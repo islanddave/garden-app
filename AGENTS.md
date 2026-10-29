@@ -32,6 +32,7 @@ export const FROM_CACHE = Symbol.for('garden-app.fromCache')
 - Memoize Provider `value` props (`useMemo`), or every consumer re-renders.
 - Database: read through views, write through base tables. Reads that depend on constraints (existence, uniqueness, FK checks) also use base tables.
 - Fix lint warnings only on lines you touch.
+- `npm run lint` (eslint plus a madge import-cycle check) must pass before you push.
 
 ## Unused is not always dead
 Never delete or rename as "unused": the rollback tooling and everything it calls (`skip_version_bump`, `workflow_dispatch` on deploy workflows, `revert-floors.json`, `forward-undo.py`, `revert-to.py`, `snap.py`, `preflight-revert-iam.py`, `gh_api_check.py`, `lambda_fleet.py`, their tests, the revert and rehearsal workflows) and `iconwire3`. Never add a push-to-main trigger or `|| echo "{}"` to a deploy workflow.

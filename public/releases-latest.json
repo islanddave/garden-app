@@ -1,7 +1,7 @@
 {
-  "version": "5.3.16",
-  "date": "2026-10-25",
+  "version": "5.3.17",
+  "date": "2026-10-29",
   "highlights": [
-    "Today’s lists now show up on the first load instead of sometimes needing a refresh, and tapping a plant that isn’t in a project (like Penstemon) opens its own page."
+    "Behind the scenes: a written house style for the code, stricter checks for screen code, and time limits on every automated job."
   ]
 }

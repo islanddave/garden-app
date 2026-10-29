@@ -1,5 +1,12 @@
 [
   {
+    "version": "5.3.17",
+    "date": "2026-10-29",
+    "highlights": [
+      "Behind the scenes: a written house style for the code, stricter checks for screen code, and time limits on every automated job."
+    ]
+  },
+  {
     "version": "5.3.16",
     "date": "2026-10-25",
     "highlights": [

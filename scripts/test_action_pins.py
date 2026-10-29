@@ -1,3 +1,4 @@
+# new-file: new subject: third-party action pinning across all workflows
 """Every third-party action a workflow uses is pinned to a full commit SHA.
 
 Run: python3 -m pytest -q scripts/test_action_pins.py
