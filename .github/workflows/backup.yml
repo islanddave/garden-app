@@ -79,6 +79,8 @@ jobs:
           aws-region: us-east-1
 
       - name: pg_dump from Neon (prod)
+        env:
+          NEON_BACKUP_URL: ${{ secrets.NEON_BACKUP_URL }}
         # IMPORTANT: Use direct endpoint (no -pooler suffix) — pg_dump is incompatible
         # with connection poolers and will hang or produce corrupt output.
         # NEON_BACKUP_URL must point to the direct host, not the pooler host.
@@ -126,7 +128,7 @@ jobs:
           TABLES_FILE="$RUNNER_TEMP/garden-$(date +%Y%m%d).tables.json"
           S3_KEY="db/garden-$(date +%Y%m%d).dump"
           TAKEN_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          if ! timeout -k 5 120 psql "${{ secrets.NEON_BACKUP_URL }}" -X -tA -v ON_ERROR_STOP=1 \
+          if ! timeout -k 5 120 psql "$NEON_BACKUP_URL" -X -tA -v ON_ERROR_STOP=1 \
             -c "SELECT json_build_object('format', 1, 'dump_key', '$S3_KEY', 'taken_at', '$TAKEN_AT', 'tables', COALESCE(json_agg(table_schema || '.' || table_name ORDER BY table_schema, table_name), '[]'::json)) FROM information_schema.tables WHERE table_type = 'BASE TABLE' AND table_schema NOT IN ('pg_catalog', 'information_schema') AND table_schema NOT LIKE 'pg_%'" \
             > "$TABLES_FILE"; then
             echo "::error::Table list for $S3_KEY could NOT be read from prod -- the dump continues, and 'Verify upload' will fail this job at its end"
@@ -134,7 +136,7 @@ jobs:
           fi
           CATALOG_FILE="$RUNNER_TEMP/garden-$(date +%Y%m%d).catalog.json"
           CATALOG_TAKEN_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          if ! timeout -k 5 120 psql "${{ secrets.NEON_BACKUP_URL }}" -X -q -tA -v ON_ERROR_STOP=1 \
+          if ! timeout -k 5 120 psql "$NEON_BACKUP_URL" -X -q -tA -v ON_ERROR_STOP=1 \
             -c "SET search_path TO pg_catalog" \
             -c "SELECT json_build_object('triggers', (SELECT json_build_object('count', count(*), 'rows', COALESCE(json_agg(json_build_array(t.tgname, t.tgrelid::regclass::text, t.tgtype, t.tgfoid::regproc::text, t.tgenabled) ORDER BY t.tgrelid::regclass::text, t.tgname), '[]'::json)) FROM pg_trigger t WHERE NOT t.tgisinternal), 'gv_functions', (SELECT json_build_object('count', count(*), 'rows', COALESCE(json_agg(p.oid::regprocedure::text ORDER BY p.oid::regprocedure::text), '[]'::json)) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'gv'), 'extensions_functions', (SELECT json_build_object('count', count(*), 'rows', COALESCE(json_agg(p.oid::regprocedure::text ORDER BY p.oid::regprocedure::text), '[]'::json)) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'extensions'))" \
             > "$CATALOG_FILE.raw" \
@@ -144,12 +146,12 @@ jobs:
             rm -f "$CATALOG_FILE" || true
           fi
           rm -f "$CATALOG_FILE.raw" || true
-          pg_dump "${{ secrets.NEON_BACKUP_URL }}" \
+          pg_dump "$NEON_BACKUP_URL" \
             --no-owner \
             --no-privileges \
             -Fc \
             > "$DUMP_FILE"
-          pg_dumpall --dbname "${{ secrets.NEON_BACKUP_URL }}" \
+          pg_dumpall --dbname "$NEON_BACKUP_URL" \
             --globals-only \
             --no-role-passwords \
             -f "$GLOBALS_FILE"

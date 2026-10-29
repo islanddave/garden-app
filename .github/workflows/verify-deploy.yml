@@ -25,7 +25,8 @@ jobs:
       - name: Verify deploy success
         env:
           GH_TOKEN: ${{ github.token }}
+          SHA: ${{ inputs.sha }}
         run: |
           ARGS=""
-          if [ -n "${{ inputs.sha }}" ]; then ARGS="--sha ${{ inputs.sha }}"; fi
+          if [ -n "$SHA" ]; then ARGS="--sha $SHA"; fi
           python3 scripts/verify-deploy.py $ARGS
