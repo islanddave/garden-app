@@ -12,14 +12,12 @@ import {
   SURFACES, REPOINT_SURFACES, SNAPSHOT_VERSION,
 } from './merge.js'
 import { PLANT_MEMORY_COLUMNS } from './plantMemoryRepoint.js'
+import { decommentSqlDashSpace as decomment } from '../_test-stubs/handlerSource.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
 // A construct NAMED IN A COMMENT is not that construct — the reparent guard learned this the hard
 // way, so assertions run against decommented source.
-const decomment = (s) => s.split('\n')
-  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
-  .join('\n')
 const RAW = readFileSync(resolve(__dirname, 'merge.js'), 'utf8')
 const SRC = decomment(RAW)
 // BUG-ENTITYMEMSTALE-001: the event_log repoint now lives in plantMemoryRepoint.js, paired with the

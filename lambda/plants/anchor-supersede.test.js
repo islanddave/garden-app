@@ -20,13 +20,11 @@ import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { mergeCore } from './merge.js'
+import { decommentSqlDashSpace as decomment } from '../_test-stubs/handlerSource.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
 // A construct NAMED IN A COMMENT is not that construct — assertions run against decommented source.
-const decomment = (s) => s.split('\n')
-  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
-  .join('\n')
 
 const SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'))
 const MERGE_SRC = decomment(readFileSync(resolve(__dirname, 'merge.js'), 'utf8'))

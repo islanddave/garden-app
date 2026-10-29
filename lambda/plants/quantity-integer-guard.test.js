@@ -29,15 +29,13 @@ import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateQuantity, QUANTITY_ERROR } from './validate.js';
+import { decommentSqlDashSpace as decomment } from '../_test-stubs/handlerSource.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // A construct NAMED IN A COMMENT is not that construct — same decommenter the sibling guards use,
 // so `// was: validateQuantity(body)` cannot satisfy a wiring assertion. This file's own header
 // mentions the call several times, which is precisely why the source must be stripped first.
-const decomment = (s) => s.split('\n')
-  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
-  .join('\n');
 
 const LAMBDA_SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
 

@@ -36,14 +36,12 @@ import { deriveAnchorOnCreate } from './anchorCreate.js'
 import {
   ANCHOR_DERIVE_MODEL_VERSION, ADD_DATE_OFFSET_DAYS, DERIVATION_TIERS, OBSERVED_ANCHOR_FIELDS,
 } from '../harvests/anchorDerive.js'
+import { decommentSqlDashSpace as decomment } from '../_test-stubs/handlerSource.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
 // A construct NAMED IN A COMMENT is not that construct — source assertions run against decommented
 // source, same helper the sibling guards in this directory use.
-const decomment = (s) => s.split('\n')
-  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
-  .join('\n')
 
 const SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'))
 const MODULE_SRC = decomment(readFileSync(resolve(__dirname, 'anchorCreate.js'), 'utf8'))

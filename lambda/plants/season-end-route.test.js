@@ -16,6 +16,7 @@ import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stubState, resetStubs } from '../_test-stubs/state.js';
+import { decommentSqlDashSpace as decomment } from '../_test-stubs/handlerSource.js';
 
 vi.mock('@neondatabase/serverless', async () => {
   const { stubState: st } = await import('../_test-stubs/state.js');
@@ -37,9 +38,6 @@ vi.stubEnv('S3_PHOTOS_BUCKET', 'stub-photos-bucket');
 const { handler } = await import('./index.js');
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const decomment = (s) => s.split('\n')
-  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
-  .join('\n');
 const SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
 
 const USER = 'user_stub_owner';
