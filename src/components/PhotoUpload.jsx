@@ -43,8 +43,7 @@
 // MULTI-ATTACH (V4-PHOTOBULK-001 S1, design V100 §3 B2/B3). `multiple` lets one picker invocation
 // stage N files, which then upload SERIALLY with per-file status and per-file failure.
 //
-// THE DEFAULT IS THE WHOLE CONTRACT. With `multiple` absent/false — or with
-// PHOTO_MULTI_ATTACH_ENABLED off, which makes the prop inert — this component is byte-identical to
+// THE DEFAULT IS THE WHOLE CONTRACT. With `multiple` absent/false this component is byte-identical to
 // what it was: one hidden input WITHOUT a `multiple` attribute, `files?.[0]` semantics, the hook's
 // single preview, the hook's single error banner, and `onUploadComplete(photo)` with ONE photo
 // object. Every existing call site passes no `multiple` and is therefore untouched, which is what
@@ -69,7 +68,6 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js';
-import { PHOTO_MULTI_ATTACH_ENABLED } from '../lib/featureFlags.js';
 import { P } from '../lib/constants.js';
 import { T } from './forms/formStyles.js';
 import { snapshotFiles } from '../lib/fileSnapshot.js';
@@ -157,10 +155,7 @@ export function PhotoUpload({
   const { upload, isUploading, error, photo, preview, reset, stage, progress } = useUploadPhoto({ errorMode });
   const inputRef = useRef(null);
 
-  // The prop alone is not enough: X1 requires one compiled flag that returns every photo surface to
-  // today's behaviour in one edit. `multiple` is inert while the flag is off — deliberately AND-ed
-  // here rather than at each call site, so a future call site cannot opt itself past the flag.
-  const multiEnabled = PHOTO_MULTI_ATTACH_ENABLED && multiple === true;
+  const multiEnabled = multiple === true;
 
   // [{ id, file, url, status: 'staged'|'uploading'|'done'|'error', error, photo }] — multi mode only.
   // Stays empty in single mode, where nothing below it renders.

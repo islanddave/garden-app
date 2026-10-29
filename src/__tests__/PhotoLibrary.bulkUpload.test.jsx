@@ -10,7 +10,7 @@
 // client writes and it relaxes a rule (`photos_must_have_parent`) that exists for good reasons. The
 // relaxation is legal — the CHECK admits a parentless row for exactly this status, and
 // POST /api/photos validates and stores it (lambda/photos/index.js:1161-1174, live in prod) — but
-// legal is not the same as guarded, so the >1 gate and the flag gate are asserted, not assumed.
+// legal is not the same as guarded, so the >1 gate is asserted, not assumed.
 //
 // Mirrors the sibling PhotoLibrary.test.jsx harness deliberately, including PROJECTS_HIDDEN: false,
 // so the two files describe the same UI and a divergence shows up as a conflict rather than as two
@@ -20,11 +20,10 @@ import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 
-const { fetchSpy, uploadSpy, uploadImpl, flagRef } = vi.hoisted(() => ({
+const { fetchSpy, uploadSpy, uploadImpl } = vi.hoisted(() => ({
   fetchSpy: vi.fn(),
   uploadSpy: vi.fn(),
   uploadImpl: { current: async () => ({ photo: { id: 'p' } }) },
-  flagRef: { current: true },
 }))
 
 vi.mock('../lib/featureFlags.js', async (importActual) => {
@@ -32,7 +31,6 @@ vi.mock('../lib/featureFlags.js', async (importActual) => {
   return {
     ...actual,
     PROJECTS_HIDDEN: false,
-    get PHOTO_MULTI_ATTACH_ENABLED() { return flagRef.current },
   }
 })
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchSpy }) }))
@@ -58,7 +56,6 @@ beforeEach(() => {
   fetchSpy.mockReset()
   uploadSpy.mockReset()
   uploadImpl.current = async () => ({ photo: { id: 'p' } })
-  flagRef.current = true
   createdUrls = []; revokedUrls = []
   origCreate = URL.createObjectURL; origRevoke = URL.revokeObjectURL
   let n = 0
@@ -279,28 +276,5 @@ describe('PhotoLibrary bulk upload — object URLs', () => {
     await act(async () => { fireEvent.click(screen.getByTestId('pl-stage-clear')) })
     expect(new Set(revokedUrls)).toEqual(new Set(createdUrls))
     expect(screen.queryAllByTestId('pl-staged-item')).toHaveLength(0)
-  })
-})
-
-describe('PhotoLibrary bulk upload — flag OFF is byte-identical', () => {
-  beforeEach(() => { flagRef.current = false })
-
-  it('the picker takes one file and the inbox route does not exist', async () => {
-    await openForm()
-    expect(screen.getByTestId('pl-staged-input').hasAttribute('multiple')).toBe(false)
-    await stage(['a.jpg', 'b.jpg', 'c.jpg'])
-    expect(screen.getByTestId('pl-staged-preview')).toBeTruthy()
-    expect(screen.queryByTestId('pl-staged-strip')).toBeNull()
-    // No target, one photo: the shipped rule, unchanged.
-    expect(screen.queryByTestId('pl-untagged-notice')).toBeNull()
-    expect(screen.getByTestId('pl-staged-upload').disabled).toBe(true)
-  })
-
-  it('re-picking REPLACES the staged photo and revokes the old URL', async () => {
-    await openForm()
-    await stage(['a.jpg'])
-    await stage(['b.jpg'])
-    expect(revokedUrls).toEqual([createdUrls[0]])
-    expect(screen.getByTestId('pl-stage-replace').textContent).toMatch(/Change photo/i)
   })
 })

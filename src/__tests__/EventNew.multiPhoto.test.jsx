@@ -15,14 +15,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
 import { settle } from './helpers/settle.js'
 
-const { apiFetchSpy, navigateSpy, postCalls, searchParamsRef, pendingRef, uploadSpy, flagRef } = vi.hoisted(() => ({
+const { apiFetchSpy, navigateSpy, postCalls, searchParamsRef, pendingRef, uploadSpy } = vi.hoisted(() => ({
   apiFetchSpy: vi.fn(),
   navigateSpy: vi.fn(),
   postCalls: [],
   searchParamsRef: { current: new URLSearchParams() },
   pendingRef: { current: null },
   uploadSpy: vi.fn(),
-  flagRef: { current: true },
 }))
 
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: apiFetchSpy }), apiFetch: apiFetchSpy }))
@@ -44,7 +43,6 @@ vi.mock('../lib/featureFlags.js', async (importActual) => {
     ...actual,
     PROJECTS_HIDDEN: false,
     PLANTING_REQUIRED_ENABLED: false,
-    get PHOTO_MULTI_ATTACH_ENABLED() { return flagRef.current },
   }
 })
 vi.mock('react-router-dom', () => ({
@@ -66,7 +64,6 @@ beforeEach(() => {
   uploadSpy.mockReset()
   uploadSpy.mockResolvedValue({ photo: { id: 'p1' } })
   pendingRef.current = null
-  flagRef.current = true
   searchParamsRef.current = new URLSearchParams()
   try { localStorage.clear() } catch { /* noop */ }
 
@@ -128,7 +125,7 @@ async function save() {
   await act(async () => { fireEvent.click(screen.getByText('Save')) })
 }
 
-describe('EventNew multi-photo — flag ON', () => {
+describe('EventNew multi-photo', () => {
   it('B1: three photos in ONE picker invocation, ONE save, ONE event, three uploads', async () => {
     await renderForm('event_type=harvest&project=proj-1')
     await pickPhotos(['a.jpg', 'b.jpg', 'c.jpg'])
@@ -288,43 +285,5 @@ describe('EventNew multi-photo — flag ON', () => {
   it('the picker input carries `multiple`', async () => {
     await renderForm('event_type=harvest&project=proj-1')
     expect(document.querySelector('input[type="file"]').hasAttribute('multiple')).toBe(true)
-  })
-})
-
-describe('EventNew multi-photo — flag OFF (X1: byte-identical)', () => {
-  beforeEach(() => { flagRef.current = false })
-
-  it('the picker carries NO `multiple` attribute', async () => {
-    await renderForm('event_type=harvest&project=proj-1')
-    expect(document.querySelector('input[type="file"]').hasAttribute('multiple')).toBe(false)
-  })
-
-  it('stages and uploads only the FIRST file, exactly as the shipped scalar did', async () => {
-    await renderForm('event_type=harvest&project=proj-1')
-    await pickPhotos(['a.jpg', 'b.jpg', 'c.jpg'])
-    expect(screen.getAllByTestId('eventnew-photo-item')).toHaveLength(1)
-    await save()
-    expect(uploadSpy).toHaveBeenCalledTimes(1)
-    expect(uploadSpy.mock.calls[0][0].name).toBe('a.jpg')
-  })
-
-  it('re-picking REPLACES the staged file and revokes the old URL', async () => {
-    await renderForm('event_type=harvest&project=proj-1')
-    await pickPhotos(['a.jpg'])
-    await pickPhotos(['b.jpg'])
-    expect(screen.getAllByTestId('eventnew-photo-item')).toHaveLength(1)
-    expect(revokedUrls).toEqual([createdUrls[0]])
-  })
-
-  it('renders no "Add more" affordance', async () => {
-    await renderForm('event_type=harvest&project=proj-1')
-    await pickPhotos(['a.jpg'])
-    expect(screen.queryByTestId('eventnew-photo-add-more')).toBeNull()
-  })
-
-  it('B5 still holds: a photo event with nothing attached is refused', async () => {
-    await renderForm('event_type=photo&project=proj-1')
-    await act(async () => { fireEvent.click(screen.getByText('Save')) })
-    expect(postCalls.length).toBe(0)
   })
 })

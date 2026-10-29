@@ -37,8 +37,8 @@ vi.mock('../hooks/useUploadPhoto.js', () => ({
   }),
 }))
 // Same two flags EventNew.multiPhoto.test.jsx pins, for the same reason — the save leg needs the
-// Project select present and the planting gate open. PHOTO_MULTI_ATTACH_ENABLED is deliberately
-// left ACTUAL: the strip is the shipped surface this bug is about.
+// Project select present and the planting gate open. The multi-photo strip is the shipped surface
+// this bug is about.
 vi.mock('../lib/featureFlags.js', async (importActual) => {
   const actual = await importActual()
   return { ...actual, PROJECTS_HIDDEN: false, PLANTING_REQUIRED_ENABLED: false }

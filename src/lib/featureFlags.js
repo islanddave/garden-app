@@ -354,27 +354,6 @@ export const WEIGH_IN_FRAME_ENABLED = true
 // flag whose TRUE branch is a rejected design is worse than no flag. Upload is unconditionally
 // lenient again, and there is nothing left for it to be lenient ABOUT on the formats a phone shoots.
 
-// V4-PHOTOBULK-001 Track B — in-context multi-attach. Pick several photos in ONE picker invocation
-// and attach them all to the thing already on screen. Closes Braindump#8, the ledger's only literal
-// ASAP, which had been carried inside a P3 wrapper since the PHOTOBULK ∪ MULTIUPLOAD merge
-// (photobulk-scope-union-design-V100-20260803.md §4 B1, §5-D3).
-//
-// SEPARATE FROM THE INBOX FLAG ON PURPOSE (§5-D3). Track A's photo-first inbox — bulk-select into
-// `inbox/`, `intake_status='pending_tag'`, the QuickTagCarousel — is a different capability with a
-// different risk profile, a Lambda deploy in its path, and a design-review gate. One flag would make
-// this ship wait on that one. When Track A lands it gets PHOTO_INBOX_ENABLED; the two never merge.
-//
-// WHAT THIS FLAG DOES NOT TOUCH. Attaching N photos in context is the OPPOSITE of deferring a tag:
-// every row written on this path carries a real parent and `intake_status` stays NULL (§3 B4). No
-// code under this flag may reach the `inbox/` key prefix or POST /api/photos/batch — those belong to
-// Track A, and a multi-attach that quietly routed through them would put untagged rows in a drain
-// nothing yet drains.
-//
-// OFF is byte-identical (§3 X1): `multiple` becomes inert on <PhotoUpload>, EventNew stages one File
-// exactly as it does today, and no new DOM renders on any photo surface. Both branches are tested —
-// PhotoUpload.multi.test.jsx and EventNew.multiPhoto.test.jsx each carry a flag-OFF case.
-export const PHOTO_MULTI_ATTACH_ENABLED = true
-
 // BUG-SEEDEXTRACTOR-001 (Dave 2026-09-03): the two BULK seed-intake modes on /inventory/add-seeds —
 // "Photo of packets" and "Paste an order" — have NEVER worked in production. Both POST
 // /api/inventory-items/extract-seeds, which needs ANTHROPIC_API_KEY in the garden-app/secrets

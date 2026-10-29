@@ -38,7 +38,7 @@ import { HARVEST_UNITS, MAX_PLAUSIBLE, WEIGHT_UNITS, MAX_PLAUSIBLE_WEIGHT_G, toG
 const POST_SAVE_STRIP_SPACER_PX = 86
 import { seasonTotalPhrase } from '../lib/harvestSummary.js'
 import { useUxFlow, FLOWS, sendUxEvent } from '../lib/uxEvents.js'
-import { EVENTNEW_ADD_DETAILS_EXPANDED, PHOTO_MULTI_ATTACH_ENABLED } from '../lib/featureFlags.js'
+import { EVENTNEW_ADD_DETAILS_EXPANDED } from '../lib/featureFlags.js'
 
 // V4-PHOTOBULK-001 S2. Matches PhotoUpload's DEFAULT_MAX_FILES — one number for "a handful you just
 // took", not the server's MAX_BATCH of 20, which governs Track A's camera-roll drain.
@@ -1480,7 +1480,7 @@ export default function EventNew({ harvestSession = false } = {}) {
 
     // Bounds the copying only; the updater below re-derives room from `prev` and is the authority,
     // since this function now awaits and `photoItems` can be a render behind when it resumes.
-    const roomNow = PHOTO_MULTI_ATTACH_ENABLED ? Math.max(0, MAX_EVENT_PHOTOS - photoItems.length) : 1
+    const roomNow = Math.max(0, MAX_EVENT_PHOTOS - photoItems.length)
     const candidates = picked.slice(0, roomNow)
     if (!candidates.length) return
 
@@ -1510,14 +1510,11 @@ export default function EventNew({ harvestSession = false } = {}) {
     // here, an undoable removal can only exist against a list that is one item short of the cap.
     commitRemovedPhoto()
     setPhotoItems(prev => {
-      const room = PHOTO_MULTI_ATTACH_ENABLED ? Math.max(0, MAX_EVENT_PHOTOS - prev.length) : 1
+      const room = Math.max(0, MAX_EVENT_PHOTOS - prev.length)
       const accepted = ok.slice(0, room)
       if (!accepted.length) return prev
-      // Replace, not append, in single mode — re-picking has always swapped the staged file.
-      const next = PHOTO_MULTI_ATTACH_ENABLED ? prev : []
-      if (!PHOTO_MULTI_ATTACH_ENABLED) for (const it of prev) URL.revokeObjectURL(it.url)
       // Object URL from the SNAPSHOT — one taken from the replaced handle dies on the same schedule.
-      return next.concat(accepted.map(({ file }) => ({ id: nextPhotoId(), file, url: URL.createObjectURL(file) })))
+      return prev.concat(accepted.map(({ file }) => ({ id: nextPhotoId(), file, url: URL.createObjectURL(file) })))
     })
   }
 
@@ -2344,9 +2341,8 @@ export default function EventNew({ harvestSession = false } = {}) {
                     </div>
                   )
                 })}
-                {/* "Add another" only exists in multi mode, and only while there is room. Its absence
-                    is what makes flag-off byte-identical: one photo, one remove, no second door. */}
-                {PHOTO_MULTI_ATTACH_ENABLED && photoItems.length < MAX_EVENT_PHOTOS && (
+                {/* "Add another" only while there is room. */}
+                {photoItems.length < MAX_EVENT_PHOTOS && (
                   <button
                     type="button"
                     onClick={openPhotoPicker}
@@ -2369,7 +2365,7 @@ export default function EventNew({ harvestSession = false } = {}) {
                   ref={photoInputRef}
                   type="file"
                   accept="image/*"
-                  multiple={PHOTO_MULTI_ATTACH_ENABLED ? true : undefined}
+                  multiple
                   onChange={handlePhotoChange}
                   style={{ display: 'none' }}
                 />
@@ -2407,7 +2403,7 @@ export default function EventNew({ harvestSession = false } = {}) {
                   ref={photoInputRef}
                   type="file"
                   accept="image/*"
-                  multiple={PHOTO_MULTI_ATTACH_ENABLED ? true : undefined}
+                  multiple
                   onChange={handlePhotoChange}
                   style={{ display: 'none' }}
                 />

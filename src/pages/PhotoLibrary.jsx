@@ -28,7 +28,7 @@ import FacebookShareSheet from '../components/FacebookShareSheet.jsx'
 import PhotoDeleteConfirm from '../components/photo/PhotoDeleteConfirm.jsx'
 import QuickTagCarousel from '../components/photo/QuickTagCarousel.jsx'
 import { useOptionalToast } from '../context/ToastContext.jsx'
-import { PROJECTS_HIDDEN, PHOTO_MULTI_ATTACH_ENABLED } from '../lib/featureFlags.js'
+import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 
 // V4-PHOTOBULK-001. Higher than PhotoUpload/EventNew's 10 because this is the drain surface rather
 // than an in-context handful, and it matches the photos Lambda's own MAX_BATCH (index.js:47) so the
@@ -628,7 +628,7 @@ export default function PhotoLibrary() {
     // Room is computed twice on purpose. Here it bounds how much we bother COPYING; the updater
     // below re-derives it from `prev` and is the authority on what is actually staged, because this
     // function now awaits and `stagedItems` may be a render behind by the time it resumes.
-    const roomNow = PHOTO_MULTI_ATTACH_ENABLED ? Math.max(0, MAX_STAGED - stagedItems.length) : 1
+    const roomNow = Math.max(0, MAX_STAGED - stagedItems.length)
     const candidates = picked.slice(0, roomNow)
     if (!candidates.length) return
 
@@ -655,15 +655,12 @@ export default function PhotoLibrary() {
     if (!ok.length) return
 
     setStagedItems(prev => {
-      const room = PHOTO_MULTI_ATTACH_ENABLED ? Math.max(0, MAX_STAGED - prev.length) : 1
+      const room = Math.max(0, MAX_STAGED - prev.length)
       const accepted = ok.slice(0, room)
       if (!accepted.length) return prev
-      // Single mode REPLACES, which is what "Change photo" has always meant here.
-      const keep = PHOTO_MULTI_ATTACH_ENABLED ? prev : []
-      if (!PHOTO_MULTI_ATTACH_ENABLED) for (const it of prev) URL.revokeObjectURL(it.url)
       // The object URL is minted from the SNAPSHOT, not the original. Pointing it at the handle we
       // just replaced would leave the preview dying on exactly the schedule this fix exists to stop.
-      return keep.concat(accepted.map(({ file }) => ({
+      return prev.concat(accepted.map(({ file }) => ({
         id: nextStagedId(), file, url: URL.createObjectURL(file), status: 'staged', error: null,
       })))
     })
@@ -849,16 +846,7 @@ export default function PhotoLibrary() {
   // user meant to pick a target and didn't — and the shipped rule catches that and should keep
   // catching it. A DELIBERATE camera-roll drain is many photos at once, and for that the rule was
   // the obstacle: it demanded one home for a batch whose whole point is that the homes differ.
-  //
-  // THE FLAG TERM HERE IS REDUNDANT TODAY AND IS KEPT ON PURPOSE — stated because a mutation run
-  // proved it, rather than left as an assumption. With the flag off, onStagedPick caps the list at
-  // one item, so `stagedItems.length > 1` can never be true and deleting `PHOTO_MULTI_ATTACH_ENABLED`
-  // from this line changes no observable behaviour; no test through the UI can kill that mutant,
-  // because the state it would expose is unreachable. It stays as defence in depth: the two guards
-  // fail in different directions, and a future edit to the picker cap (a `maxFiles` prop, a paste
-  // handler, a share-target entry) would otherwise open the untagged route with the flag OFF and
-  // nothing would go red. Do not "simplify" it away on the strength of a coverage report.
-  const canUploadUntagged = PHOTO_MULTI_ATTACH_ENABLED && stagedItems.length > 1
+  const canUploadUntagged = stagedItems.length > 1
 
   // ---- Modal / tag handlers ----
   function openModal(photo) {
@@ -1153,7 +1141,7 @@ export default function PhotoLibrary() {
                 ref={stagedInputRef}
                 type="file"
                 accept="image/*"
-                multiple={PHOTO_MULTI_ATTACH_ENABLED ? true : undefined}
+                multiple
                 onChange={onStagedPick}
                 style={{ display: 'none' }}
                 data-testid="pl-staged-input"
@@ -1236,7 +1224,7 @@ export default function PhotoLibrary() {
                   <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 6 }}>
                     <button type="button" data-testid="pl-stage-replace" onClick={openStagedPicker}
                       style={{ border: `1px solid ${P.border}`, borderRadius: T.radiusButton, padding: '5px 12px', background: P.white, color: P.mid, fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer' }}>
-                      {PHOTO_MULTI_ATTACH_ENABLED && stagedItems.length > 0 ? 'Add more' : 'Change photo'}
+                      {stagedItems.length > 0 ? 'Add more' : 'Change photo'}
                     </button>
                     <button type="button" data-testid="pl-stage-clear" onClick={clearStaged}
                       style={{ border: `1px solid ${P.border}`, borderRadius: T.radiusButton, padding: '5px 12px', background: P.white, color: P.mid, fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer' }}>
