@@ -12,7 +12,7 @@
 // Dave's device smoke.
 
 import { describe, it, expect, vi } from 'vitest'
-import { snapshotFile, snapshotFiles } from '../lib/fileSnapshot.js'
+import { snapshotFile, snapshotFiles, snapshotPicked, unreadableNotice } from '../lib/fileSnapshot.js'
 
 // A stand-in for a real browser's File: has arrayBuffer, so the copy branch runs. Deliberately NOT
 // a jsdom File — using one would silently take the no-copy branch and assert nothing.
@@ -129,5 +129,53 @@ describe('snapshotFiles — the batch', () => {
   it('a throwing progress callback never costs a photo', async () => {
     const { ok } = await snapshotFiles([fakeFile('a.jpg')], () => { throw new Error('render blew up') })
     expect(ok.map(o => o.file.name)).toEqual(['a.jpg'])
+  })
+})
+
+describe('snapshotPicked — the pick screens\' shared split (OPS-CODEREVIEW-001 E1)', () => {
+  it('splits readable from unreadable and names the unreadable ones in pick order', async () => {
+    const files = [
+      fakeFile('a.jpg'),
+      fakeFile('bad1.jpg', [1], { arrayBuffer: RECLAIMED }),
+      fakeFile('c.jpg'),
+      fakeFile('bad2.jpg', [1], { arrayBuffer: RECLAIMED }),
+    ]
+    const { ok, failed, failedNames } = await snapshotPicked(files)
+    expect(ok.map(o => o.file.name)).toEqual(['a.jpg', 'c.jpg'])
+    expect(failed.map(f => f.file.name)).toEqual(['bad1.jpg', 'bad2.jpg'])
+    expect(failedNames).toEqual(['bad1.jpg', 'bad2.jpg'])
+  })
+
+  it('leaves a nameless failure out of the names but still counts it', async () => {
+    const nameless = { ...fakeFile('x', [1], { arrayBuffer: RECLAIMED }), name: undefined }
+    const { failed, failedNames } = await snapshotPicked([nameless])
+    expect(failed).toHaveLength(1)
+    expect(failedNames).toEqual([])
+  })
+
+  it('passes progress through', async () => {
+    const seen = []
+    await snapshotPicked([fakeFile('a.jpg'), fakeFile('b.jpg')], (d, t) => seen.push([d, t]))
+    expect(seen).toEqual([[1, 2], [2, 2]])
+  })
+})
+
+describe('unreadableNotice — EventNew and PhotoLibrary\'s sentence (OPS-CODEREVIEW-001 E1)', () => {
+  it('singular, with its name', () => {
+    expect(unreadableNotice(1, 3, ['bad.jpg'])).toBe(
+      "1 of 3 couldn't be read and was not added (bad.jpg). Re-pick from the gallery and try again.",
+    )
+  })
+
+  it('plural, three names at most, then an ellipsis', () => {
+    expect(unreadableNotice(4, 5, ['b1.jpg', 'b2.jpg', 'b3.jpg', 'b4.jpg'])).toBe(
+      "4 of 5 couldn't be read and were not added (b1.jpg, b2.jpg, b3.jpg…). Re-pick from the gallery and try again.",
+    )
+  })
+
+  it('no names, no parenthesis', () => {
+    expect(unreadableNotice(2, 2, [])).toBe(
+      "2 of 2 couldn't be read and were not added. Re-pick from the gallery and try again.",
+    )
   })
 })

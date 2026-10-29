@@ -34,7 +34,7 @@ let eventPhotoSeq = 0
 const nextPhotoId = () => `evphoto-${++eventPhotoSeq}`
 import { Field, Input, Select, Textarea, Button, ErrorBanner, PlantingSelect } from '../components/forms'
 import { T } from '../components/forms/formStyles.js'
-import { snapshotFile, snapshotFiles } from '../lib/fileSnapshot.js'
+import { snapshotFile, snapshotPicked, unreadableNotice } from '../lib/fileSnapshot.js'
 import { useCachedFetch } from '../hooks/useCachedFetch.js'
 import { CROP_CHIPS_AUTO } from '../components/forms/PlantingSelect.jsx'
 import TreatmentDetails from '../components/TreatmentDetails.jsx'
@@ -1066,9 +1066,9 @@ export default function EventNew({ harvestSession = false } = {}) {
     if (!candidates.length) return
 
     setPhotoPreparing({ done: 0, total: candidates.length })
-    let ok = [], failed = []
+    let ok = [], failed = [], failedNames = []
     try {
-      ;({ ok, failed } = await snapshotFiles(
+      ;({ ok, failed, failedNames } = await snapshotPicked(
         candidates,
         (done, total) => setPhotoPreparing({ done, total }),
       ))
@@ -1076,14 +1076,7 @@ export default function EventNew({ harvestSession = false } = {}) {
       setPhotoPreparing(null)
     }
 
-    if (failed.length) {
-      const names = failed.map(f => f.file?.name).filter(Boolean)
-      setNotice(
-        `${failed.length} of ${candidates.length} couldn't be read and ${failed.length === 1 ? 'was' : 'were'} not added` +
-        `${names.length ? ` (${names.slice(0, 3).join(', ')}${names.length > 3 ? '…' : ''})` : ''}` +
-        '. Re-pick from the gallery and try again.'
-      )
-    }
+    if (failed.length) setNotice(unreadableNotice(failed.length, candidates.length, failedNames))
     if (!ok.length) return
 
     // A fresh pick commits any parked removal: the user has moved on, and with the slot emptied here an

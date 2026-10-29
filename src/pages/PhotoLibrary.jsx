@@ -42,7 +42,7 @@ import useScrollRestore from '../hooks/useScrollRestore.js'
 // log uses, or a photo and the pick it documents can land on different days across midnight.
 import { etDay } from '../lib/harvestSummary.js'
 import { HARVEST_TZ } from '../lib/growYear.js'
-import { snapshotFiles } from '../lib/fileSnapshot.js'
+import { snapshotPicked, unreadableNotice } from '../lib/fileSnapshot.js'
 
 // Device-local memory of the zone filter, mirroring LogMany.jsx's SCOPE_KEY ('quicklog.lastScope').
 // Same namespaced-by-surface shape, same write-on-change / validate-on-restore contract.
@@ -464,9 +464,9 @@ export default function PhotoLibrary() {
     if (!candidates.length) return
 
     setStagedPreparing({ done: 0, total: candidates.length })
-    let ok = [], failed = []
+    let ok = [], failed = [], failedNames = []
     try {
-      ;({ ok, failed } = await snapshotFiles(
+      ;({ ok, failed, failedNames } = await snapshotPicked(
         candidates,
         (done, total) => setStagedPreparing({ done, total }),
       ))
@@ -474,15 +474,8 @@ export default function PhotoLibrary() {
       setStagedPreparing(null)
     }
 
-    if (failed.length) {
-      // Named, not counted: with nine failures the user needs to know WHICH photo to re-pick.
-      const names = failed.map(f => f.file?.name).filter(Boolean)
-      setUploadErr(
-        `${failed.length} of ${candidates.length} couldn't be read and ${failed.length === 1 ? 'was' : 'were'} not added` +
-        `${names.length ? ` (${names.slice(0, 3).join(', ')}${names.length > 3 ? '…' : ''})` : ''}` +
-        '. Re-pick from the gallery and try again.'
-      )
-    }
+    // Named, not counted: with nine failures the user needs to know which photo to re-pick.
+    if (failed.length) setUploadErr(unreadableNotice(failed.length, candidates.length, failedNames))
     if (!ok.length) return
 
     setStagedItems(prev => {

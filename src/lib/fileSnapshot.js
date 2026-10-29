@@ -111,3 +111,23 @@ export async function snapshotFiles(files, onProgress = null) {
   }
   return { ok, failed }
 }
+
+/**
+ * The pick screens' shared step: snapshot the picked files, split readable from unreadable, and name
+ * the unreadable ones (nameless files are counted in `failed` but not named). Each screen keeps its
+ * own progress state, undo, revoke and queue logic; they differ on purpose.
+ */
+export async function snapshotPicked(files, onProgress = null) {
+  const { ok, failed } = await snapshotFiles(files, onProgress)
+  return { ok, failed, failedNames: failed.map(f => f.file?.name).filter(Boolean) }
+}
+
+/**
+ * The unreadable-pick notice EventNew and PhotoLibrary show. PhotoUpload keeps its own shorter
+ * wording because it joins onto the cap notice in a tight card footer.
+ */
+export function unreadableNotice(failedCount, total, names) {
+  const named = names.length ? ` (${names.slice(0, 3).join(', ')}${names.length > 3 ? '…' : ''})` : ''
+  return `${failedCount} of ${total} couldn't be read and ${failedCount === 1 ? 'was' : 'were'} not added` +
+    `${named}. Re-pick from the gallery and try again.`
+}
