@@ -77,6 +77,7 @@ jobs:
   audit:
     name: Audit lambda column refs vs prod Neon schema
     runs-on: ubuntu-26.04
+    timeout-minutes: 10
 
     steps:
       - name: Checkout garden-app

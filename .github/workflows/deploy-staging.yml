@@ -117,6 +117,7 @@ jobs:
   # ── Deploy staging Lambda functions ──────────────────────────────────────
   deploy-lambdas:
     runs-on: ubuntu-26.04
+    timeout-minutes: 10
     environment: staging  # OIDC subject claim for garden-app-github-deploy-staging trust
     needs: ref-guard
     strategy:
@@ -655,6 +656,7 @@ jobs:
   # ── Build and deploy staging frontend ────────────────────────────────────
   deploy-frontend:
     runs-on: ubuntu-26.04
+    timeout-minutes: 15
     environment: staging  # OIDC subject claim for garden-app-github-deploy-staging trust
     needs: deploy-lambdas
     outputs:

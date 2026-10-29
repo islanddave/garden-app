@@ -10,9 +10,14 @@ permissions:
   id-token: write
   contents: read
 
+concurrency:
+  group: backup
+  cancel-in-progress: false
+
 jobs:
   backup:
     runs-on: ubuntu-26.04
+    timeout-minutes: 20
     steps:
       - name: Make /usr/lib/postgresql/17 writable (cache + docker cp target)
         # OPS-SCHEMACHECKAPT-001. See the fetch step below for why this file no longer

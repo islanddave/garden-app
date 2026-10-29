@@ -190,6 +190,7 @@ jobs:
   # Fail-closed: dev_sha must be a 40-hex commit SHA and snap_version must match the snap regex.
   resolve:
     runs-on: ubuntu-26.04
+    timeout-minutes: 10
     outputs:
       dev_sha: ${{ steps.r.outputs.dev_sha }}
       snap_version: ${{ steps.r.outputs.snap_version }}
@@ -1057,6 +1058,7 @@ jobs:
     # "SPA withheld" report alongside a successfully-shipped frontend.
     if: ${{ always() && needs.promote.result == 'success' && needs.deploy-lambdas.result != 'skipped' && needs.deploy-lambdas.outputs.deploy_result != 'success' }}
     runs-on: ubuntu-26.04
+    timeout-minutes: 10
     steps:
       - name: Report withheld SPA deploy
         run: |

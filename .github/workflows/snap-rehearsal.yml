@@ -28,9 +28,14 @@ permissions:
   id-token: write
   contents: write
 
+concurrency:
+  group: snap-rehearsal
+  cancel-in-progress: false
+
 jobs:
   rehearse:
     runs-on: ubuntu-26.04
+    timeout-minutes: 15
     environment: production
     env:
       GITHUB_REPOSITORY: ${{ github.repository }}

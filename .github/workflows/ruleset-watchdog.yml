@@ -65,6 +65,7 @@ permissions:
 jobs:
   assert-ruleset:
     runs-on: ubuntu-26.04
+    timeout-minutes: 10
     steps:
       - name: Mint garden-bot token
         id: bot
