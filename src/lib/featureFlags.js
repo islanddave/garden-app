@@ -40,25 +40,6 @@ export const CARE_RAIN_MAXDAYS_ENABLED = false
 // the two-minute revert path and flipping this constant is only the client-side trace.
 export const CARE_TODAY_AWARE_ENABLED = false
 
-// V4-WATERMATH-001 F0 (2026-08-12): editing a logged watering's amount class (Light/Normal/Deep)
-// from event history. CAPTURE is unflagged and live — POST /api/events already stores whatever
-// `metadata` it is handed, and the batch path is covered by the events-Lambda merge. EDIT is NOT:
-// PUT /api/events/:id neither writes `metadata` nor RETURNs it (lambda/events/index.js — the
-// UPDATE's SET list has no metadata column and the RETURNING clause omits it), so a chip shipped
-// here today would silently discard the user's correction AND blank the Details block on save,
-// because EventDetail re-seeds from the PUT response.
-//
-// This is default-FALSE for exactly that reason, not out of caution: an edit control that appears
-// to work and does nothing is the inert-feature class this project has shipped twice. Flip TRUE in
-// the same change that teaches the events-Lambda PUT to merge + return `metadata` (that work is
-// NOT in W-F0-LAMBDA's stated scope — it needs its own work item). The chips, the seed from the
-// stored row, and the PUT body are all built and tested behind this flag; flipping it is the whole
-// client-side cost.
-// FLIPPED true 2026-08-12 (garden-bigbites-20260812): the blocking PUT arm landed (persists +
-// returns metadata, has-key grammar) and the L-108 staging smoke round-trip proved it end-to-end
-// against real Postgres (write:event-metadata-readback + preserved-on-absent-key, run on ac7cb8e).
-export const WATER_DEPTH_EDIT_ENABLED = true
-
 // V4-PROJHIDE-001 (types-forward): hide "project" as a USER-FACING concept — project choosers,
 // labels, breadcrumbs, nav entries, the /projects tree default, and required-project gates all
 // disappear when TRUE, WHILE project_id stays intact in schema/FKs/authz/API read-shapes (projects

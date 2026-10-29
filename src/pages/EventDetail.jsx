@@ -33,7 +33,7 @@ import { lotHref } from '../components/seed/seedLots.js'
 import { Field, Input, Select, Textarea, Button, ErrorBanner, PlantingSelect, Sheet } from '../components/forms'
 // The same label chrome <Field> renders, for the one control on this form that cannot BE a Field.
 import { labelChrome } from '../components/forms/formStyles.js'
-import { PROJECTS_HIDDEN, WATER_DEPTH_EDIT_ENABLED } from '../lib/featureFlags.js'
+import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 // V4-WATERMATH-001 F0 — the amount class is correctable from history (flag-gated; see featureFlags).
 import WaterDepthChips from '../components/WaterDepthChips.jsx'
 import {
@@ -456,7 +456,7 @@ export default function EventDetail() {
       // gets what every unchosen create writes (useCareActions: default class, source 'default').
       // A stored watering with no class stays bare — stamping it here would be a backfill the
       // gardener never asked for, and the ledger fold already reads absent as the default.
-      const depthApplies = WATER_DEPTH_EDIT_ENABLED && isWaterDepthType(form.event_type)
+      const depthApplies = isWaterDepthType(form.event_type)
       const becameWatering = !isWaterDepthType(event.event_type) && !isWaterDepth(event.metadata?.water_depth)
       const depthFragment = !depthApplies ? null
         : form.water_depth_touched ? waterDepthMetadata(form.water_depth, true)
@@ -763,8 +763,8 @@ export default function EventDetail() {
               Keyed off the form's CURRENT type (unlike the harvest panel, which keys off the
               persisted type): there is no paired row to orphan here, so re-typing an event INTO
               watering may legitimately give it a class. Sits outside <Field> — one-control
-              contract. Flag-gated: see WATER_DEPTH_EDIT_ENABLED for why. */}
-          {WATER_DEPTH_EDIT_ENABLED && isWaterDepthType(form.event_type) && (
+              contract. */}
+          {isWaterDepthType(form.event_type) && (
             <div style={{ marginBottom: 14 }}>
               <label style={{ display: 'block', fontSize: '0.77rem', fontWeight: 700, color: P.mid, marginBottom: 8, letterSpacing: '0.4px', textTransform: 'uppercase' }}>
                 How much water
