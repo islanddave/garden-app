@@ -509,3 +509,140 @@ def test_a_malformed_parity_rule_is_an_input_error(tmp_path):
     p.write_text('{"env_parity": [{"min_entries": 2}]}')
     with pytest.raises(ValueError):
         clc.load_env_parity(str(p))
+
+
+# --- invoke policy (SEC-09) ----------------------------------------------------
+
+import pytest
+
+ARN = "arn:aws:lambda:us-east-1:769788341849:function:garden-x"
+URL_GRANT = {"Sid": "FunctionURLAllowPublicAccess", "Effect": "Allow", "Principal": "*",
+             "Action": "lambda:InvokeFunctionUrl", "Resource": ARN,
+             "Condition": {"StringEquals": {"lambda:FunctionUrlAuthType": "NONE"}}}
+VIA_URL_GRANT = {"Sid": "AllowInvokeViaFunctionUrl", "Effect": "Allow", "Principal": "*",
+                 "Action": "lambda:InvokeFunction", "Resource": ARN,
+                 "Condition": {"Bool": {"lambda:InvokedViaFunctionUrl": "true"}}}
+EVENTS_GRANT = {"Sid": "events-invoke", "Effect": "Allow", "Principal": {"Service": "events.amazonaws.com"},
+                "Action": "lambda:InvokeFunction", "Resource": ARN,
+                "Condition": {"ArnLike": {"AWS:SourceArn": "arn:aws:events:us-east-1:769788341849:rule/r"}}}
+APIGW_GRANT = dict(EVENTS_GRANT, Sid="apigw-invoke", Principal={"Service": "apigateway.amazonaws.com"})
+WITH_URL = {"url": {"cors_origins": [PROD]}}
+
+
+def pol(*statements):
+    return {"Version": "2012-10-17", "Id": "default", "Statement": list(statements)}
+
+
+@pytest.mark.parametrize("statement", [
+    URL_GRANT,
+    VIA_URL_GRANT,
+    dict(VIA_URL_GRANT, Principal={"AWS": "*"}),
+    dict(URL_GRANT, Principal={"AWS": "*"}),
+    EVENTS_GRANT,
+    APIGW_GRANT,
+    dict(VIA_URL_GRANT, Action=["lambda:InvokeFunction"]),
+], ids=["url-grant", "via-url-grant", "via-url-grant-aws-star", "url-grant-aws-star",
+        "eventbridge-service", "apigateway-service", "action-as-list"])
+def test_invoke_policy_allowed_statement_shapes(statement):
+    assert clc.check_invoke_policy("garden-x", {"url": None}, pol(statement)) == []
+
+
+@pytest.mark.parametrize("statement", [
+    {"Sid": "AllowPublicInvoke", "Effect": "Allow", "Principal": "*",
+     "Action": "lambda:InvokeFunction", "Resource": ARN},
+    dict(VIA_URL_GRANT, Sid="AllowPublicInvoke", Principal={"AWS": "*"}, Condition={}),
+    dict(VIA_URL_GRANT, Sid="WrongBool", Condition={"Bool": {"lambda:InvokedViaFunctionUrl": "false"}}),
+    dict(VIA_URL_GRANT, Sid="SwappedCondition", Condition=URL_GRANT["Condition"]),
+    dict(URL_GRANT, Sid="UrlNoCondition", Condition=None),
+    dict(URL_GRANT, Sid="UrlAuthIam", Condition={"StringEquals": {"lambda:FunctionUrlAuthType": "AWS_IAM"}}),
+    dict(VIA_URL_GRANT, Sid="WildAction", Action="lambda:*"),
+    dict(VIA_URL_GRANT, Sid="TwoActions", Action=["lambda:InvokeFunction", "lambda:GetFunction"]),
+    dict(VIA_URL_GRANT, Sid="AwsStarList", Principal={"AWS": ["*"]}, Condition=None),
+], ids=["unconditioned-invoke", "aws-star-empty-condition", "bool-false", "condition-of-the-other-shape",
+        "url-grant-no-condition", "url-grant-iam-authtype", "wildcard-action", "extra-action",
+        "aws-star-list-no-condition"])
+def test_invoke_policy_public_statement_outside_the_two_shapes_is_a_violation_naming_its_sid(statement):
+    v = clc.check_invoke_policy("garden-x", {"url": None}, pol(statement))
+    assert len(v) == 1 and statement["Sid"] in v[0] and "public" in v[0]
+
+
+def test_invoke_policy_deny_statement_with_a_public_principal_is_not_a_grant():
+    deny = {"Sid": "DenyAll", "Effect": "Deny", "Principal": "*", "Action": "lambda:*", "Resource": ARN}
+    assert clc.check_invoke_policy("garden-x", {"url": None}, pol(deny)) == []
+
+
+@pytest.mark.parametrize("policy", [
+    None,
+    pol(URL_GRANT),
+    pol(URL_GRANT, EVENTS_GRANT),
+    pol(URL_GRANT, dict(VIA_URL_GRANT, Effect="Deny")),
+], ids=["no-policy", "url-grant-only", "service-grant-only", "via-url-grant-is-deny"])
+def test_url_function_without_the_conditioned_invoke_grant_is_reported_missing(policy):
+    v = clc.check_invoke_policy("garden-x", WITH_URL, policy)
+    assert any("garden-x" in s and "InvokedViaFunctionUrl" in s and "403" in s for s in v), v
+
+
+def test_url_function_with_both_grants_is_clean():
+    assert clc.check_invoke_policy("garden-x", WITH_URL, pol(URL_GRANT, VIA_URL_GRANT)) == []
+
+
+def test_url_function_with_both_shapes_and_the_old_grant_reports_only_the_old_grant():
+    old = {"Sid": "AllowPublicInvoke", "Effect": "Allow", "Principal": "*",
+           "Action": "lambda:InvokeFunction", "Resource": ARN}
+    v = clc.check_invoke_policy("garden-x", WITH_URL, pol(URL_GRANT, VIA_URL_GRANT, old))
+    assert len(v) == 1 and "AllowPublicInvoke" in v[0]
+
+
+@pytest.mark.parametrize("expected", [{"url": None}, {"memory": 256}], ids=["url-null", "url-undeclared"])
+def test_function_without_a_declared_url_needs_no_invoke_grant(expected):
+    assert clc.check_invoke_policy("garden-xp-reconcile", expected, None) == []
+    assert clc.check_invoke_policy("garden-xp-reconcile", expected, pol(EVENTS_GRANT)) == []
+
+
+class _Proc:
+    def __init__(self, rc, out="", err=""):
+        self.returncode, self.stdout, self.stderr = rc, out, err
+
+
+@pytest.mark.parametrize("proc,want", [
+    (_Proc(0, json.dumps({"Policy": json.dumps(pol(VIA_URL_GRANT)), "RevisionId": "r"})), pol(VIA_URL_GRANT)),
+    (_Proc(254, err="An error occurred (ResourceNotFoundException) when calling the GetPolicy operation"), None),
+], ids=["parses-the-nested-policy-string", "no-policy-is-none"])
+def test_fetch_live_policy_reads(monkeypatch, proc, want):
+    seen = {}
+    monkeypatch.setattr(clc.subprocess, "run", lambda cmd, **kw: seen.setdefault("cmd", cmd) and proc)
+    assert clc.fetch_live_policy("garden-x", "us-east-1") == want
+    assert seen["cmd"][:3] == ["aws", "lambda", "get-policy"]
+
+
+def test_fetch_live_policy_raises_on_any_other_failure(monkeypatch):
+    """A denied or throttled read must never become None, which a url-null function reads as clean."""
+    proc = _Proc(254, err="An error occurred (AccessDeniedException) when calling the GetPolicy operation")
+    monkeypatch.setattr(clc.subprocess, "run", lambda cmd, **kw: proc)
+    with pytest.raises(RuntimeError):
+        clc.fetch_live_policy("garden-x", "us-east-1")
+
+
+def _main_with_policy(monkeypatch, tmp_path, fetch_policy):
+    m = tmp_path / "m.json"
+    m.write_text(json.dumps({"garden-x": {"memory": 256, "url": {}}}))
+    monkeypatch.setattr(clc, "fetch_live", lambda n, r: live())
+    monkeypatch.setattr(clc, "fetch_live_url", lambda n, r: url_cfg(PROD))
+    monkeypatch.setattr(clc, "fetch_live_policy", fetch_policy)
+    monkeypatch.setattr(clc, "fetch_event_rules", lambda names, r: {})
+    return clc.main(["--manifest", str(m)])
+
+
+@pytest.mark.parametrize("statements,rc", [
+    ((URL_GRANT, VIA_URL_GRANT), 0),
+    ((URL_GRANT, dict(VIA_URL_GRANT, Sid="AllowPublicInvoke", Condition=None)), 1),
+    ((URL_GRANT,), 1),
+], ids=["both-grants", "old-unconditioned-grant", "missing-via-url-grant"])
+def test_main_asserts_the_invoke_policy_of_every_declared_function(monkeypatch, tmp_path, statements, rc):
+    assert _main_with_policy(monkeypatch, tmp_path, lambda n, r: pol(*statements)) == rc
+
+
+def test_main_exits_2_when_the_policy_read_fails(monkeypatch, tmp_path):
+    def boom(n, r):
+        raise RuntimeError("live policy read failed for garden-x: AccessDenied")
+    assert _main_with_policy(monkeypatch, tmp_path, boom) == 2

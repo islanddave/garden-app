@@ -263,6 +263,58 @@ def check_function_url(name, expected, live_url):
     return []
 
 
+# SEC-09 (OPS-SECREVIEW-001). Since Oct 2025 a Function URL needs two grants: InvokeFunctionUrl at
+# the URL layer and InvokeFunction behind it. The old create step granted InvokeFunction to "*" with no
+# condition, so anyone with the ARN could invoke the function directly, around the URL. These are the
+# only two public shapes allowed; anything else public is a violation, and a URL without the second
+# grant 403s at the URL layer before the handler runs.
+_URL_INVOKE = ("lambda:InvokeFunctionUrl", "StringEquals", "lambda:FunctionUrlAuthType", "NONE")
+_VIA_URL_INVOKE = ("lambda:InvokeFunction", "Bool", "lambda:InvokedViaFunctionUrl", "true")
+
+
+def _as_list(v):
+    return v if isinstance(v, list) else [v]
+
+
+def _is_public(principal):
+    if principal == "*":
+        return True
+    return isinstance(principal, dict) and "*" in _as_list(principal.get("AWS"))
+
+
+def _has_shape(stmt, shape):
+    action, op, key, value = shape
+    if _as_list(stmt.get("Action")) != [action]:
+        return False
+    return _as_list(((stmt.get("Condition") or {}).get(op) or {}).get(key)) == [value]
+
+
+def check_invoke_policy(name, expected, policy):
+    """Compare one function's resource policy against the two allowed public grants. Pure.
+
+    `policy` is the parsed get-policy document, or None when the function has none. Service principals
+    (events.amazonaws.com, apigateway.amazonaws.com, ...) are not public and are not inspected. A
+    function whose manifest declares a Function URL must also carry the conditioned InvokeFunction grant.
+    """
+    violations = []
+    has_via_url = False
+    for stmt in (policy or {}).get("Statement") or []:
+        if stmt.get("Effect") == "Deny" or not _is_public(stmt.get("Principal")):
+            continue
+        if _has_shape(stmt, _VIA_URL_INVOKE):
+            has_via_url = True
+        elif not _has_shape(stmt, _URL_INVOKE):
+            violations.append(
+                "%s: policy statement %s grants %s to a public principal outside the two Function URL "
+                "shapes, so it can be invoked without going through the URL (SEC-09)."
+                % (name, stmt.get("Sid"), stmt.get("Action")))
+    if isinstance(expected.get("url"), dict) and not has_via_url:
+        violations.append(
+            "%s: has no lambda:InvokeFunction grant conditioned on lambda:InvokedViaFunctionUrl=true. "
+            "The manifest declares a Function URL, and without that grant the URL returns 403." % name)
+    return violations
+
+
 def check_event_rules(expected, live):
     """Compare declared EventBridge rules against live state. Pure.
 
@@ -326,6 +378,28 @@ def fetch_live_url(name, region):
             return None
         raise RuntimeError("live URL read failed for %s: %s" % (name, stderr or "rc=%d" % proc.returncode))
     return json.loads(proc.stdout)
+
+
+def fetch_live_policy(name, region):
+    """Read one function's resource policy document, or None if it has none.
+
+    Same discipline as fetch_live_url: only ResourceNotFoundException means "none". A denied read that
+    returned None would pass for every function with no declared URL.
+    """
+    proc = subprocess.run(
+        ["aws", "lambda", "get-policy", "--function-name", name,
+         "--region", region, "--output", "json"],
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        stderr = proc.stderr.strip()
+        if "ResourceNotFoundException" in stderr:
+            return None
+        raise RuntimeError("live policy read failed for %s: %s" % (name, stderr or "rc=%d" % proc.returncode))
+    doc = json.loads(proc.stdout)
+    if not isinstance(doc.get("Policy"), str):
+        raise ValueError("live policy read for %s returned no Policy document" % name)
+    return json.loads(doc["Policy"])
 
 
 def fetch_event_rules(names, region):
@@ -419,8 +493,8 @@ def main(argv=None):
     # so silently omitting these would reproduce the exact defect this block exists to close — a
     # check that did not run reading identically to a check that passed.
     if args.live_json:
-        print("note: --live-json carries function config only — Function URL, CORS and EventBridge "
-              "assertions were NOT evaluated in this run.")
+        print("note: --live-json carries function config only — Function URL, CORS, invoke policy and "
+              "EventBridge assertions were NOT evaluated in this run.")
     else:
         for n in names:
             if "url" not in manifest[n]:
@@ -430,6 +504,14 @@ def main(argv=None):
             except (RuntimeError, ValueError) as exc:
                 print("::error::%s" % exc)
                 print("::error::live Function URL state is UNKNOWN — refusing to report 'no drift'.")
+                return 2
+
+        for n in names:
+            try:
+                violations.extend(check_invoke_policy(n, manifest[n], fetch_live_policy(n, args.region)))
+            except (RuntimeError, ValueError) as exc:
+                print("::error::%s" % exc)
+                print("::error::live invoke policy is UNKNOWN — refusing to report 'no drift'.")
                 return 2
 
         # Rules are account-scoped, not per-function, so a --function run is not the right place to
@@ -459,10 +541,12 @@ def main(argv=None):
     # State WHAT passed, not just that something did. A success line that names its coverage is the
     # only way a reader can tell a full run from one that quietly asserted less than they assume.
     urls_checked = 0 if args.live_json else sum(1 for n in names if "url" in manifest[n])
+    policies_checked = 0 if args.live_json else len(names)
     rules_checked = 0 if (args.live_json or args.function) else len(load_eventbridge(args.manifest))
     print("lambda config OK: %d function(s) match the declared manifest "
-          "(%d Function URL/CORS expectation(s), %d EventBridge rule(s), %d env_parity rule(s) asserted)."
-          % (len(names), urls_checked, rules_checked, len(parity_rules)))
+          "(%d Function URL/CORS expectation(s), %d invoke policy(ies), %d EventBridge rule(s), "
+          "%d env_parity rule(s) asserted)."
+          % (len(names), urls_checked, policies_checked, rules_checked, len(parity_rules)))
     return 0
 
 
