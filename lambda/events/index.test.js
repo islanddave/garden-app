@@ -1,6 +1,5 @@
 // Lambda 2.2.x events validator unit tests (V1.2a-2 Session 2).
 // DB-free tests against the pure `validatePostBody` exported from index.js.
-// Integration / Neon-branch tests live in tests/contracts/api.ts (V1.2b backlog).
 //
 // Test coverage map (brief §Tests required):
 //   T2 (F9 UUID parse)            — routed at handler layer; not validator
