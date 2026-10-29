@@ -1,11 +1,7 @@
-# .github/workflows/integration-test.yml
-# Phase 2 / RES-001: real-Postgres integration test layer.
-# Creates an ephemeral Neon branch off staging (br-polished-art-am12o4ue), runs the real
-# Lambda handlers against it with @neondatabase/serverless (prod driver), deletes the
-# branch in always(). Catches schema/code divergence (green-tests-broken-prod class)
-# BEFORE the dev->main gate. Smoke (run-smoke.sh on staging) stays — complementary.
-#
-# NOT yet a required check — wired as blocking only after the fault-injection proof.
+# Real-Postgres integration tests: the real Lambda handlers, on the prod driver (@neondatabase/serverless),
+# against an ephemeral Neon branch forked from staging (br-polished-art-am12o4ue) and deleted in always().
+# Catches schema/code divergence that mocked tests cannot see. promote-gate requires this job
+# (`integration-tests`) on the promoted SHA unless dispatched with require_integration=false.
 
 name: Integration Tests — real Postgres (Neon ephemeral branch)
 
@@ -36,9 +32,8 @@ jobs:
       - name: Install root deps
         run: npm ci --legacy-peer-deps
 
-      # The harness directSql + vi.mock factories need these resolvable from repo root
-      # (root has only @clerk/react). Pinned to the versions lambda/events uses for
-      # driver fidelity. --no-save: do not mutate package.json/lock in CI.
+      # The harness directSql and vi.mock factories need these resolvable from the repo root, pinned to
+      # the versions lambda/events uses for driver fidelity. --no-save: never mutate package.json/lock in CI.
       - name: Install handler deps at root (harness driver + mock targets)
         run: npm install --no-save --legacy-peer-deps "@neondatabase/serverless@^0.10.0" "@clerk/backend@^1.0.0" "@aws-sdk/client-secrets-manager@^3.0.0" "@aws-sdk/client-s3@^3.0.0" "@aws-sdk/s3-request-presigner@^3.0.0"
 
@@ -52,14 +47,13 @@ jobs:
 
       # The database URL is asked for by name (neondb_owner / neondb / direct), never read from the create
       # response: Neon puts `connection_uris` there only when the branch has one role it can pick, and the
-      # staging parent gained a second password role on 2026-10-14 (run 38572988719 on). Why and how:
-      # scripts/neon_api_check.py. The branch id is written out the moment it is known, so a failure after
-      # that point still reaches the delete step instead of stranding a ci-* branch, and the branch carries
-      # a one-day expires_at, so one that strands anyway removes itself. The URL is accepted only on the host
-      # of the endpoint the create response made for THIS branch, and never on a protected long-lived endpoint:
-      # asked without branch_id, the API answers with PROD's host, and the Put-Up step below runs DDL on it.
-      # NEON_PROTECTED_ENDPOINTS is the list in tests/integration/_cleanup.js (test_workflow_steps.py keeps the
-      # two equal).
+      # staging parent has two password roles. Why and how: scripts/neon_api_check.py. The branch id is
+      # written out the moment it is known, so a later failure still reaches the delete step, and the branch
+      # carries a one-day expires_at, so one that strands anyway removes itself. The URL is accepted only on
+      # the host of the endpoint the create response made for THIS branch, and never on a protected
+      # long-lived endpoint: asked without branch_id, the API answers with PROD's host, and the Put-Up step
+      # below runs DDL on it. NEON_PROTECTED_ENDPOINTS is the list in tests/integration/_cleanup.js
+      # (test_workflow_steps.py keeps the two equal).
       - name: Create ephemeral Neon branch
         id: neon_create
         env:
@@ -120,19 +114,14 @@ jobs:
           echo "::add-mask::$DB_URL"
           echo "INT_DATABASE_URL=$DB_URL" >> "$GITHUB_ENV"
 
-      # PUT-UP TRAIN (05-release-train §2.4; lane putup1b-ddl). The train's releases stay OFF staging
-      # until B's sitting, so the train proves its code against its own DDL here: on THIS run's
-      # ephemeral branch only, apply — in train order — each train directory's 0a file(s) whose
-      # schema_version stamp the branch does not carry, and nothing else (no 0p backfill, no 0r, no
-      # other migration). Staging is never written: the only URL used is the one the create step
-      # returned for the new branch, and the step refuses without it.
-      #
-      # A NO-OP ONCE STAGING CARRIES THE STAMPS: the branch is a fork of staging, so after B's sitting
-      # every stamp is present, nothing applies, and this step changes nothing for dev. A directory that
-      # does not exist yet is skipped, so releases 2-4 need no edit here — only their 0a files' second
-      # line must read `-- schema_version: <stamp>` (the stamp the file inserts; checked after apply).
-      # Any SQL error stops the step (ON_ERROR_STOP), and so does a present stamp AFTER an absent one
-      # (the fork would be out of train order).
+      # PUT-UP TRAIN: proves the train's code against its own DDL. On THIS run's ephemeral branch only,
+      # apply, in train order, each train directory's 0a file(s) whose schema_version stamp the branch
+      # lacks, and nothing else (no 0p backfill, no 0r, no other migration). Staging is never written: the
+      # only URL used is the one the create step returned, and the step refuses without it.
+      # A no-op once staging carries the stamps (the branch is a fork of staging). A directory that does not
+      # exist yet is skipped; each 0a file's second line must read `-- schema_version: <stamp>` (checked
+      # after apply). Any SQL error stops the step (ON_ERROR_STOP), and so does a present stamp AFTER an
+      # absent one (the fork would be out of train order).
       - name: Apply the Put-Up train's migrations to the ephemeral branch
         env:
           INT_DATABASE_URL: ${{ env.INT_DATABASE_URL }}
