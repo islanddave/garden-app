@@ -59,7 +59,7 @@
     "gen:event-types": "node scripts/gen-lambda-event-types.mjs",
     "check:event-types": "node scripts/gen-lambda-event-types.mjs --check",
     "gen:frost-bands": "node scripts/gen-frost-bands.mjs",
-    "lint": "eslint .",
+    "lint": "eslint . && madge --circular --extensions js,jsx,mjs src",
     "icon:golden": "node scripts/icon-ci/optical-weight.mjs",
     "icon:golden:update": "node scripts/icon-ci/optical-weight.mjs --update",
     "icon:seam": "node scripts/icon-ci/region-seam.mjs",

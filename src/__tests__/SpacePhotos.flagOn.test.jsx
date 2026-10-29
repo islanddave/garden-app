@@ -36,8 +36,10 @@ vi.mock('../lib/api.js', () => ({
   useApiFetch: () => ({ fetch: () => Promise.resolve(null), getToken: () => Promise.resolve(null) }),
   apiFetch: () => Promise.resolve(null),
 }))
-vi.mock('../lib/mode.js', () => ({
+vi.mock('../context/ModeContext.jsx', () => ({
   useMode: () => ({ mode: 'desk', isField: false, isDesk: true, setMode: vi.fn(), toggleMode: vi.fn() }),
+}))
+vi.mock('../lib/mode.js', () => ({
   MODE: { FIELD: 'field', DESK: 'desk' },
 }))
 // V5-NAVCUSTOM-001 — the network edge of the prefs read, for the pinned-row ordering case.

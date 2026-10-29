@@ -35,7 +35,16 @@
 //   idPrefix  string            — unique id namespace (Plants edit renders one PlantForm per row)
 //   detailsDefaultOpen bool     — open the planting-details disclosure initially (default false)
 import React from 'react'
-import { Field, Input, Select, Textarea, Button, StatusSelect, ErrorBanner, SourcePicker } from './index.js'
+// Direct imports, not the ./index.js barrel: the barrel re-exports PlantForm, so importing it from
+// here would be a cycle.
+import Field from './Field.jsx'
+import Input from './Input.jsx'
+import Select from './Select.jsx'
+import Textarea from './Textarea.jsx'
+import Button from './Button.jsx'
+import StatusSelect from './StatusSelect.jsx'
+import ErrorBanner from './ErrorBanner.jsx'
+import SourcePicker from './SourcePicker.jsx'
 import VarietyPicker from '../VarietyPicker.jsx'
 import { P } from '../../lib/constants.js'
 import { PLANT_SOURCE_OPTIONS, PLANT_CONTAINER_TYPE_OPTIONS } from '../../lib/dropdownRegistry.js'
