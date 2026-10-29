@@ -5,8 +5,8 @@
 // RETURNING never read it back. So EVERY edit — a fixed typo in the notes, a quality star — was a
 // metadata event horizon: the row kept its jsonb only because the UPDATE ignored the column, and
 // the response blanked the client's copy because EventDetail re-seeds its whole event state from
-// the PUT body (setEvent). WATER_DEPTH_EDIT_ENABLED is default-FALSE on exactly this gap (see
-// src/lib/featureFlags.js) — flipping it is a separate owner decision, deliberately NOT made here.
+// the PUT body (setEvent). EventDetail's amount-class editor (src/pages/EventDetail.jsx) depends
+// on exactly this gap staying closed.
 //
 // Static-source per L-072 house style (the edit-fields.test.js precedent for this same route),
 // plus executing tests for the pure resolver that carries the semantics. DB-free.
@@ -156,7 +156,7 @@ describe('the PUT returns what it now writes — write and read-back ship togeth
   it('the response spreads the returned row, so metadata reaches the client un-stripped', () => {
     // EventDetail replaces its entire event state from this body (setEvent(updated)). A response
     // without metadata blanks the Details block on every save even when the row kept the value —
-    // the featureFlags.js WATER_DEPTH_EDIT_ENABLED comment names this exact failure.
+    // EventDetail's amount-class editor depends on this.
     expect(putArm()).toMatch(/return resp\(200, \{ \.\.\.updatedRows\[0\], harvest: harvestRow \}\)/);
   });
 
@@ -186,18 +186,6 @@ describe('scope pins — what this change deliberately does NOT do', () => {
     expect(validateClear(['metadata'], {})).toMatch(/cannot be cleared/);
     expect(putUpdate(), 'no clear arm may exist for metadata')
       .not.toMatch(/@> ARRAY\['metadata'\]/);
-  });
-
-  it('WATER_DEPTH_EDIT_ENABLED flip state matches its recorded decision', () => {
-    // Originally pinned FALSE to prove the PUT-arm change did not smuggle the flip (a separate
-    // owner decision). That decision was then TAKEN, deliberately, on 2026-08-12: the L-108
-    // staging smoke round-trip proved the arm end-to-end against real Postgres
-    // (write:event-metadata-readback + preserved-on-absent-key), and the flag flipped TRUE in its
-    // own commit with that evidence in the flag's comment. The pin now guards the new state the
-    // same way it guarded the old: a silent re-flip in either direction should fail a test.
-    const flags = readFileSync(resolve(__dirname, '../../src/lib/featureFlags.js'), 'utf8');
-    expect(flags).toMatch(/export const WATER_DEPTH_EDIT_ENABLED = true/);
-    expect(flags).toMatch(/FLIPPED true 2026-08-12/);
   });
 
   it('the metadata arm does not touch the side-effect machinery', () => {

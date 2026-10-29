@@ -1,20 +1,15 @@
-// V4-WATERMATH-001 F0 — the amount class on event history: readable always, editable behind
-// WATER_DEPTH_EDIT_ENABLED (see featureFlags.js — PUT /api/events/:id does not yet persist or
-// return `metadata`, so shipping the editor unflagged would silently discard corrections).
-//
-// Both flag states are asserted. A flag-gated feature tested in only one state is a feature whose
-// other state ships untested — and here the OFF state is the one currently in production.
+// V4-WATERMATH-001 F0 — the amount class on event history: readable, and editable on a watering
+// (PUT /api/events/:id persists and returns `metadata`; lambda/events/edit-metadata.test.js).
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, act, waitFor, fireEvent, cleanup } from '@testing-library/react'
 import { settle } from './helpers/settle.js'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 
-const { apiFetchSpy, navigateSpy, dataRef, flagRef } = vi.hoisted(() => ({
+const { apiFetchSpy, navigateSpy, dataRef } = vi.hoisted(() => ({
   apiFetchSpy: vi.fn(),
   navigateSpy: vi.fn(),
   dataRef: { event: null, project: { id: 'p1', name: 'Tomatoes 2026' } },
-  flagRef: { current: false },
 }))
 
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: apiFetchSpy }) }))
@@ -34,11 +29,6 @@ vi.mock('../hooks/useUploadPhoto.js', () => ({
 vi.mock('react-router-dom', async (importOriginal) => {
   const actual = await importOriginal()
   return { ...actual, useNavigate: () => navigateSpy }
-})
-// A getter so a single module instance can serve both flag states without re-importing the page.
-vi.mock('../lib/featureFlags.js', async (importActual) => {
-  const actual = await importActual()
-  return { ...actual, get WATER_DEPTH_EDIT_ENABLED() { return flagRef.current } }
 })
 
 import EventDetail from '../pages/EventDetail.jsx'
@@ -76,7 +66,7 @@ async function flushLoad() {
   await settle()
 }
 
-beforeEach(() => { putBodies.length = 0; flagRef.current = false })
+beforeEach(() => { putBodies.length = 0 })
 
 describe('EventDetail — the stored class is READABLE (unflagged)', () => {
   it('renders the class in plain words, not the stored code', async () => {
@@ -95,20 +85,8 @@ describe('EventDetail — the stored class is READABLE (unflagged)', () => {
   })
 })
 
-describe('EventDetail — editing the class is flag-gated', () => {
-  it('flag OFF: no chips in the edit form, and the PUT carries no metadata', async () => {
-    flagRef.current = false
-    setup()
-    await flushLoad()
-    fireEvent.click(await screen.findByRole('button', { name: /edit/i }))
-    expect(screen.queryByTestId('ev-water-depth-group')).toBeNull()
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /save changes|save/i })) })
-    await waitFor(() => expect(putBodies.length).toBe(1))
-    expect(putBodies[0].metadata).toBeUndefined()
-  })
-
-  it('flag ON: chips render seeded from the SAVED row', async () => {
-    flagRef.current = true
+describe('EventDetail — editing the class', () => {
+  it('chips render seeded from the SAVED row', async () => {
     setup()
     await flushLoad()
     fireEvent.click(await screen.findByRole('button', { name: /edit/i }))
@@ -117,8 +95,7 @@ describe('EventDetail — editing the class is flag-gated', () => {
     expect(screen.getByTestId('ev-water-depth-normal').getAttribute('aria-pressed')).toBe('false')
   })
 
-  it('flag ON: a corrected class reaches the PUT as source=user and MERGES over existing metadata', async () => {
-    flagRef.current = true
+  it('a corrected class reaches the PUT as source=user and MERGES over existing metadata', async () => {
     setup({ ...wateringEvent, metadata: { water_depth: 'deep', water_depth_source: 'user', amount_ml: 500 } })
     await flushLoad()
     fireEvent.click(await screen.findByRole('button', { name: /edit/i }))
@@ -130,8 +107,7 @@ describe('EventDetail — editing the class is flag-gated', () => {
     })
   })
 
-  it('flag ON: a class-less historical row seeds to the default rather than to nothing', async () => {
-    flagRef.current = true
+  it('a class-less historical row seeds to the default rather than to nothing', async () => {
     setup({ ...wateringEvent, metadata: null })
     await flushLoad()
     fireEvent.click(await screen.findByRole('button', { name: /edit/i }))
@@ -153,43 +129,37 @@ describe('EventDetail — editing the class is flag-gated', () => {
     return putBodies[0]
   }
 
-  it('flag ON: a note-only edit of a normal/default row does not touch its class or source', async () => {
-    flagRef.current = true
+  it('a note-only edit of a normal/default row does not touch its class or source', async () => {
     setup({ ...wateringEvent, metadata: { water_depth: 'normal', water_depth_source: 'default' } })
     const body = await editNoteAndSave()
     expect(Object.hasOwn(body, 'metadata')).toBe(false)
   })
 
-  it('flag ON: a note-only edit of a deep/user row does not touch its class or source', async () => {
-    flagRef.current = true
+  it('a note-only edit of a deep/user row does not touch its class or source', async () => {
     setup()
     const body = await editNoteAndSave()
     expect(Object.hasOwn(body, 'metadata')).toBe(false)
   })
 
-  it('flag ON: tapping the SAME class that was stored is still a choice (source=user)', async () => {
-    flagRef.current = true
+  it('tapping the SAME class that was stored is still a choice (source=user)', async () => {
     setup({ ...wateringEvent, metadata: { water_depth: 'normal', water_depth_source: 'default' } })
     const body = await editNoteAndSave({ tap: 'normal' })
     expect(body.metadata).toEqual({ water_depth: 'normal', water_depth_source: 'user' })
   })
 
-  it('flag ON: a bare legacy row (no metadata) is not given a class or a source by a note-only edit', async () => {
-    flagRef.current = true
+  it('a bare legacy row (no metadata) is not given a class or a source by a note-only edit', async () => {
     setup({ ...wateringEvent, metadata: null })
     const body = await editNoteAndSave()
     expect(Object.hasOwn(body, 'metadata')).toBe(false)
   })
 
-  it('flag ON: a stored class with no source is left as stored by a note-only edit', async () => {
-    flagRef.current = true
+  it('a stored class with no source is left as stored by a note-only edit', async () => {
     setup({ ...wateringEvent, metadata: { water_depth: 'light' } })
     const body = await editNoteAndSave()
     expect(Object.hasOwn(body, 'metadata')).toBe(false)
   })
 
-  it('flag ON: other metadata keys survive both a note-only edit and a chip tap', async () => {
-    flagRef.current = true
+  it('other metadata keys survive both a note-only edit and a chip tap', async () => {
     const stored = { water_depth: 'normal', water_depth_source: 'default', batch_id: 'b-7', care_input_source: 'today' }
     setup({ ...wateringEvent, metadata: stored })
     const untouched = await editNoteAndSave()
@@ -204,8 +174,7 @@ describe('EventDetail — editing the class is flag-gated', () => {
     })
   })
 
-  it('flag ON: re-typing a class-less event INTO watering without a tap records the default, not a choice', async () => {
-    flagRef.current = true
+  it('re-typing a class-less event INTO watering without a tap records the default, not a choice', async () => {
     setup({ ...wateringEvent, event_type: 'observation', metadata: { batch_id: 'b-7' } })
     await flushLoad()
     fireEvent.click(await screen.findByRole('button', { name: /edit/i }))
@@ -217,8 +186,7 @@ describe('EventDetail — editing the class is flag-gated', () => {
     })
   })
 
-  it('flag ON: a non-watering event gets no chips', async () => {
-    flagRef.current = true
+  it('a non-watering event gets no chips', async () => {
     setup({ ...wateringEvent, event_type: 'observation', metadata: null })
     await flushLoad()
     fireEvent.click(await screen.findByRole('button', { name: /edit/i }))
