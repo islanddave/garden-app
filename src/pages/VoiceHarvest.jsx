@@ -1,50 +1,22 @@
-// src/pages/VoiceHarvest.jsx — V5-HARVESTVOICEFLOW-001 (BD-068), the first USER-FACING slice.
+// Voice harvest screen: a separate route with its own state, deliberately not part of /log, so a defect
+// here cannot break the weigh-in form. There is no root mic provider; the recogniser lives and dies with
+// this component.
 //
-// Dave, 2026-08-30: "I want to get to production the voice harvest flow. It can run as a parallel tab
-// short term so that I don't lose the harvest ability should this fail somehow, but I need to start
-// using it to see if it is going to work."
+// The recogniser is open-coded here, not shared with ContinuousVoiceProbe or lib/transcribe.js. The probe
+// is valuable because it is un-abstracted. transcribe.js ends a session on `onend` with no restart and
+// never delivers a revised final, which the debouncer's supersede rule needs ("231 grams" would commit
+// as "231"). This component owns its mic and releases it on unmount.
 //
-// PARALLEL, NOT INTEGRATED — and that is the entire risk design. Build plan V101's S3 put voice
-// INSIDE the live weigh-in session on /log, which meant every defect in this flow was a defect in the
-// form Dave depends on daily. This is a separate route with its own state, mounted from its own row
-// in the + sheet. /log is not imported, not modified, and not reachable from here; if this surface
-// misbehaves the recovery is to close it. That is why this ships without the
-// HARVEST_VOICE_FLOW_ENABLED flag V101 specified: the flag existed to make a root mic provider
-// escapable, and a route you can navigate away from is already escapable. There is no root provider
-// here — the recogniser lives and dies with this component.
-//
-// WHAT IT REUSES rather than rebuilds:
-//   lib/voiceHarvestGrammar.js  — classify(): command vs quantity vs weight vs search vs unparsed
-//   lib/voiceCommitDebounce.js  — settle window, supersede, write cooldown, staleness bound
-//   lib/comboboxInput.js        — looseKey/looseIncludes, the voice-forgiving matcher the picker uses
-//   POST /api/events            — the same endpoint and the same harvest payload /log posts
-// The grammar and the debouncer had run only inside the /admin probe until now. This is their first
-// execution against real data.
-//
-// WHY THE RECOGNISER IS OPEN-CODED HERE and not shared with ContinuousVoiceProbe: the probe's value
-// is that it is deliberately un-abstracted — it reports what Chrome dispatches, not what a wrapper
-// says Chrome dispatched, and wrapping it would destroy the instrument. It cannot go through
-// lib/transcribe.js either, for the reason V101 records: transcribe.js ends a session on `onend` with
-// no restart, and its BUG-VOICEDUPE-003 fix pins onResult to never deliver a revised final — which is
-// exactly the revision the debouncer's supersede rule needs, so behind that wrapper "231 grams" would
-// commit as "231". The mic arbiter (S1) is the thing that should eventually own all five start-paths
-// including this one; it is not built, so this component owns its own and releases it on unmount.
-//
-// THE SAFETY PROPERTIES, because "a silent wrong save is worse than a slow form" (Dave, BD-068):
-//   * A save NEVER happens without a planting AND a quantity. A "next" that cannot save says so and
-//     keeps the record intact — it does not advance over it. This is the failure V101 found in
-//     /log's handleSubmit, which returned undefined on all 9 paths so save_and_advance could not
-//     tell a refusal from a success.
-//   * Every outcome is announced on THREE channels — a large banner, a distinct haptic, and a
-//     permanent ledger row. BUG-VOICEFAILSILENT-001 (Dave, verbatim): "a silent fail is a lost log."
-//     The strip counts BOTH halves ("12 saved · 3 not captured") because the banner is a single
-//     overwritten slot: a refusal he did not glance at is erased by the next utterance, and the
-//     count is the only surface that can still answer "did everything I said get logged?".
-//   * The screen going dark takes all three channels at once, so a Screen Wake Lock is held for the
-//     run (BUG-VOICESCREENSLEEP-001). It is a precondition for the line above, not an optimisation.
+// Safety properties ("a silent wrong save is worse than a slow form"):
+//   * A save NEVER happens without a planting AND a quantity. A "next" that cannot save says so and keeps
+//     the record intact; it does not advance over it.
+//   * Every outcome is announced on three channels: a large banner, a distinct haptic, and a permanent
+//     ledger row. The strip counts both halves ("12 saved · 3 not captured") because the banner is one
+//     overwritten slot and a refusal he did not glance at is erased by the next utterance.
+//   * A Screen Wake Lock is held for the run: the screen going dark takes all three channels at once.
 //   * Every committed row carries an Undo for the whole session, not just the last one.
-//   * A save that FAILS releases the write cooldown, so saying "next" again actually retries rather
-//     than being swallowed for 1500 ms as a transport duplicate.
+//   * A save that FAILS releases the write cooldown, so saying "next" again retries instead of being
+//     swallowed for 1500 ms as a transport duplicate.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { P } from '../lib/constants.js'
 import { useApiFetch } from '../lib/api.js'
@@ -66,10 +38,9 @@ import {
   hapticMatchUncertain,
 } from '../lib/haptics.js'
 
-// A HARD STOP, not a nag. An unbounded live mic is a recorder someone forgets, and this surface is
-// reachable from the ordinary + menu rather than from /admin. Thirty minutes covers a real weigh-in
-// (the outdoor fixture gate B6 asks for ≥20 utterances; the device re-arms ~5 sessions per 4
-// utterances, so the re-arm cap is sized well above that) and restarting is one tap.
+// A hard stop, not a nag: an unbounded live mic is a recorder someone forgets, and this surface is
+// reachable from the ordinary + menu. The re-arm cap is sized well above the device's ~5 sessions per
+// 4 utterances.
 export const RUN_BUDGET = { restarts: 600, runMs: 30 * 60 * 1000, label: '30 minutes' }
 
 function ctor() {
@@ -77,45 +48,30 @@ function ctor() {
   return window.SpeechRecognition || window.webkitSpeechRecognition || null
 }
 
-// BUG-VOICESCREENSLEEP-001 — one reader for "is this document hidden", because four separate places
-// now branch on it and they must not disagree. Both spellings are consulted: `visibilityState` is
-// the one the spec defines the platform behaviour against and the one a test can redefine, `hidden`
-// is the shorthand, and an environment where they disagree should be treated as hidden either way.
+// One reader for "is this document hidden": four places branch on it and they must not disagree. Either
+// spelling counts as hidden; `visibilityState` is what a test can redefine, `hidden` is the shorthand.
 function isHidden() {
   if (typeof document === 'undefined') return false
   return document.visibilityState === 'hidden' || document.hidden === true
 }
 
-// What a planting can be called out loud. Crop type is included for the reason V4-SEARCHCROPTYPE-001
-// shipped for, in Dave's words: "I don't always remember spelling — is it charentais? charantais? —
-// but I know it is a cantaloupe." Speaking makes that worse, not better: a recogniser has no chance
-// on a cultivar name it has never heard, and every chance on "cucumber".
 // The `src` column every voiceDebug entry from this page carries, so a log that also contains
 // transcribe.js or probe entries can be read back to the surface that produced it.
 const VOICE_DEBUG_SRC = 'voiceharvest'
 
-// How many candidate buttons the "Which one?" card renders. Exported so the test asserts against the
-// same number the UI caps at rather than a copy of it that can drift out from under it.
+// Cap on the "Which one?" candidate buttons. Exported so the test asserts the same number the UI uses.
 export const CANDIDATE_LIMIT = 8
 
-// BUG-VOICEALIASFAILSOFT-001 — THE LONGEST anything said may wait for his taught names to load, once per
-// visit. What is said in that window is HELD, in order, and read the moment the list answers; the
-// hold ends early whenever it does. Sized on the varieties Lambda's own record (review-regression-
-// impact.md F.5, 14 days: request p95 1.56 s across its routes, cold-start init p95 0.55 s, 0 errors):
-// a list still loading 2.5 s after the first thing he says is past the slow tail, and waiting longer
-// buys little. The first utterance usually lands seconds after the page opens (tap Start, speak,
-// Chrome's endpointing), so on a normal load nothing waits at all. When the wait runs out the held
-// words are read with the names unknown, which the one-breath reader handles by refusing a named
-// sentence out loud (resolveBareOneBreath's `aliasesKnown`) — never by guessing.
+// The longest the first utterance of a visit may wait for the taught-name list. What is said meanwhile
+// is held, in order, and read the moment the list answers. When the wait runs out the held words are
+// read with the names unknown, which resolveBareOneBreath refuses (`aliasesKnown`) rather than guesses.
 export const ALIAS_WAIT_MS = 2500
-// When the list FAILED to load it is asked for again after each of these delays, and again on every
-// Start while it still has not loaded. Until it does, named one-breath sentences are refused.
+// Delays before a list that FAILED to load is asked for again; it is also re-asked on every Start. Until
+// it loads, named one-breath sentences are refused.
 export const ALIAS_RETRY_MS = [2000, 5000, 15000]
 
-// One-line rendering of a classify() result for the debug log. EXPORTED AND PURE so the log format
-// is testable without a recogniser. Quotes the transcript on every branch: the whole point of the
-// capture is to pair what was heard with what was done, and a decision line without the words is
-// only half a datum.
+// One-line rendering of a classify() result for the debug log. Pure so the log format is testable without
+// a recogniser. Quotes the transcript on every branch: a decision line without the words is half a datum.
 export function describeResult(r) {
   if (!r || !r.kind) return '?'
   const said = JSON.stringify(String(r.transcript ?? ''))
@@ -129,30 +85,14 @@ export function describeResult(r) {
   }
 }
 
-// V4-SEARCHCROPTYPE-001, the VOICE leg. The three typed client filters (whole-garden search, the
-// /log picker, the variety picker) got crop type as a first-class term; this surface is the fourth,
-// and the one where it matters most — a recogniser has no chance on a cultivar name it has never
-// heard and every chance on "cucumber".
+// What a planting can be called out loud: its name, variety name, crop-type slug and the crop type's
+// aliases ("cantaloupe" for a melon). A recogniser fails on a cultivar name it has never heard but not on
+// "cucumber".
 //
-// THE SLUG IS THE WHOLE CROP-TYPE TERM, and a `display_name` term was BUILT AND THEN REMOVED here
-// rather than never considered. It was measured to be a near-duplicate: display_name is the Title
-// Case of the slug for every type in the vocabulary ('bunching_onion' / "Bunching Onion"), looseKey
-// lowercases both, and the tokeniser agreement in voiceFuzzyMatch.js already reaches the multi-word
-// slug from its spoken form. The non-vacuity check is what caught it — with the crop-type vocabulary
-// deliberately failed, "bunching onion" STILL selected the right planting, so the term the fetch paid
-// for was carrying nothing. It cost a third network dependency on mount for that. Reverted; the
-// evidence is in the lane report. Re-adding it needs a crop type whose display name is not its
-// de-snake-cased slug, and there is not one today.
-//
-// OPS-CROPTYPEALIASCLIENT-001 — AND THE ALIAS, which is what finally answers the acceptance sentence
-// this whole feature was built from: "I know it is a cantaloupe." Charentais sits under crop type
-// 'melon', display 'Melon', and no crop type anywhere is NAMED cantaloupe — the word lives only in
-// `crop_types.search_aliases`. Whole-garden search has matched that column server-side since
-// v4-croptypealias-001 (lambda/dashboard/handlers.js:1117) and NO client could, because
-// /api/varieties/crop-types did not select it. It does now, so the sentence holds on the server leg
-// and on all four client filters — voice, whole-garden search, the /log picker and the variety
-// picker. (The paragraph this replaces predicted the fix as "one column in that SELECT plus a term
-// here", and that is exactly what it was.)
+// The slug alone is the crop-type term. display_name is the Title Case of the slug for every type
+// ('bunching_onion' / "Bunching Onion") and looseKey lowercases both, so a display_name term was a
+// near-duplicate that cost a third fetch on mount. Re-add it only for a crop type whose display name is
+// not its de-snake-cased slug.
 //
 // `crop_aliases` is attached to the row by the page, not read from the payload: ?view=picker carries
 // the crop-type SLUG and nothing else crop-shaped, and the alias text comes from the separate
@@ -163,9 +103,9 @@ export function plantingAliases(p) {
     .filter(Boolean).map(String)
 }
 
-// EXPORTED AND PURE so the matcher is testable without a recogniser, a network or a DOM. Returns
-// every planting any of whose aliases contains the spoken text, with exact alias matches promoted —
-// "cucumber" must select a planting actually NAMED cucumber ahead of "Cucumber Beetle Trap Crop".
+// Pure so the matcher is testable without a recogniser, a network or a DOM. Returns every planting any
+// of whose aliases contains the spoken text, with exact alias matches promoted: "cucumber" must select a
+// planting actually NAMED cucumber ahead of "Cucumber Beetle Trap Crop".
 export function matchPlantings(plantings, spoken) {
   const needle = looseKey(spoken)
   if (!needle) return []
@@ -174,90 +114,51 @@ export function matchPlantings(plantings, spoken) {
   return exact.length ? exact : hits
 }
 
-// BUG-VOICECOUNTSPLIT-001, residual case C — is this bare number the WHOLE NAME of a live planting?
+// Is this bare number the WHOLE NAME of a live planting? The hold that stops a count splitting
+// requires a planting to be selected, after which a bare number can only be an amount. This is the
+// exception, so "1884" can still switch to the planting named 1884 (the word form already resolves).
 //
-// The hold that fixed the count split gates on a planting being selected, and it must: after a plant
-// is chosen a bare number can only be an amount. Except when the number IS the plant. Saying "1884"
-// to switch to the planting literally named 1884 stopped working, while the word form "eighteen
-// eighty four" still resolves (it fails parseNumber's monotonic rule, so it never reaches the hold).
-// One utterance form of one planting became unreachable; the other kept working. That asymmetry is
-// the defect.
-//
-// TWO BOUNDS, AND BOTH ARE THE SAFETY ARGUMENT rather than convenience:
-//   * KEY EQUALITY, NOT looseIncludes. The class the hold exists to stop is SUBSTRING reselection —
-//     "two" inside *Brentwood*, "four" inside Marvel of *Four* Seasons, "2" inside Danvers 1*2*6.
-//     Whole-key equality cannot be satisfied by a proper substring, so none of those can reach this.
-//     Measured on Dave's real 239 live plantings: every number in that class has exact-hits = 0.
-//   * DIGITS ONLY. A digit literal is what the recogniser emits for a name that is digits. Allowing
-//     word forms would put "three" one badly-named planting away from silently switching crops mid
-//     record, which is the expensive direction. Measured on the same 239: zero number-WORD utterances
-//     key-match any alias, so the bound costs nothing today and caps what it can cost later.
-//
-// Blast radius, measured not reasoned: of the digit utterances 1..3000, exactly four key-matched a
-// live alias — 184, 1184, 1844 and 1884 — all four resolving to the one planting named 1884. Three
-// of those four were an artefact of `looseKey` collapsing runs of repeated characters, which is
-// right for doubled letters and wrong for digit runs (BUG-LOOSEKEYREPEAT-001). With that collapse
-// removed only 1884 itself key-matches, so the reachable set gets STRICTLY SMALLER and this bound
-// gets tighter, never looser — the safety argument above does not depend on which side of that fix
-// you read it from. Nothing under 184 fires either way, so no plausible spoken count is reachable by
-// this at all.
+// Two bounds are the safety argument:
+//   * Key equality, not looseIncludes. A proper substring can never satisfy it, so "two" in
+//     *Brentwood*, "four" in Marvel of *Four* Seasons and "2" in Danvers 1*2*6 cannot reach this.
+//   * Digits only. Allowing word forms would put "three" one badly-named planting away from silently
+//     switching crops mid-record.
+// looseKey collapses runs of repeated characters, which is wrong for digit runs; fixing that only
+// shrinks the reachable set, so the bound only tightens.
 export function namesAPlantingExactly(plantings, spoken) {
   const needle = looseKey(spoken)
   if (!needle || !/^\d+$/.test(needle)) return false
   return (plantings ?? []).some((p) => plantingAliases(p).some((a) => looseKey(a) === needle))
 }
 
-// BUG-VOICENUMWORD-001 — the same STRICT matcher, re-run with spoken number words folded to the
-// digits a planting is actually named with ("eighteen eighty four" → "1884"). Returns [] when there
-// was nothing to fold, so the caller can tell "no numbers in this phrase" from "folded and missed".
+// The strict matcher re-run with spoken number words folded to digits ("eighteen eighty four" ->
+// "1884"). Returns [] when there was nothing to fold, so the caller can tell "no numbers in this
+// phrase" from "folded and missed".
 //
-// WHY NOT IN looseKey, which is where it would be tidiest. `looseKey` is shared by three surfaces —
-// this matcher, PlantingSelect (the /log picker) and VarietyPicker — so folding inside it would reach
-// all three INCLUDING TYPED queries, and typing "1884" would start returning eighteen-eighty-four
-// rows on the form Dave uses every day. This is a defect of the RECOGNISER, not of matching: nobody
-// types "eighteen eighty four". Keeping the fold on the voice path is the same principle that put
-// this whole flow on a parallel route — a voice defect must not become a defect in the form the
-// harvest depends on.
+// Not folded inside looseKey, which PlantingSelect and VarietyPicker share: typed "1884" would start
+// returning eighteen-eighty-four rows on the daily form. The fold fixes a recogniser defect, so it
+// stays on the voice path.
 function matchFolded(plantings, spoken) {
   const folded = foldNumberWords(spoken)
   if (folded === normalise(String(spoken ?? ''))) return []
   return matchPlantings(plantings, folded)
 }
 
-// V5-VOICEFUZZYMATCH-001 — the rescue, and WHERE it sits is the whole safety argument.
+// The rescue runs ONLY when matchPlantings returns empty, so every utterance that resolves strictly
+// resolves identically; it can only turn "nothing matched" into something. It cannot reach a command or
+// a number: classify() decides those before the search branch is entered. Returns the shape the caller
+// already handles plus a `rescued` marker, so a non-strict hit is announced as a correction.
 //
-// It runs ONLY when matchPlantings returns empty. Every utterance that resolves today resolves
-// identically after this change — the strict matcher is untouched and still answers first, so this
-// can only turn a "nothing matched" into something. That is the same shape as the voice rescue
-// VarietyPicker already ships (V4-PICKERVOICE-001 QA-G3: voice-only, empty-result-only, one shot),
-// and it is deliberate reuse of a pattern Dave has already used in production rather than a new one.
-//
-// It cannot reach a command or a number: classify() decides those before the search branch is ever
-// entered, and this is called from inside that branch. The grammar's own note says the search branch
-// is the permissive one because "a wrong search shows the wrong list, which Dave sees and corrects".
-//
-// Returns the SAME shape the caller already handles plus a `rescued` marker, so a fuzzy hit is
-// announced as a correction instead of passing itself off as a clean match.
-// FOUR LAYERS, IN THIS ORDER, and the order is the whole safety argument:
-//   1. strict   — exact/substring. Unchanged and still first, so every utterance that resolves today
-//                 resolves identically.
-//   2. learned  — a mishearing Dave has already corrected by hand (V5-VOICEALIAS-001).
-//   3. folded   — spoken number words read as the digits in a name (BUG-VOICENUMWORD-001).
-//   4. fuzzy    — closed-set scoring, for a mishearing nobody has taught yet.
-// LEARNED BEATS FUZZY DELIBERATELY. Fuzzy is a guess that is right 77% of the time on adversarial
-// input; an alias is a fact a human asserted. No score outranks that. Placing learned SECOND rather
-// than first is equally deliberate: a strict match needs no rescue, and letting an alias shadow an
-// exact name match would let one bad teach make a real planting unreachable.
-//
-// FOLDED SITS BETWEEN THEM, and both boundaries are deliberate:
-//   * ABOVE FUZZY, because a fold is DERIVABLE — "eighteen eighty four" is 1884 by rule, not by
-//     resemblance. Edit distance cannot reach it at all (measured: it scores 0.353 against
-//     *helichrysum*), so letting a guess answer first would be strictly worse.
-//   * BELOW LEARNED, because the layer-order principle above is about CONFIDENCE, not mechanism: a
-//     correction a human actually made outranks one a rule derived. A fold is still an inference
-//     about what was meant, and if Dave or Jen has explicitly taught this phrase, their word wins.
-//     Aliases are user-scoped precisely because two people's recognisers mishear differently, and a
-//     universal rule must not silently overrule one person's correction of their own device.
+// Four layers, in this order (the order is the safety argument):
+//   1. strict  — exact/substring, still first.
+//   2. learned — a mishearing already fixed by hand. Beats fuzzy: fuzzy is a guess (77% right on
+//                adversarial input), an alias is a fact a human asserted. It sits below strict so one
+//                bad teach cannot shadow an exact name and make a planting unreachable.
+//   3. folded  — spoken number words read as the digits in a name. Above fuzzy because a fold is
+//                derivable by rule and edit distance cannot reach it ("eighteen eighty four" scores
+//                0.353 against *helichrysum*). Below learned because a person's explicit correction
+//                of their own device outranks a universal rule; aliases are user-scoped.
+//   4. fuzzy   — closed-set scoring, for a mishearing nobody has taught yet.
 export function matchPlantingsWithRescue(plantings, spoken, aliasIndex = null) {
   const strict = matchPlantings(plantings, spoken)
   if (strict.length) return { hits: strict, rescued: null }
@@ -265,9 +166,8 @@ export function matchPlantingsWithRescue(plantings, spoken, aliasIndex = null) {
   const learned = resolveAlias(aliasIndex, spoken, plantings)
   if (learned.length) return { hits: learned, rescued: 'learned' }
 
-  // Announced via a truthy `rescued` like any other non-strict outcome: Dave said words and got
-  // digits back, so the caller quotes the heard text alongside the match. A fold that stayed silent
-  // would look exactly like a clean match and hide the one step worth seeing.
+  // Truthy `rescued`, like any non-strict outcome: the caller quotes the heard text so a fold does
+  // not pass itself off as a clean match.
   const folded = matchFolded(plantings, spoken)
   if (folded.length === 1) return { hits: folded, rescued: 'folded' }
   if (folded.length > 1) return { hits: folded, rescued: null }
@@ -278,9 +178,8 @@ export function matchPlantingsWithRescue(plantings, spoken, aliasIndex = null) {
   return { hits: [], rescued: null }
 }
 
-// V5-VOICEVOCAB-001 (lane D4) — the NUMBERS in a name, as whole digit runs. Number words are folded to
-// the digits a planting is named with ("marvel of four" → 4, "cherry rescue one" → 1), and a digit run
-// glued to letters is split off them ("5-Color", "F1") so it compares as a run of its own.
+// The NUMBERS in a name, as whole digit runs. Number words fold to digits ("marvel of four" -> 4) and a
+// digit run glued to letters is split off ("5-Color", "F1") so it compares as a run of its own.
 export function digitRuns(text) {
   return foldNumberWords(text)
     .replace(/(\d)([a-z])/g, '$1 $2').replace(/([a-z])(\d)/g, '$1 $2')
@@ -288,16 +187,12 @@ export function digitRuns(text) {
     .filter((t) => /^\d+$/.test(t))
 }
 
-// V5-VOICEVOCAB-001 (lane D4, review BLOCKING-2) — THE NAMES DAVE TAUGHT ARE NAMES TOO. He taught
-// "cucumber one" → Suyo Long on 2026-09-15, and the name rules below knew only a planting's own names,
-// so the bare reader split his alias into the crop "cucumber" plus an amount of 1: "cucumber one", "3",
-// "next" saved 1 count · 3 g where prod saves 3 count. A phrase that resolves through the alias index
-// is a NAME wherever a name is recognised — the head guard, a reading's name, and ownership.
+// The variety a phrase names when it IS a taught alias, else null. A taught alias is a name wherever a
+// name is recognised (the head guard, a reading's name, ownership); without that, a taught "cucumber one"
+// split into the crop "cucumber" plus an amount of 1.
 //
-// Returns the variety the phrase names when it IS a taught alias, else null. Whole-key equality and
-// never under MIN_ALIAS_CHARS, the bounds resolveAlias itself applies. KEY-LEVEL, NOT PLANTING-LEVEL:
-// the phrase is a name whether or not that variety has a live planting, and the search then answers
-// for it exactly as prod does.
+// Whole-key equality and never under MIN_ALIAS_CHARS, the bounds resolveAlias itself applies. Key-level,
+// not planting-level: the phrase is a name whether or not that variety has a live planting.
 export function aliasVarietyOf(aliasNames, spoken) {
   if (!aliasNames?.size) return null
   for (const key of [looseKey(spoken), looseKey(foldNumberWords(spoken))]) {
@@ -306,10 +201,10 @@ export function aliasVarietyOf(aliasNames, spoken) {
   return null
 }
 
-// The keys aliasVarietyOf reads: each stored heard_key, plus its heard_text with number words folded,
-// so Chrome's "cucumber 1" is the same name as the taught "cucumber one". Kept apart from indexAliases
-// on purpose: the learned SEARCH layer stays exactly what prod runs, and only "is this a name?" learns
-// the folded form. Rows without heard_text contribute their key alone.
+// The keys aliasVarietyOf reads: each stored heard_key, plus its heard_text with number words folded, so
+// Chrome's "cucumber 1" is the taught "cucumber one". Kept apart from indexAliases so the learned SEARCH
+// layer stays as it was and only "is this a name?" learns the folded form. Rows without heard_text
+// contribute their key alone.
 export function indexAliasNames(rows, base = null) {
   const byKey = new Map(base ?? [])
   for (const r of rows ?? []) {
@@ -321,9 +216,8 @@ export function indexAliasNames(rows, base = null) {
   return byKey
 }
 
-// BUG-VOICEALIASHITCOUNT-001 — the same keys as indexAliasNames, each pointing at the alias it came
-// from: the stored heard_key the server counts by, and its variety. So Chrome's "cucumber 1" is counted
-// as a use of the alias he taught as "cucumber one".
+// The same keys as indexAliasNames, each pointing at the alias it came from (the stored heard_key the
+// server counts by, and its variety), so "cucumber 1" counts as a use of the taught "cucumber one".
 export function indexAliasUses(rows, base = null) {
   const byKey = new Map(base ?? [])
   for (const r of rows ?? []) {
@@ -336,11 +230,9 @@ export function indexAliasUses(rows, base = null) {
   return byKey
 }
 
-// BUG-VOICEALIASHITCOUNT-001 — the taught alias that chose THIS planting from THESE words, or null.
-// Credited only when the alias is what did the choosing: a strict name answers before any alias does
-// (matchPlantingsWithRescue's order), so words that already name the planting strictly — "super sweet
-// 100", taught but also the planting's own name — are not a use of the alias, whatever the list says.
-// Same variety only: an alias names a variety, and a planting of another variety was not its doing.
+// The taught alias that chose THIS planting from THESE words, or null. Credited only when the alias did
+// the choosing: a strict name answers before any alias, so words that already name the planting strictly
+// ("super sweet 100") are not a use. Same variety only: an alias names a variety.
 export function aliasUseOf(aliasUses, plantings, spoken, planting) {
   const varietyId = planting?.variety_ref?.id
   if (!aliasUses?.size || !varietyId || !spoken) return null
@@ -359,15 +251,13 @@ const taughtFor = (planting, name, aliasNames) => {
   return variety != null && variety === planting?.variety_ref?.id
 }
 
-// V5-VOICEVOCAB-001 (lane D4) — does this planting OWN every number left in the name that reached it?
-//
-// THE RULE THAT KEEPS A DIGIT FROM CHANGING SIDES. Every digit run in the spoken name must be a WHOLE
-// digit run of one of the planting's own aliases, counted with multiplicity. "danvers 126" owns 126;
-// "danvers 12" does not own 12 even though looseIncludes finds "danvers12" inside "danvers126carrot";
-// "suyo long 2" does not own 2 even though the fuzzy layer resolves it to Suyo Long (measured: it does).
-// A name that fails this is not a name — the number in it was an amount the split put on the wrong side.
-// BLOCKING-2 — or the name IS an alias Dave taught for this planting's variety ("cucumber one" owns its
-// 1 for Suyo Long). Only the whole alias: "suyo long one" still does not own 1.
+// Does this planting OWN every number left in the name that reached it? Every digit run in the spoken
+// name must be a whole digit run of one of the planting's aliases, counted with multiplicity. "danvers
+// 126" owns 126; "danvers 12" does not (looseIncludes finds it inside "danvers126carrot"); "suyo long 2"
+// does not (the fuzzy layer resolves it to Suyo Long). A name that fails this is not a name: the number
+// was an amount the split put on the wrong side.
+// A name that IS an alias taught for this planting's variety owns its numbers ("cucumber one" owns its
+// 1 for Suyo Long), whole alias only.
 export function plantingOwnsNumbers(planting, name, aliasNames = null) {
   const wanted = digitRuns(name)
   if (!wanted.length) return true
@@ -383,10 +273,10 @@ export function plantingOwnsNumbers(planting, name, aliasNames = null) {
   })
 }
 
-// V5-VOICEVOCAB-001 (lane D4) — plantings whose alias IS this phrase, raw or with number words folded.
-// The only matcher a number-only phrase may use (see isNumberPhrase): whole-key equality cannot be
-// satisfied by a proper substring, which is the same bound namesAPlantingExactly puts on a bare digit.
-// BLOCKING-2 — a taught alias answers second, in the search's own order (strict, then learned).
+// Plantings whose alias IS this phrase, raw or with number words folded. The only matcher a number-only
+// phrase may use (see isNumberPhrase): whole-key equality cannot be met by a proper substring, the same
+// bound namesAPlantingExactly puts on a bare digit. A taught alias answers second, in the search's own
+// order (strict, then learned).
 export function plantingsNamedExactly(plantings, spoken, aliasNames = null) {
   const keys = new Set([looseKey(spoken), looseKey(foldNumberWords(spoken))].filter(Boolean))
   const named = (plantings ?? []).filter((p) => plantingAliases(p)
@@ -396,39 +286,28 @@ export function plantingsNamedExactly(plantings, spoken, aliasNames = null) {
   return taught == null ? [] : (plantings ?? []).filter((p) => p?.variety_ref?.id === taught)
 }
 
-// V5-VOICEONEBREATH-001 — pick the ONE reading of a one-breath sentence that the live planting
-// vocabulary actually supports, or none.
+// Pick the ONE reading of a one-breath sentence that the live planting vocabulary supports, or none.
 //
-// `segmentCandidates` deliberately refuses to choose: for "eighteen eighty four two count" the
-// string alone cannot say whether the count is 2, 6 or 86, because every token before the unit is a
-// number word and the planting really is named 1884. The vocabulary can. This is closed-set
-// selection again — the same reframe that fixed V5-VOICEFUZZYMATCH-001 — applied to the split point
-// instead of to the spelling.
+// `segmentCandidates` refuses to choose: for "eighteen eighty four two count" the string alone cannot
+// say whether the count is 2, 6 or 86, because the planting really is named 1884. The vocabulary can.
+// This is closed-set selection applied to the split point instead of the spelling.
 //
-// EXACTNESS IS THE TIEBREAK, and it is needed rather than decorative. Measured on Dave's real names:
-// "super sweet one hundred three count" yields BOTH "super sweet one hundred" (folds to the exact
-// alias "super sweet 100") and "super sweet one" (folds to "super sweet 1", which is a SUBSTRING of
-// the same planting) — one planting, two readings, counts of 3 and 103. Preferring the exact alias
-// resolves it the way a human would; without that rule this correct sentence would be refused.
-// It is the same promotion matchPlantings already applies internally, reused rather than reinvented.
+// Exactness is the tiebreak: "super sweet one hundred three count" yields both "super sweet one
+// hundred" (the exact alias "super sweet 100") and "super sweet one" (a SUBSTRING of the same planting):
+// counts 3 and 103. Preferring the exact alias resolves it; without that this correct sentence would be
+// refused.
 //
-// REFUSES ON A GENUINE TIE. If two survivors of equal strength disagree about the planting or the
-// values, no reading is chosen — the caller falls through to "say the parts separately". A wrong
-// harvest committed silently is the one outcome this flow is not allowed to have, and a one-breath
-// sentence is where it is most reachable.
+// Refuses on a genuine tie. If two survivors of equal strength disagree about the planting or the
+// values, no reading is chosen and the caller falls through to "say the parts separately". A wrong
+// harvest committed silently is the one outcome this flow must not have.
 //
-// V5-VOICEVOCAB-001 (lane D4) — TWO BOUNDS ON THE NAME HALF, both measured on cb32814 against the 244
-// real plantings, where "Suyo Long", "2 165 grams" SWITCHED the crop to Danvers 126 Carrot ("4 …" to
-// 1884, "5 …" to Chinese 5-Color, "6 …" to Danvers) and "cucumber 3 231 grams" kept Suyo Long's 231 g
-// while the 3 vanished into the name:
-//   * A name made ONLY of numbers resolves by exact equality or not at all (plantingsNamedExactly) —
-//     "2" offered as a name hit Danvers 1*2*6 through the substring layer.
-//   * Every number left in a name must be the planting's own (plantingOwnsNumbers) — "cucumber 3"
-//     reached Suyo Long through the fuzzy layer with the 3 still in it.
-// Neither bound touches a name without digits, and every digit-named planting still resolves by its
-// own name ("1884 two count", "super sweet one hundred three count", "danvers 126 3 count") — and by
-// the names Dave taught (BLOCKING-2: "cucumber one 3 count" is Suyo Long · 3 count, as on prod).
-// `aliasNames` is indexAliasNames' map; given only the search index, the raw keys still count.
+// Two bounds on the name half:
+//   * A name made ONLY of numbers resolves by exact equality or not at all (plantingsNamedExactly): "2"
+//     offered as a name hit Danvers 1*2*6 through the substring layer.
+//   * Every number left in a name must be the planting's own (plantingOwnsNumbers): "cucumber 3 231
+//     grams" kept Suyo Long's 231 g while the 3 vanished into the name.
+// Neither bound touches a name without digits. `aliasNames` is indexAliasNames' map; given only the
+// search index, the raw keys still count.
 export function resolveOneBreath(plantings, candidates, aliasIndex = null, aliasNames = aliasIndex) {
   const survivors = []
   for (const c of candidates) {
@@ -453,33 +332,31 @@ export function resolveOneBreath(plantings, candidates, aliasIndex = null, alias
   return agreed ? first : null
 }
 
-// ── V5-VOICEVOCAB-001 (lane D4) — the one-breath record said WITHOUT (all of) its units ─────────────
+// ── One-breath record said WITHOUT (all of) its units ──────────────────────────────────────────────
 //
-// Dave's own example, "planting 2 165", as ONE final. oneBreathReadings (the grammar) returns every
-// way to split the final into a name and one or two amounts; this decides which of them are real,
-// using the two things the grammar cannot see — the planting vocabulary and the current selection.
+// "planting 2 165" as ONE final. oneBreathReadings (the grammar) returns every way to split the final
+// into a name and one or two amounts; this decides which are real, using what the grammar cannot see:
+// the planting vocabulary and the current selection.
 //
-// THE RULE: a one-breath final is read exactly as its parts would be read as separate finals, and it
-// is REFUSED when the split into parts is not unique. Measured against the 244 real plantings, the
-// hazard is a number that could sit on either side of the name boundary: "super sweet 100 3 200",
-// "cherry rescue 1 200", "danvers 126 200", "peach tree 200" ("tree" is the recogniser's "three").
-// A reading survives only if:
+// THE RULE: a one-breath final is read exactly as its parts would be read as separate finals, and it is
+// REFUSED when the split into parts is not unique. The hazard is a number that could sit on either side
+// of the name boundary: "super sweet 100 3 200", "cherry rescue 1 200", "danvers 126 200", "peach tree
+// 200" ("tree" is the recogniser's "three"). A reading survives only if:
 //   * its name resolves to exactly ONE planting that OWNS every number left in the name
-//     (plantingOwnsNumbers) — and a name made only of numbers resolves by exact equality or not at
-//     all (plantingsNamedExactly), because "2" is a substring of Danvers 1*2*6;
+//     (plantingOwnsNumbers); a name of numbers only resolves by exact equality or not at all
+//     (plantingsNamedExactly), because "2" is a substring of Danvers 1*2*6;
 //   * no bare amount is itself a planting's whole name ("1884"): said alone, that is the planting;
 //   * nameless, a planting is already selected — "a bare number before a planting is chosen is a
 //     search" stands unless the same final names one.
-// A reading is AMBIGUOUS — and the whole final is refused, never guessed — when its first bare amount
-// is a number the planting's own name carries ("clemson 80 200": is 80 the name's or the count?), when
-// a name ending in a homophone reads differently with that word as the first amount ("peach tree 200"
-// vs "peach" + 3, 200; "suyo long to 165" vs "suyo long" + 2, 165), or — defensively, for when that
-// other reading cannot be formed — when the name holds a homophone the planting's name does not
-// ("suyo long to 7 165"). Two surviving readings that disagree are ambiguous too.
+// A reading is AMBIGUOUS, and the whole final refused, when its first bare amount is a number the
+// planting's own name carries ("clemson 80 200"), when a name ending in a homophone reads differently
+// with that word as the first amount ("peach tree 200" vs "peach" + 3, 200), or, defensively, when the
+// name holds a homophone the planting's name does not ("suyo long to 7 165"). Two surviving readings
+// that disagree are ambiguous too.
 //
-// Returns null when the final is not this reader's (the ordinary path handles it exactly as before),
-// { kind: 'apply', planting, groups, command, nearCommand } — planting null means the selected one —
-// or { kind: 'refuse', reason: 'ambiguous' | 'crowded' | 'run' | 'numbers', name?, hits? }.
+// Returns null when the final is not this reader's (the ordinary path handles it), { kind: 'apply',
+// planting, groups, command, nearCommand } (planting null means the selected one), or { kind: 'refuse',
+// reason: 'ambiguous' | 'crowded' | 'run' | 'numbers' | 'names', name?, hits? }.
 const sameGroups = (a, b) => a.length === b.length
   && a.every((g, i) => g.value === b[i].value && g.unit === b[i].unit)
 
@@ -500,9 +377,9 @@ function judgeBareReading(plantings, r, ctx) {
     return { kind: 'invalid' }
   }
   if (!r.name) return ctx.selected ? { kind: 'valid', planting: null, groups: r.groups } : { kind: 'invalid' }
-  // BLOCKING-2 — a name that runs on into a TAUGHT alias is only the front of it: "cucumber" then "one"
-  // is Dave's "cucumber one", so the one belongs to the name and is not an amount. The reading that
-  // keeps the whole alias as its name is judged on its own.
+  // A name that runs on into a TAUGHT alias is only the front of it: "cucumber" then "one" is
+  // "cucumber one", so the one belongs to the name. The reading that keeps the whole alias is judged
+  // on its own.
   const rest = r.groups.map((g) => g.text).join(' ').split(' ')
   for (let k = 1; k <= rest.length; k++) {
     if (aliasVarietyOf(ctx.aliasNames, `${r.name} ${rest.slice(0, k).join(' ')}`) != null) return { kind: 'invalid' }
@@ -537,25 +414,21 @@ function judgeBareReading(plantings, r, ctx) {
   return { kind: 'valid', planting, groups: r.groups, name: r.name }
 }
 
-// BUG-VOICEALIASFAILSOFT-001 — `aliasesKnown: false` says his taught names could not be read (the list
-// failed, or has not loaded yet), which is not the same as "he taught none". Every guard above that
-// keeps a taught name whole ("cucumber one" is Suyo Long, not "cucumber" + 1) reads that list, and any
-// name followed by a bare number could be one he taught, so without it a NAMED sentence cannot be
-// split safely: it is REFUSED ('names'), and the caller clears the record as for any refused named
-// sentence (QA F10). Refused rather than sent the ordinary way, which was measured and is worse: the
-// ordinary search re-selects the crop and KEEPS the amounts already on the record, so "Stupice",
-// "5 count", "suyo long 3 231", "next" saved Suyo Long · 5 count — Stupice's count under another crop.
-// A planting's own whole name still passes (the guard below is first). A sentence of numbers alone is
-// still read: no live alias is numbers only (33 of 33 carry a word, prod 2026-09-24), and "3 231"
-// with a crop chosen is the most common thing said on this page. Default true, so a caller with no
-// list to pass — every pure test — keeps meaning "none taught".
+// `aliasesKnown: false` means his taught names could not be read (the list failed or has not loaded),
+// which is not the same as "he taught none". Every guard that keeps a taught name whole ("cucumber one"
+// is Suyo Long, not "cucumber" + 1) reads that list, so a NAMED sentence cannot be split safely: it is
+// REFUSED ('names') and the caller clears the record as for any refused named sentence. Not sent the
+// ordinary way, which is worse: the search re-selects the crop and KEEPS the amounts already on the
+// record, so "Stupice", "5 count", "suyo long 3 231", "next" saved Suyo Long · 5 count.
+// A planting's own whole name still passes (the guard below is first), and a sentence of numbers alone is
+// still read. Default true, so a caller with no list to pass (every pure test) means "none taught".
 export function resolveBareOneBreath(plantings, info, {
   selected = null, aliasIndex = null, aliasNames = aliasIndex, aliasesKnown = true,
 } = {}) {
   if (!info) return null
-  // The whole head IS a planting's name ("cherry rescue 1", "eighteen eighty four"), or a name Dave
-  // taught ("cucumber one", BLOCKING-2): a name, not a record — the ordinary search selects it, with or
-  // without a trailing command, exactly as before.
+  // The whole head IS a planting's name ("cherry rescue 1", "eighteen eighty four") or a taught name
+  // ("cucumber one"): a name, not a record. The ordinary search selects it, with or without a trailing
+  // command.
   if (plantingsNamedExactly(plantings, info.head).length || aliasVarietyOf(aliasNames, info.head) != null) return null
   if (!aliasesKnown && !info.nameless) return { kind: 'refuse', reason: 'names' }
   const judged = info.readings.map((r) => judgeBareReading(plantings, r, { selected, aliasIndex, aliasNames }))
@@ -581,12 +454,11 @@ export function resolveBareOneBreath(plantings, info, {
   return null
 }
 
-// THE GUARD THE GRAMMAR ASKS FOR AT THE CALL SITE, in its own words: "do not treat a whole-utterance
-// command match as a command while the chooser's live result set contains an exact name match for
-// that same text." A planting name is free text with no vocabulary file, so the grammar cannot check
-// disjointness itself — a planting Dave named "Next" would otherwise be unselectable and would fire a
-// save every time he said it. Only an EXACT alias match demotes a command; a partial one must not,
-// or "save" would stop working the moment he grew something called Savoy.
+// The guard the grammar asks for at the call site: a whole-utterance command is not a command while the
+// chooser's live result set contains an exact name match for that text. A planting name is free text,
+// so the grammar cannot check disjointness itself; a planting named "Next" would be unselectable and
+// would fire a save every time. Only an EXACT alias match demotes a command; a partial one must not, or
+// "save" would stop working the moment something called Savoy is grown.
 export function resolveCommandCollision(result, plantings) {
   if (!result || result.kind !== 'command') return result
   const spoken = String(result.transcript ?? '')
@@ -596,16 +468,14 @@ export function resolveCommandCollision(result, plantings) {
   return collides ? { kind: 'search', text: spoken, transcript: spoken } : result
 }
 
-// V5-VOICEVOCAB-001 / BUG-VOICETWOBARENUM-001 — THE ONE WORDING of an inferred unit ("3 count
-// assumed"), shared by the live banner and the saved banner/row so the two cannot drift apart.
-// QA F6 — AND SAYS WHEN THE GUESSED VALUE LOOKS HIGH. A spoken "60000 grams" warns "that looks high";
-// the same number reaching a slot by assumption did not, so "3", "60000", "next" saved 60000 g silently.
-// The flag rides on the slot (like `assumed`), so the saved banner and row say it too.
+// The one wording of an inferred unit ("3 count assumed"), shared by the live banner and the saved
+// banner/row so they cannot drift apart. It says when the guessed value looks high; the flag rides on
+// the slot (like `assumed`) so the saved banner and row say it too.
 const assumedPhrase = (v) => `${v.value} ${v.unit} assumed${v.implausible ? ' — that looks high' : ''}`
 
-// Where a held number will land if nothing changes it — the same slot order placeHeld uses (the crop's
+// Where a held number will land if nothing changes it: the same slot order placeHeld uses (the crop's
 // default unit into an empty quantity, else grams into an empty weight), and the axis from buildValue.
-// Shared by the held-number card (QA F4) and the restatement's replaced-value note (review MINOR-6).
+// Shared by the held-number card and the restatement's replaced-value note.
 function heldLandingOf(held, qty, weight, selected) {
   if (held == null) return null
   const unit = qty == null ? (selected?.variety_ref?.default_unit || 'count') : weight == null ? 'g' : null
@@ -614,10 +484,9 @@ function heldLandingOf(held, qty, weight, selected) {
   return { axis: built.kind, value: built.value, unit: built.unit }
 }
 
-// BUG-VOICECROPSWITCHKEEPSAMOUNTS-001 — THE ONE WORDING of amounts a crop change took off the record: the note
-// for the banner, the row for the strip and the debug mark. Shared by the switch itself and by a failed save
-// that had sent them (review IMPORTANT-1), so the row reads the same whichever of the two finds it true.
-// BUG-VOICESLOWSAVEFALSEROWS-001 — the other doors that take values off the record build the same three.
+// The one wording of amounts a crop change took off the record: the banner note, the strip row and the
+// debug mark. Shared by the switch itself, by a failed save that had sent them, and by the other doors
+// that take values off the record, so the row reads the same whichever finds it true.
 function switchWords(amountsCleared, planting) {
   const amounts = amountsCleared.map((v) => `${v.value} ${v.unit}`).join(' · ')
   const from = [...new Set(amountsCleared.map((v) => v.saidFor.name || v.saidFor.variety_ref?.name))].join(' and ')
@@ -637,22 +506,14 @@ const TONE = {
   idle: { bg: P.white,     border: P.border,      fg: P.light },
 }
 
-// V5-HARVESTONEDOOR-001 — `embedded` is set only by HarvestLog, the combined harvest page, which
-// supplies its own title and the voice/manual selector. It suppresses this page's own <h1> and
-// swaps one sentence of help text. Default false keeps the standalone /log/voice route (now a
-// redirect, but still reachable in tests and from a stale bookmark) byte-identical.
-//
-// It DOES branch — two places, `{!embedded && (` on the heading and a ternary in the help text —
-// and both are covered by VoiceHarvest.embedded.test.jsx. An earlier version of this comment
-// claimed "there is no embedded-only code path to test separately", which was false eight lines
-// after it was written and would have talked the next reader out of testing the branch. A comment
-// asserting its own untestability is the one kind that has to be checked.
+// `embedded` is set only by HarvestLog, which supplies its own title and the voice/manual selector. It
+// suppresses this page's <h1> and swaps one sentence of help text; both branches are covered by
+// VoiceHarvest.embedded.test.jsx.
 export default function VoiceHarvest({ embedded = false } = {}) {
   const { fetch: apiFetch } = useApiFetch()
 
-  // OPS-CROPTYPEALIASCLIENT-001 — the raw picker payload, and the crop-type vocabulary it is
-  // decorated with below. Held apart because they arrive from two independent fetches and either may
-  // land first; the memo re-derives whenever either does.
+  // The raw picker payload and the crop-type vocabulary it is decorated with below. Held apart because
+  // they come from two independent fetches and either may land first.
   const [rawPlantings, setRawPlantings] = useState([])
   const { cropTypes } = useCropTypes()
   const [loadError, setLoadError] = useState(null)
@@ -667,15 +528,15 @@ export default function VoiceHarvest({ embedded = false } = {}) {
   // resolve from scratch.
   const [unmatched, setUnmatched]   = useState(null)
   const [qty, setQty]               = useState(null)     // { value, unit }
-  const [heldNum, setHeldNum]       = useState(null)     // BUG-VOICECOUNTSPLIT-001 — number awaiting its unit
+  const [heldNum, setHeldNum]       = useState(null)     // number awaiting its unit
   const [weight, setWeight]         = useState(null)     // { value, unit }
   const [rows, setRows]             = useState([])       // committed harvests, newest last
   const [heard, setHeard]           = useState(null)     // the pending, not-yet-settled utterance
   const [status, setStatus]         = useState({ tone: 'idle', text: 'Tap Start, then say a crop.' })
   const [endsAt, setEndsAt]         = useState(null)
-  // BUG-VOICESCREENSLEEP-001 — whether the screen is being held awake, said out loud rather than
-  // assumed. A wake lock can be refused (low battery, insecure context, no API at all) and a refusal
-  // that presents as a success is the same silent fail this page exists to close.
+  // Whether the screen is being held awake, said out loud rather than assumed. A wake lock can be refused
+  // (low battery, insecure context, no API) and a refusal that presents as a success is the silent fail
+  // this page exists to close.
   const [screenNote, setScreenNote] = useState(null)
 
   // The recogniser and the run's own bookkeeping. Refs, not state: the recogniser callbacks fire
@@ -686,15 +547,14 @@ export default function VoiceHarvest({ embedded = false } = {}) {
   const wallRef     = useRef(null)
   const restartsRef = useRef(0)
   const stopRef     = useRef(false)
-  // BUG-VOICESCREENSLEEP-001. `wakeRef` is the live WakeLockSentinel or null; `hiddenRef` records
-  // that THIS run was interrupted by the page hiding, so the interruption is announced once rather
-  // than once per event that notices it (Chrome's own `aborted`, our visibilitychange listener and
-  // `onend` can all arrive for the same screen timeout). `runningRef` exists because the visibility
-  // listener fires outside React's render cycle and must read the current run state.
+  // `wakeRef` is the live WakeLockSentinel or null. `hiddenRef` records that THIS run was interrupted by
+  // the page hiding, so it is announced once (Chrome's `aborted`, our visibilitychange listener and
+  // `onend` can all arrive for one screen timeout). `runningRef` is for the visibility listener, which
+  // fires outside React's render cycle.
   const wakeRef     = useRef(null)
   const hiddenRef   = useRef(false)
   const runningRef  = useRef(false)
-  // BUG-VOICEFAILSILENT-001 R4 — how many cues the platform REFUSED since the last report.
+  // How many cues the platform REFUSED since the last report.
   const refusedRef  = useRef(0)
 
   // THE RECORD UNDER CONSTRUCTION, mirrored into refs. `setState` updaters are not a synchronous
@@ -704,17 +564,16 @@ export default function VoiceHarvest({ embedded = false } = {}) {
   const qtyRef      = useRef(null)
   const weightRef   = useRef(null)
   const plantingsRef = useRef([])
-  // V5-VOICEALIAS-001. `aliasRef` is the learned-mishearing index, consulted between strict and fuzzy.
-  // `unmatchedRef` is the phrase that produced whatever the user is currently looking at — the thing
-  // a tap would TEACH. It has to be a ref for the same reason the record slots are: the tap handler
-  // must read what was actually heard, not what the last render closed over.
+  // `aliasRef` is the learned-mishearing index, consulted between strict and fuzzy. `unmatchedRef` is the
+  // phrase behind what the user is looking at, the thing a tap would TEACH; a ref so the tap handler reads
+  // what was actually heard, not what the last render closed over.
   const aliasRef    = useRef(null)
-  // BLOCKING-2 — the same aliases as NAMES (indexAliasNames): what the one-breath readers ask "is this
-  // phrase a name Dave taught?". Loaded and taught alongside aliasRef, never instead of it.
+  // The same aliases as NAMES (indexAliasNames), which the one-breath readers ask "is this phrase a
+  // taught name?". Loaded and taught alongside aliasRef, never instead of it.
   const aliasNamesRef = useRef(null)
-  // BUG-VOICEALIASFAILSOFT-001 — WHETHER HIS TAUGHT NAMES ARE KNOWN: 'loading' until the first GET
-  // answers, 'ready' once a list loaded (an empty list too — then he has taught none), 'failed' when it
-  // could not be read. Only 'ready' lets the one-breath reader treat a name and a number as a record.
+  // Whether the taught names are KNOWN: 'loading' until the first GET answers, 'ready' once a list loaded
+  // (an empty list too: none taught), 'failed' when it could not be read. Only 'ready' lets the one-breath
+  // reader treat a name and a number as a record.
   const aliasStateRef = useRef('loading')
   // Names taught in THIS visit, laid over every (re)load, so a list that lands after a teach keeps it.
   const taughtRowsRef = useRef([])
@@ -724,60 +583,53 @@ export default function VoiceHarvest({ embedded = false } = {}) {
   const reloadAliasesRef = useRef(null)
   const releaseHeldRef = useRef(null)
   const applyCommittedRef = useRef(null)
-  // BUG-VOICEALIASHITCOUNT-001 — `aliasUsesRef` maps what can be said to the alias it would use
-  // (indexAliasUses); `aliasUseRef` is the alias that chose the planting on the record under
-  // construction — { heard_key, variety_id, plantingId } or null — counted once that record saves.
+  // `aliasUsesRef` maps what can be said to the alias it would use (indexAliasUses); `aliasUseRef` is the
+  // alias that chose the planting on the record under construction ({ heard_key, variety_id, plantingId }
+  // or null), counted once that record saves.
   const aliasUsesRef = useRef(null)
   const aliasUseRef = useRef(null)
   const unmatchedRef = useRef(null)
-  // BUG-VOICECOUNTSPLIT-001 — a number whose unit has not arrived yet. A REF because the recogniser
-  // callbacks that read it fire outside React's render cycle and must see the value the previous
-  // utterance wrote, not the one their closure captured; `heldNum` is the render-visible mirror so
-  // the half-finished value is never invisible on screen.
+  // A number whose unit has not arrived yet. A REF because the recogniser callbacks that read it fire
+  // outside React's render cycle; `heldNum` is the render-visible mirror so a half-finished value is
+  // never invisible on screen.
   const heldNumRef  = useRef(null)
-  // BUG-VOICECROPSWITCHKEEPSAMOUNTS-001 — what the last crop change cleared, for the crop it changed to:
-  // { plantingId, text } or null. saveRecord says it again, because a switch and a save in one breath
-  // ("suyo long 3 231 next") leave the save's banner as the only one on screen.
+  // What the last crop change cleared, for the crop it changed to: { plantingId, text } or null.
+  // saveRecord says it again, because a switch and a save in one breath ("suyo long 3 231 next") leave
+  // the save's banner as the only one on screen.
   const switchedRef = useRef(null)
-  // Review IMPORTANT-1 / PE-1 — THE SAVES WHOSE POST IS STILL OUT, oldest first: { plantId, slots, rechosen }.
-  // `slots` are the exact count and weight objects sent. They stay on the record until the POST answers, so
-  // the page keeps showing what is being saved, and they are compared BY IDENTITY: a value said again while
-  // the POST is out is a new object even when it reads the same. `rechosen` marks the saved crop chosen again
-  // while its POST was out. `sendingLossRef` holds what a door would have said about taking sent values off the
-  // record — { slots, words }, `words(values)` building that door's own row, note and mark — until their POSTs
-  // answer; `savedSlotsRef` holds every value a POST saved.
+  // The saves whose POST is still out, oldest first: { plantId, slots, rechosen }. `slots` are the exact
+  // count and weight objects sent; they stay on the record until the POST answers and are compared BY
+  // IDENTITY (a value said again while the POST is out is a new object even if it reads the same).
+  // `rechosen` marks the saved crop chosen again while its POST was out. `sendingLossRef` holds what a
+  // door would have said about taking sent values off the record ({ slots, words }; `words(values)`
+  // builds that door's own row, note and mark) until their POSTs answer; `savedSlotsRef` holds every
+  // value a POST saved.
   const inFlightRef = useRef([])
   const sendingLossRef = useRef([])
   const savedSlotsRef = useRef(new WeakSet())
-  // Lane V3 F8 — A "NEXT" QUEUED BEHIND THE SEND IN ITS WAY: { flight, plantId, token } or null. Set when a "next"
-  // is refused because the record also holds a value that POST is sending, and something new besides; that "next"
-  // then goes through as a spoken one would when the POST answers (saveRecord). Cancelled by a record started over
-  // (clearRecord) or another crop (clearForSwitch).
+  // A "next" queued behind the send in its way: { flight, plantId, token } or null. Set when a "next" is
+  // refused because the record holds a value that POST is sending plus something new; it then goes
+  // through as a spoken one would when the POST answers (saveRecord). Cancelled by clearRecord or
+  // clearForSwitch.
   const pendingSaveRef = useRef(null)
   const applyOneUtteranceRef = useRef(null)
-  // BUG-EVENTSREPEATTAP-001 — the ledger as it stands, for the save path's banner after its await.
+  // The ledger as it stands, for the save path's banner after its await.
   const rowsRef = useRef([])
   useEffect(() => { selectedRef.current = selected }, [selected])
   useEffect(() => { qtyRef.current = qty }, [qty])
   useEffect(() => { weightRef.current = weight }, [weight])
   useEffect(() => { rowsRef.current = rows }, [rows])
-  // OPS-CROPTYPEALIASCLIENT-001 — DECORATE THE ROWS, don't thread a map through the matchers.
+  // Decorate the rows with the crop-type aliases rather than threading a vocabulary map through the
+  // matchers. plantingAliases() has six call sites, four of them exported pure helpers that take only
+  // `plantings` (matchPlantings, namesAPlantingExactly, resolveOneBreath, resolveCommandCollision) plus
+  // fuzzyMatch, which takes it as an injected function. A parameter would have to travel through every
+  // signature and test, and a call site that forgot it would silently match less than its neighbour.
+  // Attaching the terms to the row means every layer (strict, learned, folded, fuzzy, one-breath, the
+  // teach picker's own filter) sees them.
   //
-  // plantingAliases() is consumed by six call sites, four of them exported pure helpers that take
-  // `plantings` and nothing else (matchPlantings, namesAPlantingExactly, resolveOneBreath,
-  // resolveCommandCollision) plus fuzzyMatch, which takes it as an injected function. Adding a
-  // vocabulary parameter would have to travel through every one of those signatures and their tests,
-  // and any call site that forgot it would silently match less than its neighbour — the exact drift
-  // the shared cropTypeTerms() helper exists to prevent on the typed surfaces. Attaching the terms to
-  // the ROW instead means every layer (strict, learned, folded, fuzzy, one-breath, the teach picker's
-  // own filter) sees them without knowing they exist.
-  //
-  // The slug stays on the row and is still a term in its own right, so a planting whose crop type is
-  // missing from the vocabulary — or the whole vocabulary failing to load — matches exactly what it
-  // matched before. display_name is deliberately NOT added: it was built, measured to be the Title
-  // Case of the slug for every type in the vocabulary, and reverted (see the note on plantingAliases).
-  // Aliases are the opposite case — "cantaloupe" shares no characters with "melon", which is why this
-  // fetch now carries something the slug cannot.
+  // The slug stays on the row as a term, so a planting whose crop type is missing from the vocabulary (or
+  // a vocabulary that failed to load) matches as before. display_name is deliberately not added (see
+  // plantingAliases); aliases are the opposite case, since "cantaloupe" shares no characters with "melon".
   const plantings = useMemo(() => {
     const bySlug = new Map((cropTypes ?? []).map((c) => [c.slug, c]))
     return rawPlantings.map((p) => {
@@ -793,38 +645,30 @@ export default function VoiceHarvest({ embedded = false } = {}) {
   const statusRef = useRef(null)
   const say = useCallback((tone, text) => { statusRef.current = { tone, text }; setStatus({ tone, text }) }, [])
 
-  // BUG-VOICEFAILSILENT-001 R4 — FIRE A CUE AND READ WHETHER IT LANDED.
-  //
-  // `haptic()` already returns true only when the platform accepted the vibration (haptics.js), and
-  // every call site on this page threw that answer away. Chrome refuses on a hidden document and
-  // drops the request outright when the ringer is on silent — which is precisely the pocketed-phone
-  // case the whole vocabulary was designed for, so the channel can be dead exactly when it is the
-  // only one left. Counting the refusals is what makes the design honest about its own reach.
-  //
-  // ONLY AN EXPLICIT `false` COUNTS. That is the module's documented refusal value; anything else,
-  // including a test double that returns nothing, is not evidence the platform said no.
+  // Fire a cue and read whether it landed. `haptic()` returns true only when the platform accepted the
+  // vibration, and Chrome refuses on a hidden document and drops the request when the ringer is silent:
+  // the pocketed-phone case, so the channel can be dead exactly when it is the only one left. Counting
+  // refusals keeps the design honest about its reach.
+  // Only an explicit `false` counts; anything else, including a test double that returns nothing, is not
+  // evidence the platform said no.
   const cue = useCallback((fire) => { if (fire() === false) refusedRef.current += 1 }, [])
 
-  // BUG-VOICEFAILSILENT-001 R3 — THE CHANNEL THAT SURVIVES NOT LOOKING.
+  // The channel that survives not looking. `status` is one slot and `say()` replaces it, so a refusal is
+  // erased by the next utterance that parses cleanly ("Nothing matched" then "3 count" reads green). A
+  // miss row is appended for every outcome announced as a failure, so the strip's header can answer
+  // "did everything I said get logged?".
   //
-  // `status` is one slot and `say()` replaces it, so a refusal is erased by the next utterance that
-  // parses cleanly: "Nothing matched" then "3 count" reads green, and the failure is gone before he
-  // glances. Dave's own worst case is reachable in two utterances. A miss row is appended for every
-  // outcome the app ANNOUNCES AS A FAILURE, so the strip's header can answer the only question that
-  // matters at the end of a session — "did everything I said get logged?".
-  //
-  // AN AMBIGUOUS MATCH IS DELIBERATELY NOT A MISS. It leaves a candidate list on screen and is
-  // normally resolved by the next utterance; counting it would inflate "not captured" with things
-  // that were captured a second later, and a count that overstates is a count he stops reading.
+  // An ambiguous match is deliberately NOT a miss: it leaves a candidate list and is normally resolved
+  // by the next utterance, and counting it would inflate "not captured" with things captured a second
+  // later.
   const noteMiss = useCallback((text) => {
     setRows((r) => [...r, { kind: 'miss', text, at: Date.now() }])
   }, [])
 
-  // R4's other half. Reported when the document next becomes VISIBLE, because that is the first
-  // moment the report can be read — and because the refusals it is reporting were mostly caused by
-  // the document being hidden in the first place. Returns the count so the caller can decide whether
-  // to spend the banner on it. It is a NOTE, not a miss: nothing was lost, a channel was, and
-  // folding it into "not captured" would make that number mean two different things.
+  // Reported when the document next becomes VISIBLE, the first moment the report can be read (the
+  // refusals were mostly caused by the document being hidden). Returns the count so the caller can decide
+  // whether to spend the banner on it. A NOTE, not a miss: a channel was lost, not a log, and folding it
+  // into "not captured" would give that number two meanings.
   const reportRefusedCues = useCallback(() => {
     const n = refusedRef.current
     if (!n) return 0
@@ -836,21 +680,18 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     return n
   }, [])
 
-  // ── BUG-VOICESCREENSLEEP-001 ────────────────────────────────────────────────────────────────────
+  // ── Screen sleep ────────────────────────────────────────────────────────────────────────────────
   //
-  // On Chrome Android the screen turning off kills the capture AND every non-visual cue in one event,
-  // and it is the most likely way a hands-free run actually dies. Sourced from Chromium rather than
-  // assumed: speech_recognition.cc aborts recognition unconditionally under #if BUILDFLAG(IS_ANDROID)
-  // when the page hides, vibration_controller.cc returns false from navigator.vibrate on a hidden
-  // document and re-checks it per pulse, hidden-tab timer throttling stalls the settle-window tick
-  // below, and the banner is on a dark screen. The page had no handling at all: it swallowed the one
-  // signal the platform emits for this ('aborted', treated as routine) and then re-armed a mic Chrome
-  // would abort again, burning the restart budget until it reported "session limit reached".
+  // On Chrome Android the screen turning off kills the capture AND every non-visual cue in one event, and
+  // it is the most likely way a hands-free run dies. In Chromium, speech_recognition.cc aborts recognition
+  // unconditionally under IS_ANDROID when the page hides, vibration_controller.cc returns false from
+  // navigator.vibrate on a hidden document (re-checked per pulse), and hidden-tab timer throttling stalls
+  // the settle-window tick below. Treating 'aborted' as routine and re-arming a mic Chrome aborts again
+  // burns the restart budget until "session limit reached".
   //
-  // FEATURE-DETECTED, AND A REFUSAL IS SAID OUT LOUD. Wake Lock is absent in some browsers and in any
-  // insecure context, and it can be refused at request time (low battery). Its absence must degrade,
-  // never throw — but it must also never be assumed to have held, because the whole cue stack is
-  // downstream of it.
+  // Wake Lock is feature-detected and a refusal is said out loud: it is absent in some browsers and in
+  // insecure contexts, and it can be refused at request time (low battery). Its absence must degrade,
+  // never throw, and must never be assumed to have held, because the whole cue stack is downstream of it.
   const requestWakeLock = useCallback(async () => {
     const wl = typeof navigator !== 'undefined' ? navigator.wakeLock : null
     if (!wl || typeof wl.request !== 'function') {
@@ -885,11 +726,10 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     try { rec.abort() } catch { /* already gone */ }
   }, [])
 
-  // ONE announcement per interruption. Chrome's `aborted`, our visibilitychange listener and `onend`
-  // can each notice the same screen timeout, and three miss rows for one event would make the count
-  // this row exists to provide untrustworthy. The haptic is fired even though a hidden document is
-  // exactly where Chrome refuses it — the refusal is then counted and reported by R4, which is more
-  // honest than not trying and is the only way the report can be true.
+  // One announcement per interruption: Chrome's `aborted`, our visibilitychange listener and `onend` can
+  // each notice the same screen timeout, and three miss rows for one event would make the count
+  // untrustworthy. The haptic is fired even though a hidden document is where Chrome refuses it; the
+  // refusal is then counted and reported (reportRefusedCues), the only way that report can be true.
   const noteScreenSleep = useCallback(() => {
     if (hiddenRef.current) return false
     hiddenRef.current = true
@@ -901,25 +741,18 @@ export default function VoiceHarvest({ embedded = false } = {}) {
 
   useEffect(() => {
     let live = true
-    // ?view=picker — the narrow projection (V4-PICKERPAYLOAD-001). This page is now its THIRD
-    // consumer and the census in lambda/plants/grid-view.test.js is extended to say so. Fields read
-    // here: id, name, archived_at, variety_ref.{name,crop_type_slug,default_unit}. All present.
+    // ?view=picker is the narrow projection; the census in lambda/plants/grid-view.test.js lists its
+    // consumers. Fields read here: id, name, archived_at, variety_ref.{name,crop_type_slug,default_unit}.
     apiFetch('/api/plants?view=picker')
       .then((r) => { if (live) setRawPlantings((r?.plants ?? r ?? []).filter((p) => !p.archived_at)) })
       .catch((e) => { if (live) setLoadError(e?.message || 'Could not load your plantings') })
 
-    // V5-VOICEALIAS-001 — learned mishearings, fetched ALONGSIDE the plantings rather than gating
-    // them. fetchAliases never rejects, and this deliberately sets no loadError: a chooser that
-    // refuses to start because a cache of corrections could not load is worse than one that has
-    // forgotten a few. Losing this degrades the search to its v4.78.0 behaviour — strict, then fuzzy
-    // — which is a working page.
-    //
-    // BUG-VOICEALIASFAILSOFT-001 — BUT IT NO LONGER PRETENDS HE TAUGHT NOTHING. fetchAliases answers
-    // null for "could not read", and the state says so (aliasStateRef): the one-breath reader then
-    // refuses a named sentence out loud instead of splitting "cucumber one" into the crop and an
-    // amount of 1 (review MINOR-9: "cucumber one", "next" saved a 1 count he never said, where the
-    // live app refused). A failed load is asked for again (ALIAS_RETRY_MS, and on every Start), and
-    // whatever was held while it loaded is read the moment it answers either way.
+    // Learned mishearings are fetched ALONGSIDE the plantings, not gating them, and this sets no
+    // loadError: a chooser that refuses to start because a cache of corrections failed to load is worse
+    // than one that forgot a few. fetchAliases answers null for "could not read" and aliasStateRef says
+    // so, so the one-breath reader refuses a named sentence out loud instead of splitting "cucumber one"
+    // into the crop and an amount of 1. A failed load is asked for again (ALIAS_RETRY_MS, and on every
+    // Start); whatever was held while it loaded is read the moment it answers either way.
     let retry = null
     let attempts = 0
     let inFlight = false
@@ -961,43 +794,37 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     // let a count spoken for one crop attach itself to another — the silent wrong save this flow
     // exists to prevent, reached by the back door.
     heldNumRef.current = null; setHeldNum(null)
-    // Lane V3 F8 — a queued "next" was for the record being cleared.
+    // A queued "next" was for the record being cleared.
     pendingSaveRef.current = null
   }, [])
 
-  // BUG-VOICECROPSWITCHKEEPSAMOUNTS-001 — every amount on the record carries the crop it was SAID FOR: the
-  // planting chosen when it was said, or null before one was. It rides on the slot value like `assumed`,
-  // so it goes wherever the value goes and is cleared with it. Every write of a count or weight is here.
+  // Every amount on the record carries the crop it was SAID FOR: the planting chosen when it was said, or
+  // null before one was. It rides on the slot value like `assumed`, so it goes wherever the value goes and
+  // is cleared with it. Every write of a count or weight goes through here.
   const fillSlot = useCallback((axis, v) => {
     const slot = { ...v, saidFor: selectedRef.current }
     if (axis === 'weight') { setWeight(slot); weightRef.current = slot } else { setQty(slot); qtyRef.current = slot }
   }, [])
 
-  // BUG-VOICECROPSWITCHKEEPSAMOUNTS-001 — A CROP CHANGE CLEARS THE AMOUNTS SAID FOR THE OLD CROP, AND SAYS SO.
-  //
-  // Dave, 2026-09-24, chose "clear them on a switch" over "keep them and say so" and "leave it as is". A
-  // spoken name kept the amounts standing, so "Stupice", "5 count", "cucumber one", "next" saved Suyo Long ·
-  // 5 count: Stupice's count under another crop, and nothing said. The trade he accepted: a correction
-  // ("Stupice… no, cucumber one") means saying the amounts again.
+  // A crop change clears the amounts said for the old crop, and says so. Without it a spoken name kept the
+  // amounts standing: "Stupice", "5 count", "cucumber one", "next" saved Suyo Long · 5 count, Stupice's
+  // count under another crop, with nothing said. The accepted cost: a correction ("Stupice… no, cucumber
+  // one") means saying the amounts again.
   //
   // Called by EVERY door that chooses a planting, before it does: a spoken name, a tap in the list or the
-  // teach box, and the one-breath readers (which already start a new record, and now say what went). Keyed
-  // on what each amount was SAID FOR, not on the crop on screen: the list and the teach box only show once
-  // a search has unselected the crop, so at a tap nothing is selected, yet the amounts are still the old
-  // crop's. Each amount on the record is:
-  //   * said for another planting — cleared, on the banner and in a miss row. ANOTHER PLANTING BY ID, the
-  //     row the harvest is saved under, so a second planting of the same variety ("Super Sweet 100 Rescue")
-  //     is a different crop, as the one-breath readers already treated it;
+  // teach box, and the one-breath readers. Keyed on what each amount was SAID FOR, not on the crop on
+  // screen: the list and teach box only show once a search has unselected the crop, so at a tap nothing is
+  // selected yet the amounts are still the old crop's. Each amount on the record is:
+  //   * said for another planting — cleared, on the banner and in a miss row. Another planting BY ID (the
+  //     row the harvest is saved under), so a second planting of the same variety is a different crop;
   //   * said for this planting — kept (the same crop chosen again, by any name or door);
-  //   * said before any crop was chosen — kept, and from now on this crop's ("5 count", "Stupice").
+  //   * said before any crop was chosen — kept, and from now on this crop's.
   // Returns the words for the read-back, or null when nothing was cleared.
   //
-  // Review IMPORTANT-1 — AN AMOUNT A SAVE HAS ALREADY SENT LEAVES THE RECORD WITHOUT A WORD. It is not lost, it is
-  // on its way: naming the next crop while the POST was out wrote "Cleared 5 count for Stupice — the crop changed
-  // to Suyo Long before it was saved" beside Stupice's own saved row, "1 saved · 1 not captured" for a harvest
-  // that saved — the false-miss class QA F1 closed once already. Its words are held back (sendingLossRef) and
-  // said only if no POST saves it, the one case where they are true. It still leaves the record: kept, "next"
-  // would save it again under the new crop, which is the leak this function exists to close.
+  // An amount a save has already SENT leaves the record without a word. It is on its way: "Cleared 5
+  // count for Stupice" beside Stupice's own saved row would count a false miss ("1 saved · 1 not
+  // captured"). Its words are held back (sendingLossRef) and said only if no POST saves it, the one case
+  // where they are true. It still leaves the record: kept, "next" would save it again under the new crop.
   const clearForSwitch = useCallback((planting) => {
     const cleared = []
     const sending = []
@@ -1008,10 +835,10 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       if (!next) (inFlightRef.current.some((f) => f.slots.includes(v)) ? sending : cleared).push(v)
       if (next !== v) { ref.current = next; set(next) }
     }
-    // PE-1 — the crop being saved, chosen again while its POST is out, is a choice that POST must not undo.
+    // The crop being saved, chosen again while its POST is out, is a choice that POST must not undo.
     for (const f of inFlightRef.current) if (f.plantId === planting.id) f.rechosen = true
-    // Lane V3 F8 — a "next" queued for another crop's record does not carry over to this one; what it was for is
-    // cleared above, and said, like anything else unsaved.
+    // A "next" queued for another crop's record does not carry over; what it was for is cleared above,
+    // and said, like anything else unsaved.
     if (pendingSaveRef.current && pendingSaveRef.current.plantId !== planting.id) pendingSaveRef.current = null
     if (sending.length) {
       const held = switchWords(sending, planting)
@@ -1026,11 +853,11 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     return words.note
   }, [noteMiss])
 
-  // Review IMPORTANT-1 — a POST has answered. What a door took off the record while values were being sent is
-  // said now, in that door's own words, for every one of them that no POST saved, once no POST is still sending
-  // any of them. Two POSTs cannot carry one value while a save word is refused during a send (lane V3 F3.2,
-  // saveRecord); the check stays so the words can never be false if that refusal is ever relaxed. Returns what
-  // it said, for the failed save's banner.
+  // A POST has answered. What a door took off the record while values were being sent is said now, in that
+  // door's own words, for every one that no POST saved, once no POST is still sending any of them. Two
+  // POSTs cannot carry one value while a save word is refused during a send (saveRecord); the check stays
+  // so the words can never be false if that refusal is relaxed. Returns what it said, for the failed
+  // save's banner.
   const settleSendingLosses = useCallback(() => {
     const said = []
     sendingLossRef.current = sendingLossRef.current.filter((held) => {
@@ -1047,38 +874,34 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     return said
   }, [noteMiss])
 
-  // BUG-VOICESLOWSAVEFALSEROWS-001 — THE OTHER DOORS THAT TAKE VALUES OFF THE RECORD HOLD BACK THEIR WORDS THE SAME
-  // WAY. A sentence refused and started over (QA F10) and amounts said again without units (review MINOR-6) each
-  // wrote a "Cleared …" / "Replaced …" row for whatever the record held — including values a POST was still
-  // sending, which then saved: "1 saved · 2 not captured" for a record that saved whole. This splits off the
-  // values being sent and hands `words(values)` — the door's own row, note and mark for them — to
-  // settleSendingLosses, which says them only if no POST saves those values. Returns the values it held back; the
-  // door says the rest now, exactly as before. What the door does to the record is not touched. (The switch
-  // splits its own, value by value, because it also keeps and adopts.)
+  // The other doors that take values off the record hold back their words the same way. A sentence
+  // refused and started over, and amounts said again without units, each wrote a "Cleared …" / "Replaced
+  // …" row for values a POST was still sending, which then saved ("1 saved · 2 not captured" for a record
+  // that saved whole). This splits off the values being sent and hands `words(values)` (the door's own
+  // row, note and mark) to settleSendingLosses, which says them only if no POST saves those values.
+  // Returns the values held back; the door says the rest now. The switch splits its own, value by value,
+  // because it also keeps and adopts.
   const holdBackSending = useCallback((values, words) => {
     const sending = values.filter((v) => v && inFlightRef.current.some((f) => f.slots.includes(v)))
     if (sending.length) sendingLossRef.current = [...sendingLossRef.current, { slots: sending, words }]
     return sending
   }, [])
 
-  // BUG-VOICEALIASHITCOUNT-001 — which taught alias, if any, chose the planting now on the record.
-  // Called wherever spoken words select a planting; a selection by any other door leaves null.
+  // Which taught alias, if any, chose the planting now on the record. Called wherever spoken words select
+  // a planting; a selection by any other door leaves null.
   const noteAliasUse = useCallback((spoken, planting) => {
     const use = aliasUseOf(aliasUsesRef.current, plantingsRef.current, spoken, planting)
     aliasUseRef.current = use ? { ...use, plantingId: planting.id } : null
   }, [])
 
-  // V5-VOICEALIAS-001 — THE TEACH. One handler for every manual pick, so a correction is learned
-  // from the candidate list and from the search box identically; two paths would mean one of them
-  // silently never taught.
+  // The teach: one handler for every manual pick, so a correction is learned identically from the
+  // candidate list and from the search box.
   //
-  // SELECTION HAPPENS FIRST AND UNCONDITIONALLY. The user's actual job is logging a harvest, and the
-  // teach is a side benefit — so a failed teach must never cost them the pick they just made. The
-  // record is set before the network call and is not rolled back if it fails.
+  // Selection happens first and unconditionally: the user's job is logging a harvest, so a failed teach
+  // must never cost the pick. The record is set before the network call and not rolled back.
   //
-  // A FAILED TEACH IS SAID OUT LOUD, unlike the failed alias READ, which is swallowed. The asymmetry
-  // is the point: someone correcting the app has already been let down once, and a teach that
-  // silently did nothing would let them believe it was fixed and meet the same failure tomorrow.
+  // A failed teach is said out loud, unlike a failed alias READ (swallowed): someone correcting the app
+  // has been let down once, and a silent no-op would let them believe it was fixed.
   const pickPlanting = useCallback(async (p) => {
     const phrase = unmatchedRef.current
     const switched = clearForSwitch(p)
@@ -1097,18 +920,16 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     unmatchedRef.current = null
     try {
       await teachAlias(apiFetch, { heardText: phrase, varietyId })
-      // Update the live index immediately rather than waiting for a refetch, so saying it again in
-      // THIS session already resolves — the correction has to be visibly true at once or the user
-      // has no way to tell it worked.
+      // Update the live index immediately, so saying it again in THIS session already resolves; the
+      // correction must be visibly true at once.
       const next = new Map(aliasRef.current ?? [])
       next.set(looseKey(phrase), varietyId)
       aliasRef.current = next
       const taughtRow = { heard_key: looseKey(phrase), heard_text: phrase, variety_id: varietyId }
       aliasNamesRef.current = indexAliasNames([taughtRow], aliasNamesRef.current)
       aliasUsesRef.current = indexAliasUses([taughtRow], aliasUsesRef.current)
-      // BUG-VOICEALIASFAILSOFT-001 — kept for a list that is still loading or being asked for again, so
-      // the load that lands later cannot undo this teach. The state is NOT set to 'ready' here: one name
-      // taught is not the rest of the list.
+      // Kept for a list still loading or being asked for again, so the load that lands later cannot undo
+      // this teach. The state is NOT set to 'ready': one taught name is not the rest of the list.
       taughtRowsRef.current = [...taughtRowsRef.current, taughtRow]
       say(switched ? 'warn' : 'ok', `${label} — learned “${phrase}”${switched ? `, ${switched}` : ''}. Now say the count or the weight.`)
     } catch (err) {
@@ -1118,37 +939,36 @@ export default function VoiceHarvest({ embedded = false } = {}) {
 
   // ── the save ────────────────────────────────────────────────────────────────────────────────────
   // Returns nothing and throws nothing: every outcome is a banner, a haptic and (on success) a row.
-  // `token` is the debouncer's commit timestamp, which is how a failed write releases the cooldown
-  // that a successful one armed — without it, Dave's natural retry is swallowed for 1500 ms.
+  // `token` is the debouncer's commit timestamp, which is how a failed write releases the cooldown that a
+  // successful one armed; without it the natural retry is swallowed for 1500 ms.
   const saveRecord = useCallback(async (token) => {
     const plant = selectedRef.current
     const q = qtyRef.current
     const w = weightRef.current
     const aliasUse = aliasUseRef.current
-    // BUG-VOICECROPSWITCHKEEPSAMOUNTS-001 — what the change to this crop cleared, said again on both
-    // banners below: "cucumber one", "next" refuses for want of the count he said for Stupice a moment ago.
+    // What the change to this crop cleared, said again on both banners below ("cucumber one", "next"
+    // refuses for want of the count said for Stupice a moment ago).
     const switchNote = plant && switchedRef.current?.plantingId === plant.id ? ` (${switchedRef.current.text})` : ''
     const noteAtSave = switchedRef.current
 
-    // Lane V3 F3.2 — A SAVE WORD WHILE THE RECORD IS STILL BEING SENT SENDS NOTHING. The write cooldown is the only
-    // duplicate guard and it lasts 1.5 s; a slow POST lasts longer, and the record stays on screen until it
-    // answers, so a second "next" — the natural reaction to a save that seems not to have happened — sent the same
-    // harvest again: two rows, "2 saved". IDENTITY decides it, as it decides what the POST's answer clears: the
-    // record holds a value a POST still out is sending (inFlightRef). That is the whole record when nothing was
-    // said since "next", or the crop was only named again; it is part of it when a new amount was said for the
-    // same crop while the other is still on its way, and sending that would save the other twice. A record said
-    // since, for this crop or another, holds no such value and saves as always. Not a failure, so no miss row and
-    // no buzz — the save's own buzz comes when it lands — and the cooldown claim is given back, as the refusal
-    // below gives it back, so a real "next" said straight after is not swallowed as a duplicate.
+    // A save word while the record is still being sent sends nothing. The write cooldown (1.5 s) is the
+    // only duplicate guard and a slow POST lasts longer, so a second "next" sent the same harvest again:
+    // two rows, "2 saved". IDENTITY decides it, as it decides what the POST's answer clears: the record
+    // holds a value a POST still out is sending (inFlightRef). That is the whole record when nothing was
+    // said since "next" or the crop was only named again; it is part of it when a new amount was said for
+    // the same crop while the other is on its way (sending that would save the other twice). Not a
+    // failure, so no miss row and no buzz (the save's own buzz comes when it lands), and the cooldown
+    // claim is given back, as the refusal below gives it back, so a real "next" straight after is not
+    // swallowed as a duplicate.
     //
-    // Lane V3 F8 — AND A "NEXT" FOR A NEW AMOUNT IS QUEUED, NOT DROPPED. Refused and told to say it again, it could
-    // end in nothing: "stupice 5 count 231 grams next", "3 count", "next" during the save, then the POST landed
-    // with the success buzz and the 3 count sat on the card unsaved and uncounted (Seat A's delta pass, v4.150.0).
-    // So the refusal promises the new amount ("then 3 count") and queues the "next" behind the POST in the way;
-    // when that POST answers, the "next" goes through as a spoken one would (settleQueuedNext below) — a save,
-    // with its own banner and buzz, or a loud refusal when the record cannot be saved (only a weight: it needs a
-    // quantity, and says so now). A pure repeat queues nothing: that harvest is on its way already. Without a
-    // crop, the refusal below answers as it would for any record without one.
+    // A "next" for a new amount is QUEUED, not dropped. Refused and told to say it again, it could end in
+    // nothing: "stupice 5 count 231 grams next", "3 count", "next" during the save, then the POST landed
+    // with the success buzz and the 3 count sat unsaved and uncounted. So the refusal promises the new
+    // amount ("then 3 count") and queues the "next" behind the POST in the way; when that POST answers it
+    // goes through as a spoken one would (settleQueuedNext below): a save, or a loud refusal when the
+    // record cannot be saved (only a weight: it needs a quantity). A pure repeat queues nothing: that
+    // harvest is on its way already. Without a crop, the refusal below answers as for any record without
+    // one.
     const sending = [q, w].filter((s) => s && inFlightRef.current.some((f) => f.slots.includes(s)))
     const unsent = [q, w].filter((s) => s && !sending.includes(s))
     if (sending.length && (plant || !unsent.length)) {
@@ -1171,33 +991,31 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       cue(hapticSaveFailed)
       say('fail', `Not saved — still need ${missing}. Say it, then "next".${switchNote}`)
       noteMiss(`Not saved — still need ${missing}.`)
-      // BUG-VOICEREFUSEDNEXT-001 — RELEASED ONE MICROTASK LATER, OR NOT AT ALL. This refusal runs
-      // synchronously INSIDE the debouncer's commit handler, and the debouncer arms the write
-      // cooldown only after that handler returns (it arms on a handler that returned). Called here
-      // directly, the release found nothing armed and did nothing; the cooldown was then armed for a
-      // save that never happened. Measured: "Suyo Long", "next" (refused), "3 count", "next" inside
-      // 1.5 s — the second "next" was swallowed as a duplicate, NOTHING was saved, and the banner
-      // said "Heard "next" twice in a moment — saved once." A false success on a lost log. The
-      // failed-POST release below needs no deferral: it runs after an await, by which time the
-      // cooldown is armed. Token-scoped either way, so only this commit's claim is released.
+      // Released one microtask later, or not at all. This refusal runs synchronously INSIDE the
+      // debouncer's commit handler, which arms the write cooldown only after the handler returns; released
+      // here directly, the release found nothing armed and the cooldown was then armed for a save that
+      // never happened. "Suyo Long", "next" (refused), "3 count", "next" inside 1.5 s had the second
+      // "next" swallowed as a duplicate, nothing saved, and the banner said "saved once". The failed-POST
+      // release below needs no deferral: it runs after an await, when the cooldown is armed. Token-scoped
+      // either way, so only this commit's claim is released.
       queueMicrotask(() => debRef.current?.invalidateLastWrite(token))
       return
     }
 
     const label = plant.name || plant.variety_ref?.name || 'planting'
-    // The slots whose unit the app INFERRED, quantity's first. ONE list feeds both the metadata below
-    // and the saved banner/row, so what Dave is told and what the server records cannot disagree.
+    // The slots whose unit the app INFERRED, quantity's first. One list feeds both the metadata below and
+    // the saved banner/row, so what he is told and what the server records cannot disagree.
     const assumed = [q, w].filter((s) => s?.assumed)
-    // Review IMPORTANT-1 / PE-1 — what this POST sends, while it is out (inFlightRef).
+    // What this POST sends, while it is out (inFlightRef).
     const flight = { plantId: plant.id, slots: [q, w].filter(Boolean), rechosen: false }
     inFlightRef.current = [...inFlightRef.current, flight]
     const land = () => { inFlightRef.current = inFlightRef.current.filter((f) => f !== flight) }
-    // Lane V3 F8 — this record is being sent, so nothing is left queued for it.
+    // This record is being sent, so nothing is left queued for it.
     pendingSaveRef.current = null
-    // Lane V3 F8 — THE "NEXT" QUEUED BEHIND THIS POST GOES THROUGH NOW, as a spoken one would: through the command
-    // path, so a held number is placed exactly as it would be. Only when the record holds something this POST did
-    // not send; otherwise there is nothing it was for, and it is dropped without a word. Run last, after this
-    // POST's own answer has settled the record.
+    // The "next" queued behind this POST goes through now, as a spoken one would, through the command path
+    // so a held number is placed as usual. Only when the record holds something this POST did not send;
+    // otherwise it is dropped without a word. Run last, after this POST's own answer has settled the
+    // record.
     const settleQueuedNext = () => {
       const pending = pendingSaveRef.current
       if (!pending || pending.flight !== flight) return
@@ -1210,11 +1028,11 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     try {
       const res = await apiFetch('/api/events', {
         method: 'POST',
-        // BUG-HARVESTTIMEOUT-001: outwait the Lambda rather than aborting at 15s.
+        // Outwait the Lambda rather than aborting at 15s.
         timeoutMs: HARVEST_WRITE_TIMEOUT_MS,
         body: JSON.stringify({
-          // NULL BY DESIGN. The container is derived server-side (deriveEventProjectId), the same
-          // rule dev 1f567ae applied to plantings — "no client should be expected to supply one".
+          // NULL BY DESIGN. The container is derived server-side (deriveEventProjectId); no client is
+          // expected to supply one.
           project_id: null,
           event_type: 'harvest',
           event_date: todayLocalISO(),
@@ -1222,22 +1040,15 @@ export default function VoiceHarvest({ embedded = false } = {}) {
           private_notes: null,
           quantity: null,           // harvests use the structured panel; the freetext field is nulled
           plant_id: plant.id,
-          // BUG-EVENTPUBFALSE-001 — `is_public` is deliberately NOT SENT, and the fix was a DELETION
-          // rather than a flip to `true`. V4-PUBHIDE-001 is "default everything to true on all create
-          // paths"; the Lambda implements exactly that with `body.is_public ?? true`
-          // (lambda/events/index.js:3118) — and `false ?? true` is `false`, so an explicit false beats
-          // the default all the way to the row. This page sent one on every harvest, so a voice-logged
-          // row was excluded from the public garden page by `AND is_public IS TRUE`
-          // (lambda/projects/index.js:194) with no UI to notice or undo it: V4-PUBHIDE-001 removed
-          // every is_public toggle. 16 rows were repaired by a system sweep on 2026-08-30 and the
-          // producer was left alone; this is that producer. Sending `true` would work today and drift
-          // the moment the default changes — staying SILENT is the pattern, which is why the key is
-          // absent and this comment stands in its place (EventNew.jsx:1746-1749 says the same).
+          // `is_public` is deliberately NOT SENT, and the fix was a deletion rather than a flip to `true`.
+          // The Lambda defaults it with `body.is_public ?? true`, and `false ?? true` is `false`, so an
+          // explicit false beat the default all the way to the row and hid a voice-logged harvest from the
+          // public garden page with no UI to notice or undo it. Sending `true` would drift the moment the
+          // default changes; staying silent is the pattern (EventNew.jsx says the same). Guard:
+          // src/__tests__/eventIsPublicSilence.test.js.
           has_photo: false,
-          // C8 — the row says how it was captured. V5-VOICEVOCAB-001 — and which of its units the
-          // app INFERRED rather than heard, quantity's first; [] when both were spoken. Without this
-          // the no-unit path was measurable only from a debug trace Dave had to switch on and copy.
-          // ALWAYS SENT, so a row without the key means a bundle from before this change, never
+          // How the row was captured, and which units the app INFERRED rather than heard (quantity's first;
+          // [] when both were spoken). ALWAYS SENT, so a row without the key predates this field, never
           // "nothing assumed". Machine provenance: EventDetail.jsx hides it like the key above it.
           metadata: {
             harvest_input_source: 'voice',
@@ -1252,39 +1063,30 @@ export default function VoiceHarvest({ embedded = false } = {}) {
         }),
       })
       land()
-      // THE KEY THE API ACTUALLY RETURNS. lambda/events/index.js:3890 answers `resp(201, {
-      // ...newEvent, … })` where newEvent is the event_log row (`:3495`), so the id is a TOP-LEVEL
-      // `id` — there is no `eventId` key and no nested `event` object anywhere in lambda/events.
-      // This read was `res?.eventId ?? res?.event?.id`, so it resolved to null on every real
-      // response, the Undo button (`{!r.undone && r.eventId && …}`) never rendered on device, and
-      // this page's own "every committed row carries an Undo" was false in production. Its test was
-      // green because the fixture had been written to match the client instead of the producer.
-      // `eventId` is kept as a tail read only because CaptureFlow.jsx:443 tolerates both shapes.
+      // The id is a TOP-LEVEL `id` on the 201 response (the event_log row); there is no `eventId` key and no
+      // nested `event`. Reading those left the Undo button (`r.eventId`) never rendered on device while its
+      // test stayed green, because the fixture had been written to match the client instead of the producer.
+      // `eventId` is kept as a tail read only because CaptureFlow.jsx tolerates both shapes.
       const eventId = res?.id ?? res?.eventId ?? null
       cue(hapticSaveCommitted)
-      // BUG-VOICEWEIGHTLESSNOTE-001 — A WEIGHTLESS SAVE SAYS SO. 1,079 of 1,080 prod harvests carry a
-      // weight, so a row with none is far likelier to be a capture failure than an intention: the
-      // weight utterance was misheard, or the session boundary ate it, and the save announced plain
-      // success anyway. A NOTE, NEVER A GATE — the row is explicit that a genuine count-only harvest
-      // must still save cleanly, so this changes no payload, blocks nothing and keeps the `ok` tone
-      // (it DID save). The note travels into the ledger row rather than only the banner, because the
-      // banner is the channel that gets overwritten and this is exactly a thing to reconcile later.
+      // A weightless save says so: nearly every harvest carries a weight, so a row with none is far likelier
+      // a capture failure (misheard, or the session boundary ate it) than an intention. A NOTE, NEVER A
+      // GATE: a genuine count-only harvest must still save cleanly, so this changes no payload, blocks
+      // nothing and keeps the `ok` tone. It travels into the ledger row, not only the banner, because the
+      // banner is the channel that gets overwritten.
       //
-      // BUG-VOICETWOBARENUM-001 — AN ASSUMED UNIT IS SAID AT THE SAVE TOO, for the same two reasons.
-      // "next" is itself a resolver: when it applies a held number, this save follows in the same
-      // utterance and used to replace the "(… assumed)" note before it was ever shown — on 15db68c,
-      // "Suyo Long, three, 231, next" ended on "Saved Suyo Long — 231 count · no weight was said",
-      // which reads exactly like a spoken count. e142054's safety argument is that "nothing is
-      // assumed SILENTLY"; this was the one door where it was. Every assumed slot is named, not only
-      // the one "next" resolved, because the row is what Dave reads when he corrects it later ("I can
-      // correct it later if it is wrong") and it has to say which values were guesses.
+      // An assumed unit is said at the save too. "next" is itself a resolver: when it applies a held number
+      // the save follows in the same utterance and would replace the "(… assumed)" note before it is
+      // shown ("Suyo Long, three, 231, next" ended on "231 count · no weight was said", which reads like a
+      // spoken count). Nothing is assumed SILENTLY. Every assumed slot is named, not only the one "next"
+      // resolved, because the row is what he reads later and it has to say which values were guesses.
       const said = `${q.value} ${q.unit}${w ? ` · ${w.value} ${w.unit}` : ' · no weight was said'}`
         + (assumed.length ? ` (${assumed.map(assumedPhrase).join(', ')})` : '')
-      // BUG-EVENTSREPEATTAP-001 — THE SERVER KEPT ONE ROW. A pick identical to one saved in the last 45 s
-      // answers 200 `repeated` with THAT row's id. When the ledger already shows it live, a second row would
-      // say "saved" twice, count one harvest too many, and its Undo would 404 after the first's. So no row,
-      // and the banner says what happened. An id the ledger does not hold (the first attempt failed here
-      // after the server had written it) is this save's only row, and is added as usual.
+      // The server kept ONE row: a pick identical to one saved in the last 45 s answers 200 `repeated` with
+      // THAT row's id. When the ledger already shows it live, a second row would say "saved" twice, count
+      // one harvest too many, and its Undo would 404 after the first's. So no row, and the banner says what
+      // happened. An id the ledger does not hold (the first attempt failed here after the server wrote it)
+      // is this save's only row.
       const liveSaveOf = (r) => r.some((x) => x.kind === 'save' && !x.undone && x.eventId === eventId)
       const keptOnce = res?.repeated === true && eventId != null && liveSaveOf(rowsRef.current)
       say('ok', keptOnce
@@ -1295,14 +1097,12 @@ export default function VoiceHarvest({ embedded = false } = {}) {
         : [...r, { kind: 'save', eventId, label, said, at: Date.now() }]))
       for (const s of flight.slots) savedSlotsRef.current.add(s)
       settleSendingLosses()
-      // PE-1 — CLEAR ONLY WHAT WAS SAVED. This cleared the whole record, and the record is not only what was
-      // sent: whatever was said while the POST was out went with it, without a word. On c016dcde, "stupice 5
-      // count 231 grams next" then "suyo long 3 count 231 grams" during a slow POST lost the Suyo Long harvest
-      // ("1 saved", no row). So each value sent leaves the record BY IDENTITY, and what was said while it was
-      // out stays: a new amount (even one that reads the same), a held number, another crop, the same crop
-      // chosen again, a list or a teach box — and the crop, when anything was said for it. A record holding
-      // none of that is cleared exactly as before. Identity, not "is the record unchanged": after "3 count" for
-      // the same crop the record still holds the weight just saved, and keeping that would save it twice.
+      // Clear only what was saved. Whatever was said while the POST was out stays: a new amount (even one
+      // that reads the same), a held number, another crop, the same crop chosen again, a list or a teach
+      // box, and the crop when anything was said for it. Each value sent leaves the record BY IDENTITY; a
+      // record holding none of that is cleared whole. Identity, not "is the record unchanged": after
+      // "3 count" for the same crop the record still holds the weight just saved, and keeping that would
+      // save it twice.
       if (qtyRef.current === q) { qtyRef.current = null; setQty(null) }
       if (w && weightRef.current === w) { weightRef.current = null; setWeight(null) }
       if (aliasUseRef.current === aliasUse) aliasUseRef.current = null
@@ -1311,9 +1111,9 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       if (!movedOn) clearRecord()
       // The note was said on this banner; one set while the POST was out belongs to the record still standing.
       if (switchedRef.current === noteAtSave) switchedRef.current = null
-      // BUG-VOICEALIASHITCOUNT-001 — a taught alias chose this crop, and the harvest it named has
-      // landed: count the use. AFTER the save, never awaited, never throwing (recordAliasUse), so the
-      // count can cost this save nothing. An Undo does not un-count it: the alias did its job.
+      // A taught alias chose this crop and the harvest it named has landed: count the use. After the save,
+      // never awaited, never throwing (recordAliasUse), so counting can cost this save nothing. An Undo
+      // does not un-count it.
       if (aliasUse?.plantingId === plant.id) recordAliasUse(apiFetch, [aliasUse])
       settleQueuedNext()
     } catch (err) {
@@ -1322,15 +1122,13 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       land()
       const why = err?.message || 'the save failed'
       cue(hapticSaveFailed)
-      // Review v4.150.0 QA M2 — ONCE ANYTHING HAS BEEN SAID SINCE "NEXT", THE RECORD IS WHAT WAS SAID SINCE, as it
-      // is when the POST lands: a new amount (even one that reads the same), a held number, another crop or none,
-      // or a door that took a sent value off. Kept whole, the record would merge the two at the retry: "stupice
-      // 5 count 231 grams next", then "3 count", a failed POST and "next" saved Stupice · 3 count · 231 g — the
-      // 231 g weighed with 5 filed under 3, and the 5 count never saved or named. So what was sent leaves the
-      // record by identity, the row names what did not save, and the banner asks for it again rather than
-      // offering "next", which saves what is on screen. It is the rule Dave chose for a crop change: clear it,
-      // and say it again. The same crop named again changes nothing, and a record that is still exactly what
-      // was sent stays whole for the retry, as before.
+      // Once anything has been said since "next", the record is what was said since, as when the POST
+      // lands: a new amount (even one that reads the same), a held number, another crop or none, or a door
+      // that took a sent value off. Kept whole, the record would merge the two at the retry: "stupice 5
+      // count 231 grams next", then "3 count", a failed POST and "next" saved Stupice · 3 count · 231 g.
+      // So what was sent leaves the record by identity, the row names what did not save, and the banner
+      // asks for it again rather than offering "next". The same crop named again changes nothing, and a
+      // record that is still exactly what was sent stays whole for the retry.
       const saidSince = [qtyRef.current, weightRef.current].some((s) => s && !flight.slots.includes(s))
         || heldNumRef.current != null || selectedRef.current?.id !== plant.id
         || flight.slots.some((s) => s !== qtyRef.current && s !== weightRef.current)
@@ -1343,11 +1141,10 @@ export default function VoiceHarvest({ embedded = false } = {}) {
           if (sent && ref.current === sent) { ref.current = null; set(null) }
         }
       }
-      // Review IMPORTANT-1 — A DOOR THAT TOOK A SENT VALUE OFF THE RECORD WHILE IT WAS SENDING held back its row,
-      // which is written now, when it is true, and says why: a crop change (the lane's R1 — "next" then saves the
-      // new crop's record, never this one), or BUG-VOICESLOWSAVEFALSEROWS-001's sentence refused and started over,
-      // or amounts said again without units, each in its own words. Only a crop change has a crop to carry the
-      // note to.
+      // A door that took a sent value off the record while it was sending held back its row; it is written
+      // now, when it is true, and says why: a crop change ("next" then saves the new crop's record, never
+      // this one), a sentence refused and started over, or amounts said again without units, each in its
+      // own words. Only a crop change has a crop to carry the note to.
       const lost = settleSendingLosses()
       const here = lost.find((l) => l.planting && l.planting.id === selectedRef.current?.id)
       if (here) {
@@ -1356,8 +1153,8 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       }
       say('fail', saidSince ? notSaved : `NOT SAVED — ${why}. Say "next" to try again.`)
       debRef.current?.invalidateLastWrite(token)
-      // Lane V3 F8 — a "next" queued behind this failed POST goes through for what was said since. It never
-      // retries this record: with nothing new said, nothing is queued, and a later "next" retries it (Dave's call).
+      // A "next" queued behind this failed POST goes through for what was said since. It never retries this
+      // record: with nothing new said nothing is queued, and a later "next" retries it.
       settleQueuedNext()
     }
   }, [apiFetch, clearRecord, cue, noteMiss, say, settleSendingLosses])
@@ -1380,56 +1177,48 @@ export default function VoiceHarvest({ embedded = false } = {}) {
   const applyOneUtterance = useCallback((raw, meta) => {
     let result = resolveCommandCollision(raw, plantingsRef.current)
 
-    // ── BUG-VOICECOUNTSPLIT-001: rejoin a value Chrome split across two utterances ────────────────
+    // ── Rejoin a value Chrome split across two utterances ──────────────────────────────────────────
     //
-    // Chrome ends the recogniser session mid-phrase, so "three count" reaches us as "three" then
-    // "count". The debouncer's supersede rule already rejoins the two when they land inside ONE
-    // session; it cannot when a session boundary falls between them, because `onend` flushes data
-    // immediately — deliberately, and correctly, since a data commit is not destructive.
+    // Chrome ends the recogniser session mid-phrase, so "three count" reaches us as "three" then "count".
+    // The debouncer's supersede rule rejoins the two inside ONE session; it cannot across a session
+    // boundary, because `onend` flushes data immediately (a data commit is not destructive).
     //
-    // THIS IS STRICTLY ADDITIVE, in the same sense the fuzzy rescue is. Both halves are already a
-    // failure or a hazard today: the unit half is `unparsed`, and the number half falls into the
-    // permissive search branch where — measured against Dave's real 239 live plantings — "two"
-    // silently reselects Brentwood Leaf Lettuce and "four" Marvel of Four Seasons, so the following
-    // "next" saves against a plant he never named. No utterance that resolves correctly today
-    // reaches this code: classify() answers a complete phrase before it is ever consulted.
-    // BUG-VOICEFAILSILENT-001 — the number this utterance THREW AWAY, carried to the announcement.
-    // Null on every path that keeps or applies it; set only where the pairing ends unfinished.
+    // Strictly additive, like the fuzzy rescue: both halves are already a failure or a hazard today. The
+    // unit half is `unparsed`; the number half falls into the permissive search branch, where "two"
+    // silently reselects Brentwood Leaf Lettuce and "four" Marvel of Four Seasons, so the following "next"
+    // saves against a plant he never named. No utterance that resolves correctly today reaches this code:
+    // classify() answers a complete phrase before it is consulted.
+    // The number this utterance THREW AWAY, carried to the announcement. Null on every path that keeps or
+    // applies it; set only where the pairing ends unfinished.
     let dropped = null
-    // V5-VOICEVOCAB-001 — the value a held number RESOLVED TO, carried to the announcement.
+    // The value a held number RESOLVED TO, carried to the announcement.
     let assumedApplied = null
     // The two notes those carry, built in ONE place because two branches say them: the hold branch
     // (where a second number resolves the first) returns before the shared readback further down.
     const dropNoteNow = () => (dropped != null ? ` (dropped ${dropped} — no unit was said)` : '')
-    // The inference, said out loud. THIS IS THE GUARD that replaced "refuse the save" —
-    // an assumed unit that is never announced is the fabricated-value class. Do not remove it
-    // to shorten the readback.
+    // The inference, said out loud. DO NOT remove it to shorten the readback: an assumed unit that is never
+    // announced is the fabricated-value class.
     const assumedNoteNow = () => (assumedApplied ? ` (${assumedPhrase(assumedApplied)})` : '')
     const noteWarns = () => dropped != null || !!assumedApplied?.implausible
 
-    // BUG-VOICETWOBARENUM-001 — THE ONE PLACE A HELD NUMBER IS GIVEN A SLOT WITHOUT ITS UNIT. Two
-    // doors resolve a hold that way: the resolution site below (a command, or anything else that
-    // leaves the record standing) and a SECOND bare number (the hold branch). e142054 described both
-    // and wired only the first, so the second door simply re-held — which is how Dave's own example,
-    // "planting 2 165", saved 165 count and no weight. One function, so the two cannot disagree again.
+    // The one place a held number is given a slot without its unit. Two doors resolve a hold that way: the
+    // resolution site below (a command, or anything else that leaves the record standing) and a SECOND
+    // bare number (the hold branch). One function, so the two cannot disagree.
     //
-    // SLOT ORDER IS THE INFERENCE, and it is the whole of it: the first EMPTY slot, quantity first in
-    // the crop's default unit, then weight in grams. That mirrors the order he speaks them and is the
-    // same ordering parseValueSequence already relies on for the unit-bearing form.
+    // Slot order is the inference: the first EMPTY slot, quantity first in the crop's default unit, then
+    // weight in grams. That mirrors the order he speaks them and parseValueSequence's ordering for the
+    // unit-bearing form.
     //
-    // A FILLED SLOT IS NEVER OVERWRITTEN BY AN ASSUMPTION. With both filled the number is DROPPED and
-    // said rather than guessed onto one of them: "3, 231, 4" does not say whether the 4 corrects the
-    // count or the weight, and either guess can write a value he never meant over one he did —
-    // including over a weight he SPOKE ("3 count, 231 grams, 85" used to save 85 g). Saying it with a
-    // unit replaces a slot; that path is untouched and is the way to correct one.
+    // A filled slot is never overwritten by an assumption. With both filled the number is DROPPED and said
+    // rather than guessed onto one of them: "3, 231, 4" does not say whether the 4 corrects the count or
+    // the weight, and either guess can write over a value he meant ("3 count, 231 grams, 85" would save
+    // 85 g). Saying it with a unit replaces a slot.
     //
-    // V5-VOICEVOCAB-001 (lane D4) — NOR A SLOT THE RESOLVING UTTERANCE IS ABOUT TO FILL. `fills` is the
-    // set of axes the utterance that resolves the hold writes itself. Without it, "231" then "3 count"
-    // assumed 231 COUNT and the quantity branch overwrote it with the spoken 3 a moment later: 231 was
-    // lost and the banner read "3 count (231 count assumed)" — an assumption that no longer existed.
-    // Measured on cb32814, on both axes ("three count", "231", "85 grams" lost 231 the same way). The
-    // held number goes to the first empty slot the resolving utterance does NOT fill, and when it
-    // fills the last one the number is dropped and said, never written under a spoken value.
+    // Nor a slot the resolving utterance is about to fill. `fills` is the set of axes that utterance
+    // writes itself. Without it "231" then "3 count" assumed 231 COUNT and the quantity branch overwrote
+    // it with the spoken 3: 231 was lost and the banner read "3 count (231 count assumed)", an assumption
+    // that no longer existed (the same on both axes). The held number goes to the first empty slot the
+    // resolving utterance does NOT fill; when it fills the last one the number is dropped and said.
     // `takenBy` is that utterance's own readback, for the miss row.
     const placeHeld = (value, fills = null, takenBy = null) => {
       const qtyOpen = qtyRef.current == null && !fills?.has('quantity')
@@ -1443,19 +1232,18 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       // The axis comes from buildValue, not from the branch above, so a mass default_unit (legal in
       // the CHECK, absent from prod today) is checked against the slot it would actually land in.
       if (built && (built.kind === 'weight' ? weightOpen : qtyOpen)) {
-        // `assumed` RIDES ON THE SLOT VALUE, not beside it, so it cannot outlive the value it
-        // describes: every spoken write builds a fresh { value, unit } without it ("85" assumed,
-        // then "85 G"; or a later "3 count"), and clearRecord() nulls it with the record. saveRecord
-        // turns it into metadata.assumed_units — the only way the server can tell this unit from a
-        // spoken one. A separate per-record flag would need clearing at every write site instead.
+        // `assumed` RIDES ON THE SLOT VALUE, not beside it, so it cannot outlive the value it describes:
+        // every spoken write builds a fresh { value, unit } without it, and clearRecord() nulls it with the
+        // record. saveRecord turns it into metadata.assumed_units, the only way the server can tell this
+        // unit from a spoken one. A per-record flag would need clearing at every write site.
         fillSlot(built.kind, { value: built.value, unit: built.unit, assumed: true, ...(built.implausible ? { implausible: true } : {}) })
         assumedApplied = built
         recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `assumed-unit ${built.value} ${built.unit} (held number resolved)`)
         return
       }
-      // Honest losses rather than guesses, each an R3 permanent row: default_unit is outside
-      // HARVEST_UNITS (it is a crop_types value and may be), or there is no empty slot left for it —
-      // either because both were filled before, or because the resolving utterance takes the last one.
+      // Honest losses rather than guesses, each a permanent miss row: default_unit is outside
+      // HARVEST_UNITS (it is a crop_types value and may be), or no empty slot is left (both were filled, or
+      // the resolving utterance takes the last one).
       dropped = value
       const takenNow = takenBy && (qtyRef.current == null || weightRef.current == null)
       recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `held-dropped ${value} (${unit && !built ? 'no usable default unit' : takenNow ? `slot taken by ${takenBy}` : 'no empty slot'})`)
@@ -1487,82 +1275,67 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       if (joined) result = { ...joined, joined: true }
     } else if (partial?.kind === 'number' && selectedRef.current
                && !namesAPlantingExactly(plantingsRef.current, result.transcript)) {
-      // GATED ON A PLANTING BEING SELECTED, which is what makes suppressing the search safe: before
-      // a plant is chosen a bare number can legitimately be a search term, and after one is chosen
-      // it can only be an amount.
+      // Gated on a planting being selected, which is what makes suppressing the search safe: before a
+      // plant is chosen a bare number can legitimately be a search term; after one is chosen it can only
+      // be an amount.
       //
-      // AND GATED OFF A NUMBER THAT IS A WHOLE PLANTING NAME (case C). That utterance is not an
-      // amount, it is the crop, so it falls through to the ordinary search branch rather than being
-      // handled here — no second copy of the selection, the announcement, or the teach bookkeeping.
-      // The bound is whole-key equality on a digit literal, which by construction cannot readmit the
-      // substring reselection this gate exists to stop; see namesAPlantingExactly.
-      // V5-VOICEVOCAB-001 — ASSUME THE UNIT INSTEAD OF ASKING FOR IT (Dave directive 2026-09-13,
-      // reaffirmed 09-14 after review). This branch used to hold the number and reply "now say the
-      // unit: count, or grams", which is precisely the two words he wants to stop saying: every
-      // spoken amount cost a second utterance, and if the next utterance was anything else the held
-      // number was DROPPED. Now the slot decides the unit and he corrects it if it is wrong — his
-      // stated tolerance, verbatim: "I can correct it later if it is wrong."
+      // And gated off a number that is a whole planting name. That utterance is the crop, so it falls
+      // through to the ordinary search branch (no second copy of the selection, announcement or teach
+      // bookkeeping). The bound is whole-key equality on a digit literal, which cannot readmit the
+      // substring reselection this gate stops; see namesAPlantingExactly.
       //
-      // WHY THIS IS NOT THE PREFILL DEFECT THIS PAGE ALREADY REMOVED (see the note further down at
-      // the single-hit branch). That bug invented a VALUE — `{ value: 1, unit: default_unit }` — so a
-      // record looked complete from its weight alone and saved a count Dave never said. Here the
-      // NUMBER IS ALWAYS SPOKEN; only its unit is inferred, and the inference is announced. A wrong
-      // unit is visible in the ledger and correctable before "next"; a fabricated value was neither.
+      // The unit is ASSUMED, not asked for: asking ("now say the unit: count, or grams") cost a second
+      // utterance, and a number followed by anything else was dropped. The slot decides the unit and the
+      // inference is announced. His stated tolerance: "I can correct it later if it is
+      // wrong."
       //
-      // SLOT ORDER IS THE INFERENCE — see placeHeld above, the one place it is decided.
+      // This is not the prefill defect removed further down at the single-hit branch, which invented a
+      // VALUE ({ value: 1, unit: default_unit }) so a record looked complete and saved a count never said.
+      // Here the NUMBER IS ALWAYS SPOKEN; only its unit is inferred, and announced. A wrong unit is
+      // visible in the ledger and correctable before "next".
       //
-      // THE HOLD STAYS. The first cut of this change applied the assumed unit IMMEDIATELY, and the
-      // existing suite caught why that is wrong: Chrome splits "231 grams" into "231" then "grams"
-      // routinely — it is the dominant shape in the 2026-09-13 device trace, where every weight
-      // arrived as "85" then "85 G". Assuming on arrival consumed the number into the COUNT slot
-      // before its unit could land, turning "231 grams" into 231 count. A silently wrong value is
-      // the one outcome this page may not produce, so the number is still HELD; what changed is that
-      // holding no longer DEMANDS a unit and no longer ends in the number being thrown away.
+      // Slot order is the inference; placeHeld is the one place it is decided.
       //
-      // A held number is now resolved by whatever comes next:
-      //   unit            -> rejoin, exactly as before
+      // THE HOLD STAYS. Applying the assumed unit immediately was tried and is wrong: Chrome routinely
+      // splits "231 grams" into "231" then "grams" (every weight in one device trace arrived as "85" then
+      // "85 G"), so assuming on arrival put the number in the COUNT slot before its unit landed and turned
+      // "231 grams" into 231 count. Holding no longer DEMANDS a unit and no longer ends in the number being
+      // thrown away.
+      //
+      // A held number is resolved by whatever comes next:
+      //   unit            -> rejoin
       //   another number  -> the held one takes the next empty slot (placeHeld); the new one is held
       //   the same number -> one number heard twice, not two amounts; it stays held
       //   restated value  -> the same number with its unit; the hold is released, nothing is assumed
       //   a search        -> dropped, and said: the crop is changing
       //   anything else   -> the next empty slot with an assumed unit (placeHeld)
-      // so Dave never says "count" or "grams", and no utterance loses a number he spoke without
-      // saying so.
       //
-      // BUG-VOICETWOBARENUM-001 — A SECOND BARE NUMBER IS THE NEXT AMOUNT, NOT A CORRECTION. Until this
-      // fix the branch simply re-held, on ae83521's reading (2026-08-31) that "three" then "fifteen"
-      // means he corrected himself. That was right when it was written: a bare number could not become
-      // an amount without its unit — it waited for one or was dropped — so two of them could never be
-      // a count and a weight. Dave's directive made them exactly that (V5-VOICEVOCAB-001, 2026-09-13:
-      // "assume the unit and assume grams, so 'planting 2 165' replaces 'planting 2 count 165
-      // grams'"), and re-holding saved that very phrase as 165 count with no weight. A correction is
-      // still one utterance away: said WITH its unit ("fifteen count", or "fifteen" then "count") it
-      // replaces the slot through the ordinary branches.
+      // A second bare number is the next amount, not a correction. Re-holding it saved "planting 2 165" as
+      // 165 count with no weight, because a bare number can now become an amount without its unit, so two
+      // of them can be a count and a weight. A correction is still one utterance away: said WITH its unit
+      // ("fifteen count", or "fifteen" then "count") it replaces the slot through the ordinary branches.
       //
-      // THE SAME NUMBER AGAIN IS ONE NUMBER, by BUG-VOICEHELDREPEAT-001's equality rule. Chrome
-      // re-delivers finals (BUG-VOICEDUPE-001..005; one measured 274 ms after its twin, against a
-      // 16-133 ms re-arm), and the debouncer's only cross-session defence is the WRITE cooldown, so a
-      // duplicate "85" arrives here as a second utterance. Pairing it would save 85 count AND 85 g
-      // from one spoken number. What this reads wrongly is a real count and weight that share a
-      // number: the weight stays empty and the save says "no weight was said".
+      // The same number again is one number (equality rule). Chrome re-delivers finals (one measured
+      // 274 ms after its twin, against a 16-133 ms re-arm) and the debouncer's only cross-session defence
+      // is the write cooldown, so a duplicate "85" arrives as a second utterance; pairing it would save 85
+      // count AND 85 g from one spoken number. What this reads wrongly is a real count and weight that
+      // share a number: the weight stays empty and the save says "no weight was said".
       const repeat = partial.value === heldNumRef.current
       if (heldNumRef.current != null && !repeat) placeHeld(heldNumRef.current)
       heldNumRef.current = partial.value; setHeldNum(partial.value)
       // No slot left for this one (both filled, spoken or assumed): it will be dropped at the next
-      // utterance unless a unit comes with it, and that is said NOW, on the banner and the hand,
-      // while he can still act on it — not only in the miss row after the fact.
+      // utterance unless a unit comes with it, and that is said NOW, on the banner and the hand, while he
+      // can still act on it.
       const full = qtyRef.current != null && weightRef.current != null
-      // QA F6 — where the held number WILL land if nothing changes it, and whether that looks high.
-      // Said now, while the unit can still be given or the number said again: when the next utterance
-      // is "next", the value is placed and saved in the same breath, and a warning at the save alone
-      // would come too late to act on.
+      // Where the held number WILL land if nothing changes it, and whether that looks high. Said now, while
+      // the unit can still be given: when the next utterance is "next" the value is placed and saved in the
+      // same breath, and a warning at the save alone would come too late.
       const landing = full ? null : buildValue(partial.value, qtyRef.current == null
         ? (selectedRef.current?.variety_ref?.default_unit || 'count') : 'g', '')
       const high = !!landing?.implausible
       cue(full ? hapticDigitRejected : hapticDigitAccepted)
       recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `${repeat ? 'held-repeat' : 'held-number'} ${partial.value} <- ${JSON.stringify(String(result.transcript ?? ''))}`)
-      // No longer an instruction, because obeying it is what he asked to stop doing. It reads as a
-      // progress line: the number landed, and saying a unit is now optional rather than required.
+      // Reads as a progress line: the number landed, and saying a unit is optional rather than required.
       say(full || high || noteWarns() ? 'warn' : 'ok', (full
         ? `${partial.value} — the quantity and weight are both filled. Say it with a unit to replace one, or it will be dropped.`
         : high
@@ -1572,54 +1345,42 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     } else if (heldNumRef.current != null
                && (result.kind === 'quantity' || result.kind === 'weight')
                && result.value === heldNumRef.current) {
-      // BUG-VOICEHELDREPEAT-001 — THE SAME NUMBER WITH ITS UNIT IS THE HELD NUMBER, RESTATED.
+      // The same number with its unit is the held number, RESTATED. Chrome delivers a continuous session
+      // cumulatively: "87" as one final, then "87 G" as the next final of the SAME session. Once the gap
+      // passes the settle window the tick has already committed "87" as held and the debouncer can no
+      // longer supersede it, so the resolution site below read "87 G" as a second amount (87 count by slot
+      // order, then 87 g) and "next" saved a count nobody said. A person answering the banner with "87
+      // grams" reaches the same place across a session boundary, so the rule is not scoped to one session.
       //
-      // Chrome delivers a continuous session cumulatively: "87" as one final, then "87 G" as the next
-      // final of the SAME session. Once the gap passes the settle window the tick has already
-      // committed "87" as held, the debouncer can no longer supersede it, and the resolution site
-      // below read "87 G" as a second amount — 87 count by slot order, then 87 g — and "next" saved a
-      // count nobody said. The device timing is on record (2026-09-16: 551 ms, avoided only because
-      // Chrome heard "grounds"). A person answering the banner above with "87 grams" reaches the same
-      // place across a session boundary, so the rule is not scoped to one session.
-      //
-      // The utterance carries the number itself, so the hold is released and the ordinary
-      // quantity/weight branch applies it as said — no second copy of the announcement or the haptic.
-      // EQUALITY IS THE WHOLE TEST: a different value with a unit is a different amount, and the
-      // resolution site still infers the held number's unit for it. What this reads wrongly is a bare
-      // amount followed by the OTHER axis sharing its number; that slot stays visibly empty, and an
-      // empty quantity refuses at "next".
+      // The utterance carries the number itself, so the hold is released and the ordinary quantity/weight
+      // branch applies it as said (no second copy of the announcement or the haptic). Equality is the whole
+      // test: a different value with a unit is a different amount, and the resolution site still infers the
+      // held number's unit for it. What this reads wrongly is a bare amount followed by the OTHER axis
+      // sharing its number; that slot stays visibly empty, and an empty quantity refuses at "next".
       heldNumRef.current = null; setHeldNum(null)
       recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `held-restated ${result.value} ${result.unit} (held number resolved)`)
     } else if (heldNumRef.current != null) {
-      // V5-VOICEVOCAB-001 — RESOLUTION SITE. Any other utterance ends the pairing, and the held
-      // number is now APPLIED with an assumed unit rather than thrown away.
+      // RESOLUTION SITE. Any other utterance ends the pairing, and the held number is APPLIED with an
+      // assumed unit rather than thrown away. Dropping was safe only while the alternative was asking for
+      // the unit; now the unit is inferred from the slot and the inference is ANNOUNCED. What makes
+      // assuming safe is that nothing is assumed SILENTLY.
       //
-      // WHAT THIS REVERSES, deliberately and on Dave's instruction (2026-09-13, reaffirmed 09-14):
-      // this branch used to drop the number, because "a value with no unit is exactly the shape of a
-      // silent wrong save". That reasoning was sound while the alternative was asking him for the
-      // unit. He has asked to stop saying "count" and "grams", so the trade is now: infer the unit
-      // from the slot, and ANNOUNCE the inference. What made dropping safe was that nothing wrong
-      // could be saved; what makes assuming safe is that nothing is assumed SILENTLY.
-      //
-      // BUG-VOICEFAILSILENT-001 IS SATISFIED MORE STRONGLY THAN BEFORE, not weakened: its whole
-      // complaint was that a number Dave spoke could vanish ("A SILENT FAIL IS A LOST LOG"). On this
-      // path the number no longer vanishes without a word. The `dropped` path survives for the cases
-      // that can still lose it, each said out loud: a search (below), a crop whose default_unit is
-      // not in this grammar's vocabulary, and a record with no empty slot left (both in placeHeld).
+      // The `dropped` path survives for the cases that can still lose a number, each said out loud: a
+      // search (below), a crop whose default_unit is not in this grammar's vocabulary, and a record with no
+      // empty slot left (both in placeHeld).
       const heldVal = heldNumRef.current
       heldNumRef.current = null; setHeldNum(null)
-      // A SEARCH STILL DROPS IT, and that is not an oversight. A search utterance is how the plant
-      // gets changed, and a pending number belongs to the record being abandoned — "Suyo Long,
-      // three, Brentwood" must not carry a 3 onto Brentwood, and applying it to Suyo Long moments
-      // before that record is replaced is the same value in a different grave. So this case keeps
-      // BUG-VOICEFAILSILENT-001's original answer: drop it, and SAY so. Assuming is for the
-      // utterances that leave the record standing — a save command, or something unrecognised.
+      // A search still drops it, deliberately. A search utterance is how the plant gets changed, and a
+      // pending number belongs to the record being abandoned: "Suyo Long, three, Brentwood" must not carry
+      // a 3 onto Brentwood, and applying it to Suyo Long moments before that record is replaced is the same
+      // value in a different grave. So drop it, and SAY so. Assuming is for utterances that leave the
+      // record standing: a save command, or something unrecognised.
       //
-      // V5-VOICEVOCAB-001 (lane D4) — A ONE-BREATH SENTENCE NAMING A DIFFERENT PLANTING IS A CROP
-      // CHANGE TOO. It used to reach placeHeld, which assumed the number onto the OLD record a moment
-      // before the one-breath branch cleared that record: on cb32814 "Suyo Long", "5", "Marketmore
-      // three count 231 grams" announced "(5 count assumed)" for a 5 that no longer existed anywhere.
-      // Every other resolving utterance places the number on a slot IT does not fill (see placeHeld).
+      // A one-breath sentence naming a DIFFERENT planting is a crop change too. Reaching placeHeld would
+      // assume the number onto the OLD record a moment before the one-breath branch cleared it:
+      // "Suyo Long", "5", "Marketmore three count 231 grams" announced "(5 count assumed)" for a 5 that no
+      // longer existed anywhere. Every other resolving utterance places the number on a slot IT does not
+      // fill (see placeHeld).
       const changesCrop = result.kind === 'search'
         || (oneBreath != null && selectedRef.current?.id !== oneBreath.planting.id)
       if (changesCrop) {
@@ -1638,21 +1399,18 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     const dropNote = dropNoteNow()
     const assumedNote = assumedNoteNow()
 
-    // ── V5-VOICEONEBREATH-001: the whole record in one sentence ──────────────────────────────────
+    // ── The whole record in one sentence ───────────────────────────────────────────────────────────
     //
-    // "Big Boy, two count, fifteen grams" — which is how Dave actually speaks, against a flow that
-    // was specified as three separate utterances. HOOKED ONLY ON `unparsed`, which is what makes it
-    // additive in the strictest sense available: an utterance reaching here already produced nothing
-    // but "Didn't catch that", so there is no behaviour to regress. classify() answers first and
-    // always; this only picks up what it declined.
+    // "Big Boy, two count, fifteen grams", which is how he actually speaks. Hooked ONLY on `unparsed`, so
+    // it is additive in the strictest sense: such an utterance can only have produced "Didn't
+    // catch that". classify() answers first and always; this only picks up what it declined.
     if (result.kind === 'unparsed') {
       const one = oneBreath
       if (one) {
-        // A DIFFERENT planting means a NEW record, so the old one is cleared rather than merged.
-        // Merging would let a weight spoken for the previous crop survive onto this one — the
-        // record would look complete and be wrong, which is the failure mode this page is built
-        // around. The same planting is a correction and keeps whatever axis was not restated.
-        // BUG-VOICECROPSWITCHKEEPSAMOUNTS-001 — and what was said for the old crop is named on the way out.
+        // A DIFFERENT planting means a NEW record, so the old one is cleared rather than merged. Merging
+        // would let a weight spoken for the previous crop survive onto this one: the record would look
+        // complete and be wrong. The same planting is a correction and keeps whatever axis was not
+        // restated. What was said for the old crop is named on the way out.
         let switched = null
         if (selectedRef.current?.id !== one.planting.id) { switched = clearForSwitch(one.planting); clearRecord() }
         heldNumRef.current = null; setHeldNum(null)
@@ -1665,25 +1423,21 @@ export default function VoiceHarvest({ embedded = false } = {}) {
         const implausible = one.values.some((v) => v.implausible)
         cue(hapticDigitAccepted)
         recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `one-breath ${label} ${said} <- ${JSON.stringify(String(result.transcript ?? ''))}`)
-        // Read back in full, for the same reason a fuzzy rescue is: the app chose a split point the
-        // words did not settle, so Dave sees the reading it picked before "next" commits it.
+        // Read back in full, for the same reason a fuzzy rescue is: the app chose a split point the words
+        // did not settle, so he sees the reading it picked before "next" commits it.
         say(implausible || noteWarns() || switched ? 'warn' : 'ok', `${label} — ${said}${implausible ? ' — that looks high. Say it again to correct it.' : ''}${switched ? ` (${switched})` : ''}${dropNote}${assumedNote}`)
         return
       }
 
-      // BOTH AMOUNTS, NO NAME — "three count, two thirty one grams". segmentCandidates() refuses a
-      // nameless run by design, so this shape had no reader at all and lost BOTH values. It is Dave's
-      // common case rather than an edge one: he says the crop, pauses, then says the numbers together,
-      // and Chrome ends the session at that pause.
+      // Both amounts, no name: "three count, two thirty one grams". segmentCandidates() refuses a nameless
+      // run by design, so this shape had no reader and lost BOTH values. It is a common case: he says the
+      // crop, pauses, then says the numbers together, and Chrome ends the session at that pause.
       //
-      // NOT GATED ON A PLANTING BEING SELECTED (BUG-VOICEVALPAIRNOSEL-001). It was, on the rule that a
-      // bare number before a plant is chosen may be a search. That rule belongs to the hold above and
-      // cannot reach here: parseValueSequence accepts only two or more groups that each END IN A UNIT
-      // WORD, and this branch runs only on an utterance classify() already refused as `unparsed`, so
-      // no search is suppressed. "Nothing to attach the values to" was already untrue of the
-      // single-value branches below, which apply "four count" with nothing selected. The gate made the
-      // pair the one amount that could not be said before the crop: device trace 2026-09-16 +27268,
-      // "4 count 4 G" came back "Didn't catch that" and the weight had to be said again. saveRecord
+      // Not gated on a planting being selected. The rule that a bare number before a plant is chosen may be
+      // a search belongs to the hold above and cannot reach here: parseValueSequence accepts only two or
+      // more groups that each END IN A UNIT WORD, and this branch runs only on an utterance classify()
+      // already refused as `unparsed`, so no search is suppressed. Gating it made the pair the one amount
+      // that could not be said before the crop ("4 count 4 G" came back "Didn't catch that"). saveRecord
       // still refuses without a crop, so an early pair waits for one exactly as a single amount does.
       const seq = valueSeq
       if (seq && seq.length) {
@@ -1699,44 +1453,37 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       }
     }
 
-    // The RAW event stream alone cannot answer BUG-VOICECOUNTSPLIT-001: two runs can deliver the
-    // same words and diverge on what the app made of them. This is the other half of the pair — one
-    // line per SETTLED utterance saying which branch it took, so "three counts -> quantity 3 count"
-    // and "three -> search" are distinguishable in the log without re-deriving the grammar by hand.
+    // One line per SETTLED utterance saying which branch it took, so "three counts -> quantity 3 count"
+    // and "three -> search" are distinguishable in the log. The raw event stream alone cannot tell: two
+    // runs can deliver the same words and diverge on what the app made of them.
     recordVoiceMark(VOICE_DEBUG_SRC, 'decision', describeResult(result))
 
     if (result.kind === 'search') {
-      // `rescued` is the alias a FUZZY match landed on, or null when the strict matcher answered.
-      // It exists to be said out loud: a rescue that stays silent is a guess wearing the costume of a
-      // clean match, and this flow's rule is that every outcome is announced. Dave hears which words
-      // were swapped, so a wrong rescue is caught before "next" rather than after the save.
+      // `rescued` is the alias a FUZZY match landed on, or null when the strict matcher answered. It is said
+      // out loud: a rescue that stays silent is a guess wearing the costume of a clean match, so a wrong
+      // rescue is caught before "next" rather than after the save.
       const { hits, rescued } = matchPlantingsWithRescue(
         plantingsRef.current, result.text, aliasRef.current,
       )
-      // What a tap would teach. Recorded for EVERY non-strict outcome — a total miss, an ambiguous
-      // list, and a fuzzy rescue alike — because all three are cases where the user is about to tell
-      // us what they actually meant. Cleared on a strict match: there is nothing to learn from a
-      // phrase that already resolved exactly.
+      // What a tap would teach. Recorded for EVERY non-strict outcome (total miss, ambiguous list, fuzzy
+      // rescue), all cases where the user is about to tell us what they meant. Cleared on a strict match:
+      // there is nothing to learn from a phrase that already resolved exactly.
       unmatchedRef.current = rescued === null && hits.length === 1 ? null : result.text
       if (hits.length === 0) {
         cue(hapticDigitRejected)
-        // A FAILED RE-SELECTION MUST NOT LEAVE THE OLD CROP SELECTED (BUG-VOICEFAILSILENT-001).
-        // Measured sequence: "Suyo Long" selects, "Marketmore" is misheard and matches nothing, the
-        // banner says so — and then "three count" and "next" each overwrite that one message, and
-        // the row lands against Suyo Long announced as a clean success. The failure was told once
-        // and buried twice. This is the SAME harm as the bare-number reselect this release fixes,
-        // reached by another route: a save against a plant the user never confirmed.
+        // A failed re-selection must not leave the old crop selected. "Suyo Long" selects, "Marketmore" is
+        // misheard and matches nothing, the banner says so, then "three count" and "next" each overwrite
+        // that one message and the row lands against Suyo Long announced as a clean success: a save against
+        // a plant the user never confirmed.
         //
-        // Clearing the SELECTION only, not the record. The count and weight stay, so re-saying the
-        // name is one utterance and nothing already spoken is lost; and until a name lands, the
-        // existing "still need a crop" refusal in saveRecord makes `next` fail loudly instead of
-        // committing. Chosen over marking it stale or blocking the save because it needs no new
-        // state to drift and it reuses a refusal that is already tested.
+        // Clears the SELECTION only, not the record. The count and weight stay, so re-saying the name is
+        // one utterance, and until a name lands saveRecord's "still need a crop" refusal makes `next` fail
+        // loudly. Chosen over marking it stale or blocking the save because it needs no new state to drift
+        // and it reuses a refusal that is already tested.
         setSelected(null); selectedRef.current = null
         aliasUseRef.current = null
-        // The phrase survives into the candidate-less state so the manual picker below can still
-        // teach it. Without this, a total miss — the case most worth learning from — is the one case
-        // that cannot be taught.
+        // The phrase survives into the candidate-less state so the manual picker below can still teach it;
+        // otherwise a total miss, the case most worth learning from, could not be taught.
         setCandidates([])
         setUnmatched(result.text)
         say('fail', `Nothing matched “${result.text}”. Say it again, or pick it below to teach me.${dropNote}${assumedNote}`)
@@ -1745,63 +1492,47 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       }
       setUnmatched(null)
       if (hits.length === 1) {
-        // BUG-VOICEFAILSILENT-001 — A GUESS MUST NOT FEEL LIKE A MATCH. This branch auto-selects on a
-        // single hit whether the strict matcher answered or the fuzzy/learned/folded rescue scored
-        // its way there. The banner already says which ("Heard X — matched Y"); the hand could not
-        // tell, so a rescue onto the WRONG plant delivered the success cue and the next "next" wrote
-        // a harvest against it. `rescued` is exactly the flag that distinguishes them, and it was
-        // already being computed for the banner — the cue just was not reading it.
+        // A guess must not feel like a match. This branch auto-selects on a single hit whether the strict
+        // matcher answered or the fuzzy/learned/folded rescue scored its way there. The banner says which,
+        // but the hand could not tell, so a rescue onto the WRONG plant delivered the success cue.
+        // `rescued` is the flag that distinguishes them.
         if (rescued !== null) cue(hapticMatchUncertain)
         else cue(hapticDigitAccepted)
         const switched = clearForSwitch(hits[0])
         setSelected(hits[0]); selectedRef.current = hits[0]
         noteAliasUse(result.text, hits[0])
         setCandidates([])
-        // NO DEFAULT QUANTITY IS SEEDED HERE, and that is a correction rather than an omission.
-        // This branch briefly pre-filled `{ value: 1, unit: variety_ref.default_unit }` so a weighed
-        // crop would be "complete" from the weight alone. Caught in the browser harness, not in a
-        // test: it made the record LOOK complete, so saying "Suyo Long" then "next" — with no count
-        // ever spoken — saved a harvest of 1 count that Dave never said, and announced it as a
-        // success. That is exactly the silent wrong save this whole flow exists to make impossible.
-        //
-        // It also bought nothing. The grammar only parses a quantity from a number carrying a
-        // trailing unit ("three count"), so a bare "three" returns `unparsed` either way — the
-        // default unit had no utterance it could rescue. A quantity now exists only if it was said.
+        // NO DEFAULT QUANTITY IS SEEDED HERE. Pre-filling `{ value: 1, unit: variety_ref.default_unit }`
+        // made the record LOOK complete, so "Suyo Long" then "next", with no count ever spoken, saved a
+        // harvest of 1 count and announced success: the silent wrong save this flow exists to prevent. It
+        // also bought nothing, because the grammar parses a quantity only from a number carrying a trailing
+        // unit, so a bare "three" is `unparsed` either way. A quantity exists only if it was said.
         const chosen = hits[0].name || hits[0].variety_ref?.name
         say(noteWarns() || switched ? 'warn' : 'ok', (rescued
-          // The heard text is quoted back verbatim so the swap is legible at a glance. Without the
-          // "heard X" half, a rescue of the WRONG planting reads exactly like a correct match.
+          // The heard text is quoted back verbatim so the swap is legible at a glance; without it a rescue
+          // of the WRONG planting reads like a correct match.
           ? `Heard “${result.text}” — matched ${chosen}${switched ? `, ${switched}` : ''}. Say the count, or say it again to change it.`
           : `${chosen} — ${switched ? `${switched}. Now say` : 'now say'} the count or the weight.`) + dropNote + assumedNote)
         return
       }
       cue(hapticDigitRejected)
-      // AMBIGUOUS IS ALSO UNCONFIRMED, so the previous crop goes here too. A list on screen is a
-      // question, not an answer — until one is tapped the user has chosen nothing, and leaving the
-      // old plant selected behind the list is the same silent-wrong-save route as the miss above.
+      // AMBIGUOUS IS ALSO UNCONFIRMED, so the previous crop goes here too. A list on screen is a question,
+      // not an answer, and leaving the old plant selected behind it is the same silent-wrong-save route as
+      // the miss above.
       setSelected(null); selectedRef.current = null
       aliasUseRef.current = null
-      // THE WHOLE HIT LIST, not the eight that fit. The render caps the buttons; holding the full
-      // list here is what lets the card say how many it is hiding, and a cap the user can see is a
-      // different thing from a truncation they cannot. A crop-type utterance reaches 46 live tomato
-      // plantings and 38 of them used to leave no trace on screen at all.
+      // THE WHOLE HIT LIST, not the eight that fit. The render caps the buttons; holding the full list lets
+      // the card say how many it is hiding (a crop-type utterance reaches 46 live tomato plantings), so a
+      // cap the user can see is not a truncation they cannot.
       setCandidates(hits)
       say('warn', `${hits.length} match “${result.text}” — say more of the name, or tap one.${dropNote}${assumedNote}`)
       return
     }
 
-    // A JOINED VALUE IS ANNOUNCED AS ONE, for the same reason a fuzzy rescue is: the app assembled
-    // it from two utterances rather than hearing it, and a rejoin that stays silent is a guess
-    // wearing the costume of a clean parse. Dave sees "3 count (heard in two parts)" and can correct
-    // it before "next" instead of after the save.
+    // A joined value is announced as one, like a fuzzy rescue: the app assembled it from two utterances
+    // rather than hearing it, and a silent rejoin is a guess wearing the costume of a clean parse. He sees
+    // "3 count (heard in two parts)" and can correct it before "next".
     const joinNote = result.joined ? ' (heard in two parts)' : ''
-
-    // V5-VOICEVOCAB-001 — AN ASSUMED UNIT IS ANNOUNCED AS ASSUMED, by the same rule as joinNote and
-    // the fuzzy rescue: Dave spoke the number but not the unit, so the unit is the app's inference
-    // and an inference that stays silent is a guess wearing the costume of a clean parse. He hears
-    // "3 count (unit assumed)" and can correct it before "next" instead of after the save. This is
-    // the ONE thing standing between "assume the unit" and the fabricated-value class this page has
-    // already been bitten by once — do not remove it to shorten the readback.
 
     if (result.kind === 'quantity') {
       cue(hapticDigitAccepted)
@@ -1840,51 +1571,48 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       }
     }
 
-    // unparsed — INCLUDING a near-miss of a command word. The grammar routes "text" (a measured 1-in-9
-    // mishear of "next") here rather than to search, precisely so it cannot perform a different
-    // action that looks like it worked. Costs one repeated word; says so out loud.
+    // unparsed, INCLUDING a near-miss of a command word. The grammar routes "text" (a measured 1-in-9
+    // mishear of "next") here rather than to search, so it cannot perform a different action that looks
+    // like it worked. Costs one repeated word; says so out loud.
     //
-    // `ambiguous-number` (BUG-VOICENUMSUM-001) needs its OWN sentence, not the generic one. It fires
-    // when the utterance carried more than one number — the shape you get saying a planting NAMED
-    // after a number together with the amount ("1884 two count"). A bare "Didn't catch that" is a
-    // dead end there: the recogniser heard him perfectly, so he repeats it more clearly, gets the
-    // same refusal, and has no way to discover that the name is being read as part of the count.
+    // `ambiguous-number` needs its OWN sentence: it fires when the utterance carried more than one number,
+    // the shape of a planting NAMED after a number said with its amount ("1884 two count"). A bare "Didn't
+    // catch that" is a dead end there: the recogniser heard him perfectly, so he repeats it, gets the same
+    // refusal, and cannot discover the name is being read as part of the count.
     cue(hapticDigitRejected)
     const hint = result.reason === 'near-command' ? ' — say "next" again'
       : result.reason === 'ambiguous-number' ? ' — say the planting, then the amount separately'
       : ''
     say('warn', `Didn't catch that${hint}.${dropNote}${assumedNote}`)
-    // THE HEARD TEXT GOES IN THE ROW, not just the refusal. Recovery from a mishear means knowing
-    // WHAT it heard — "Didn't catch that ← "text"" is actionable minutes later; "Didn't catch that"
-    // alone asks him to remember which of forty utterances it was.
+    // The heard text goes in the row, not just the refusal: recovering from a mishear means knowing WHAT
+    // it heard, and "Didn't catch that" alone asks him to remember which of forty utterances it was.
     noteMiss(`Didn't catch that — heard “${String(result.transcript ?? '')}”.`)
   }, [clearForSwitch, clearRecord, cue, fillSlot, noteAliasUse, noteMiss, saveRecord, say])
-  // Lane V3 F8 — for the "next" a save queues behind a POST (saveRecord is declared first, so it reaches this by ref).
+  // For the "next" a save queues behind a POST (saveRecord is declared first, so it reaches this by ref).
   applyOneUtteranceRef.current = applyOneUtterance
 
-  // ── V5-VOICEVOCAB-001 (lane D4): apply a one-breath record said without its units ───────────────
+  // ── Apply a one-breath record said without its units ───────────────────────────────────────────
   //
-  // THE PARTS GO THROUGH THE ORDINARY PATH, in the order spoken, so "Suyo Long 2 165 next" does
-  // exactly what "Suyo Long", "2", "165", "next" does: BUG-VOICETWOBARENUM-001's pairing, the hold
-  // that lets a unit in the next final still rejoin, the equality rule, the axis rule and every
-  // announcement are reused, not copied. Only the NAME is applied here, because it was resolved under
-  // stricter rules than a search (resolveBareOneBreath) and must not be re-resolved by the looser ones.
+  // The parts go through the ordinary path, in the order spoken, so "Suyo Long 2 165 next" does exactly
+  // what "Suyo Long", "2", "165", "next" does: the bare-number pairing, the hold that lets a unit in the
+  // next final still rejoin, the equality rule, the axis rule and every announcement are reused, not
+  // copied. Only the NAME is applied here, because it was resolved under stricter rules than a search
+  // (resolveBareOneBreath) and must not be re-resolved by the looser ones.
   //   * a DIFFERENT planting starts a new record, and a held number from the old one is dropped, said;
-  //   * BOTH amounts — for the same planting, or with no name at all — restate the record: nothing is
-  //     lost that the sentence does not say again. With one amount it continues the record, as a bare
-  //     number would.
-  // QA F1 — THE NAMELESS PAIR RESTATES TOO, so applying it twice is applying it once. Chrome delivers the
-  // same pair twice in two measured shapes: a growing phrase whose partial a tick commits ("2 165", then
-  // "2 165 next" in one session) and a re-delivered final 274 ms later (BUG-VOICEDUPE). Continuing the
-  // record the second time found both slots already filled and wrote two FALSE "Dropped …" rows —
-  // "1 saved · 2 not captured" for a record saved exactly right. The named form restated already.
-  // Review MINOR-6 — A RESTATEMENT NEVER ERASES A SPOKEN AMOUNT SILENTLY. placeHeld's rule is that an
-  // assumption never overwrites a filled slot, and the restatement gets round it by clearing the slots
-  // first: "Suyo Long", "3 count", "2 165", "next" saved 2 count · 165 g with no word about the 3 count he
-  // had SAID. It still restates (a second "2 165" must stay a no-op, QA F1), but every spoken slot it
-  // replaces with an assumed value — or with nothing — gets a miss row and a banner note. A slot the
-  // sentence says again WITH its unit is a correction, as it is on the ordinary path, and an unchanged
-  // amount is not a replacement.
+  //   * BOTH amounts, for the same planting or with no name at all, restate the record: nothing is lost
+  //     that the sentence does not say again. With one amount it continues the record, as a bare number
+  //     would.
+  // The nameless pair restates too, so applying it twice is applying it once. Chrome delivers the same
+  // pair twice in two shapes: a growing phrase whose partial a tick commits ("2 165", then "2 165 next"
+  // in one session) and a re-delivered final 274 ms later. Continuing the record the second time found
+  // both slots filled and wrote two FALSE "Dropped …" rows ("1 saved · 2 not captured" for a record
+  // saved exactly right).
+  // A restatement never erases a spoken amount silently. placeHeld never overwrites a filled slot and the
+  // restatement gets round it by clearing the slots first: "Suyo Long", "3 count", "2 165", "next" saved
+  // 2 count · 165 g with no word about the 3 count he had SAID. It still restates (a second "2 165" must
+  // stay a no-op), but every spoken slot it replaces with an assumed value, or with nothing, gets a miss
+  // row and a banner note. A slot the sentence says again WITH its unit is a correction, as on the
+  // ordinary path, and an unchanged amount is not a replacement.
   const applyBareOneBreath = useCallback((d, heard, meta) => {
     const planting = d.planting
     const label = planting ? (planting.name || planting.variety_ref?.name) : null
@@ -1928,7 +1656,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
         row: `${now ? `Replaced ${was.value} ${was.unit} with ${now.value} ${now.unit} (assumed)` : `Cleared ${was.value} ${was.unit}`} — the amounts were said again without units.`,
         mark: `restated ${was.value} ${was.unit}${now ? ` -> ${now.value} ${now.unit}` : ''}`,
       }
-      // BUG-VOICESLOWSAVEFALSEROWS-001 — a value a POST is still sending was not erased: it is on its way.
+      // A value a POST is still sending was not erased: it is on its way.
       if (holdBackSending([was], () => words).length) continue
       noteMiss(words.row)
       droppedNote += ` (${words.note})`
@@ -1944,18 +1672,17 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     // would. Empty transcript: a trailing command is never a planting name (resolveCommandCollision
     // guards a WHOLE-utterance command only, as the unit-bearing trailing split already assumes).
     if (d.command) { applyOneUtterance({ kind: 'command', command: d.command, transcript: '' }, meta); return }
-    // No command: read the planting back in front of what the last part said, the way every other
-    // one-breath reading is read back — the app chose the split, so Dave sees which one before "next".
+    // No command: read the planting back in front of what the last part said, as every other one-breath
+    // reading is. The app chose the split, so he sees which one before "next".
     if (label || droppedNote) {
       const last = statusRef.current
       say(droppedNote ? 'warn' : (last?.tone ?? 'ok'), `${label ? `${label} — ` : ''}${last?.text ?? ''}${droppedNote}`)
     }
   }, [applyOneUtterance, clearForSwitch, clearRecord, cue, holdBackSending, noteAliasUse, noteMiss, say])
 
-  // QA F2 — the one-breath sentence whose ONE amount may be two numbers run together ("Suyo Long 2165
-  // next"). The name was read cleanly, so it is applied exactly as the one-breath would apply it (a
-  // different planting starts a new record); only the amount is refused — reject haptic, banner, miss
-  // row — and nothing is written.
+  // The one-breath sentence whose ONE amount may be two numbers run together ("Suyo Long 2165 next"). The
+  // name was read cleanly, so it is applied as the one-breath would apply it (a different planting starts
+  // a new record); only the amount is refused (reject haptic, banner, miss row) and nothing is written.
   const refuseMergedAmount = useCallback((d, heard) => {
     const n = d.groups[0].value
     let switched = null
@@ -1975,17 +1702,15 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     noteMiss(`Not kept — heard “${heard}”: ${n} may be two numbers run together.`)
   }, [clearForSwitch, clearRecord, cue, noteAliasUse, noteMiss, say])
 
-  // A one-breath sentence whose split is not unique, or whose name is too vague, or whose numbers
-  // cannot be read: refused LOUDLY — reject haptic, a banner saying why, a miss row quoting what was
-  // heard. A refused sentence of numbers only changes nothing.
+  // A one-breath sentence whose split is not unique, whose name is too vague, or whose numbers cannot be
+  // read is refused LOUDLY: reject haptic, a banner saying why, a miss row quoting what was heard. A
+  // refused sentence of numbers only changes nothing.
   //
-  // QA F10 — ONE THAT NAMED A PLANTING CLEARS THE WHOLE RECORD, AND SAYS WHAT WENT. It already unselected
-  // the old crop (as a failed search does) but KEPT the amounts, so "Suyo Long", "3 count", "danvers 126
-  // 200" (refused), "danvers 126", "next" saved Danvers 126 Carrot · 3 count — a count said for Suyo
-  // Long, under a crop he named afterwards, with the reselect banner saying only "now say the count or
-  // the weight" (QA probe P7). Of the two ways to close that — keep the amounts and name them at the
-  // reselect, or clear them — clearing is the one that CANNOT save them under a different crop at all.
-  // What is cleared is said on the banner and in a miss row, so nothing he spoke vanishes unannounced.
+  // One that named a planting clears the WHOLE record and says what went. Unselecting the old crop but
+  // KEEPING the amounts is the trap, so "Suyo Long", "3 count", "danvers 126 200" (refused), "danvers 126", "next"
+  // saved Danvers 126 Carrot · 3 count: a count said for Suyo Long under a crop named afterwards. Clearing
+  // is the option that cannot save them under a different crop at all, and what is cleared is said on the
+  // banner and in a miss row.
   const refuseBareOneBreath = useCallback((d, info, heard) => {
     cue(hapticDigitRejected)
     let droppedNote = ''
@@ -1999,8 +1724,8 @@ export default function VoiceHarvest({ embedded = false } = {}) {
           mark: `restart-cleared ${amounts}`,
         }
       }
-      // BUG-VOICESLOWSAVEFALSEROWS-001 — values a POST is still sending leave with the record but were not lost:
-      // their row waits for that POST (holdBackSending), and only the rest is said now.
+      // Values a POST is still sending leave with the record but were not lost: their row waits for that
+      // POST (holdBackSending), and only the rest is said now.
       const values = [qtyRef.current, weightRef.current].filter(Boolean)
       const sending = holdBackSending(values, restarted)
       const unsent = values.filter((v) => !sending.includes(v))
@@ -2025,28 +1750,26 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     }
     const why = d.reason === 'run' ? 'two numbers ran together — say them with a pause, or with their units'
       : d.reason === 'numbers' ? 'more amounts than one record holds — say the count and the weight again'
-      // BUG-VOICEALIASFAILSOFT-001 — his taught names did not load, so a name and a number cannot be
-      // told apart; the planting's own name still works, and so does saying the parts separately.
+      // the taught names did not load, so a name and a number cannot be told apart; the planting's own
+      // name still works, and so does saying the parts separately.
       : d.reason === 'names' ? 'the names you taught me have not loaded, so I cannot tell a name from an amount — say the planting, then the amounts'
       : 'the name and the numbers could be split more than one way — say the planting, then the amounts'
     say('warn', `Didn't catch that — ${why}.${droppedNote}`)
     noteMiss(`Didn't catch that — heard “${heard}”.`)
   }, [clearRecord, cue, holdBackSending, noteMiss, say])
 
-  // ── V5-VOICEONEBREATH-002: a trailing command rides on the record it follows ────────────────────
+  // ── A trailing command rides on the record it follows ───────────────────────────────────────────
   //
-  // "cucumber, three count, two thirty one grams, next" in ONE breath, which is how Dave asked for
-  // it and how he already speaks. Before this, appending "next" did not merely fail to save — it
-  // flipped classify() from `unparsed` to `search`, which skipped the one-breath reader entirely and
-  // ran a planting search for the whole literal sentence. The count and the weight were discarded in
-  // silence. That is the real answer to "next is often not heard at all": in that shape it was never
-  // a recogniser miss, so repeating it more clearly could never help.
+  // "cucumber, three count, two thirty one grams, next" in ONE breath. Appending "next" flips
+  // classify() from `unparsed` to `search`, which skips the one-breath reader and searched for the whole
+  // literal sentence, discarding the count and weight in silence. That, not a recogniser miss, is why
+  // "next" seemed often not heard.
   //
-  // The split is refused unless the head is ALREADY a record on its own terms, so "cucumber next"
-  // and "next to the fence" still cannot conjure a save — see splitTrailingCommand for the gate.
-  // A trailing MISHEARD command ("231 grams text") applies the record and refuses the save: the
-  // values were spoken clearly and dropping them is the lost-log failure this page exists around,
-  // while committing on a near-miss is the silent-wrong-write it exists around even harder.
+  // The split is refused unless the head is ALREADY a record on its own terms, so "cucumber next" and
+  // "next to the fence" cannot conjure a save (see splitTrailingCommand). A trailing MISHEARD command
+  // ("231 grams text") applies the record and refuses the save: the values were spoken clearly and
+  // dropping them is the lost-log failure, while committing on a near-miss is the silent wrong write.
+
   // Does the UNIT reader — classify()'s value branch, the unit one-breath (resolveOneBreath over
   // segmentCandidates) or the nameless unit pair (parseValueSequence) — read this text as ONE record?
   // The same three readers applyOneUtterance runs, asked in the same order with the same vocabulary,
@@ -2064,32 +1787,31 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     // decide the commit path. So the split reads `transcript`, and the head is re-classified before
     // it goes downstream, because applyOneUtterance's whole contract is "a result object".
     const heard = typeof raw === 'string' ? raw : String(raw?.transcript ?? '')
-    // V5-VOICEVOCAB-001 (lane D4) — a record said without (all of) its units, in one breath. Asked
-    // first: when it answers, the sentence is its; when it does not, nothing below changes.
+    // A record said without (all of) its units, in one breath. Asked first: when it answers the sentence
+    // is its; when it does not, nothing below changes.
     const info = oneBreathReadings(heard)
     const bare = resolveBareOneBreath(plantingsRef.current, info, {
       selected: selectedRef.current, aliasIndex: aliasRef.current, aliasNames: aliasNamesRef.current,
       aliasesKnown: aliasStateRef.current === 'ready',
     })
-    // A one-breath final ending in a save word CLAIMS the debouncer's one-write cooldown when it
-    // commits (splitTrailingCommand marks it `bare`), which is what stops a re-delivered final saving
-    // twice. When it turns out NOT to write — refused here, or declined and read the ordinary way —
-    // the claim is released, or a genuine "next" said straight after would be swallowed as a duplicate
-    // and told "saved once". The debouncer arms the claim only after this handler returns (it arms on
-    // a handler that returned), so the release waits one microtask for it.
+    // A one-breath final ending in a save word CLAIMS the debouncer's one-write cooldown when it commits
+    // (splitTrailingCommand marks it `bare`), which stops a re-delivered final saving twice. When it
+    // turns out NOT to write (refused here, or declined and read the ordinary way) the claim is released,
+    // or a genuine "next" said straight after would be swallowed as a duplicate. The debouncer arms the
+    // claim only after this handler returns, so the release waits one microtask.
     const releaseUnwritten = () => {
       if (info?.command !== 'save_and_advance' && info?.command !== 'save') return
       const token = meta?.atMs
       queueMicrotask(() => debRef.current?.invalidateLastWrite(token))
     }
     if (bare?.kind === 'apply') {
-      // QA F2 — ONE BIG NUMBER WHERE A COUNT GOES MAY BE TWO NUMBERS RUN TOGETHER. Chrome writes
-      // "two, one sixty-five" as "2165" at times; prod refused "Suyo Long 2165 next" (a search that
-      // matched nothing), and this lane's reader SAVED it as 2165 count — under MAX_PLAUSIBLE, so
-      // nothing warned. The narrowest rule that covers it: in a one-breath final, a LONE amount, said
-      // as 4+ digits, with no unit, that would land in the COUNT slot is refused out loud. A 4-digit
-      // number landing in the weight slot is left alone (a count was already said, so it is grams),
-      // and so is one said with its unit or in words. The planting it named is still selected.
+      // One big number where a count goes may be two numbers run together: Chrome writes "two, one
+      // sixty-five" as "2165" at times, and a lone 4+ digit amount with no unit landed in the COUNT slot as
+      // 2165 count, under MAX_PLAUSIBLE so nothing warned. The narrowest rule that covers it: in a
+      // one-breath final, a LONE amount, said as 4+ digits, with no unit, that would land in the count slot
+      // is refused out loud. A 4-digit number landing in the weight slot is left alone (a count was already
+      // said, so it is grams), as is one said with its unit or in words. The planting it named is still
+      // selected.
       const lone = bare.groups.length === 1 ? bare.groups[0] : null
       const intoCount = lone != null && lone.unit == null && /^\d{4,}$/.test(lone.text)
         && ((bare.planting != null && bare.planting.id !== selectedRef.current?.id)
@@ -2099,23 +1821,20 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       return
     }
     const split = splitTrailingCommand(heard)
-    // V5-VOICEVOCAB-001 (lane D4, review BLOCKING-1) — A BARE REFUSAL NEVER PRE-EMPTS THE UNIT READER.
-    // The bare reader sees only splits that leave at least one amount WITHOUT a unit, so for
-    // "cherry rescue 1 3 count" its one reading is "cherry rescue" + 1, 3 count — refused, because 1
-    // is the planting's own number. The unit reader, asked about the same words, finds "cherry rescue
-    // 1" + 3 count, which prod saves. The regression-impact review measured 58 of 200 real-name
-    // sentences like that refused on this lane's build and saved on prod: names ending in their number
-    // with ONE unit amount, word-form names ("danvers one twenty six three count"), and "1884 3 count
-    // 231 grams next" with another crop selected. So a refusal stands only when the unit reader has no
-    // reading of its own; when it has one, the sentence goes the ordinary way, exactly as on prod.
+    // A bare refusal never pre-empts the unit reader. The bare reader sees only splits that leave an
+    // amount WITHOUT a unit, so for "cherry rescue 1 3 count" its one reading is "cherry rescue" + 1,
+    // 3 count, refused because 1 is the planting's own number; the unit reader finds "cherry rescue 1" +
+    // 3 count, which saves. Measured on 200 real-name sentences, 58 were refused where the unit reader
+    // would save them (names ending in their number with one unit amount, word-form names, "1884 3 count
+    // 231 grams next" with another crop selected). So a refusal stands only when the unit reader has no
+    // reading of its own.
     const unitHead = split ? split.head : heard
     const unitReads = unitReaderReads(unitHead)
     if (bare?.kind === 'refuse' && !unitReads) {
       refuseBareOneBreath(bare, info, heard); releaseUnwritten(); return
     }
-    // A `bare` head is only ever the reader's above. Sent down the split path it would be SEARCHED
-    // and the record standing would then be saved — so when the reader declines it, the whole
-    // sentence goes the ordinary way, exactly as it did before bare heads could split.
+    // A `bare` head is only ever the reader's above. Sent down the split path it would be SEARCHED and the
+    // standing record then saved, so when the reader declines, the whole sentence goes the ordinary way.
     if (!split || split.bare) {
       applyOneUtterance(raw, meta)
       if (split?.bare) releaseUnwritten()
@@ -2124,9 +1843,8 @@ export default function VoiceHarvest({ embedded = false } = {}) {
 
     recordVoiceMark(VOICE_DEBUG_SRC, 'decision',
       `trailing-command ${split.command ?? 'near-miss'} <- ${JSON.stringify(heard)}`)
-    // The head runs through the ORDINARY path, so every announcement, haptic, implausibility warning
-    // and debug row is the one that utterance would have produced on its own. A second copy of that
-    // logic here is a second thing to drift.
+    // The head runs through the ORDINARY path, so every announcement, haptic, implausibility warning and
+    // debug row is the one that utterance would have produced alone.
     applyOneUtterance(classify(split.head), { ...(meta ?? {}), fromTrailingSplit: true })
 
     if (split.nearCommand) {
@@ -2136,15 +1854,13 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       return
     }
     if (split.command === 'save_and_advance' || split.command === 'save') {
-      // V5-VOICEVOCAB-001 (lane D4, review IMPORTANT-1) — THE SAVE WORD SAVES ONLY WHAT THE SENTENCE
-      // SET. The head above was just refused ("Didn't catch that"), so the record standing is the one
-      // from BEFORE this sentence — and this path used to save it anyway, announced as a success. With
-      // "Suyo Long", "5 count" standing, "danvers 12 three count 231 grams next" saved Suyo Long · 5 count
-      // under a "Saved Suyo Long" banner, for a sentence that named Danvers; prod does the same for 16
-      // shapes ("tomato 1884 3 count next", "super sweet 100 three count 231 grams next", …). Only the
-      // save is withheld: "clear" and "stop" after a refused head still act, because they write
-      // nothing and a dropped "stop" would leave a live mic he asked to stop. The claim on the write
-      // cooldown is given back, so the "next" he says after correcting himself is not swallowed.
+      // The save word saves only what the sentence SET. The head above was just refused ("Didn't catch
+      // that"), so the record standing is the one from BEFORE this sentence, and saving it would announce a
+      // success for a sentence that named something else: with "Suyo Long", "5 count" standing, "danvers 12 three count 231
+      // grams next" saved Suyo Long · 5 count. Only the save is withheld: "clear" and "stop" after a
+      // refused head still act, because they write nothing and a dropped "stop" would leave a live mic he
+      // asked to stop. The claim on the write cooldown is given back so the "next" he says after
+      // correcting himself is not swallowed.
       if (!unitReads) {
         say('warn', `${statusRef.current?.text ?? "Didn't catch that."} Nothing was saved.`)
         const token = meta?.atMs
@@ -2163,20 +1879,19 @@ export default function VoiceHarvest({ embedded = false } = {}) {
   }, [applyBareOneBreath, applyOneUtterance, clearRecord, cue, noteMiss, refuseBareOneBreath, refuseMergedAmount, saveRecord, say, unitReaderReads])
   applyCommittedRef.current = applyCommitted
 
-  // ── BUG-VOICEALIASFAILSOFT-001: nothing is read before his taught names are known, for a moment ──
+  // ── Nothing is read before the taught names are known, for a moment ─────────────────────────────
   //
-  // The list is fetched when the page opens and usually lands long before the first thing he says. If
-  // it has not, what he says is HELD — in order, every utterance, commands included, so a "next" can
-  // never overtake the name it belongs to — and read the moment the list answers, or after
-  // ALIAS_WAIT_MS at most, whichever comes first. Once per visit: when the wait runs out, the rest of
-  // the visit is read at once with the names unknown, so a list that never loads cannot slow every
-  // sentence by the same wait. Reading "cucumber one" before the list lands is the whole defect (review
-  // MINOR-9 — a 1-second-late GET was enough): Suyo Long plus an amount of 1. Waiting a moment instead
-  // reads it the way he taught it, and "cucumber 3" is only ever late by the wait, never lost.
+  // The list is fetched when the page opens and usually lands long before the first utterance. If it has
+  // not, what he says is HELD (every utterance, commands included, so a "next" never overtakes the name
+  // it belongs to) and read the moment the list answers, or after ALIAS_WAIT_MS at most. Once per visit:
+  // when the wait runs out the rest of the visit is read at once with the names unknown, so a list that
+  // never loads cannot slow every sentence by the same wait. Reading "cucumber one" before the list lands
+  // is the defect: Suyo Long plus an amount of 1. Waiting reads it as taught, and "cucumber 3" is only
+  // ever late by the wait, never lost.
   //
-  // The banner says why nothing has happened yet; the outcome is announced when the words are read.
-  // A write held here has already claimed the debouncer's cooldown (it arms on a handler that
-  // returned), and it releases or keeps that claim with the same token when it is read — see saveRecord.
+  // The banner says why nothing has happened yet; the outcome is announced when the words are read. A
+  // write held here has already claimed the debouncer's cooldown (it arms on a handler that returned) and
+  // releases or keeps that claim with the same token when read; see saveRecord.
   const releaseHeld = useCallback(() => {
     const held = heldRef.current
     if (!held) return
@@ -2227,27 +1942,20 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     rec.lang = 'en-US'
     recRef.current = rec
 
-    // BUG-VOICECOUNTSPLIT-001 — this page was the ONLY mic surface with no raw capture, which is why
-    // the count defect had to be diagnosed by replaying a simulation instead of by reading what
-    // Dave's phone actually did. The recorder is the same one BUG-VOICEDUPE-002 already ships
-    // (`src/lib/voiceDebug.js`): flag-gated in localStorage, off by default, and every entry point
-    // returns on the flag check BEFORE touching the event, so a disabled recorder never reads the
-    // live SpeechRecognitionResultList. Recorded FIRST in the handler, before the debouncer sees the
-    // event, so the log shows what the browser delivered rather than what survived our own filtering.
+    // Recorded FIRST in the handler, before the debouncer sees the event, so the log shows what the
+    // browser delivered rather than what survived our own filtering. The recorder (src/lib/voiceDebug.js)
+    // is flag-gated in localStorage, off by default, and returns on the flag check before touching the
+    // event, so a disabled recorder never reads the live SpeechRecognitionResultList.
     rec.onstart = () => { recordVoiceMark(VOICE_DEBUG_SRC, 'start') }
 
-    // OPS-VOICENOMATCH-001 — the one failure class where the engine tells us plainly that it heard
-    // speech and could not make anything of it. It was unwired, so "the recogniser gave up on that
-    // phrase" was indistinguishable from "he said nothing" in both the UI and the trace, and a
-    // platform seat sourced from Chromium establishes that it DOES fire on Chrome Android
-    // (SpeechRecognitionImpl.java maps ERROR_NO_MATCH → a distinct `nomatch` event) — correcting the
-    // received wisdom that it never fires. That makes wiring it load-bearing rather than defensive:
-    // unhandled, it is evidence lost on every occurrence.
+    // `nomatch` is the engine saying it heard speech and could make nothing of it. It fires on Chrome
+    // Android (SpeechRecognitionImpl.java maps ERROR_NO_MATCH to it), so wiring it is load-bearing:
+    // unhandled, "the recogniser gave up on that phrase" is indistinguishable from "he said nothing" in
+    // the UI and the trace.
     //
-    // ROUTED TO THE SOFT-REJECT FAMILY, not to the terminal-error one. `nomatch` arrives with a null
-    // results list and does NOT end capture, so it is F6-shaped ("say it again"), not F1-shaped ("the
-    // mic is dead") — three channels, same as every other refusal, but claiming the mic died when it
-    // did not would be its own dishonesty.
+    // Routed to the soft-reject family, not the terminal-error one: `nomatch` arrives with a null results
+    // list and does NOT end capture, so it is "say it again", not "the mic is dead". Claiming the mic died
+    // when it did not would be its own dishonesty.
     rec.onnomatch = () => {
       recordVoiceMark(VOICE_DEBUG_SRC, 'nomatch')
       cue(hapticDigitRejected)
@@ -2265,16 +1973,14 @@ export default function VoiceHarvest({ embedded = false } = {}) {
         scheduleTick()
       }
     }
-    // BUG-VOICEFAILSILENT-001 — MIC DEATH IS THE ONE EVENT WITH UNBOUNDED LOSS, and it was the one
-    // event with no haptic. Every branch below stops capture for good, and the only cue was a banner
-    // on a screen he is not looking at: he keeps talking into a dead recogniser and loses every
-    // utterance until he happens to glance down. `saveFailed` is reused rather than given its own
-    // symbol — to the hand these carry the identical message ("stop, something you believe is
-    // happening is not"), the screen already says which, and a seventh symbol buys nothing.
+    // Mic death is the one event with unbounded loss, so it gets a haptic as well as the banner: every
+    // branch below stops capture for good, and a banner on a screen he is not looking at leaves him
+    // talking into a dead recogniser. `saveFailed` is reused rather than given its own symbol: to the hand
+    // these carry the same message ("something you believe is happening is not") and the screen says which.
     //
-    // These fire from an async callback, so Chrome may refuse the vibration for want of user
-    // activation (haptics.js ACTIVATION RISK). That is exactly why the banner stays: this is a second
-    // channel on the worst failure, not a replacement for the first.
+    // These fire from an async callback, so Chrome may refuse the vibration for want of user activation
+    // (haptics.js ACTIVATION RISK). That is why the banner stays: this is a second channel on the worst
+    // failure, not a replacement.
     rec.onerror = (ev) => {
       recordVoiceMark(VOICE_DEBUG_SRC, 'error', ev?.error)
       const e = ev?.error
@@ -2289,20 +1995,18 @@ export default function VoiceHarvest({ embedded = false } = {}) {
         say('fail', 'No microphone available.')
         noteMiss('No microphone available — capture stopped there.')
       } else if (e === 'aborted' && isHidden()) {
-        // BUG-VOICESCREENSLEEP-001 — 'aborted' IS ordinary when WE aborted (stop, unmount, the
-        // visibility release below), and it is NOT ordinary when the page is hidden and we did not
-        // ask. That is Chrome ending the session because the screen went off, which it does
-        // unconditionally on Android, and it is the single most likely way a hands-free run dies.
-        // Swallowing it as routine is what let `onend` re-arm into the dark.
+        // 'aborted' is ordinary when WE aborted (stop, unmount, the visibility release below) and NOT
+        // ordinary when the page is hidden and we did not ask: that is Chrome ending the session because
+        // the screen went off, which it does unconditionally on Android. Swallowing it as routine is what
+        // let `onend` re-arm into the dark.
         noteScreenSleep()
       }
       // 'no-speech', and a VISIBLE 'aborted', are ordinary in a continuous session — onend re-arms.
     }
     rec.onend = () => {
-      // Marked BEFORE sessionEnd() flushes, because the session boundary IS the evidence in
-      // BUG-VOICECOUNTSPLIT-001: whether the boundary lands between "three" and "count" is the
-      // whole difference between the count registering and vanishing, and a log that records the
-      // flush without the boundary cannot tell those two runs apart.
+      // Marked BEFORE sessionEnd() flushes, because the session boundary is the evidence for the count-split
+      // defect: whether it lands between "three" and "count" decides whether the count registers, and a log
+      // that records the flush without the boundary cannot tell those runs apart.
       recordVoiceMark(VOICE_DEBUG_SRC, 'end')
       // A DATA utterance flushes at the session boundary; a WRITE deliberately does not, and waits
       // out the settle window on a tick. That asymmetry is the whole reason a bare "next" can be
@@ -2310,12 +2014,10 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       debRef.current?.sessionEnd(Date.now())
       scheduleTick()
       if (stopRef.current) { releaseWakeLock(); setRunning(false); return }
-      // BUG-VOICESCREENSLEEP-001 — NEVER RE-ARM AGAINST A HIDDEN DOCUMENT. Chrome aborts the session
-      // on every hide, so the old loop re-armed a mic that could not hear, aborted again, and burned
-      // the 600-restart budget until it reported "session limit reached" — a message describing a
-      // time budget for a failure that was nothing of the kind. `running` deliberately stays true:
-      // the user never tapped Stop, their intent is unchanged, and the visibility handler re-arms
-      // the moment the page comes back — which is also the first moment anyone could read a button.
+      // NEVER RE-ARM AGAINST A HIDDEN DOCUMENT. Chrome aborts the session on every hide, so re-arming burned
+      // the restart budget until "session limit reached", a message for a failure that was no time budget.
+      // `running` deliberately stays true: the user never tapped Stop, and the visibility handler re-arms
+      // the moment the page comes back.
       if (isHidden()) { noteScreenSleep(); return }
       if (restartsRef.current >= RUN_BUDGET.restarts) {
         releaseWakeLock()
@@ -2326,9 +2028,8 @@ export default function VoiceHarvest({ embedded = false } = {}) {
         return
       }
       restartsRef.current += 1
-      // Gesture-free re-arm. Measured on Dave's Android 2026-08-27: 16–133 ms, no permission
-      // re-prompt. If it ever throws, hands-free is off the table and the message says so plainly
-      // rather than leaving a dead mic that looks live.
+      // Gesture-free re-arm (16–133 ms on a device, no permission re-prompt). If it ever throws, hands-free
+      // is off the table and the message says so rather than leaving a dead mic that looks live.
       try { rec.start() } catch {
         releaseWakeLock()
         setRunning(false)
@@ -2352,12 +2053,11 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     hiddenRef.current = false
     runningRef.current = true
     setRunning(true)
-    // S1 — the hold spans the RUN, not the recogniser. arm() builds a fresh one on every re-arm
-    // (15-22 ms apart), so a per-recogniser hold would open a window on each one in which a picker
-    // on another surface could take the mic mid-sentence. Evicting DETACHES before aborting, via
-    // releaseRecogniser, so a final in flight cannot commit into a run we have already abandoned —
-    // and it is announced, because a capture flow that goes quiet is indistinguishable from a dead
-    // mic (BUG-VOICEFAILSILENT-001).
+    // The mic hold spans the RUN, not the recogniser: arm() builds a fresh recogniser on every re-arm
+    // (15-22 ms apart), so a per-recogniser hold would open a window on each in which a picker on another
+    // surface could take the mic mid-sentence. Evicting DETACHES before aborting (releaseRecogniser), so a
+    // final in flight cannot commit into a run already abandoned, and it is announced because a capture
+    // flow that goes quiet looks like a dead mic.
     micTokenRef.current = acquireMic('VoiceHarvest', () => {
       stopRef.current = true
       runningRef.current = false
@@ -2372,16 +2072,14 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     })
     setRows((r) => r)   // the ledger persists across a stop/start within the visit
     say('ok', 'Listening — say a crop.')
-    // BUG-VOICESCREENSLEEP-001 — asked for HERE rather than in an effect, because this is the tap:
-    // the request is a user-gesture descendant and the sentinel it returns is what keeps the whole
-    // cue stack alive. Deliberately not awaited — a slow or refused lock must not delay the mic, and
-    // the outcome lands on the persistent screen note either way.
+    // Asked for HERE rather than in an effect because this is the tap: the request descends from a user
+    // gesture and the sentinel keeps the whole cue stack alive. Not awaited, so a slow or refused lock
+    // cannot delay the mic; the outcome lands on the persistent screen note either way.
     requestWakeLock()
 
-    // A FRESH DEBOUNCER PER RUN. resetSession() would clear duplicate-suppression memory while a
-    // pending utterance from the previous run might still be held, which its own docstring warns
-    // hosts against. A new instance has no history to mis-clear.
-    // BUG-VOICEALIASFAILSOFT-001 — a list that failed to load is asked for again with each run.
+    // A FRESH DEBOUNCER PER RUN: resetSession() would clear duplicate-suppression memory while a pending
+    // utterance from the previous run might still be held, which its own docstring warns against.
+    // A list that failed to load is asked for again with each run.
     reloadAliasesRef.current?.()
     debRef.current = createCommitDebouncer({
       onCommit: commitWhenNamesKnown,
@@ -2404,9 +2102,9 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     wallRef.current = setTimeout(() => {
       stopRef.current = true
       try { recRef.current?.stop() } catch { /* ignore */ }
-      // The SIBLING of the restart-budget stop in onend, and cued the same way for the same reason:
-      // the run ends on a timer while he is mid-sentence in a bed, which is the shape of the loss
-      // this whole cue exists for. The user-initiated stop() below stays silent — he just tapped it.
+      // The sibling of the restart-budget stop in onend, cued the same way: the run ends on a timer while
+      // he is mid-sentence in a bed, the shape of loss the cue exists for. The user-initiated stop() below
+      // stays silent; he just tapped it.
       cue(hapticSaveFailed)
       say('warn', `Stopped after ${RUN_BUDGET.label}. Tap Start to carry on.`)
       noteMiss(`Stopped after ${RUN_BUDGET.label}.`)
@@ -2442,25 +2140,22 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     debRef.current = null
   }, [releaseRecogniser, releaseWakeLock])
 
-  // S1 — hand the mic back whenever the run stops, HOWEVER it stopped: the user's tap, the
-  // wall-clock budget, the restart budget, or any error path. There are six sites that set
-  // stopRef.current = true and they do not share an exit, so keying on the state they all converge
-  // on is the only single point that covers them. Not an acquire — mounting this page must not take
-  // the mic; only tapping Start may.
+  // Hand the mic back whenever the run stops, HOWEVER it stopped (tap, wall-clock budget, restart budget,
+  // any error path). Six sites set stopRef.current = true and share no exit, so keying on the state they
+  // all converge on is the only single point that covers them. Not an acquire: mounting must not take the
+  // mic; only tapping Start may.
   useEffect(() => {
     if (running) return
     releaseMic(micTokenRef.current)
     micTokenRef.current = null
   }, [running])
 
-  // ── BUG-VOICESCREENSLEEP-001: the only event that tells us the run was interrupted ──────────────
+  // ── Screen visibility ───────────────────────────────────────────────────────────────────────────
   //
-  // A screen wake lock is released BY THE PLATFORM whenever the document hides — that is spec
-  // behaviour, not a bug — so coming back always needs a fresh request; a lock acquired once and
-  // assumed to persist is a lock that stops working the first time he takes a call.
-  //
-  // Registered unconditionally rather than only while running, so the R4 refused-cue report can be
-  // delivered on the next visible moment even if the run has already ended.
+  // The platform releases a screen wake lock whenever the document hides (spec behaviour), so coming back
+  // always needs a fresh request; a lock acquired once and assumed to persist stops working the first
+  // time he takes a call. Registered unconditionally, not only while running, so the refused-cue report
+  // can be delivered on the next visible moment even if the run has ended.
   useEffect(() => {
     if (typeof document === 'undefined') return undefined
     const onVisibility = () => {
@@ -2478,10 +2173,10 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       const resumed = hiddenRef.current
       if (resumed) {
         hiddenRef.current = false
-        // The miss row was written when the interruption happened; this is the recovery. Re-arming
-        // without a fresh tap is the same gesture-free re-arm `onend` already does — sticky user
-        // activation from the Start tap survives for the document's lifetime — and it is what makes
-        // "the screen went off" a recoverable event rather than the end of the weigh-in.
+        // The miss row was written when the interruption happened; this is the recovery. Re-arming without
+        // a fresh tap is the same gesture-free re-arm `onend` does (sticky user activation from the Start
+        // tap survives for the document's lifetime), and it makes "the screen went off" recoverable rather
+        // than the end of the weigh-in.
         if (runningRef.current) {
           arm()
           say('warn', 'The screen went off — listening stopped. Listening again now.')
@@ -2506,12 +2201,9 @@ export default function VoiceHarvest({ embedded = false } = {}) {
   }, [heldNum, qty, weight, selected])
   const savedCount = rows.filter((r) => r.kind === 'save' && !r.undone).length
   const missCount  = rows.filter((r) => r.kind === 'miss').length
-  // BUG-VOICEFAILSILENT-001 R3 — ONE LINE THAT ANSWERS THE ONLY QUESTION HE HAS AT THE END OF A BED.
-  // "12 saved · 3 not captured" is the reconciliation surface this flow has never had: the banner
-  // said each of those three things once and was overwritten, so without a count the misses are
-  // unrecoverable by design. The second half appears only when there IS one — a bare "12 saved"
-  // stays the shape of the old label on a clean session rather than adding "· 0 not captured"
-  // noise to every glance.
+  // One line that answers "did everything I said get logged?": "12 saved · 3 not captured". The banner
+  // said each miss once and was overwritten, so without a count they are unrecoverable. The second half
+  // appears only when there IS one, so a clean session keeps the bare "12 saved".
   const totalLabel = useMemo(() => {
     if (!savedCount && !missCount) return null
     const saved = `${savedCount} saved`
@@ -2527,10 +2219,8 @@ export default function VoiceHarvest({ embedded = false } = {}) {
           Harvest by voice
         </h1>
       )}
-      {/* The pointer to the other surface is REWRITTEN, not just relocated. It used to read "the
-          normal harvest form is untouched under Log an event", which was a direction to a different
-          menu; the manual form is now one tap away in the selector above, so the sentence names
-          that instead. Embedded or not, the copy has to describe the doors that actually exist. */}
+      {/* The copy has to describe the doors that exist: the manual form is one tap away in the selector
+          above when embedded. */}
       <p style={{ fontSize: '0.82rem', color: P.light, lineHeight: 1.5, margin: '0 0 14px' }}>
         Say the crop, then the count, then the weight, then <strong>“next”</strong> to save and start
         the following one.{' '}
@@ -2548,9 +2238,8 @@ export default function VoiceHarvest({ embedded = false } = {}) {
         </div>
       )}
 
-      {/* THE LOUD CHANNEL. aria-live so it is announced, role=status so it never steals focus, and
-          large enough to read at arm's length with wet hands — this is the surface that has to make
-          a failed capture impossible to miss (BUG-VOICEFAILSILENT-001). */}
+      {/* THE LOUD CHANNEL. aria-live so it is announced, role=status so it never steals focus, and large
+          enough to read at arm's length with wet hands: a failed capture must be impossible to miss. */}
       <div
         data-testid="voice-harvest-status"
         role="status"
@@ -2568,16 +2257,13 @@ export default function VoiceHarvest({ embedded = false } = {}) {
           missing one is visible as a gap instead of having to be inferred from prose. */}
       <div style={card} data-testid="voice-harvest-record">
         <Slot label="Crop"     value={selected ? (selected.name || selected.variety_ref?.name) : null} />
-        {/* Every value in these three slots was SPOKEN. Nothing is pre-filled and nothing carries a
-            default, so a slot reading "—" means the words have not been said yet — which is the only
-            reading that lets a glance at this card be trusted. */}
-        {/* A HELD NUMBER IS SHOWN IN THE SLOT IT WILL LAND IN, with the unit it will get — not hidden until
-            something resolves it. QA F4 (the idea of D3's slice B, 312c90c): after "2", "165" the card read
-            Quantity "2 count", Weight "—" while 165 sat held, and a "—" for words that HAVE been said
-            breaks the one reading this card promises. It is marked as not final — "assumed unless you
-            say a unit", the banner's own words — rather than shown bare, which would look exactly like a
-            filled slot. The old "… needs a unit" wording was dropped with it: units are optional now.
-            With both slots filled it has nowhere to land; the banner says it will be dropped. */}
+        {/* Every value in these slots was SPOKEN. Nothing is pre-filled, so a slot reading "—" means the
+            words have not been said yet, the only reading that lets a glance at this card be trusted. */}
+        {/* A held number is shown in the slot it will land in, with the unit it will get, marked as not
+            final ("assumed unless you say a unit", the banner's own words). Hiding it left "—" for words
+            that HAVE been said, which breaks the one reading this card promises; shown bare it would look
+            like a filled slot. With both slots filled it has nowhere to land; the banner says it will be
+            dropped. */}
         <Slot label="Quantity"
               value={qty ? `${qty.value} ${qty.unit}` : heldLanding?.axis === 'quantity' ? heldLanding.text : null} />
         <Slot label="Weight"
@@ -2590,11 +2276,9 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       {candidates.length > 0 && (
         <div style={card} data-testid="voice-harvest-candidates">
           <div style={{ fontSize: '0.85rem', fontWeight: 700, marginBottom: 6, color: P.dark }}>
-            {/* THE CAP IS SAID OUT LOUD. The list is capped at CANDIDATE_LIMIT buttons because a
-                crop-type utterance can match 46 plantings and an endless scroll is not a chooser —
-                but a cap with nothing on screen admitting it is indistinguishable from "these are
-                all of them", which is how a plant that IS in the list reads as absent. Naming the
-                total keeps the truncation visible; the ordering and the ranking are untouched. */}
+            {/* THE CAP IS SAID OUT LOUD. The list is capped at CANDIDATE_LIMIT buttons because a crop-type
+                utterance can match 46 plantings, but a cap with nothing admitting it reads as "these are
+                all of them" and a plant that IS in the list looks absent. */}
             Which one?
             {candidates.length > CANDIDATE_LIMIT
               ? <span style={{ fontWeight: 400, color: P.light }}>
@@ -2620,10 +2304,10 @@ export default function VoiceHarvest({ embedded = false } = {}) {
         </div>
       )}
 
-      {/* THE TEACH SURFACE, and the reason the whole learning layer can work at all. Before this,
-          a phrase that matched NOTHING left no way to say what it meant — which made the case most
-          worth learning from the one case that could not be taught. Typing here is the escape hatch
-          from a name the recogniser will never get right, AND the moment the correction is captured. */}
+      {/* The teach surface. A phrase that matched NOTHING otherwise leaves no way to say what it meant,
+          making the case most worth learning from the one that cannot be taught. Typing here is the
+          escape hatch from a name the recogniser will never get right AND the moment the correction is
+          captured. */}
       {unmatched && (
         <TeachPicker
           phrase={unmatched}
@@ -2654,9 +2338,8 @@ export default function VoiceHarvest({ embedded = false } = {}) {
           The mic stops on its own after {RUN_BUDGET.label}.
         </p>
       )}
-      {/* BUG-VOICESCREENSLEEP-001 — whether the screen is being held awake, stated rather than
-          assumed. A wake lock that was refused and a wake lock that is holding look identical from
-          inside the app, and everything else on this page depends on which it is. */}
+      {/* Whether the screen is being held awake, stated rather than assumed: a refused wake lock and a
+          holding one look identical from inside the app, and everything else here depends on which it is. */}
       {screenNote && (
         <p data-testid="voice-harvest-screen" style={{ fontSize: '0.75rem', color: P.light, margin: '0 0 12px' }}>
           {screenNote}
@@ -2697,11 +2380,10 @@ export default function VoiceHarvest({ embedded = false } = {}) {
             )}
           </div>
         ) : (
-          // A MISS ROW, and a REFUSED-CUE NOTE, in the same strip as the saves — because the strip is
-          // the only thing on this page that is still true a minute later, and a reconciliation
-          // surface that lists only the successes cannot reconcile anything. Informational: never
-          // blocking, never dismissable, no micro-decision, no focus steal. A note is styled like a
-          // miss but is NOT counted in the header — nothing was lost, a channel was.
+          // A miss row, and a refused-cue note, share the strip with the saves: the strip is the only thing
+          // here still true a minute later, and a reconciliation surface listing only successes reconciles
+          // nothing. Informational: never blocking or dismissable. A note is styled like a miss but NOT
+          // counted in the header: nothing was lost, a channel was.
           <div
             key={`${r.at}-${i}`}
             data-testid={r.kind === 'note' ? 'voice-harvest-note' : 'voice-harvest-miss'}
@@ -2720,16 +2402,14 @@ export default function VoiceHarvest({ embedded = false } = {}) {
   )
 }
 
-// V5-VOICEALIAS-001 — resolve a phrase the recogniser mangled beyond matching, and teach it.
+// Resolve a phrase the recogniser mangled beyond matching, and teach it.
 //
-// A PLAIN TEXT INPUT, NOT the PlantingSelect combobox, and that is a deliberate refusal to reuse.
-// PlantingSelect owns its own microphone (comboboxInput's SPEAK mode), and mounting it here would
-// put a second recogniser on a page that already has one running continuously — the exact collision
-// the unbuilt S1 mic arbiter exists to prevent. This is a filter over the plantings already in
-// memory: no fetch, no mic, no combobox machinery.
+// A plain text input, deliberately not the PlantingSelect combobox: that owns its own microphone, and
+// mounting it here would put a second recogniser on a page that already has one running (the collision
+// micArbiter exists to prevent). This filters the plantings already in memory: no fetch, no mic.
 //
-// TYPING IS THE POINT. The user reaches this because speech failed, so the input opens with the
-// keyboard available rather than suppressed — the opposite default from the voice-first pickers.
+// Typing is the point: the user reaches this because speech failed, so the input opens with the keyboard
+// available, the opposite default from the voice-first pickers.
 function TeachPicker({ phrase, plantings, onPick, onDismiss }) {
   const [q, setQ] = useState('')
   const matches = useMemo(() => {
