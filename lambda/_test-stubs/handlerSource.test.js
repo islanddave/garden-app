@@ -77,10 +77,12 @@ describe('readHandlerSource', () => {
     return name;
   };
 
+  // Spliced, so scripts/vitest/vitest-projects.test.js does not read these fixture lines as this file's imports.
+  const from = (spec) => `from '${spec}'`;
   const INDEX = [
-    "import { handleFoo } from './fooRoutes.js';",
-    "// import { handleBar } from './barRoutes.js';",
-    "import { helper } from './helper.js';",
+    `import { handleFoo } ${from('./fooRoutes.js')};`,
+    `// import { handleBar } ${from('./barRoutes.js')};`,
+    `import { helper } ${from('./helper.js')};`,
     'export const handler = () => handleFoo(); // route',
     '--',
   ].join('\n');
