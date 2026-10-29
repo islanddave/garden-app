@@ -433,6 +433,30 @@
           "working-directory": null
         },
         {
+          "env": {
+            "SHFMT_SHA256": "76e77641faa025814b77f153b29796b8e6fa2fca03e0c76a691608b86c7ea7bf",
+            "SHFMT_VERSION": "3.14.1"
+          },
+          "name": "Install shfmt (pinned and checksum-verified)",
+          "other": {},
+          "run": [
+            "set -euo pipefail",
+            "D=\"$RUNNER_TEMP/shfmt\"",
+            "mkdir -p \"$D\"",
+            "curl -sSfL --retry 3 --retry-connrefused --retry-all-errors -o \"$D/shfmt\" \\",
+            "  \"https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}/shfmt_v${SHFMT_VERSION}_linux_amd64\"",
+            "echo \"${SHFMT_SHA256}  $D/shfmt\" | sha256sum -c -",
+            "chmod +x \"$D/shfmt\"",
+            "\"$D/shfmt\" --version",
+            "echo \"$D\" >> \"$GITHUB_PATH\"",
+            ""
+          ],
+          "shell": null,
+          "uses": null,
+          "with": null,
+          "working-directory": null
+        },
+        {
           "env": null,
           "name": "Unit tests with coverage, shard 1 of 3 (no threshold, no report)",
           "other": {},
@@ -513,6 +537,30 @@
           "working-directory": null
         },
         {
+          "env": {
+            "SHFMT_SHA256": "76e77641faa025814b77f153b29796b8e6fa2fca03e0c76a691608b86c7ea7bf",
+            "SHFMT_VERSION": "3.14.1"
+          },
+          "name": "Install shfmt (pinned and checksum-verified)",
+          "other": {},
+          "run": [
+            "set -euo pipefail",
+            "D=\"$RUNNER_TEMP/shfmt\"",
+            "mkdir -p \"$D\"",
+            "curl -sSfL --retry 3 --retry-connrefused --retry-all-errors -o \"$D/shfmt\" \\",
+            "  \"https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}/shfmt_v${SHFMT_VERSION}_linux_amd64\"",
+            "echo \"${SHFMT_SHA256}  $D/shfmt\" | sha256sum -c -",
+            "chmod +x \"$D/shfmt\"",
+            "\"$D/shfmt\" --version",
+            "echo \"$D\" >> \"$GITHUB_PATH\"",
+            ""
+          ],
+          "shell": null,
+          "uses": null,
+          "with": null,
+          "working-directory": null
+        },
+        {
           "env": null,
           "name": "Unit tests with coverage, shard 2 of 3 (no threshold, no report)",
           "other": {},
@@ -586,6 +634,30 @@
           "other": {},
           "run": [
             "npm ci --legacy-peer-deps"
+          ],
+          "shell": null,
+          "uses": null,
+          "with": null,
+          "working-directory": null
+        },
+        {
+          "env": {
+            "SHFMT_SHA256": "76e77641faa025814b77f153b29796b8e6fa2fca03e0c76a691608b86c7ea7bf",
+            "SHFMT_VERSION": "3.14.1"
+          },
+          "name": "Install shfmt (pinned and checksum-verified)",
+          "other": {},
+          "run": [
+            "set -euo pipefail",
+            "D=\"$RUNNER_TEMP/shfmt\"",
+            "mkdir -p \"$D\"",
+            "curl -sSfL --retry 3 --retry-connrefused --retry-all-errors -o \"$D/shfmt\" \\",
+            "  \"https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}/shfmt_v${SHFMT_VERSION}_linux_amd64\"",
+            "echo \"${SHFMT_SHA256}  $D/shfmt\" | sha256sum -c -",
+            "chmod +x \"$D/shfmt\"",
+            "\"$D/shfmt\" --version",
+            "echo \"$D\" >> \"$GITHUB_PATH\"",
+            ""
           ],
           "shell": null,
           "uses": null,
@@ -795,6 +867,30 @@
         },
         {
           "env": {
+            "SHFMT_SHA256": "76e77641faa025814b77f153b29796b8e6fa2fca03e0c76a691608b86c7ea7bf",
+            "SHFMT_VERSION": "3.14.1"
+          },
+          "name": "Install shfmt (pinned and checksum-verified)",
+          "other": {},
+          "run": [
+            "set -euo pipefail",
+            "D=\"$RUNNER_TEMP/shfmt\"",
+            "mkdir -p \"$D\"",
+            "curl -sSfL --retry 3 --retry-connrefused --retry-all-errors -o \"$D/shfmt\" \\",
+            "  \"https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}/shfmt_v${SHFMT_VERSION}_linux_amd64\"",
+            "echo \"${SHFMT_SHA256}  $D/shfmt\" | sha256sum -c -",
+            "chmod +x \"$D/shfmt\"",
+            "\"$D/shfmt\" --version",
+            "echo \"$D\" >> \"$GITHUB_PATH\"",
+            ""
+          ],
+          "shell": null,
+          "uses": null,
+          "with": null,
+          "working-directory": null
+        },
+        {
+          "env": {
             "TZ": "America/New_York"
           },
           "name": "TZ sentinel — America/New_York resolves on this runner",
@@ -874,6 +970,30 @@
           "other": {},
           "run": [
             "npm ci --legacy-peer-deps"
+          ],
+          "shell": null,
+          "uses": null,
+          "with": null,
+          "working-directory": null
+        },
+        {
+          "env": {
+            "SHFMT_SHA256": "76e77641faa025814b77f153b29796b8e6fa2fca03e0c76a691608b86c7ea7bf",
+            "SHFMT_VERSION": "3.14.1"
+          },
+          "name": "Install shfmt (pinned and checksum-verified)",
+          "other": {},
+          "run": [
+            "set -euo pipefail",
+            "D=\"$RUNNER_TEMP/shfmt\"",
+            "mkdir -p \"$D\"",
+            "curl -sSfL --retry 3 --retry-connrefused --retry-all-errors -o \"$D/shfmt\" \\",
+            "  \"https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}/shfmt_v${SHFMT_VERSION}_linux_amd64\"",
+            "echo \"${SHFMT_SHA256}  $D/shfmt\" | sha256sum -c -",
+            "chmod +x \"$D/shfmt\"",
+            "\"$D/shfmt\" --version",
+            "echo \"$D\" >> \"$GITHUB_PATH\"",
+            ""
           ],
           "shell": null,
           "uses": null,

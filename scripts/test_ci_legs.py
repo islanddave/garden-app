@@ -9,8 +9,9 @@ everything below is a GATING test.
 Eight things are held, each by a function that returns the problems it found (so the mutations at the end can show
 every one of them is able to fail):
 
-  once          a check runs in one leg: no step other than the six repeatable setup steps (checkout, setup-node,
-                npm ci, Chrome resolve, the origin/main fetch, the TZ sentinel) is in the legs twice.
+  once          a check runs in one leg: no step other than the seven repeatable setup steps (checkout,
+                setup-node, npm ci, Chrome resolve, the origin/main fetch, the TZ sentinel, the shfmt install) is in
+                the legs twice.
   unit_passes   the unit passes (a run: that starts `npm test` or `npx vitest run`) are the five steps named in
                 UNIT_STEPS, one in each shard leg. And the file does not name VITEST_NODE_PROJECT, the A3 trial's env
                 key (an env at any level, or the key written into a run: body): vitest.config.ts runs two projects
@@ -25,8 +26,9 @@ every one of them is able to fail):
                 body and by place. No step carries an `if:` or reads the inputs context.
   setup         each leg has what the serial job handed its steps implicitly: checkout first; node 22.23.3 and
                 node_modules for steps that run node (and neither for pytest); CHROME_PATH for the real-Chrome
-                gates; origin/main for the release-version guard; PyYAML for gate_runner.py; and the two artefact
-                chains kept whole and in order (dist/, coverage/coverage-summary.json).
+                gates; origin/main for the release-version guard; PyYAML for gate_runner.py; shfmt for each unit
+                pass (scripts/check-comment-only.test.js runs it) and in no other leg; and the two artefact chains
+                kept whole and in order (dist/, coverage/coverage-summary.json).
   shape         triggers, permissions, concurrency and the job graph: push to dev and pull_request to the three
                 protected branches and NOTHING else (no workflow_dispatch: see NO_DISPATCH), its concurrency group,
                 and the aggregator under the id the promote reads; no continue-on-error, no `if:`, matrix, name or
@@ -80,6 +82,7 @@ NO_DISPATCH = ("ci.yml must never gain workflow_dispatch (or any trigger beyond 
                "ci.yml's triggers is a regression-reviewed change: widen CI_ON in scripts/test_ci_legs.py with it")
 PYYAML = "Install PyYAML for the migration gate validation"
 SENTINEL = "TZ sentinel — America/New_York resolves on this runner"
+SHFMT = "Install shfmt (pinned and checksum-verified)"
 # THE UNIT PASSES, and the key that is gone. The unit steps run the suite as vitest.config.ts has it: two projects,
 # `node` for the test files that need no DOM and `dom` for the rest. That began as the A3 trial, behind an env key;
 # OPS-A3TRIALKEYREMOVE-001 took the key out and made the projects unconditional. `unit_passes` holds the passes to
@@ -118,8 +121,9 @@ UNIT_RULE = ("the unit passes of ci.yml are one step in each shard leg, %s, and 
 # set anywhere else (the `test` script of package.json is the short way) would read as a switch in a config that has
 # none.
 RETIRED_KEY_FILES = ["scripts/test_ci_legs.py"]
-# The TZ sentinel is setup since A4: each NY shard repeats it, directly before its pass (`setup` holds that).
-REPEATABLE = ("checkout", "setup-node", "npm-ci", "chrome", "fetch-main", "tz-sentinel")
+# The TZ sentinel is setup since A4: each NY shard repeats it, directly before its pass (`setup` holds that). Each
+# unit shard installs shfmt before its pass, because the shard that draws scripts/check-comment-only.test.js needs it.
+REPEATABLE = ("checkout", "setup-node", "npm-ci", "chrome", "fetch-main", "tz-sentinel", "shfmt")
 NODE_PIN = {"node-version": "22.23.3", "cache": "npm"}
 DRY_RUN = "npm install --dry-run --package-lock-only"
 NODE_COMMAND = re.compile(r"(?:^|[\s;&|(])(?:npm|npx|node)\s")
@@ -142,6 +146,8 @@ HANDOFFS = {
     "Resolve Chrome for the layout gates": "writes CHROME_PATH to GITHUB_ENV: repeated in gates-a, gates-b, gates-c "
                                            "and gate-probes",
     "Photo-tier payload budget (BUG-TIERLESSPHOTOS-001)": "pip installs pillow for its own gate only: gates-a",
+    SHFMT: "writes shfmt's directory to GITHUB_PATH: repeated in the five unit shard legs, for "
+           "scripts/check-comment-only.test.js",
     UPLOAD: "each coverage shard's blob, as an artifact, for the merge leg: the one hand-off BETWEEN legs (plan A4), "
             "held by `shards`",
     DOWNLOAD: "the three coverage shards' blobs, in the merge leg unit-utc-cov, the one leg with needs",
@@ -256,6 +262,8 @@ def _kind(step):
         return "fetch-main"
     if step.get("name") == SENTINEL:
         return "tz-sentinel"
+    if step.get("name") == SHFMT:
+        return "shfmt"
     return None
 
 
@@ -283,7 +291,7 @@ def _has_key(node, key):
 def once(ci):
     seen = collections.Counter(_label(s) for job in _legs(ci).values() for s in _conserved(job))
     return ["step %r is in the legs %d times, want once: a check runs in one leg (only checkout, setup-node, npm ci, "
-            "the Chrome resolve, the origin/main fetch and the TZ sentinel repeat)" % (label, count)
+            "the Chrome resolve, the origin/main fetch, the TZ sentinel and the shfmt install repeat)" % (label, count)
             for label, count in seen.items() if count != 1]
 
 
@@ -442,6 +450,7 @@ def setup(ci):
         before("chrome", [i for i, s in enumerate(steps) if _chrome_gate(s)], "Chrome resolve")
         before("fetch-main", [i for i, s in enumerate(steps) if "check-release-version.py" in (s.get("run") or "")],
                "origin/main fetch")
+        before("shfmt", [i for i, s in enumerate(steps) if UNIT_PASS.match(s.get("run") or "")], "shfmt install")
         for i, step in enumerate(steps):
             if "gate_runner.py" in (step.get("run") or "") and not any(
                     PIP_PYYAML.search(s.get("run") or "") for s in steps[:i]):
@@ -1050,6 +1059,11 @@ MUTATIONS = {
     "the release-version guard loses its fetch": ("setup", lambda w: _drop(w, "static", _kinded("fetch-main"))),
     "gate_runner.py loses its PyYAML": ("setup", lambda w: _drop(w, "static", _named(PYYAML))),
     "the NY suite loses its sentinel": ("setup", lambda w: _drop(w, "unit-ny-1", _named(SENTINEL))),
+    "a unit shard loses its shfmt install": ("setup", lambda w: _drop(w, "unit-utc-cov-2", _named(SHFMT))),
+    "a NY shard installs shfmt after its pass": ("setup", lambda w: _steps(w, "unit-ny-2").append(
+        _steps(w, "unit-ny-2").pop(_find(w, "unit-ny-2", _named(SHFMT))))),
+    "a leg with no unit pass installs shfmt": ("setup", lambda w: _steps(w, "gates-a").append(
+        copy.deepcopy(_own(w, "unit-ny-1", SHFMT)))),
     "the build moves after the check that reads it": ("setup", lambda w: _swap(
         _steps(w, "static"), _find(w, "static", CHAINS["dist/"][0]), _find(w, "static", CHAINS["dist/"][2]))),
     "the chunk check leaves the build's leg": ("setup", lambda w: _move(w, "static", "unit-ny-1", CHAINS["dist/"][2])),

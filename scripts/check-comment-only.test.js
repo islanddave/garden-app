@@ -26,15 +26,8 @@ function pairs(kind) {
     })
 }
 
-// Shell files and YAML run: bodies need shfmt. CI installs it only after B1 lands (until then every ci.yml
-// step edit is mirrored into ci-next.yml), so those cases skip on a runner without it.
-const hasShfmt = spawnSync('shfmt', ['--version']).status === 0
-const SKIP_NOTE = 'shfmt not installed on this runner; CI installs it after B1'
-const needsShfmt = (path) => path.endsWith('.sh') || (/\.ya?ml$/.test(path) && /\brun:/.test(readFileSync(path, 'utf8')))
-const skipWithoutShfmt = (ctx, ...paths) => {
-  if (!hasShfmt && paths.some(needsShfmt)) ctx.skip(SKIP_NOTE)
-}
-
+// Shell files and YAML run: bodies need shfmt on PATH: every ci.yml unit leg installs it, and a run without it
+// fails those cases rather than skipping them.
 const run = (args, opts = {}) =>
   spawnSync(process.execPath, [TOOL, ...args], { encoding: 'utf8', ...opts })
 
@@ -68,23 +61,20 @@ describe('check-comment-only corpora', () => {
     expect(accept.map((p) => p.name)).toEqual(expect.arrayContaining(REQUIRED_ACCEPT))
   })
 
-  it.for(poison.map((p) => [p.name, p]))('refuses poison: %s', ([_n, p], ctx) => {
-    skipWithoutShfmt(ctx, p.oldPath)
+  it.for(poison.map((p) => [p.name, p]))('refuses poison: %s', ([_n, p]) => {
     const r = compareFile(p.newPath, readFileSync(p.oldPath, 'utf8'), readFileSync(p.newPath, 'utf8'))
     expect(r.ok, `${p.name} was accepted`).toBe(false)
     expect(r.reason).toBeTruthy()
   })
 
-  it.for(accept.map((p) => [p.name, p]))('accepts comment-only edit: %s', ([_n, p], ctx) => {
-    skipWithoutShfmt(ctx, p.oldPath)
+  it.for(accept.map((p) => [p.name, p]))('accepts comment-only edit: %s', ([_n, p]) => {
     const r = compareFile(p.newPath, readFileSync(p.oldPath, 'utf8'), readFileSync(p.newPath, 'utf8'))
     expect(r, `${p.name}: ${r.reason}`).toEqual({ ok: true })
   })
 
   const fixtureFiles = [...poison, ...accept].flatMap((p) => [p.oldPath, p.newPath]).filter((f) => !f.endsWith('.py'))
   // The .py case is refused even against itself (unknown type), so it is left out here.
-  it.for(fixtureFiles.map((f) => [f.slice(CORPUS.length + 1), f]))('accepts fixture against itself: %s', ([_n, path], ctx) => {
-    skipWithoutShfmt(ctx, path)
+  it.for(fixtureFiles.map((f) => [f.slice(CORPUS.length + 1), f]))('accepts fixture against itself: %s', ([_n, path]) => {
     const text = readFileSync(path, 'utf8')
     expect(compareFile(path, text, text), path).toEqual({ ok: true })
   })
