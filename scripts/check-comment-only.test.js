@@ -1,8 +1,7 @@
-// scripts/check-comment-only.mjs is the proof behind every comment-only cleanup commit, so a false accept is
-// the failure that matters: a code change waved through as "just comments". The POISON corpus holds edits
-// that must be refused; the ACCEPT corpus holds edits that must pass (without it a checker that refuses
-// everything would look perfect). Each case is a pair `<name>.old.<ext>` / `<name>.new.<ext>` under
-// scripts/fixtures/check-comment-only/{poison,accept}.
+// new-file: new subject: the comment-only checker
+// A false accept (code change waved through as "just comments") is the failure that matters. POISON pairs must be
+// refused; ACCEPT pairs must pass (else a checker that refuses everything looks perfect). Cases are
+// `<name>.old.<ext>` / `<name>.new.<ext>` under scripts/fixtures/check-comment-only/{poison,accept}.
 import { describe, it, expect } from 'vitest'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -25,6 +24,15 @@ function pairs(kind) {
       expect(files, `${kind}/${oldName} has no ${newName}`).toContain(newName)
       return { name: oldName.replace('.old.', '.'), oldPath: join(dir, oldName), newPath: join(dir, newName) }
     })
+}
+
+// Shell files and YAML run: bodies need shfmt. CI installs it only after B1 lands (until then every ci.yml
+// step edit is mirrored into ci-next.yml), so those cases skip on a runner without it.
+const hasShfmt = spawnSync('shfmt', ['--version']).status === 0
+const SKIP_NOTE = 'shfmt not installed on this runner; CI installs it after B1'
+const needsShfmt = (path) => path.endsWith('.sh') || (/\.ya?ml$/.test(path) && /\brun:/.test(readFileSync(path, 'utf8')))
+const skipWithoutShfmt = (ctx, ...paths) => {
+  if (!hasShfmt && paths.some(needsShfmt)) ctx.skip(SKIP_NOTE)
 }
 
 const run = (args, opts = {}) =>
@@ -60,25 +68,25 @@ describe('check-comment-only corpora', () => {
     expect(accept.map((p) => p.name)).toEqual(expect.arrayContaining(REQUIRED_ACCEPT))
   })
 
-  it.each(poison.map((p) => [p.name, p]))('refuses poison: %s', (_n, p) => {
+  it.for(poison.map((p) => [p.name, p]))('refuses poison: %s', ([_n, p], ctx) => {
+    skipWithoutShfmt(ctx, p.oldPath)
     const r = compareFile(p.newPath, readFileSync(p.oldPath, 'utf8'), readFileSync(p.newPath, 'utf8'))
     expect(r.ok, `${p.name} was accepted`).toBe(false)
     expect(r.reason).toBeTruthy()
   })
 
-  it.each(accept.map((p) => [p.name, p]))('accepts comment-only edit: %s', (_n, p) => {
+  it.for(accept.map((p) => [p.name, p]))('accepts comment-only edit: %s', ([_n, p], ctx) => {
+    skipWithoutShfmt(ctx, p.oldPath)
     const r = compareFile(p.newPath, readFileSync(p.oldPath, 'utf8'), readFileSync(p.newPath, 'utf8'))
     expect(r, `${p.name}: ${r.reason}`).toEqual({ ok: true })
   })
 
-  it('accepts every fixture against itself (all parse)', () => {
-    for (const p of [...poison, ...accept]) {
-      for (const path of [p.oldPath, p.newPath]) {
-        if (path.endsWith('.py')) continue // the unknown-type case is refused even against itself
-        const text = readFileSync(path, 'utf8')
-        expect(compareFile(path, text, text), path).toEqual({ ok: true })
-      }
-    }
+  const fixtureFiles = [...poison, ...accept].flatMap((p) => [p.oldPath, p.newPath]).filter((f) => !f.endsWith('.py'))
+  // The .py case is refused even against itself (unknown type), so it is left out here.
+  it.for(fixtureFiles.map((f) => [f.slice(CORPUS.length + 1), f]))('accepts fixture against itself: %s', ([_n, path], ctx) => {
+    skipWithoutShfmt(ctx, path)
+    const text = readFileSync(path, 'utf8')
+    expect(compareFile(path, text, text), path).toEqual({ ok: true })
   })
 })
 
