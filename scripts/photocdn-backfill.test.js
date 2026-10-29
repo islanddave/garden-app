@@ -8,6 +8,8 @@ const here = dirname(fileURLToPath(import.meta.url));
 const DRIVER = readFileSync(join(here, 'photocdn-backfill.mjs'), 'utf8');
 const GEN = readFileSync(join(here, '..', 'lambda', 'photocdn-derivative', 'index.mjs'), 'utf8');
 const YML = readFileSync(join(here, '..', '.github', 'workflows', 'deploy-lambda.yml'), 'utf8');
+// Builds every deploy zip, prod and staging (scripts/test_workflow_steps.py pins that both call it).
+const PACKAGE = readFileSync(join(here, 'package-lambda.sh'), 'utf8');
 
 describe('backfill pure helpers', () => {
   it('derivativeKey is path-addressed, etag-scoped, quote-stripped', () => {
@@ -72,8 +74,8 @@ describe('deploy-lambda.yml matrix guards for photocdn-derivative', () => {
     expect(YML).toMatch(/Restore Lambda Function URL CORS[\s\S]*?matrix\.function != 'photocdn-derivative'/);
   });
   it('arm64 sharp build with in-zip assertion', () => {
-    expect(YML).toMatch(/npm install --omit=dev --os=linux --cpu=arm64 --include=optional/);
-    expect(YML).toMatch(/sharp-linux-arm64.*refusing to deploy an x64 build/s);
+    expect(PACKAGE).toMatch(/npm install --omit=dev --os=linux --cpu=arm64 --include=optional/);
+    expect(PACKAGE).toMatch(/sharp-linux-arm64.*refusing to deploy an x64 build/s);
   });
   it('post-deploy self-test invoke + no-Function-URL assertion', () => {
     expect(YML).toMatch(/rawPath.*__selftest__/);

@@ -1273,6 +1273,120 @@ def test_deploy_staging_ref_guard_passes_dev_and_staging_and_names_the_fix_other
         assert len(errors) == 1 and "Dispatch with --ref dev" in errors[0], errors
 
 
+# ── deploy-lambda.yml + deploy-staging.yml: one packaging script builds both fleets' zips (F6) ─────────────────────
+# Staging soaks the zip prod gets only while both build it the same way: one step calling scripts/package-lambda.sh,
+# no other step packaging. What the script excludes and asserts is pinned by lambda/deploy-zip-excludes-tests.test.js;
+# that a change to it redeploys is test_check_lambda_current.py.
+
+PACKAGE_SCRIPT = "scripts/package-lambda.sh"
+PACKAGING_JOBS = {"deploy-lambda.yml": "deploy", "deploy-staging.yml": "deploy-lambdas"}
+# Command position only (line start or after ; & | ( ), so an echo or a comment that says "zip" is not packaging.
+_PACKAGING = re.compile(r"(?m)(?:^\s*|[;&|(]\s*)(?:zip|npm (?:install|ci)|npm run (?:gen|check):event-types)\s")
+
+
+def packaging_problems(wf, job):
+    """Why `job` does not build its zips through the shared script alone; [] when it does."""
+    steps = wf["jobs"][job]["steps"]
+    calls = [s for s in steps if PACKAGE_SCRIPT in s.get("run", "")]
+    problems = [] if len(calls) == 1 else [f"{len(calls)} steps call {PACKAGE_SCRIPT}, not 1"]
+    problems += [f"{s.get('name')!r} runs only if {s['if']}" for s in calls if "if" in s]
+    problems += [f"{s.get('name')!r} is continue-on-error" for s in calls if "continue-on-error" in s]
+    problems += [f"{s.get('name')!r} packages outside the script" for s in steps
+                 if not any(s is c for c in calls) and _PACKAGING.search(s.get("run", ""))]
+    return problems
+
+
+def test_both_deploy_workflows_build_every_zip_through_the_one_packaging_script():
+    calls = {}
+    for name, job in PACKAGING_JOBS.items():
+        wf = _workflow(name)
+        assert packaging_problems(wf, job) == [], name
+        calls[name] = next(s for s in wf["jobs"][job]["steps"] if PACKAGE_SCRIPT in s.get("run", ""))
+    prod, staging = calls.values()
+    assert prod == staging  # one recipe, not two that happen to agree today
+    assert prod["run"] == f'bash {PACKAGE_SCRIPT} "$FN"' and prod["env"] == {"FN": "${{ matrix.function }}"}
+    assert os.path.isfile(os.path.join(HERE, "..", PACKAGE_SCRIPT))
+
+
+def _inline_recipe(steps, i):
+    steps[i] = {"name": "Build and zip ${{ matrix.function }}",
+                "run": "cd lambda/${{ matrix.function }}\nnpm install --omit=dev\nzip -r ../${{ matrix.function }}.zip .\n"}
+
+
+def _only_some_legs(steps, i):
+    steps[i] = dict(steps[i], **{"if": "matrix.function != 'events'"})
+
+
+def _zips_again_beside_it(steps, i):
+    steps.insert(i + 1, {"name": "Re-zip", "run": "cd lambda/x && zip -r ../x.zip .\n"})
+
+
+@pytest.mark.parametrize("name", list(PACKAGING_JOBS))
+@pytest.mark.parametrize("mutate,problem", [
+    (_inline_recipe, f"0 steps call {PACKAGE_SCRIPT}, not 1"),
+    (_only_some_legs, "runs only if matrix.function != 'events'"),
+    (_zips_again_beside_it, "'Re-zip' packages outside the script"),
+], ids=["stops-calling-it", "calls-it-for-some-legs", "zips-again-beside-it"])
+def test_a_deploy_workflow_that_stops_packaging_through_the_script_is_caught(name, mutate, problem):
+    wf = _workflow(name)
+    steps = wf["jobs"][PACKAGING_JOBS[name]]["steps"]
+    mutate(steps, next(i for i, s in enumerate(steps) if PACKAGE_SCRIPT in s.get("run", "")))
+    problems = packaging_problems(wf, PACKAGING_JOBS[name])
+    assert any(problem in p for p in problems), problems
+
+
+# `unzip -l` listings long enough that grep -q always exits first and unzip dies writing to the closed pipe.
+_FLOOD = '\nwhile :; do echo "      120  10-29-2026 10:00   node_modules/pg/lib/index.js" || exit 1; done\n'
+TEST_FILE_THEN_MORE = 'echo "      120  10-29-2026 10:00   engine/persist.test.js"' + _FLOOD
+ARM64_THEN_MORE = ('echo "  9000  10-29-2026 10:00   node_modules/@img/sharp-linux-arm64/lib/sharp.node"\n'
+                   'echo "   120  10-29-2026 10:00   node_modules/blurhash/dist/index.js"' + _FLOOD)
+CLEAN_LISTING = 'echo "      120  10-29-2026 10:00   index.js"\necho "      120  10-29-2026 10:00   node_modules/pg/lib/index.js"\n'
+
+
+def _package(tmp_path, fn, listing):
+    """Run prod's packaging step for `fn` in a stand-in checkout: npm and zip log and succeed, `unzip -l` runs the
+    shell body `listing`. Returns (proc, the logged calls as "tool args @ cwd" lines)."""
+    (tmp_path / "scripts").mkdir()
+    shutil.copy(os.path.join(HERE, "package-lambda.sh"), tmp_path / "scripts")
+    (tmp_path / "lambda" / fn).mkdir(parents=True, exist_ok=True)
+    bindir, log = tmp_path / "bin", tmp_path / "calls"
+    bindir.mkdir()
+    for tool, body in {"npm": "", "zip": "", "unzip": listing}.items():
+        stub = bindir / tool
+        stub.write_text(f'#!/bin/sh\necho "{tool} $* @ ${{PWD##*/}}" >> "{log}"\n{body}\n')
+        stub.chmod(stub.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    _, step = _step("deploy-lambda.yml", "deploy", "Build and zip ${{ matrix.function }}")
+    proc = _run_as_runner(tmp_path, step["run"], dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}", FN=fn))
+    return proc, (log.read_text().splitlines() if log.exists() else [])
+
+
+@pytest.mark.parametrize("fn,listing,rc,said", [
+    ("photos", TEST_FILE_THEN_MORE, 1, "FATAL: test files present in photos.zip"),
+    ("photocdn-derivative", ARM64_THEN_MORE, 0, "arm64 sharp + blurhash present in photocdn-derivative.zip"),
+], ids=["test-file-in-a-long-listing-refuses", "arm64-zip-with-a-long-listing-passes"])
+def test_the_packaging_script_judges_a_listing_by_grep_alone(tmp_path, fn, listing, rc, said):
+    """Catches `set -o pipefail` in the script: unzip's SIGPIPE status would then decide each `if`, shipping a zip
+    that holds a test file and refusing a good arm64 one."""
+    proc, _ = _package(tmp_path, fn, listing)
+    assert proc.returncode == rc and said in proc.stdout, proc.stdout + proc.stderr
+
+
+def test_the_packaging_script_runs_the_event_types_generation_before_the_events_zip(tmp_path):
+    proc, calls = _package(tmp_path, "events", CLEAN_LISTING)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert calls == [f"npm run gen:event-types @ {tmp_path.name}",  # at the checkout root, as the old prod step ran
+                     f"npm run check:event-types @ {tmp_path.name}",
+                     "npm install --omit=dev @ events",
+                     "zip -r ../events.zip . -x *.test.js *.test.js.map @ events",
+                     "unzip -l ../events.zip @ events"]
+
+
+def test_the_packaging_script_refuses_an_empty_function_name(tmp_path):
+    # An empty name would `cd lambda/` and zip every function's source into one ../.zip.
+    proc, calls = _package(tmp_path, "", CLEAN_LISTING)
+    assert proc.returncode != 0 and "usage: scripts/package-lambda.sh" in proc.stderr and calls == []
+
+
 # ── revert-rehearsal.yml: setup stops on a target tag it could not create ───────────────────────────────────────
 # Setup deletes and recreates refs/tags/<TARGET_VERSION>. Ruleset release-tag-integrity lets only garden-bot create a
 # v* tag, and a refusal is one of the ways the create can answer HTTP 422: the status this leg used to accept as
