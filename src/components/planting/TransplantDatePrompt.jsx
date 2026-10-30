@@ -26,14 +26,7 @@ import Sheet from '../forms/Sheet.jsx'
 import Field from '../forms/Field.jsx'
 import Input from '../forms/Input.jsx'
 import Button from '../forms/Button.jsx'
-
-// Local-calendar today as YYYY-MM-DD. toISOString() would be UTC and can land on the wrong day
-// west of Greenwich, which is exactly where this app is used.
-function todayISO() {
-  const d = new Date()
-  const p = (n) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
-}
+import { todayLocalISO } from '../../lib/dateLocal.js'
 
 // Lifecycle dates arrive as either a bare 'YYYY-MM-DD' or a full timestamp; <input type="date">
 // only accepts the former.
@@ -55,7 +48,7 @@ export default function TransplantDatePrompt({ planting, onSaved }) {
   const sown = dateOnly(planting.sown_at)
 
   function openSheet() {
-    setDate(dateOnly(planting.transplanted_at) || todayISO())
+    setDate(dateOnly(planting.transplanted_at) || todayLocalISO())
     setErr(null)
     setOpen(true)
   }

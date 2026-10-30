@@ -48,6 +48,7 @@ import React, { useMemo } from 'react'
 import { useCachedFetch } from '../../hooks/useCachedFetch.js'
 import { P } from '../../lib/constants.js'
 import Icon from '../Icon.jsx'
+import { todayLocalISO } from '../../lib/dateLocal.js'
 import {
   plantingsWithOpenDeadline,
   DEADLINES_BY_CROP_TYPE,
@@ -68,13 +69,6 @@ const NAMES_SHOWN = 3
 
 /** Plantings the alert must not speak about, regardless of deadline. */
 const CLOSED_STATUSES = new Set(['ended', 'failed'])
-
-// Same local-ISO convention as CultivationLead/CareNeeded: bucket against the day Dave is looking at.
-function todayLocalISO() {
-  const d = new Date()
-  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000)
-  return local.toISOString().slice(0, 10)
-}
 
 function plantingLabel(p) {
   const n = String(p?.name ?? '').trim()

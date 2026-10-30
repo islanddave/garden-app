@@ -34,6 +34,7 @@ import { WATER_DEPTH_DEFAULT, isWaterDepthType, waterDepthMetadata } from '../li
 import Spinner from '../components/forms/Spinner.jsx'
 import { clearPatch, SERVER_CLEARABLE } from '../lib/clearKeys.js'
 import useScrollRestore from '../hooks/useScrollRestore.js'
+import { todayLocalISO } from '../lib/dateLocal.js'
 
 
 // BUG-PROJEVENTTRUNC-001 — the project event log used to stop at 50 with nothing saying so.
@@ -94,11 +95,6 @@ const isAlreadyGone = (err) => err?.status === 404
 // network error was being shown to the user as a safety assurance.
 const CHILD_FETCH_FAILED = Symbol('child-fetch-failed')
 
-function todayLocal() {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
-}
-
 // V4-DIRTYGUARDSWEEP-001 — the edit form's seed, hoisted out of startEdit so the dirty predicate
 // diffs against the SAME shape the form was opened with. Inlined in both places, these two would
 // drift the first time a field is added to the edit form, and the drift would be silent: the guard
@@ -120,7 +116,7 @@ function emptyEventForm() {
   return {
     event_type:    'observation',
     plant_id:      '',
-    event_date:    todayLocal(),
+    event_date:    todayLocalISO(),
     title:         '',
     notes:         '',
     private_notes: '',
