@@ -47,6 +47,7 @@ vi.mock('../components/VarietyPicker.jsx', () => ({
 }))
 
 import Garden from '../pages/Garden.jsx'
+import PlantingEditor from '../components/PlantingEditor.jsx'
 
 const PROJECTS = [{ id: 'proj-1', name: 'Spring 2026', status: 'active', parent_project_id: null, is_public: true }]
 const PLANT = {
@@ -128,7 +129,7 @@ describe('Garden — ?add=1 opens the Add Planting editor (FAB entry)', () => {
     expect(currentParams().get('add')).toBeNull()
   })
 
-  it('POST carries dual-write variety + planting-details union + project_id', async () => {
+  it('POST carries dual-write variety + planting-details union, and files into no container itself', async () => {
     primeFetch()
     await renderGarden('add=1')
     fireEvent.change(screen.getByLabelText(/Name/i), { target: { value: 'New Plant' } })
@@ -142,7 +143,9 @@ describe('Garden — ?add=1 opens the Add Planting editor (FAB entry)', () => {
     expect(body.name).toBe('New Plant')
     expect(body.variety_id).toBe('var-1')
     expect(body.variety).toBe('Black Krim')
-    expect(body.project_id).toBe('proj-1')
+    // BUG-ADDPLANTPREFILE-001: this line used to expect 'proj-1', i.e. PROJECTS[0], a choice the user
+    // never saw (PROJECTS_HIDDEN). The server picks a same-crop container or leaves the place empty.
+    expect(body).toHaveProperty('project_id', null)
     expect(body.sown_at).toBeNull()
     expect(body.source_type).toBeNull()
     expect(screen.queryAllByText('Add planting').length).toBe(0)
@@ -165,6 +168,36 @@ describe('Garden — ?add=1 opens the Add Planting editor (FAB entry)', () => {
       const plantGets = fetchSpy.mock.calls.filter(([u, o = {}]) => u === '/api/plants?view=grid' && !o.method)
       expect(plantGets.length).toBeGreaterThanOrEqual(2)
     })
+  })
+})
+
+describe('PlantingEditor add mode — the place is chosen, never defaulted (BUG-ADDPLANTPREFILE-001)', () => {
+  // A crabapple and three flowers were filed under "Wild Wineberry" because that container sorted first
+  // in GET /api/projects. The container's name is what gam-site publishes, so crabapples went out as
+  // wineberries. With the chooser hidden, nobody chose projects[0]; only a caller may pick a place.
+  const CONTAINERS = [
+    { id: 'proj-wineberry', name: 'Wild Wineberry', status: 'active', parent_project_id: null },
+    { id: 'proj-beds', name: 'Raised beds', status: 'active', parent_project_id: null },
+  ]
+  async function addOne(props = {}) {
+    fetchSpy.mockImplementation((url, opts = {}) =>
+      Promise.resolve(url === '/api/plants' && opts.method === 'POST' ? { id: 'plant-new' } : []))
+    render(<PlantingEditor mode="add" plants={[]} projects={CONTAINERS} fetch={fetchSpy} {...props} />)
+    fireEvent.change(screen.getByLabelText(/Name/i), { target: { value: 'Crabapple' } })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /^Add planting$/i }))
+    })
+    const postCall = fetchSpy.mock.calls.find(c => c[0] === '/api/plants' && c[1]?.method === 'POST')
+    expect(postCall).toBeDefined()
+    return JSON.parse(postCall[1].body)
+  }
+
+  it('posts project_id null when nothing chose a place, whatever sorts first', async () => {
+    expect(await addOne()).toHaveProperty('project_id', null)
+  })
+
+  it('keeps a container the calling surface picked (addDefaults.project_id)', async () => {
+    expect(await addOne({ addDefaults: { project_id: 'proj-beds' } })).toHaveProperty('project_id', 'proj-beds')
   })
 })
 

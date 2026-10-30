@@ -7,9 +7,9 @@
 //   · The canonical PlantingEditor in add mode, pre-seeded status seed / sown today / the packet's source
 //     type — so a sown planting always gets a real place and full details (BUG-ORPHANNAV-001, the old
 //     mini-form's project_id:null).
-//   · ITS OWN projects fetch, and the editor waits for it. PlantingEditor reads projects[0] ONCE, at
-//     mount, as the default place, and with PROJECTS_HIDDEN on there is no picker to correct it from: an
-//     editor mounted before the list landed would POST project_id ''. On Sow now the list had always
+//   · ITS OWN projects fetch, and the editor waits for it. The wait once kept PlantingEditor from taking
+//     an empty projects[0] as its place; since BUG-ADDPLANTPREFILE-001 it takes no default place with
+//     PROJECTS_HIDDEN on (the server matches by crop), and the wait is kept as is. On Sow now the list had always
 //     landed long before a tap; on a packet's page the sheet mounts with the page, so a quick tap could
 //     beat it. The fetch still starts at mount, exactly when Sow now's did.
 //   · The editor's dirty and busy signals, wired to the Sheet's backdrop guard, ConfirmSheet and the

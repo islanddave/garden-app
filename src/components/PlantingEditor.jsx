@@ -169,9 +169,13 @@ export default function PlantingEditor({
   onBusy,                        // V4-SHEETBUSY-001: (bool) => void, fires on every idle↔write-in-flight flip
 }) {
   const isEdit = mode === 'edit'
+  // BUG-ADDPLANTPREFILE-001: with the chooser hidden, projects[0] is only whichever container sorts first
+  // in GET /api/projects, and it filed a crabapple under "Wild Wineberry". Only a caller (addDefaults)
+  // picks the place; otherwise none is sent and the server matches one by crop or leaves it empty.
+  // With the chooser shown, the visible default is kept as before.
   const [form, setForm] = useState(() => isEdit && plant
     ? formFromPlant(plant)
-    : { ...EMPTY_FORM, project_id: projects[0]?.id ?? '', ...(addDefaults ?? {}) })
+    : { ...EMPTY_FORM, project_id: PROJECTS_HIDDEN ? '' : (projects[0]?.id ?? ''), ...(addDefaults ?? {}) })
   const [saving,   setSaving]   = useState(false)
   const [err,      setErr]      = useState(null)
   const [deleting, setDeleting] = useState(false)
@@ -279,7 +283,7 @@ export default function PlantingEditor({
     const qty = parseInt(form.quantity, 10)
     const varietyText = form.variety?.name ?? null
     const payload = {
-      project_id: form.project_id,
+      project_id: form.project_id || null,   // '' is "not chosen"; null is what triggers the server's crop match
       name:       form.name.trim(),
       variety:    varietyText,
       variety_id: form.variety?.id ?? null,
@@ -458,9 +462,9 @@ export default function PlantingEditor({
         submitLabel={isEdit ? 'Save' : 'Add planting'}
         submittingLabel={isEdit ? 'Saving…' : 'Adding…'}
         onCancel={onClose}
-        /* V4-PROJHIDE-001: hide the project chooser when projects aren't user-facing. project_id still
-           defaults to projects[0]?.id (see initial form state) so the add POST satisfies the FK with no
-           visible project step. Flag OFF passes the exact prior !isEdit values (byte-identical). */
+        /* V4-PROJHIDE-001: hide the project chooser when projects aren't user-facing. With it hidden the
+           add POST sends project_id null unless the caller picked one (BUG-ADDPLANTPREFILE-001, see the
+           initial form state). Flag OFF passes the exact prior !isEdit values (byte-identical). */
         showProjectSelect={PROJECTS_HIDDEN ? false : !isEdit}
         projectOptions={PROJECTS_HIDDEN ? null : (!isEdit ? <>{projects.length === 0 && <option value="">No projects yet</option>}<ProjectOptions projects={projects} /></> : null)}
         plantingOptions={(isEdit ? plants.filter(p => p.id !== plant?.id) : plants).map(p => ({ id: p.id, name: p.name }))}
