@@ -35,6 +35,8 @@ import { renderRoutes } from '../App.jsx'
 import Seeds from '../pages/Seeds.jsx'
 import SavedSeeds from '../pages/SavedSeeds.jsx'
 import SowNow from '../pages/SowNow.jsx'
+import TodayV2 from '../pages/TodayV2.jsx'
+import SeasonEnd from '../pages/SeasonEnd.jsx'
 import LegacySeedsRedirect from '../components/LegacySeedsRedirect.jsx'
 
 const pagePaths = () => renderRoutes({ overlay: false, user: true }).map((r) => r.props.path)
@@ -182,6 +184,29 @@ describe('App route table (single source of truth)', () => {
       .filter((r) => r.props.element.type !== Protected)
       .map((r) => r.props.path)
     expect(unwrapped.sort()).toEqual([...UNPROTECTED].sort())
+  })
+
+  it('every Protected route renders a route-scoped ErrorBoundary directly under <Protected>', () => {
+    const routes = renderRoutes({ overlay: false, user: true })
+    const garden = routes.find((r) => r.props.path === '/garden').props.element
+    const Protected = garden.type
+    const Boundary = garden.props.children.type
+    const Fallback = garden.props.children.props.fallback.type
+    expect(Boundary).toBeTypeOf('function')
+    expect(Fallback).toBeTypeOf('function')
+    const protectedRoutes = routes.filter((r) => r.props.element.type === Protected)
+    expect(protectedRoutes.length).toBeGreaterThan(50)
+    const unbounded = protectedRoutes
+      .filter((r) => {
+        const inner = r.props.element.props.children
+        return inner?.type !== Boundary || inner.props.scope !== 'route' || inner.props.fallback?.type !== Fallback
+      })
+      .map((r) => r.props.path)
+    expect(unbounded).toEqual([])
+    // The two mounts the retired source-text pins covered: the boundary wraps the real page.
+    const mounted = (path) => routes.find((r) => r.props.path === path).props.element.props.children.props.children.type
+    expect(mounted('/today')).toBe(TodayV2)
+    expect(mounted('/season-end')).toBe(SeasonEnd)
   })
 
   it('/garden/:slug specifically is Protected (the WS-A1 public share route is retired)', () => {

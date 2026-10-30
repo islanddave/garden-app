@@ -26,9 +26,8 @@ function walk(dir, out = []) {
 const SOURCES = walk(SRC).map((p) => ({ rel: path.relative(SRC, p), text: fs.readFileSync(p, 'utf8') }))
 
 describe('/today mounts TodayV2', () => {
-  it('from a static import, inside the route boundary', () => {
+  it('from a static import', () => {
     expect(APP).toMatch(/\nimport TodayV2 from '\.\/pages\/TodayV2\.jsx'\n/)
-    expect(APP).toMatch(/path: '\/today',\s+element: <Protected><ErrorBoundary scope="route" fallback=\{<RouteFallback \/>\}><TodayV2 \/><\/ErrorBoundary><\/Protected>/)
   })
   it('never through React.lazy or a dynamic import of the page', () => {
     expect(APP).not.toMatch(/lazy\(\s*\(\)\s*=>\s*import\(['"][^'"]*TodayV2/)

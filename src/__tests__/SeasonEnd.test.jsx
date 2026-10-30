@@ -9,8 +9,6 @@
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, fireEvent, within, act } from '@testing-library/react'
-import fs from 'node:fs'
-import path from 'node:path'
 
 const { fetchSpy, invalidateSpy, toastApi } = vi.hoisted(() => ({
   fetchSpy: vi.fn(),
@@ -480,10 +478,8 @@ describe('states', () => {
 })
 
 describe('the door ships with the route', () => {
-  it('a More row "End of season" leads to /season-end, and App.jsx declares it', () => {
+  it('a More row "End of season" leads to /season-end', () => {
     const row = MORE_ROWS.find((r) => r.id === 'season-end')
     expect(row).toMatchObject({ to: '/season-end', label: 'End of season', sub: 'Close out finished plantings', section: 'garden' })
-    const app = fs.readFileSync(path.resolve(process.cwd(), 'src/App.jsx'), 'utf8')
-    expect(app).toMatch(/path: '\/season-end',\s+element: <Protected><ErrorBoundary scope="route" fallback=\{<RouteFallback \/>\}><SeasonEnd \/>/)
   })
 })
