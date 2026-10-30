@@ -19,13 +19,17 @@ const decomment = (s) => s.split('\n')
   .join('\n');
 
 const SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
+// index.js signs in through its copy of the D2 kit (same zip); lambda/household-isolation.test.js holds the copy
+// byte-equal to lambda/request-context.js and checks its refusal order.
+const KIT = decomment(readFileSync(resolve(__dirname, 'request-context.js'), 'utf8'));
 
 describe('findings Lambda — static read-path invariants', () => {
   const stmts = SRC.match(/sql`[\s\S]*?`/g) || [];
 
   it('authenticates with Clerk verifyToken', () => {
-    expect(SRC).toMatch(/verifyToken\(/);
-    expect(SRC).toMatch(/secretKey:\s*secrets\.CLERK_SECRET_KEY/);
+    expect(SRC).toMatch(/const ctx = await requestContext\(event\b[\s\S]*?\);\n\s*if \(ctx\.response\) return ctx\.response;/);
+    expect(KIT).toMatch(/verifyToken\(/);
+    expect(KIT).toMatch(/secretKey:\s*secrets\.CLERK_SECRET_KEY/);
   });
 
   it('is READ-ONLY — issues exactly one SQL statement, a SELECT, with no write verbs', () => {
