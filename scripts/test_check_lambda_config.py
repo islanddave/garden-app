@@ -258,9 +258,30 @@ def _household_log_leaks(workflow):
 
 
 def test_no_deploy_step_prints_the_household_list():
-    leaks, fb_steps = _household_log_leaks("deploy-lambda.yml")
-    assert fb_steps == 1, "the facebook-share step was renamed or removed: re-point this check"
-    assert leaks == [], "these lines put the household list into the public Actions log:\n  " + "\n  ".join(leaks)
+    for workflow in ("deploy-lambda.yml", "deploy-staging.yml"):
+        leaks, fb_steps = _household_log_leaks(workflow)
+        assert fb_steps == 1, "%s: the facebook-share step was renamed or removed: re-point this check" % workflow
+        assert leaks == [], "%s puts the household list into the public Actions log:\n  %s" % (workflow, "\n  ".join(leaks))
+
+
+def test_household_step_body_is_byte_identical_in_prod_and_staging():
+    """One never-shrink rule to review, executed against a stub aws by scripts/test_deploy_staging_env.py. Only the
+    step's env differs: the function name, and each environment's own GARDEN_HOUSEHOLD_IDS secret."""
+    import yaml
+    found = {}
+    for workflow, prefix, fn in (("deploy-lambda.yml", "Ensure GARDEN_HOUSEHOLD_IDS env for household-scoped fns",
+                                  "garden-${{ matrix.function }}"),
+                                 ("deploy-staging.yml", "Ensure GARDEN_HOUSEHOLD_IDS env for household-scoped staging fns",
+                                  "garden-${{ matrix.function }}-staging")):
+        with open(os.path.join(os.path.dirname(__file__), "..", ".github", "workflows", workflow)) as fh:
+            doc = yaml.safe_load(fh)
+        steps = [st for job in doc["jobs"].values() for st in job.get("steps", [])
+                 if str(st.get("name", "")).startswith(prefix)]
+        assert len(steps) == 1, "%s: the household ensure step is missing or duplicated" % workflow
+        assert steps[0]["env"] == {"FN": fn, "HH_CANON": "${{ secrets.GARDEN_HOUSEHOLD_IDS }}"}, workflow
+        assert steps[0].get("continue-on-error") is True, workflow
+        found[workflow] = steps[0]["run"]
+    assert found["deploy-lambda.yml"] == found["deploy-staging.yml"]
 
 def test_manifest_declares_every_env_var_daily_plan_reads():
     """The daily-plan flag set is declared EXHAUSTIVELY — a read-but-undeclared var is how

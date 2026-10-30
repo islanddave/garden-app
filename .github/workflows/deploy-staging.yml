@@ -350,68 +350,76 @@ jobs:
             echo "ADMIN_CLERK_SUBS set on $FN"
           fi
 
+      # Every function that reads GARDEN_HOUSEHOLD_IDS gets it from ONE source, this environment's
+      # GARDEN_HOUSEHOLD_IDS secret; no value is in the repo. The URL handlers' SEC-13a household gate fails
+      # closed (403) without it. The step never shrinks a live list: a list wider than the secret is a hand
+      # widening (the lockout undo) and is kept with a warning, and a list naming different members is
+      # refused. It prints no entry, only counts and a sha256 prefix, because these logs are public.
+      # Read-merge, as every env step here (--environment is SET-not-MERGE). It runs AFTER the code update,
+      # so it is the backstop: set the list live before code that needs it ships. The run body is
+      # byte-identical in deploy-lambda.yml and deploy-staging.yml (scripts/test_check_lambda_config.py)
+      # and is executed against a stub aws by scripts/test_deploy_staging_env.py.
       - name: Ensure GARDEN_HOUSEHOLD_IDS env for household-scoped staging fns (read-merge)
-        # garden-harvests-staging and garden-members-staging are household-scoped; create-function above
-        # sets ONLY SECRET_NAME, so without this they collapse to per-user scope (divergent harvest lists, a
-        # roster of the caller alone). Read-merge (NOT set: set wipes SECRET_NAME) the value from the sibling
-        # garden-events-staging.
-        if: matrix.function == 'harvests' || matrix.function == 'members'
-        continue-on-error: true  # requires lambda:UpdateFunctionConfiguration on staging deploy role
+        if: matrix.function == 'projects' || matrix.function == 'plants' || matrix.function == 'locations' || matrix.function == 'events' || matrix.function == 'favorites' || matrix.function == 'photos' || matrix.function == 'dashboard' || matrix.function == 'inventory-items' || matrix.function == 'varieties' || matrix.function == 'app-events' || matrix.function == 'ux-events' || matrix.function == 'critter' || matrix.function == 'shared-state' || matrix.function == 'findings' || matrix.function == 'daily-plan-read' || matrix.function == 'members' || matrix.function == 'evidence-ingest' || matrix.function == 'storage-location' || matrix.function == 'preservation' || matrix.function == 'harvests' || matrix.function == 'facebook-share'
+        continue-on-error: true  # requires lambda:Get/UpdateFunctionConfiguration on staging deploy role
+        env:
+          FN: garden-${{ matrix.function }}-staging
+          HH_CANON: ${{ secrets.GARDEN_HOUSEHOLD_IDS }}
         run: |
-          FN="garden-${{ matrix.function }}-staging"
-          SRC="garden-events-staging"
-          HH=$(aws lambda get-function-configuration --function-name "$SRC" \
-            --query 'Environment.Variables.GARDEN_HOUSEHOLD_IDS' --output text 2>/dev/null || echo "None")
-          if [[ "$HH" == "None" || -z "$HH" ]]; then
-            echo "::warning::B1(staging) — GARDEN_HOUSEHOLD_IDS not readable from $SRC; $FN"
-            echo "::warning::stays per-user until set. The both-household staging smoke will diverge until fixed."
-            exit 0
+          set -o pipefail
+          HH=$(printf '%s' "${HH_CANON:-}" | tr -d '\r\n')
+          if [ -z "$(printf '%s' "$HH" | tr -d ', \t')" ]; then
+            echo "::error::$FN: this environment's GARDEN_HOUSEHOLD_IDS secret is empty or missing; nothing written"
+            exit 1
           fi
-          # OPS-STAGINGENVREAD-001: test EXIT STATUS, not emptiness (rationale on the S3_PHOTOS_BUCKET
-          # step). This step is continue-on-error, so bailing leaves the live config untouched.
+          ids() { printf '%s\n' "$1" | tr ',' '\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e '/^$/d' | LC_ALL=C sort -u; }
+          mask() { while IFS= read -r e; do echo "::add-mask::$e"; done; }
+          CANON=$(ids "$HH")
+          printf '%s\n' "$CANON" | mask
+          # OPS-LAMBDAENVWIPE-001: test the read's EXIT STATUS, never emptiness. A function with no env reads
+          # back `null` at exit 0 and merges correctly; a failed read must never become an empty merge base.
           if ! EXISTING=$(aws lambda get-function-configuration --function-name "$FN" \
             --query 'Environment.Variables' --output json 2>/tmp/env-read-err); then
             CAUSE=$(tr -s '\r\n' '  ' </tmp/env-read-err | sed -e 's/^ //' -e 's/ $//' | cut -c1-400)
             echo "::warning::could not read env for $FN (${CAUSE:-no error text}); leaving GARDEN_HOUSEHOLD_IDS untouched rather than risking a wipe"
             exit 1
           fi
+          LIVE_RAW=$(printf '%s' "$EXISTING" | jq -r '(. // {}).GARDEN_HOUSEHOLD_IDS // ""')
+          LIVE=$(ids "$LIVE_RAW")
+          if [ -n "$LIVE" ]; then printf '%s\n' "$LIVE" | mask; fi
+          if [ -z "$LIVE" ]; then
+            VERDICT=added
+          elif [ "$LIVE" = "$CANON" ]; then
+            if [ "$LIVE_RAW" = "$HH" ]; then VERDICT=same; else VERDICT=normalized; fi
+          else
+            ONLY_LIVE=$(LC_ALL=C comm -23 <(printf '%s\n' "$LIVE") <(printf '%s\n' "$CANON"))
+            ONLY_CANON=$(LC_ALL=C comm -13 <(printf '%s\n' "$LIVE") <(printf '%s\n' "$CANON"))
+            if [ -z "$ONLY_LIVE" ]; then VERDICT=widened
+            elif [ -z "$ONLY_CANON" ]; then VERDICT=live-wider
+            else VERDICT=differ; fi
+          fi
+          N=$(printf '%s\n' "$CANON" | wc -l | tr -d ' ')
+          SUM=$(printf '%s' "$HH" | sha256sum | cut -c1-12)
+          case "$VERDICT" in
+            same)
+              echo "GARDEN_HOUSEHOLD_IDS already correct on $FN ($N entries, sha256 $SUM)"
+              exit 0 ;;
+            live-wider)
+              echo "::warning::$FN carries a wider GARDEN_HOUSEHOLD_IDS than this environment's secret (a hand widening?): kept, because a deploy never shrinks the list. Update the secret to match."
+              exit 0 ;;
+            differ)
+              echo "::error::$FN: its GARDEN_HOUSEHOLD_IDS and this environment's secret name different members. Nothing written: a person decides which list is right."
+              exit 1 ;;
+          esac
           UPDATED=$(echo "$EXISTING" | jq --arg v "$HH" '. + {GARDEN_HOUSEHOLD_IDS: $v}')
           echo "{\"Variables\": $UPDATED}" > "/tmp/env-$FN-household.json"
           aws lambda update-function-configuration \
             --function-name "$FN" --environment "file:///tmp/env-$FN-household.json" >/dev/null
           aws lambda wait function-updated --function-name "$FN"
-          echo "GARDEN_HOUSEHOLD_IDS ensured on $FN"
+          rm -f "/tmp/env-$FN-household.json"
+          echo "GARDEN_HOUSEHOLD_IDS $VERDICT on $FN ($N entries, sha256 $SUM)"
 
-      - name: Ensure GARDEN_HOUSEHOLD_IDS env for shared-state-staging
-        # shared-state admits only members of a list of at least two, and fails
-        # closed, so without this both shared-state smoke blocks 403. NOT sourced from
-        # garden-events-staging like the step above: that function has no such key on staging, and
-        # giving it one would switch events/harvests/members staging into household mode. Carries the
-        # smoke's CLERK_TEST_USER_ID alongside Dave (the ux-events-staging ADMIN_CLERK_SUBS convention).
-        if: matrix.function == 'shared-state'
-        continue-on-error: true  # requires lambda:UpdateFunctionConfiguration on staging deploy role
-        run: |
-          FN="garden-shared-state-staging"
-          EXPECTED="user_3D2gM0hIl03gjW3JM2DjtPzm0jI,${{ secrets.CLERK_TEST_USER_ID }}"
-          CURRENT=$(aws lambda get-function-configuration --function-name "$FN" --query 'Environment.Variables.GARDEN_HOUSEHOLD_IDS' --output text 2>/dev/null || echo "None")
-          if [[ "$CURRENT" == "$EXPECTED" ]]; then
-            echo "GARDEN_HOUSEHOLD_IDS already correct on $FN"
-          else
-            # OPS-STAGINGENVREAD-001: test EXIT STATUS, not emptiness (rationale on the S3_PHOTOS_BUCKET
-            # step). This step is continue-on-error, so bailing leaves the live config untouched.
-            if ! EXISTING=$(aws lambda get-function-configuration --function-name "$FN" --query 'Environment.Variables' --output json 2>/tmp/env-read-err); then
-              CAUSE=$(tr -s '\r\n' '  ' </tmp/env-read-err | sed -e 's/^ //' -e 's/ $//' | cut -c1-400)
-              echo "::warning::could not read env for $FN (${CAUSE:-no error text}); leaving GARDEN_HOUSEHOLD_IDS untouched rather than risking a wipe"
-              exit 1
-            fi
-            UPDATED=$(echo "$EXISTING" | jq --arg v "$EXPECTED" '. + {GARDEN_HOUSEHOLD_IDS: $v}')
-            echo "{\"Variables\": $UPDATED}" > /tmp/env-shared-state-household-staging.json
-            aws lambda update-function-configuration --function-name "$FN" --environment file:///tmp/env-shared-state-household-staging.json >/dev/null
-            aws lambda wait function-updated --function-name "$FN"
-            echo "GARDEN_HOUSEHOLD_IDS set on $FN"
-          fi
-
-      - name: Ensure facebook-share-staging config (household + admin + bucket + secret; read-merge)
+      - name: Ensure facebook-share-staging config (admin + bucket + secret; read-merge)
         # Staging mirror of deploy-lambda.yml's "Ensure facebook-share config" step.
         # READ-MERGE is mandatory: --environment is set-not-merge and a naive set would wipe the
         # SECRET_NAME written at create.
@@ -429,8 +437,6 @@ jobs:
         continue-on-error: true  # requires lambda:Get/UpdateFunctionConfiguration on staging deploy role
         run: |
           FN="garden-facebook-share-staging"
-          HH=$(aws lambda get-function-configuration --function-name garden-events-staging \
-            --query 'Environment.Variables.GARDEN_HOUSEHOLD_IDS' --output text 2>/dev/null || echo "None")
           # OPS-STAGINGENVREAD-001: test EXIT STATUS, not emptiness (rationale on the S3_PHOTOS_BUCKET
           # step). This step reads and SETS on every deploy, and a merge onto "{}" would drop SECRET_NAME
           # and whatever was set by hand. It is continue-on-error, so bailing leaves the config untouched.
@@ -441,16 +447,15 @@ jobs:
             exit 1
           fi
           UPDATED=$(echo "$EXISTING" | jq \
-            --arg hh "$HH" \
             --arg b "garden-photos-staging" \
             --arg a "user_3D2gM0hIl03gjW3JM2DjtPzm0jI,${{ secrets.CLERK_TEST_USER_ID }}" \
             --arg s "garden-app/facebook-page-token-staging" \
-            '. + {S3_PHOTOS_BUCKET:$b, ADMIN_CLERK_SUBS:$a, FB_SECRET_NAME:$s} + (if $hh != "None" and $hh != "" then {GARDEN_HOUSEHOLD_IDS:$hh} else {} end)')
+            '. + {S3_PHOTOS_BUCKET:$b, ADMIN_CLERK_SUBS:$a, FB_SECRET_NAME:$s}')
           echo "{\"Variables\": $UPDATED}" > /tmp/env-fbshare-staging.json
           aws lambda update-function-configuration --function-name "$FN" \
             --environment file:///tmp/env-fbshare-staging.json --timeout 60 --memory-size 512 >/dev/null
           aws lambda wait function-updated --function-name "$FN"
-          echo "facebook-share-staging config ensured (household=$HH; admin; bucket; secret; 512MB/60s)"
+          echo "facebook-share-staging config ensured (admin; bucket; secret; 512MB/60s)"
 
       - name: Ensure photocdn-derivative-staging config (buckets; read-merge)
         # ORIGINALS_BUCKET is re-asserted on every deploy, not just at create: index.mjs falls back to
