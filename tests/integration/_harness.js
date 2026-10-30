@@ -43,14 +43,15 @@ vi.mock('@aws-sdk/client-secrets-manager', async (importOriginal) => {
   }
 })
 
-// Stub Clerk verifyToken — returns { sub: <testUserId> } without a network call, and makes that subject a
-// household member so the SEC-13a gate admits it (lambda/_test-stubs/householdDefault.js says how). A test
-// that overrides verifyToken with its own implementation calls householdDefault(sub) itself; a test of the
-// gate's refusal calls setHouseholdDefault(false) and restores it after.
+// Stub Clerk verifyToken — returns { sub: <testUserId>, azp: <prod origin> } without a network call, and makes that
+// subject a household member so the SEC-13a gate admits it (lambda/_test-stubs/householdDefault.js says how). A
+// test that overrides verifyToken with its own implementation calls householdDefault(sub) itself and names an azp
+// (lambda/request-context.js refuses a token without one); a test of the gate's refusal calls
+// setHouseholdDefault(false) and restores it after.
 vi.mock('@clerk/backend', () => ({
   verifyToken: vi.fn().mockImplementation(() => {
     applyHouseholdDefault(_testUserId)
-    return Promise.resolve({ sub: _testUserId })
+    return Promise.resolve({ sub: _testUserId, azp: 'https://garden.futureishere.net' })
   }),
 }))
 // DO NOT turn these into `export { … }` of the imports: vi.mock hoisting rewrites this file's imports to a

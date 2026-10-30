@@ -1353,9 +1353,15 @@ describe('V4-AUTHZRESIDUE-001: every household-scoped handler rejects an empty J
     expect(scoped, 'dashboard scopes via handlers.js and must not be skipped').toContain('dashboard');
   });
 
+  // D2: once index.js calls requestContext( the guard lives in the dir's kit copy (lambda/request-context.js, same zip,
+  // held byte-equal to the master by household-isolation.test.js), which runs before index.js can scope anything.
+  const indexCode = (d) => decomment(readFileSync(join(here, d, 'index.js'), 'utf8'));
+  const usesKit = (d) => /requestContext\(/.test(indexCode(d));
+  const signInSource = (d) => decomment(readFileSync(join(here, d, usesKit(d) ? 'request-context.js' : 'index.js'), 'utf8'));
+
   for (const d of scoped) {
     it(`${d}/index.js 401s an empty sub before deriving householdIds`, () => {
-      const src = decomment(readFileSync(join(here, d, 'index.js'), 'utf8'));
+      const src = signInSource(d);
       expect(src, `${d} must guard the empty sub`).toMatch(/if \(!userId\) return resp\(401/);
       // Ordering is the substance: a guard placed AFTER householdScope() has already let the empty
       // sub become an ownership array is decoration. Only assertable where the call is in this file
@@ -1363,6 +1369,16 @@ describe('V4-AUTHZRESIDUE-001: every household-scoped handler rejects an empty J
       const use = src.search(/householdScope\s*\(\s*userId\s*\)/);
       if (use !== -1) {
         expect(src.indexOf('if (!userId) return resp(401')).toBeLessThan(use);
+      }
+      if (usesKit(d)) {
+        const kit = src.slice(src.indexOf('export async function requestContext('));
+        const sub401 = kit.indexOf('if (!userId) return resp(401');
+        expect(sub401).toBeGreaterThan(-1);
+        expect(kit.indexOf('householdGate(userId)')).toBeGreaterThan(sub401);
+        expect(kit.indexOf('scope(')).toBeGreaterThan(sub401);
+        const index = indexCode(d);
+        const firstScope = index.search(/householdScope\s*\(/);
+        if (firstScope !== -1) expect(firstScope).toBeGreaterThan(index.indexOf('requestContext('));
       }
     });
   }

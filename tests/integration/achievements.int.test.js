@@ -112,7 +112,7 @@ describe('achievements — sign-in and origin', () => {
   })
 
   it('no Authorization header sends an empty token to Clerk and is 401 when Clerk refuses it', async () => {
-    vi.mocked(verifyToken).mockImplementationOnce((token) => (token === '' ? Promise.reject(new Error('no token')) : Promise.resolve({ sub: FRESH })))
+    vi.mocked(verifyToken).mockImplementationOnce((token) => (token === '' ? Promise.reject(new Error('no token')) : Promise.resolve({ sub: FRESH, azp: ORIGINS[0] })))
     const r = await raw({ ...makeEvent({ method: 'GET', path: '/api/achievements' }), headers: {} })
     expect(r.status).toBe(401)
     expect(vi.mocked(verifyToken).mock.calls.at(-1)[0]).toBe('')
@@ -138,7 +138,7 @@ describe('achievements — sign-in and origin', () => {
   })
 
   it('SEC-60: a verified token with no subject is 401 (it was served as a user with nothing earned)', async () => {
-    vi.mocked(verifyToken).mockImplementationOnce(() => Promise.resolve({}))
+    vi.mocked(verifyToken).mockImplementationOnce(() => Promise.resolve({ azp: ORIGINS[0] }))
     const r = await raw(makeEvent({ method: 'GET', path: '/api/achievements' }))
     expect(r.status).toBe(401)
     expect(r.body).toEqual({ error: 'Unauthorized' })

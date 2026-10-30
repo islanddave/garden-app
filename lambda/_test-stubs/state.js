@@ -19,6 +19,10 @@ export const stubState = {
   // Clerk. Either a payload object to return, or an Error to throw.
   verifyTokenResult: null,
   verifyTokenCalls: [],
+  // On after every resetStubs(), not only under vitest: the stub never stands for a real token, and the operator
+  // scripts that run handlers in-process through these stubs (scripts/seed-recipes.mjs,
+  // scripts/putup-postdeploy-refile.mjs) sign in through the kit. Tests of the azp rule turn it off.
+  azpDefault: true,
   // Clerk Backend API user list (createClerkClient().users.getUserList) and the params of every call.
   clerkUsers: [],
   clerkListCalls: [],
@@ -58,6 +62,7 @@ export function resetStubs() {
   };
   stubState.verifyTokenResult = null;
   stubState.verifyTokenCalls = [];
+  stubState.azpDefault = true;
   stubState.clerkUsers = [];
   stubState.clerkListCalls = [];
   stubState.sqlHandler = () => [];

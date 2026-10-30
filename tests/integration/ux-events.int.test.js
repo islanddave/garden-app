@@ -174,7 +174,7 @@ describe('ux-events — database errors', () => {
   })
 
   it('SEC-60: a token with no subject is 401 and writes no row (it reached the INSERT: 23502, a 500)', async () => {
-    vi.mocked(verifyToken).mockImplementationOnce(() => Promise.resolve({}))
+    vi.mocked(verifyToken).mockImplementationOnce(() => Promise.resolve({ azp: ORIGINS[0] }))
     const r = await raw(makeEvent({ method: 'POST', path: '/api/ux-events', body: { flow_id: 'log_watering', session_id: 'nosub' } }))
     expect(r.status).toBe(401)
     expect(r.body).toEqual({ error: 'Unauthorized' })

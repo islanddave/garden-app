@@ -64,6 +64,31 @@
       "lambda/photos/rate-limit.js",
       "lambda/tags/rate-limit.js",
       "lambda/varieties/rate-limit.js"
+    ],
+    "lambda/request-context.js": [
+      "lambda/achievements/request-context.js",
+      "lambda/app-events/request-context.js",
+      "lambda/critter/request-context.js",
+      "lambda/daily-plan-read/request-context.js",
+      "lambda/dashboard/request-context.js",
+      "lambda/events/request-context.js",
+      "lambda/evidence-ingest/request-context.js",
+      "lambda/facebook-share/request-context.js",
+      "lambda/favorites/request-context.js",
+      "lambda/findings/request-context.js",
+      "lambda/harvests/request-context.js",
+      "lambda/inventory-items/request-context.js",
+      "lambda/locations/request-context.js",
+      "lambda/members/request-context.js",
+      "lambda/photos/request-context.js",
+      "lambda/plants/request-context.js",
+      "lambda/preservation/request-context.js",
+      "lambda/projects/request-context.js",
+      "lambda/shared-state/request-context.js",
+      "lambda/storage-location/request-context.js",
+      "lambda/tags/request-context.js",
+      "lambda/ux-events/request-context.js",
+      "lambda/varieties/request-context.js"
     ]
   }
 }
