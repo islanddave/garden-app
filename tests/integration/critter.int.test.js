@@ -284,3 +284,45 @@ describe('critter — database errors', () => {
     expect(r.body).toEqual({ error: 'Internal Server Error' })
   })
 })
+
+describe('critter — the stickerbook stays per person with GARDEN_HOUSEHOLD_IDS set', () => {
+  const DAVE = `c6_critter_dave_${RUN}`
+  const JEN = `c6_critter_jen_${RUN}`
+  let jenCritter
+  let savedIds
+
+  beforeAll(async () => {
+    savedIds = process.env.GARDEN_HOUSEHOLD_IDS
+    process.env.GARDEN_HOUSEHOLD_IDS = `${DAVE},${JEN}`
+    const [row] = await directSql`
+      INSERT INTO critter_state (created_by, species_id, target_kind, target_id, source_event_id, earned_at)
+      VALUES (${JEN}, 5, 'plant', ${randomUUID()}, ${randomUUID()}, now() - interval '1 hour')
+      RETURNING id`
+    jenCritter = row.id
+  })
+
+  afterAll(async () => {
+    if (savedIds === undefined) delete process.env.GARDEN_HOUSEHOLD_IDS
+    else process.env.GARDEN_HOUSEHOLD_IDS = savedIds
+    await directSql`DELETE FROM critter_state WHERE created_by IN (${DAVE}, ${JEN})`
+  })
+
+  it('SEC-13a: Jen\'s critter is not in Dave\'s active list, collection or by-id read, and Dave cannot mark it viewed', async () => {
+    setTestUserId(DAVE)
+    const active = await call('GET', '/api/critters/active')
+    expect(active.status).toBe(200)
+    expect(active.body.critters.map((c) => c.id)).not.toContain(jenCritter)
+    const collection = await call('GET', '/api/critters/collection')
+    expect(collection.status).toBe(200)
+    expect(collection.body.species).toEqual([])
+    const byId = await call('GET', `/api/critters/${jenCritter}`)
+    expect(byId.status).toBe(404)
+    const mark = await call('PATCH', '/api/critters/viewed', { actually_seen_critter_ids: [jenCritter] })
+    expect(mark.body).toEqual({ marked_viewed_ids: [] })
+    const [row] = await directSql`SELECT viewed_at FROM critter_state WHERE id = ${jenCritter}`
+    expect(row.viewed_at).toBeNull()
+    setTestUserId(JEN)
+    const own = await call('GET', '/api/critters/active')
+    expect(own.body.critters.map((c) => c.id)).toContain(jenCritter)
+  })
+})

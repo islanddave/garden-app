@@ -4,7 +4,7 @@
 //
 // Routes (12 declared; POST /api/critters is retired — see the tombstone in the handler):
 //   POST   /api/critters                           Award critter for action-completion event (MVP plant-only)
-//   GET    /api/critters/active                    Unviewed + unfaded list for household
+//   GET    /api/critters/active                    Unviewed + unfaded list for the caller
 //   GET    /api/critters/collection             Per-user lifetime stickerbook summary (Collection page Phase 2 wiring)
 //   GET    /api/critters/:id                       Single row (smoke verification)
 //   PATCH  /api/critters/viewed                    Mark unviewed → viewed (Stage 3 dot clear, race-window guarded)
@@ -18,12 +18,14 @@
 //   GET    /api/app-config                         DORMANT since V5-NAVCUSTOM-001 — was the global nav read
 //   PATCH  /api/app-config                         DORMANT since V5-NAVCUSTOM-001 — was the global nav write, ADMIN_CLERK_SUBS gated
 //
-// Scope: every route except the two /api/app-config ones is PER-USER (householdScope / created_by).
+// Scope: every route except the two /api/app-config ones is PER-USER (created_by = the caller's own sub).
 // Those two write a row no user owns, which is why their PATCH keeps its admin gate. They are dormant:
 // Dave ruled on 2026-09-24 (D4) that the tab bar is per person, so the SPA stopped using them in
 // V5-NAVCUSTOM-001 and the per-person bar is bar_layout on the prefs route. They stay only so a client
 // still rolling out gets a 200 rather than a 404; removal is a follow-up (see the block above them).
-// Scope: ZERO RLS in current Neon. Lambda enforces via householdScope(clerk_sub) → created_by = ANY(${ids}).
+// Scope: ZERO RLS in current Neon. Lambda enforces created_by = ANY(${ownerIds}) with ownerIds = [caller]: the
+// stickerbook is per person even when GARDEN_HOUSEHOLD_IDS lists a household (Dave's ruling; guard:
+// tests/integration/critter.int.test.js "SEC-13a" case, lambda/household-isolation.test.js OUT_OF_SCOPE).
 // Idempotency: POST /api/critters relies on UNIQUE INDEX idx_critter_state_source_event_id.
 //   PG 23505 (unique_violation) caught + returns existing row → idempotent success (revision §3.27).
 // CORS: Lambda URL config owns it. Handler keeps CORS = {} per L-097.
@@ -32,7 +34,6 @@
 import { neon } from '@neondatabase/serverless'
 import { verifyToken } from '@clerk/backend'
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager'
-import { householdScope } from './household.js'
 import {
   validatePrefsPatchBody, validateSpeciesPrefsPatchBody,
   validateMarkViewedPatchBody, validateAppConfigPatchBody,
@@ -199,14 +200,14 @@ export const handler = async (event) => {
     console.error('verifyToken failed:', err?.message ?? String(err))
     return resp(401, { error: 'Unauthorized' })
   }
-  // V4-AUTHZRESIDUE-001 (mirrors lambda/plants + lambda/photos): householdScope('') returns [''] and
+  // V4-AUTHZRESIDUE-001 (mirrors lambda/plants + lambda/photos): an empty sub would bind [''] and
   // `'' = ANY(ARRAY[''])` is TRUE in Postgres, so an empty/absent JWT subject would be a live
   // ownership value rather than a no-match. verifyToken rejects such a token first, so this is
   // defence-in-depth; the point is that the invariant is ENFORCED here rather than relied upon.
   if (!userId) return resp(401, { error: 'Unauthorized' })
 
   const sql = neon(secrets.NEON_DATABASE_URL)
-  const householdIds = householdScope(userId)
+  const ownerIds = [userId]
   const method = event.requestContext?.http?.method ?? 'GET'
   const rawPath = event.rawPath ?? ''
   const headers = event.headers ?? {}
@@ -239,22 +240,21 @@ export const handler = async (event) => {
     //   species_user_count      — scoped to THIS user (created_by = userId). Drives the
     //                              "✨ First sighting!" celebration. Stickerbook is per-person
     //                              per Dave 2026-05-31 (each user collects their own roster).
-    //   species_household_count — scoped to household (ANY(householdIds)). Plumbed but not
-    //                              yet surfaced — reserved for future "Welcome to your garden"
-    //                              household-milestone moment (separate from personal stickerbook).
+    //   species_household_count — counted over ownerIds, the caller alone, so it equals
+    //                              species_user_count. Kept in the response for clients; not surfaced.
     if (rawPath === '/api/critters/active' && method === 'GET') {
       const rows = await sql`
         -- V4-PERFCRITTER-001: per-species lifetime counts via single-pass GROUP BY CTEs
         -- (was correlated per-row COUNT subqueries). Counts include viewed/faded, exclude
         -- soft-deleted — identical scope to the prior subqueries. Response shape byte-identical
         -- (verified vs prod 2026-07-01). user_counts drives the personal "First sighting!"
-        -- celebration; hh_counts is household-scoped (plumbed, not yet surfaced).
+        -- celebration; hh_counts runs over the same per-person ownerIds (not surfaced).
         WITH active AS (
           SELECT cs.id, cs.species_id, cs.target_kind, cs.target_id, cs.plant_id,
                  cs.source_event_id, cs.earned_at, cs.viewed_at, cs.faded_at,
                  cs.dot_visible_after, cs.meta
             FROM public.critter_state cs
-           WHERE cs.created_by = ANY(${householdIds})
+           WHERE cs.created_by = ANY(${ownerIds})
              AND cs.faded_at IS NULL
              AND cs.deleted_at IS NULL
         ),
@@ -268,7 +268,7 @@ export const handler = async (event) => {
         hh_counts AS (
           SELECT species_id, COUNT(*)::int AS c
             FROM public.critter_state
-           WHERE created_by = ANY(${householdIds})
+           WHERE created_by = ANY(${ownerIds})
              AND deleted_at IS NULL
            GROUP BY species_id
         )
@@ -287,10 +287,7 @@ export const handler = async (event) => {
 
     // ── Route 2.5: GET /api/critters/collection (per-user stickerbook) ──
     // Per-USER lifetime species summary for Collection page Phase 2 wiring.
-    // Scope: created_by = userId (NOT householdIds). Per Dave 2026-05-31
-    //   ("stickerbook is per person, not per household"). species_household_count
-    //   remains plumbed on Route 2 for the household-first celebration badge;
-    //   this route is the per-USER lifetime view (the stickerbook).
+    // Scope: created_by = userId: the stickerbook is per person, not per household.
     // Lifetime: includes viewed AND faded rows (excludes only soft-deleted).
     // Species never earned by the user are absent from the response — the frontend
     // renders them as silhouettes per spec V001.
@@ -321,7 +318,7 @@ export const handler = async (event) => {
                source_event_id, earned_at, viewed_at, faded_at, dot_visible_after, meta
           FROM public.critter_state
          WHERE id = ${id}
-           AND created_by = ANY(${householdIds})
+           AND created_by = ANY(${ownerIds})
            AND deleted_at IS NULL
          LIMIT 1
       `
@@ -353,7 +350,7 @@ export const handler = async (event) => {
         upd = await sql`
           UPDATE public.critter_state
              SET viewed_at = now()
-           WHERE created_by = ANY(${householdIds})
+           WHERE created_by = ANY(${ownerIds})
              AND viewed_at IS NULL
              AND deleted_at IS NULL
              AND earned_at < ${gate}::timestamptz
@@ -365,13 +362,13 @@ export const handler = async (event) => {
         upd = await sql`
           UPDATE public.critter_state
              SET viewed_at = now()
-           WHERE created_by = ANY(${householdIds})
+           WHERE created_by = ANY(${ownerIds})
              AND viewed_at IS NULL
              AND deleted_at IS NULL
              AND earned_at < ${gate}::timestamptz
              AND id IN (
                SELECT id FROM public.critter_state
-                WHERE created_by = ANY(${householdIds})
+                WHERE created_by = ANY(${ownerIds})
                   AND viewed_at IS NULL
                   AND deleted_at IS NULL
                   AND earned_at < ${gate}::timestamptz

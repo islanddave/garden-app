@@ -22,7 +22,6 @@ const IN_SCOPE = [
   'photos/index.js',
   'dashboard/handlers.js',
   'locations/index.js',
-  'critter/index.js', // shared critter stickerbook is household-scoped (created_by = ANY(householdIds))
   'findings/index.js', // DRG findings read model — household-scoped reads (created_by = ANY(householdIds))
   'tags/index.js', // V4-TAGSUB faceted tag visibility — shared tags widen to householdScope
   'daily-plan-read/index.js', // V4-ASSIGNLENS-001 — OPT-IN ?include=household widening (default stays per-user)
@@ -51,6 +50,9 @@ const OUT_OF_SCOPE = [
   'xp-reconcile/index.js',
   'app-events/index.js',
   'dashboard/index.js', // wrapper — householdScope is computed inside builders, not the wrapper
+  // The critter stickerbook is per person even with GARDEN_HOUSEHOLD_IDS set (Dave's ruling, SEC-13a):
+  // its rows are scoped to the caller's own sub. Twin on real Postgres: tests/integration/critter.int.test.js.
+  'critter/index.js',
 ];
 
 const IMPORT_RE = /import \{[^}]*\bhouseholdScope\b[^}]*\} from '\.\/household\.js'/;
