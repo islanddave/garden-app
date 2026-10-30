@@ -289,6 +289,25 @@ def test_before_v5_3_14_ships_the_weather_plot_floors_are_not_in_force(monkeypat
     assert rt.require_target_above_floor(cfg_for("v5.3.12")) is None
 
 
+def test_the_household_env_floor_refuses_older_critter_code_once_v5_3_22_ships(monkeypatch):
+    """The deploy only adds GARDEN_HOUSEHOLD_IDS, so code below v5.3.22 would run household-scoped critter
+    code with the key set and merge two people's stickerbooks. The undo order names the five functions."""
+    e = {x["floor"]: x for x in rf.load()}["v5.3.22"]
+    assert (e["since"], e["ledger"], e["undo_instead"]) == ("v5.3.22", "OPS-CRPHASE2-001", None)
+    for fn in ("critter", "achievements", "app-events", "favorites", "ux-events", "lambda-env-set.sh"):
+        assert fn in e["reason"]
+    monkeypatch.setattr(rt, "requests", FakeRequests(prod_routes("5.3.22")))
+    with pytest.raises(rt.RevertError) as err:
+        rt.require_target_above_floor(cfg_for("v5.3.21"))
+    assert "below the revert floor v5.3.22" in str(err.value) and "OPS-CRPHASE2-001" in str(err.value)
+    assert rt.require_target_above_floor(cfg_for("v5.3.22")) is None
+
+
+def test_before_v5_3_22_ships_the_household_env_floor_is_not_in_force(monkeypatch):
+    monkeypatch.setattr(rt, "requests", FakeRequests(prod_routes("5.3.21")))
+    assert rt.require_target_above_floor(cfg_for("v5.3.14")) is None
+
+
 def test_the_not_null_floor_alone_refuses_code_that_stamps_no_plot_id(monkeypatch, tmp_path):
     """MINOR-2 of the v5.3.13 pre-promote pass: on its own, the 3.2d entry refuses v5.3.12 (its writers name
     no plot_id, 23502 on every weather_daily row after NOT NULL) and allows v5.3.13, the first that stamps."""

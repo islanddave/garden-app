@@ -1,6 +1,13 @@
 {
   "floors": [
     {
+      "floor": "v5.3.22",
+      "since": "v5.3.22",
+      "reason": "household env on five more functions (SEC-13a) and per-person critter scope: v5.3.22 sets GARDEN_HOUSEHOLD_IDS on critter, achievements, app-events, favorites and ux-events and moves critter to per-person scope. The deploy step only adds or keeps that key and never removes it, so a code revert below v5.3.22 runs the old critter code (householdScope) with the key set and merges Dave's and Jen's critter state (its bulk viewed_at update marks both stickerbooks viewed). Undo order: remove GARDEN_HOUSEHOLD_IDS from those five functions first (scripts/lambda-env-set.sh, on Dave's yes), then forward-fix. Forward-fix only.",
+      "ledger": "OPS-CRPHASE2-001",
+      "undo_instead": null
+    },
+    {
       "floor": "v5.3.14",
       "since": "v5.3.14",
       "reason": "multi-space 3.2c (migrations/v5-wxwriterplot-001): once garden_wx_writer holds INSERT on weather_cold_range.plot_id and the off-repo cold-range job (project-state/tools/wn3_send.py) names plot_id from its config, only code at or above v5.3.14 carries the 1a-writer-role.sql (its W3b) and scripts/wx-writer-role.py that keep that grant: older code's 1a, re-run after a restore or by wx-writer-role.py apply, converges on seven columns and the job is refused (42501) every night, the cold-range card blank. The job is not in this repo, so a code revert never switches it back. Forward-fix only.",
