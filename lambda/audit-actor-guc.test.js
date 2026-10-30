@@ -287,6 +287,28 @@ describe('BUG-EVENTAUDITACTOR-001 — actor GUC shares a transaction with every 
     expect(extra).toEqual([])
   })
 
+  // X-EV-1 (R-W1-1): GUARD events/household-mode.test.js pins the raw `${userId}` bind text, so events keeps exactly
+  // one raw bind, and it carries withActor's own check as the statement right before its batch.
+  it('X-EV-1: events/index.js keeps one raw actor bind, checked by the helper\'s auditActor just before its batch', () => {
+    const rel = 'lambda/events/index.js'
+    const ast = parseFile(rel)
+    const raw = GROUPS.filter((g) => g.file === rel && g.kind !== 'withActor' && isSetConfig(g.element0))
+    expect(raw.map((g) => g.line)).toHaveLength(1)
+    const bind = raw[0].element0.quasi.expressions[0]
+    expect(bind.type === 'Identifier' && bind.name === 'userId').toBe(true)
+    let prev = null
+    walkAst(ast, (n) => {
+      if (n.type !== 'BlockStatement') return
+      const i = n.body.findIndex((s) => s.loc.start.line === raw[0].line)
+      if (i > 0) prev = n.body[i - 1]
+    })
+    const call = prev?.type === 'ExpressionStatement' ? prev.expression : null
+    expect(call?.type === 'CallExpression' && call.callee.name === 'auditActor' && call.arguments[0]?.name === 'userId',
+      'the statement before the X-EV-1 batch is not auditActor(userId)').toBe(true)
+    expect(ast.body.some((s) => s.type === 'ImportDeclaration' && s.source.value === './audit-actor.js' &&
+      s.specifiers.some((sp) => sp.imported?.name === 'auditActor' && sp.local.name === 'auditActor'))).toBe(true)
+  })
+
   // M4: one refusal rule. The helper's predicate is the same text as the two writers' copies.
   it('auditActor is byte-equal in audit-actor.js, varieties/validate.js and photos/photoDelete.js', () => {
     const rule = (rel) => {

@@ -34,6 +34,7 @@ import { fileURLToPath } from 'node:url';
 import { softDeletePhoto } from './photos/photoDelete.js';
 import { auditActor } from './varieties/validate.js';
 import { withActor } from './varieties/audit-actor.js';
+import { auditActor as eventsAuditActor } from './events/audit-actor.js';
 
 const LAMBDA = dirname(fileURLToPath(import.meta.url));
 const HOUSE = ['user_a', 'user_b'];
@@ -196,6 +197,9 @@ describe('BUG-VARIETYACTOREMPTY-001 — the actor that lands can never be the em
       // The rule varieties' writes now bind through (M4): its withActor copy refuses exactly the same values.
       const withActorRefused = await (async () => withActor(fakeSql(responder), value, () => []))().then(() => false, () => true);
       expect(withActorRefused, `withActor disagrees on ${label}`).toBe(varietiesRefused);
+      // X-EV-1: events' one raw bind is guarded by its audit-actor.js copy's auditActor, called before its batch.
+      const xEv1Refused = (() => { try { eventsAuditActor(value); return false; } catch { return true; } })();
+      expect(xEv1Refused, `the X-EV-1 check disagrees on ${label}`).toBe(varietiesRefused);
     }
   });
 

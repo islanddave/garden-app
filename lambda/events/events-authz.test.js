@@ -81,7 +81,7 @@ describe('events POST — household ownership gate on body-supplied parent ids',
     // have upserted entity_memory — which is the actual harm (a forged watering suppresses a real
     // care reminder). Position is the assertion.
     const gate = SRC.indexOf("warnRejectedFk(userId, 'event_log', 'project_id'");
-    const tx = SRC.indexOf('const txResult = await sql.transaction');
+    const tx = SRC.indexOf('const txResult = await withActor(sql, userId');
     expect(gate).toBeGreaterThan(-1);
     expect(tx).toBeGreaterThan(-1);
     expect(gate).toBeLessThan(tx);
