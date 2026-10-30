@@ -867,6 +867,10 @@ jobs:
           # answers 401 for an unauthenticated request (auth is evaluated before the FB_SHARE_ENABLED
           # kill switch), which check_reachable counts as up.
           STAGING_API_FACEBOOK_SHARE: ${{ env.STAGING_API_FACEBOOK_SHARE }}
+          # The SEC-13a block's member arm probes every staging handler, these three included.
+          STAGING_API_CRITTERS: ${{ env.STAGING_API_CRITTERS }}
+          STAGING_API_FINDINGS: ${{ env.STAGING_API_FINDINGS }}
+          STAGING_API_MEMBERS: ${{ env.STAGING_API_MEMBERS }}
           COMMIT_SHA:            ${{ needs.deploy-frontend.outputs.commit-sha }}
           # The exact short SHA the Build step stamped into sw.js
           # (CACHE_VERSION = 'vstg-<this>'). Phase 1 re-reads $STAGING_CF_ORIGIN/sw.js and fails unless
@@ -878,6 +882,9 @@ jobs:
           # CLERK_TEST_USER_ID       = user_...    (existing user in dev Clerk instance)
           CLERK_SECRET_KEY_STAGING: ${{ secrets.CLERK_SECRET_KEY_STAGING }}
           CLERK_TEST_USER_ID:       ${{ secrets.CLERK_TEST_USER_ID }}
+          # Optional: a dev-instance user NOT on the staging GARDEN_HOUSEHOLD_IDS list. Unset, the SEC-13a
+          # non-member arm says it did not run (a WARN, never a pass).
+          CLERK_TEST_NONMEMBER_USER_ID: ${{ secrets.CLERK_TEST_NONMEMBER_USER_ID }}
           # The ship-gate smoke: Phase 2 (authed write-path) MUST run.
           # With this set, a missing Clerk secret or a failed session mint FAILS the job
           # (fail-closed) instead of vacuously passing on Phase-1 reachability alone.

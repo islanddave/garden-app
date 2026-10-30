@@ -454,8 +454,10 @@ def do_verify(args):
         return f'{len(names)} matrix entries cover {len(dirs)} lambda dirs'
 
     def c_auth():
-        """An authed Lambda must REJECT an unauthenticated request. A 200 here would mean the auth
-        path is not enforcing, which is a far worse outcome than a failed deploy."""
+        """An authed Lambda must REJECT an unauthenticated request with exactly 401. A 200 here would mean
+        the auth path is not enforcing, which is a far worse outcome than a failed deploy. A 403 fails
+        too: it would mean something refuses before verifyToken does (the SEC-13a household gate must
+        run after it, and deploy.yml's own prod smoke needs an exact 401)."""
         out = subprocess.run(
             ['aws', 'lambda', 'get-function-url-config', '--function-name', 'garden-plants',
              '--region', 'us-east-1', '--query', 'FunctionUrl', '--output', 'text'],
@@ -467,8 +469,8 @@ def do_verify(args):
             status, _ = fetch(url)
         except urllib.error.HTTPError as e:
             status = e.code
-        if status not in (401, 403):
-            raise CheckFailed(f'unauthenticated GET returned {status}, expected 401/403')
+        if status != 401:
+            raise CheckFailed(f'unauthenticated GET returned {status}, expected 401')
         return f'unauthenticated GET -> {status}'
 
     check('shell 200', c_shell)

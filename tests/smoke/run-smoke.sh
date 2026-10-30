@@ -4320,6 +4320,99 @@ else
   echo "⚠️  WARN [recon:bar==today] STAGING_API_DAILY_PLAN unset/placeholder or no JWT — bar==Today equality NOT run (set repo var STAGING_API_DAILY_PLAN_READ to activate)"
 fi
 
+# ── SEC-13a: the household-member gate on every staging handler ─────────────────────────────────────────────────
+# Each handler answers {"error":"Forbidden"} (403) to a verified caller outside GARDEN_HOUSEHOLD_IDS, which
+# deploy-staging.yml's household step sets on every staging function from the staging secret. Member arm: the smoke
+# user is on that list, so no handler may refuse it at the gate (a 403 Forbidden names a function the list missed).
+# Non-member arm: an identity outside the list must get exactly that 403 everywhere; with no such identity configured
+# (CLERK_TEST_NONMEMBER_USER_ID) it says it did NOT run, and lambda/household-isolation.test.js remains the only
+# check of the refusal (all 23 handlers, offline). The gate runs before any routing, so every request is to "/".
+# evidence-ingest has no staging URL wired to this job.
+SEC13A_URLS=(
+  "projects|${STAGING_API_PROJECTS:-}" "plants|${STAGING_API_PLANTS:-}" "locations|${STAGING_API_LOCATIONS:-}"
+  "events|${STAGING_API_EVENTS:-}" "favorites|${STAGING_API_FAVORITES:-}" "photos|${STAGING_API_PHOTOS:-}"
+  "dashboard|${STAGING_API_DASHBOARD:-}" "inventory-items|${STAGING_API_INVENTORY:-}" "varieties|${STAGING_API_VARIETIES:-}"
+  "app-events|${STAGING_API_APP_EVENTS:-}" "ux-events|${STAGING_API_UX_EVENTS:-}" "critter|${STAGING_API_CRITTERS:-}"
+  "shared-state|${STAGING_API_SHARED_STATE:-}" "findings|${STAGING_API_FINDINGS:-}" "daily-plan-read|${STAGING_API_DAILY_PLAN:-}"
+  "members|${STAGING_API_MEMBERS:-}" "storage-location|${STAGING_API_STORAGE_LOCATIONS:-}"
+  "preservation|${STAGING_API_PRESERVATION:-}" "harvests|${STAGING_API_HARVESTS:-}" "facebook-share|${STAGING_API_FACEBOOK_SHARE:-}"
+)
+# Prints "<http code> <body .error>" for one GET of "/" with the given token.
+sec13a_probe() {
+  local out code err
+  out=$(mktemp)
+  code=$(curl -s --max-time 30 --connect-timeout 10 -H "Authorization: Bearer $2" -o "$out" -w "%{http_code}" "${1%/}/") || code="000"
+  err=$(jq -r '.error // empty' "$out" 2>/dev/null || echo "")
+  rm -f "$out"
+  printf '%s %s' "$code" "$err"
+}
+if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" ]]; then
+  SEC13A_SEEN=0
+  SEC13A_BAD=""
+  for SEC13A_ENTRY in "${SEC13A_URLS[@]}"; do
+    SEC13A_FN="${SEC13A_ENTRY%%|*}"
+    SEC13A_URL="${SEC13A_ENTRY#*|}"
+    if [[ -z "$SEC13A_URL" || "$SEC13A_URL" == *placeholder* ]]; then
+      echo "⚠️  WARN [sec13a:member] $SEC13A_FN has no staging URL in this job: not checked"
+      continue
+    fi
+    CLERK_JWT=$(mint_session_token)
+    SEC13A_GOT=$(sec13a_probe "$SEC13A_URL" "$CLERK_JWT")
+    SEC13A_SEEN=$((SEC13A_SEEN+1))
+    case "$SEC13A_GOT" in
+      "403 Forbidden"|401*) SEC13A_BAD="$SEC13A_BAD $SEC13A_FN($SEC13A_GOT)" ;;
+    esac
+  done
+  if [[ -z "$SEC13A_BAD" && "$SEC13A_SEEN" -ge 15 ]]; then
+    echo "✅ PASS [sec13a:member] the smoke user got past the household gate on all $SEC13A_SEEN staging handlers"
+    PASS=$((PASS+1))
+  else
+    echo "❌ FAIL [sec13a:member] refused at the household gate or by auth:${SEC13A_BAD:- none} (checked $SEC13A_SEEN, need >= 15). Is the staging GARDEN_HOUSEHOLD_IDS list on every function, with the smoke user in it?"
+    FAIL=$((FAIL+1))
+  fi
+
+  if [[ -n "${CLERK_TEST_NONMEMBER_USER_ID:-}" && -n "${CLERK_SECRET_KEY_STAGING:-}" ]]; then
+    NM_TMP=$(mktemp)
+    curl -s --max-time 30 --connect-timeout 10 -X POST \
+      -H "Authorization: Bearer $CLERK_SECRET_KEY_STAGING" -H "Content-Type: application/json" \
+      -d "{\"user_id\": \"$CLERK_TEST_NONMEMBER_USER_ID\"}" \
+      -o "$NM_TMP" "https://api.clerk.com/v1/sessions" >/dev/null 2>&1 || true
+    NM_SESSION_ID=$(jq -r '.id // empty' "$NM_TMP" 2>/dev/null || echo ""); rm -f "$NM_TMP"
+    if [[ -z "$NM_SESSION_ID" ]]; then
+      echo "❌ FAIL [sec13a:non-member] CLERK_TEST_NONMEMBER_USER_ID is set but no Clerk session could be created for it"
+      FAIL=$((FAIL+1))
+    else
+      SEC13A_MAIN_SESSION="$CLERK_SESSION_ID"
+      CLERK_SESSION_ID="$NM_SESSION_ID"
+      NM_SEEN=0
+      NM_BAD=""
+      for SEC13A_ENTRY in "${SEC13A_URLS[@]}"; do
+        SEC13A_FN="${SEC13A_ENTRY%%|*}"
+        SEC13A_URL="${SEC13A_ENTRY#*|}"
+        [[ -z "$SEC13A_URL" || "$SEC13A_URL" == *placeholder* ]] && continue
+        NM_JWT=$(mint_session_token)
+        SEC13A_GOT=$(sec13a_probe "$SEC13A_URL" "$NM_JWT")
+        NM_SEEN=$((NM_SEEN+1))
+        [[ "$SEC13A_GOT" == "403 Forbidden" ]] || NM_BAD="$NM_BAD $SEC13A_FN($SEC13A_GOT)"
+      done
+      CLERK_SESSION_ID="$SEC13A_MAIN_SESSION"
+      curl -s --max-time 15 --connect-timeout 10 -X POST -H "Authorization: Bearer $CLERK_SECRET_KEY_STAGING" \
+        "https://api.clerk.com/v1/sessions/${NM_SESSION_ID}/revoke" -o /dev/null 2>&1 || true
+      if [[ -z "$NM_BAD" && "$NM_SEEN" -ge 15 ]]; then
+        echo "✅ PASS [sec13a:non-member] an identity outside the list got 403 Forbidden from all $NM_SEEN staging handlers"
+        PASS=$((PASS+1))
+      else
+        echo "❌ FAIL [sec13a:non-member] not refused with 403 Forbidden:${NM_BAD:- none} (checked $NM_SEEN, need >= 15)"
+        FAIL=$((FAIL+1))
+      fi
+    fi
+  else
+    echo "⚠️  WARN [sec13a:non-member] NOT RUN: no staging identity outside the household list (CLERK_TEST_NONMEMBER_USER_ID unset). The refusal is checked offline only, by lambda/household-isolation.test.js."
+  fi
+else
+  echo "⚠️  WARN [sec13a] no JWT — the household-gate arms NOT run"
+fi
+
 echo ""
 echo "=== Smoke tests: $PASS passed, $FAIL failed ==="
 if [[ "$FAIL" -gt 0 ]]; then
