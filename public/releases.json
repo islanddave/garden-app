@@ -1,5 +1,12 @@
 [
   {
+    "version": "5.3.22",
+    "date": "2026-10-30",
+    "highlights": [
+      "Critter stickerbooks stay personal; app pages recover from errors instead of going blank"
+    ]
+  },
+  {
     "version": "5.3.21",
     "date": "2026-10-29",
     "highlights": [
