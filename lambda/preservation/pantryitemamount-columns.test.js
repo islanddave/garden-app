@@ -16,25 +16,20 @@
 // its CHECKs are a FOURTH database copy of the kitchen units and a fourth of the source words; this file
 // binds each to the list the route validates against, so a word added to one and not the other reds here.
 import { describe, it, expect } from 'vitest';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { KITCHEN_UNITS } from './kitchenBatch.js';
 import { JAR_UNITS } from './jarRules.js';
 import { VALID_SOURCE_KINDS } from './provenance.js';
 import { handlePantryRoute, ITEM_CONSTRAINT_MESSAGES } from './pantryRoutes.js';
+import { decommentSqlDashBare as decomment } from '../_test-stubs/handlerSource.js';
+import { handlersIn, ownContract } from '../_test-stubs/columnContract.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MIGRATION = resolve(__dirname, '../../migrations/v5-pantryitemamount-001');
 
-// A column NAMED IN A COMMENT is not a column reference.
-const decomment = (s) => s.split('\n')
-  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--(\s.*)?$/, '$1'))
-  .join('\n');
-
-const HANDLERS = readdirSync(__dirname)
-  .filter((f) => f.endsWith('.js') && !/\.(test|spec)\.js$/.test(f))
-  .sort();
+const HANDLERS = handlersIn(__dirname);
 const TEMPLATES = HANDLERS.flatMap((f) => [...decomment(readFileSync(resolve(__dirname, f), 'utf8'))
   .matchAll(/sql`([\s\S]*?)`/g)].map((m) => ({ file: f, sql: m[1] })));
 const ITEM_SQL = TEMPLATES.filter((t) => t.file === 'pantryRoutes.js' && /\bpantry_item\b(?!_)/.test(t.sql));
@@ -237,14 +232,10 @@ describe('the contract matches the SQL that is actually issued', () => {
   // batchbuilder-columns.test.js pins those reads to its own list: none of the four is on it.
 
   it('exposes the contract in the shape scripts/dev-main-schema-audit.py can parse', () => {
-    const self = readFileSync(fileURLToPath(import.meta.url), 'utf8');
-    const decl = self.match(/const\s+AUDIT_COLUMNS\s*=\s*\{([\s\S]*?)\};/);
-    expect(decl).not.toBeNull();
-    expect(decl[1]).not.toMatch(/\bconst\b/);
-    const pairs = [...decl[1].matchAll(/['"]?([a-zA-Z_]\w*)['"]?\s*:\s*\[([^\]]*)\]/g)];
-    expect(pairs.map((m) => m[1])).toEqual(Object.keys(AUDIT_COLUMNS));
-    for (const [, key, body] of pairs) {
-      const cols = [...body.matchAll(/['"]([a-zA-Z_][a-zA-Z0-9_]*)['"]/g)].map((m) => m[1]);
+    const parsed = ownContract(import.meta.url);
+    expect(parsed).not.toBeNull();
+    expect(parsed.map(([key]) => key)).toEqual(Object.keys(AUDIT_COLUMNS));
+    for (const [key, cols] of parsed) {
       expect(cols, key).toEqual(AUDIT_COLUMNS[key]);
     }
   });

@@ -18,11 +18,10 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { decommentSqlDashBare as decomment } from '../_test-stubs/handlerSource.js';
+import { ownContract } from '../_test-stubs/columnContract.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const decomment = (s) => s.split('\n')
-  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--(\s.*)?$/, '$1'))
-  .join('\n');
 const sqlOf = (f) => [...decomment(readFileSync(resolve(__dirname, f), 'utf8')).matchAll(/sql`([\s\S]*?)`/g)]
   .map((m) => m[1]).join('\n');
 const RECIPE_SQL = sqlOf('recipeRoutes.js');
@@ -119,14 +118,10 @@ describe('the contract matches the SQL that is actually issued', () => {
   });
 
   it('exposes the contract in the shape scripts/dev-main-schema-audit.py can parse', () => {
-    const self = readFileSync(fileURLToPath(import.meta.url), 'utf8');
-    const decl = self.match(/const\s+AUDIT_COLUMNS\s*=\s*\{([\s\S]*?)\};/);
-    expect(decl).not.toBeNull();
-    expect(decl[1]).not.toMatch(/\bconst\b/);
-    const pairs = [...decl[1].matchAll(/['"]?([a-zA-Z_]\w*)['"]?\s*:\s*\[([^\]]*)\]/g)];
-    expect(pairs.map((m) => m[1])).toEqual(Object.keys(AUDIT_COLUMNS));
-    for (const [, key, body] of pairs) {
-      const cols = [...body.matchAll(/['"]([a-zA-Z_][a-zA-Z0-9_]*)['"]/g)].map((m) => m[1]);
+    const parsed = ownContract(import.meta.url);
+    expect(parsed).not.toBeNull();
+    expect(parsed.map(([key]) => key)).toEqual(Object.keys(AUDIT_COLUMNS));
+    for (const [key, cols] of parsed) {
       expect(cols, key).toEqual(AUDIT_COLUMNS[key]);
     }
   });

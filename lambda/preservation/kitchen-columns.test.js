@@ -33,22 +33,17 @@
 // Static source inspection rather than import: these handlers sit beside index.js, which loads
 // @neondatabase/serverless and @clerk/backend at module scope.
 import { describe, it, expect } from 'vitest';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { decommentSqlDashBare as decomment } from '../_test-stubs/handlerSource.js';
+import { handlersIn, ownContract } from '../_test-stubs/columnContract.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// A column NAMED IN A COMMENT is not a column reference.
-const decomment = (s) => s.split('\n')
-  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--(\s.*)?$/, '$1'))
-  .join('\n');
-
 // Every handler in THIS directory — the same set Phase 4 groups together. Read from disk so a handler
 // added here is covered the day it lands rather than the day someone remembers a list.
-const HANDLERS = readdirSync(__dirname)
-  .filter((f) => f.endsWith('.js') && !/\.(test|spec)\.js$/.test(f))
-  .sort();
+const HANDLERS = handlersIn(__dirname);
 
 const SQL = HANDLERS
   .map((f) => decomment(readFileSync(resolve(__dirname, f), 'utf8')))
@@ -344,18 +339,14 @@ describe('the contract matches the SQL that is actually issued', () => {
     // misspelled KEY is worse — Phase 1's empty-relation guard returns exit 2 and schema-audit.yml
     // maps exit 2 to a ::warning and exit 0, so one typo silences all four phases behind a green
     // check. Replicate the auditor's own two regexes against this file's own source.
-    const self = readFileSync(fileURLToPath(import.meta.url), 'utf8');
-    const decl = self.match(/const\s+AUDIT_COLUMNS\s*=\s*\{([\s\S]*?)\};/);
-    expect(decl).not.toBeNull();
-    expect(decl[1]).not.toMatch(/\bconst\b/);
-    const pairs = [...decl[1].matchAll(/['"]?([a-zA-Z_]\w*)['"]?\s*:\s*\[([^\]]*)\]/g)];
-    expect(pairs.map((m) => m[1])).toEqual(Object.keys(AUDIT_COLUMNS));
-    expect(pairs.map((m) => m[1]).slice(0, 7)).toEqual([
+    const parsed = ownContract(import.meta.url);
+    expect(parsed).not.toBeNull();
+    expect(parsed.map(([key]) => key)).toEqual(Object.keys(AUDIT_COLUMNS));
+    expect(parsed.map(([key]) => key).slice(0, 7)).toEqual([
       'kitchen_batch', 'kitchen_batch_input', 'kitchen_stage_log', 'v_kitchen_batch_current',
       'event_log', 'preservation_log', 'pantry_use',
     ]);
-    for (const [, key, body] of pairs) {
-      const cols = [...body.matchAll(/['"]([a-zA-Z_][a-zA-Z0-9_]*)['"]/g)].map((m) => m[1]);
+    for (const [key, cols] of parsed) {
       expect(cols, key).toEqual(AUDIT_COLUMNS[key]);
     }
   });
