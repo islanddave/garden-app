@@ -173,8 +173,11 @@ describe('SEC-21: one Clerk allow-list (lambda/request-context.js)', () => {
 })
 
 // C4: a handler that refetched garden-app/secrets on a timer keeps that timer through the kit, so a rotated Neon or
-// Clerk secret never strands a warm container. facebook-share joins this list when it signs in through the kit (P12).
-const SECRETS_TTL = [['lambda/photos/index.js', 5 * 60 * 1000]]
+// Clerk secret never strands a warm container.
+const SECRETS_TTL = [
+  ['lambda/photos/index.js', 5 * 60 * 1000],
+  ['lambda/facebook-share/index.js', 5 * 60 * 1000],
+]
 
 // The secretsTtlMs value of every requestContext( call, folded from number literals, `*` and module constants.
 function kitSecretsTtlInJs(code) {
