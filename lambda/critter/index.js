@@ -32,30 +32,16 @@
 // Deploy marker: cold-start console.log per revision §2.6 — smoke greps last 5min logs before block I.
 
 import { neon } from '@neondatabase/serverless'
-import { verifyToken } from '@clerk/backend'
-import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager'
 import {
   validatePrefsPatchBody, validateSpeciesPrefsPatchBody,
   validateMarkViewedPatchBody, validateAppConfigPatchBody,
   adminRefusal, isAdmin, projectAppConfig, APP_CONFIG_KEYS, UUID_RE,
 } from './validators.js'
-import { householdGate } from './household.js'
-import { AUTHORIZED_PARTIES } from './request-context.js'
+import { requestContext } from './request-context.js'
 
 // Deploy marker — fires once per cold start. Smoke step greps last 5min CloudWatch for this string.
 // L-072 / L-104 family: green tests ≠ green deploy. Marker proves the *running* Lambda is current.
 console.log(`critter-lambda: deploy-marker ${process.env.GIT_SHA ?? 'unknown'}`)
-
-const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' })
-
-let _secrets = null
-async function getSecrets() {
-  if (_secrets) return _secrets
-  const cmd = new GetSecretValueCommand({ SecretId: process.env.SECRET_NAME ?? 'garden-app/secrets' })
-  const res = await sm.send(cmd)
-  _secrets = JSON.parse(res.SecretString)
-  return _secrets
-}
 
 const CORS = {} // Lambda URL config owns CORS — handler must NOT duplicate (L-097)
 
@@ -181,33 +167,11 @@ export function __resetTodaySectionsAbsence() { todaySectionsAbsentUntil = 0 }
 // ─── handler ───────────────────────────────────────────────────────────────
 
 export const handler = async (event) => {
-  if (event.requestContext?.http?.method === 'OPTIONS') {
-    return { statusCode: 204, headers: CORS, body: '' }
-  }
-
-  const secrets = await getSecrets()
-  const authHeader = event.headers?.authorization ?? event.headers?.Authorization ?? ''
-  const token = authHeader.replace(/^Bearer\s+/i, '')
-  let userId
-  try {
-    const payload = await verifyToken(token, {
-      secretKey: secrets.CLERK_SECRET_KEY,
-      authorizedParties: AUTHORIZED_PARTIES,
-    })
-    userId = payload.sub
-  } catch (err) {
-    console.error('verifyToken failed:', err?.message ?? String(err))
-    return resp(401, { error: 'Unauthorized' })
-  }
-  // V4-AUTHZRESIDUE-001 (mirrors lambda/plants + lambda/photos): an empty sub would bind [''] and
-  // `'' = ANY(ARRAY[''])` is TRUE in Postgres, so an empty/absent JWT subject would be a live
-  // ownership value rather than a no-match. verifyToken rejects such a token first, so this is
-  // defence-in-depth; the point is that the invariant is ENFORCED here rather than relied upon.
-  if (!userId) return resp(401, { error: 'Unauthorized' })
-  const gateRefusal = householdGate(userId)
-  if (gateRefusal) return resp(gateRefusal.status, gateRefusal.body)
-
-  const sql = neon(secrets.NEON_DATABASE_URL)
+  // The kit answers OPTIONS and every sign-in refusal (401, the household gate's 403) before any statement. No scope:
+  // the stickerbook is per person. The two semicolons are load-bearing: household-isolation.test.js KIT_CALL needs them.
+  const ctx = await requestContext(event, { resp, neon });
+  if (ctx.response) return ctx.response;
+  const { userId, sql } = ctx
   const ownerIds = [userId]
   const method = event.requestContext?.http?.method ?? 'GET'
   const rawPath = event.rawPath ?? ''
