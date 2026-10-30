@@ -171,3 +171,42 @@ describe('SEC-21: one Clerk allow-list (lambda/request-context.js)', () => {
       .toEqual(['declares its own AUTHORIZED_PARTIES', 'AUTHORIZED_PARTIES not imported from ./request-context.js'])
   })
 })
+
+// C4: a handler that refetched garden-app/secrets on a timer keeps that timer through the kit, so a rotated Neon or
+// Clerk secret never strands a warm container. facebook-share joins this list when it signs in through the kit (P12).
+const SECRETS_TTL = [['lambda/photos/index.js', 5 * 60 * 1000]]
+
+// The secretsTtlMs value of every requestContext( call, folded from number literals, `*` and module constants.
+function kitSecretsTtlInJs(code) {
+  const ast = parseJs(code)
+  if (!ast) return null
+  const consts = new Map()
+  const ttls = []
+  eachNode(ast, (n) => {
+    if (n.type === 'VariableDeclarator' && n.id.type === 'Identifier' && n.init) consts.set(n.id.name, n.init)
+    if (n.type === 'CallExpression' && n.callee.name === 'requestContext') {
+      const opts = n.arguments[1]
+      const p = opts?.type === 'ObjectExpression' ? opts.properties.find((q) => q.type === 'Property' && keyName(q) === 'secretsTtlMs') : undefined
+      ttls.push(p ? p.value : null)
+    }
+  })
+  const value = (e) => {
+    if (e?.type === 'Literal' && typeof e.value === 'number') return e.value
+    if (e?.type === 'BinaryExpression' && e.operator === '*') return value(e.left) * value(e.right)
+    if (e?.type === 'Identifier' && consts.has(e.name)) return value(consts.get(e.name))
+    return undefined
+  }
+  return ttls.map(value)
+}
+
+describe('C4: a timed secrets refresh survives the sign-in kit', () => {
+  it.each(SECRETS_TTL)('C4: %s passes the kit secretsTtlMs of %d ms', (rel, ms) => {
+    expect(kitSecretsTtlInJs(readFileSync(join(ROOT, rel), 'utf8'))).toEqual([ms])
+  })
+
+  it('C4: the detector folds a named product and a literal, and reports a missing option', () => {
+    expect(kitSecretsTtlInJs('const T = 5 * 60 * 1000\nawait requestContext(event, { resp, secretsTtlMs: T })')).toEqual([300000])
+    expect(kitSecretsTtlInJs('await requestContext(event, { resp, secretsTtlMs: 300000 })')).toEqual([300000])
+    expect(kitSecretsTtlInJs('await requestContext(event, { resp })')).toEqual([undefined])
+  })
+})

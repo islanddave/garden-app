@@ -41,25 +41,25 @@ describe('WS-A1 public share route', () => {
     expect(SRC).toContain('projects\\/public\\/([^/]+)$');
   });
 
-  // INVERTED 2026-09-09 (was: "dispatches BEFORE verifyToken (unauthenticated reachability)").
-  // The pre-auth early return was the app's last unauthenticated content surface and is retired;
-  // this assertion is the thing that stops it coming back. Offsets are compared against the
-  // 401-return of the auth block rather than the `verifyToken(` call alone, so moving the dispatch
-  // into the middle of the try/catch would not satisfy it.
+  // This assertion is what stops the retired pre-auth early return coming back. The handler signs in
+  // through its kit copy (request-context.js: verifyToken, the 401s, the household gate); a kit refusal
+  // reaches the caller only through the handler's `if (ctx.response) return ctx.response;`. Offsets are
+  // compared against that return rather than the `requestContext(` call alone, so a dispatch moved
+  // between the kit call and the return would not satisfy it.
   it('matches + dispatches the route AFTER verifyToken() (no unauthenticated reachability)', () => {
     const handlerIdx = SRC.indexOf('export const handler');
     expect(handlerIdx).toBeGreaterThan(-1);
     // The dispatch CALL inside the handler (not the function definition above it).
     const callIdx = SRC.indexOf('handlePublicProject(publicMatch[1]', handlerIdx);
-    const verifyIdx = SRC.indexOf('verifyToken(', handlerIdx);
-    const unauthIdx = SRC.indexOf("return resp(401, { error: 'Unauthorized' })", handlerIdx);
+    const kitIdx = SRC.indexOf('requestContext(', handlerIdx);
+    const refusedIdx = SRC.indexOf('if (ctx.response) return ctx.response;', handlerIdx);
     expect(callIdx).toBeGreaterThan(-1);
-    expect(verifyIdx).toBeGreaterThan(-1);
-    expect(unauthIdx).toBeGreaterThan(-1);
-    expect(callIdx, 'public-slug dispatch is back above verifyToken — the WS-A1 bypass has returned')
-      .toBeGreaterThan(verifyIdx);
-    expect(callIdx, 'public-slug dispatch precedes the 401 return, so it is still reachable unauthenticated')
-      .toBeGreaterThan(unauthIdx);
+    expect(kitIdx).toBeGreaterThan(-1);
+    expect(refusedIdx).toBeGreaterThan(-1);
+    expect(callIdx, 'public-slug dispatch is back above the sign-in kit — the WS-A1 bypass has returned')
+      .toBeGreaterThan(kitIdx);
+    expect(callIdx, 'public-slug dispatch precedes the kit-refusal return, so it is still reachable unauthenticated')
+      .toBeGreaterThan(refusedIdx);
   });
 
   // Non-vacuity for the guard above: the dispatch must still EXIST. Only the auth bypass was
