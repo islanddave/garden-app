@@ -187,6 +187,22 @@ describe('SEC-13a household gate — every HTTP handler', () => {
     for (let i = 1; i < steps.length; i += 1) expect(at[i], `${steps[i]} after ${steps[i - 1]}`).toBeGreaterThan(at[i - 1]);
     expect(kit.slice(0, at[steps.indexOf('householdGate(userId)')])).not.toMatch(WORK);
   });
+
+  // T8 (D2 F, secreview C6): every handler signs in through its kit copy, and no other non-test file in its dir calls
+  // Clerk's verifyToken, so neither the allow-list nor the azp rule has a second way around it.
+  it('D2 T8: every handler signs in through its kit, and no other non-test file in a handler dir calls verifyToken(', () => {
+    const jsFiles = (dir) => readdirSync(join(LAMBDA_ROOT, dir)).flatMap((e) => {
+      const rel = `${dir}/${e}`;
+      if (e === 'node_modules') return [];
+      if (statSync(join(LAMBDA_ROOT, rel)).isDirectory()) return jsFiles(rel);
+      return /\.[cm]?js$/.test(e) && !/\.test\.[cm]?js$/.test(e) ? [rel] : [];
+    });
+    expect(URL_DIRS.length).toBeGreaterThanOrEqual(20);
+    expect(URL_DIRS.filter((d) => !usesKit(d))).toEqual([]);
+    expect(URL_DIRS.filter((d) => !/verifyToken\(/.test(readCode(`${d}/request-context.js`)))).toEqual([]);
+    const callers = URL_DIRS.flatMap(jsFiles).filter((f) => !f.endsWith('/request-context.js') && /verifyToken\(/.test(readCode(f)));
+    expect(callers).toEqual([]);
+  });
 });
 
 // T7: one member request per handler that reaches the routes. `binds`: some statement binds the member's sub, so a
@@ -288,6 +304,17 @@ describe('SEC-13a household gate — every handler, executed under the stubs', (
   // SEC-60: Clerk passes `sub: ''`; householdScope('') is [''] and matches every row owned by ''.
   it.each(URL_DIRS)('SEC-60: %s answers 401 to a verified token with an empty subject, before the gate and any statement', async (d) => {
     const r = await call(d, '');
+    expect(r).toEqual({ status: 401, body: { error: 'Unauthorized' } });
+    expect(stubState.sqlCalls).toEqual([]);
+    expect(stubState.clerkListCalls).toEqual([]);
+    expect(denials()).toEqual([]);
+  });
+
+  // T8 (D2 F): azp is the kit's own rule (Clerk lets a token with no azp through). The stub's azp default is off, so
+  // the payload really has none; a listed member is used so only the azp rule can refuse it.
+  it.each(URL_DIRS)('D2 T8: %s answers 401 to a verified token with no azp and no issuer, before the gate and any statement', async (d) => {
+    stubState.azpDefault = false;
+    const r = await call(d, MEMBER);
     expect(r).toEqual({ status: 401, body: { error: 'Unauthorized' } });
     expect(stubState.sqlCalls).toEqual([]);
     expect(stubState.clerkListCalls).toEqual([]);
