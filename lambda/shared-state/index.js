@@ -1,8 +1,6 @@
 import { neon } from '@neondatabase/serverless';
-import { verifyToken } from '@clerk/backend';
-import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
-import { householdGate, householdActive } from './household.js';
-import { AUTHORIZED_PARTIES } from './request-context.js';
+import { householdActive } from './household.js';
+import { requestContext } from './request-context.js';
 
 // garden_shared_state — the shared-garden reward substrate (V3-REWARDSTATE-001).
 // Workspace-shared (not per-user): until V4 Workspaces there is no `workspaces` table on
@@ -11,17 +9,6 @@ import { AUTHORIZED_PARTIES } from './request-context.js';
 // workspace_id DEFAULT on the 8 Foundation tables. The data is common to the household, so the
 // caller must be a household MEMBER, not just a logged-in user (BUG-AUTHZLAMBDA-001 B6).
 const SENTINEL_WORKSPACE = '00000000-0000-0000-0000-000000000001';
-
-const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
-
-let _secrets = null;
-async function getSecrets() {
-  if (_secrets) return _secrets;
-  const cmd = new GetSecretValueCommand({ SecretId: process.env.SECRET_NAME ?? 'garden-app/secrets' });
-  const res = await sm.send(cmd);
-  _secrets = JSON.parse(res.SecretString);
-  return _secrets;
-}
 
 const CORS = {}; // Lambda URL config is sole CORS source — handler must not duplicate
 
@@ -44,39 +31,21 @@ const PAYLOAD_MAX_CHARS = 2048;
 const TALLY_BY_MAX = 100;
 
 export const handler = async (event) => {
-  if (event.requestContext?.http?.method === 'OPTIONS') {
-    return { statusCode: 204, headers: CORS, body: '' };
-  }
-
-  const secrets = await getSecrets();
-
-  const authHeader = event.headers?.authorization ?? event.headers?.Authorization ?? '';
-  const token = authHeader.replace(/^Bearer\s+/i, '');
-  let userId;
-  try {
-    const payload = await verifyToken(token, {
-      secretKey: secrets.CLERK_SECRET_KEY,
-      authorizedParties: AUTHORIZED_PARTIES,
-    });
-    userId = payload.sub;
-  } catch (err) {
-    console.error('verifyToken failed:', err?.message ?? String(err));
-    return resp(401, { error: 'Unauthorized' });
-  }
-  if (!userId) return resp(401, { error: 'Unauthorized' });
-  const gateRefusal = householdGate(userId);
-  if (gateRefusal) return resp(gateRefusal.status, gateRefusal.body);
+  // The kit answers OPTIONS and every sign-in refusal (401, the household gate's 403) before any statement.
+  const ctx = await requestContext(event, { resp, neon });
+  if (ctx.response) return ctx.response;
+  const { userId, sql } = ctx;
 
   // The shared row belongs to one household, and a one-entry list is not a household, so it refuses even
-  // its one member, still before neon(). The client turns any non-OK into null and renders nothing, so
-  // this log line is the only place a denial is visible. Known limitation: one global list over a
-  // sentinel-pinned row; per-Space gating comes with Spaces. Guard: membership-gate.test.js.
+  // its one member, still before any statement (the kit's neon() client issues nothing until queried). The
+  // client turns any non-OK into null and renders nothing, so this log line is the only place a denial is
+  // visible. Known limitation: one global list over a sentinel-pinned row; per-Space gating comes with
+  // Spaces. Guard: membership-gate.test.js.
   if (!householdActive()) {
     console.warn(JSON.stringify({ msg: 'household-membership-denied', userId, reason: 'env-missing' }));
     return resp(403, { error: 'Forbidden' });
   }
 
-  const sql = neon(secrets.NEON_DATABASE_URL);
   const method = event.requestContext?.http?.method ?? 'GET';
   const rawPath = event.rawPath ?? '';
 

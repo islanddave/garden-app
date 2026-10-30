@@ -20,6 +20,9 @@ const decomment = (s) => s.split('\n')
   .join('\n');
 
 const SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
+// index.js signs in through its copy of the D2 kit (same zip), which reads both secrets; lambda/household-isolation.test.js
+// holds the copy byte-equal to lambda/request-context.js.
+const KIT = decomment(readFileSync(resolve(__dirname, 'request-context.js'), 'utf8'));
 
 describe('shared-state Lambda — static SQL invariants', () => {
   const stmts = SRC.match(/sql`[\s\S]*?`/g) || [];
@@ -77,7 +80,8 @@ describe('shared-state Lambda — static SQL invariants', () => {
   it('carries no hardcoded secrets or connection strings', () => {
     expect(SRC).not.toMatch(/postgres(ql)?:\/\//);
     expect(SRC).not.toMatch(/\bsk_(live|test)_/);
-    expect(SRC).toMatch(/secrets\.NEON_DATABASE_URL/);
-    expect(SRC).toMatch(/secrets\.CLERK_SECRET_KEY/);
+    expect(SRC).toMatch(/const ctx = await requestContext\(event\b[\s\S]*?\);\n\s*if \(ctx\.response\) return ctx\.response;/);
+    expect(KIT).toMatch(/secrets\.NEON_DATABASE_URL/);
+    expect(KIT).toMatch(/secrets\.CLERK_SECRET_KEY/);
   });
 });
