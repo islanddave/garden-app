@@ -169,12 +169,13 @@ jobs:
         run: |
           FN="garden-${{ matrix.function }}-staging"
           ZIP_FILE="fileb://lambda/${{ matrix.function }}.zip"
-          if aws lambda get-function --function-name "$FN" 2>/dev/null; then
+          # stdout dropped: both calls answer with the function's env and a presigned code URL.
+          if aws lambda get-function --function-name "$FN" >/dev/null 2>&1; then
             echo "Updating existing function: $FN"
             aws lambda wait function-updated --function-name "$FN"  # settle a runtime move first (normally a no-op)
             aws lambda update-function-code \
               --function-name "$FN" \
-              --zip-file "$ZIP_FILE"
+              --zip-file "$ZIP_FILE" >/dev/null
           else
             echo "Creating new function: $FN"
             RT=$(jq -er --arg f "garden-${{ matrix.function }}" '.[$f].runtime' scripts/lambda-config-expected.json) \
@@ -204,11 +205,11 @@ jobs:
         run: |
           FN="garden-photocdn-derivative-staging"
           ZIP_FILE="fileb://lambda/photocdn-derivative.zip"
-          if aws lambda get-function --function-name "$FN" 2>/dev/null; then
+          if aws lambda get-function --function-name "$FN" >/dev/null 2>&1; then
             echo "Updating existing function: $FN"
             aws lambda update-function-code \
               --function-name "$FN" \
-              --zip-file "$ZIP_FILE"
+              --zip-file "$ZIP_FILE" >/dev/null
           else
             echo "Creating new function: $FN"
             aws lambda create-function \
