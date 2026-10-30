@@ -35,7 +35,7 @@
      "lane": "4.3 preservation lane", "reason": "scope-derived: the jars are the new batch's inputs, not its parent"},
     {"key": "lambda/preservation/index.js:handler:73c11e136c>public.preservation_log", "target": "public.preservation_log", "rule": "missing",
      "lane": "4.3 preservation lane", "reason": "mixed: plant_id and harvest_log_id are optional; a jar logged on its own needs the scope"},
-    {"key": "lambda/preservation/jarRoutes.js:moveJar:f33d89c5b8>public.storage_location", "target": "public.storage_location", "rule": "missing",
+    {"key": "lambda/preservation/jarRoutes.js:moveJar>withActor(cb2):f33d89c5b8>public.storage_location", "target": "public.storage_location", "rule": "missing",
      "lane": "4.3 preservation lane", "reason": "scope-derived: a new storage place in the active Space"},
     {"key": "lambda/preservation/kitchenRoutes.js:createBatch:8c3fd5b03c>public.kitchen_batch", "target": "public.kitchen_batch", "rule": "missing",
      "lane": "4.3 preservation lane", "reason": "scope-derived: a new batch in the active Space"},

@@ -24,9 +24,9 @@
 // never make a label edit fail. A clear also reads the batch's recipe line before it writes; that read
 // sits outside the guard (xmin is the jar's), as Put it up's own recipe read sits outside its write.
 //
-// AUDIT. preservation_log carries trg_audit_preservation_log_upd (1b). Every write here runs in
-// sql.transaction([set_config('app.actor_clerk_sub', <sub>, true), <write>]) — the grouping
-// lambda/audit-actor-guc.test.js asserts.
+// AUDIT. preservation_log carries trg_audit_preservation_log_upd (1b). Every write here runs through withActor,
+// whose batch leads with the actor GUC — the grouping lambda/audit-actor-guc.test.js asserts.
+import { withActor } from './audit-actor.js';
 import { resolveJarUseBy, recipeUseBy } from './shelfLife.js';
 import {
   VALID_METHODS, projectRow, clientStale, countRefusal, normalizeJarText, normalizeJarUnit, isJarDate,
@@ -335,8 +335,7 @@ async function patchJar(sql, jarId, body, userId, householdIds) {
   const qv = has(body, 'quantity_value') && body.quantity_value != null && String(body.quantity_value).trim() !== ''
     ? body.quantity_value : null;
 
-  const [, rows] = await sql.transaction([
-    sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+  const [, rows] = await withActor(sql, userId, () => [
     sql`
     UPDATE preservation_log SET
       label             = CASE WHEN ${has(body, 'label')}::boolean THEN ${normalizeJarText(body.label)}::text ELSE label END,
@@ -458,8 +457,7 @@ async function moveJar(sql, jarId, body, userId, householdIds) {
   const today = new Date().toISOString().slice(0, 10);
   const { kindChanged, useBy } = moveUseBy(jar, destKind, moveDate ?? today);
 
-  const [, rows] = await sql.transaction([
-    sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+  const [, rows] = await withActor(sql, userId, () => [
     sql`
     WITH found AS (
       SELECT id, label, kind FROM storage_location
