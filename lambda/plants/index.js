@@ -5,13 +5,11 @@
 // during Session 2/3 cutover window. Lambda 2.0.5 (Session 3 cleanup) will remove them.
 
 import { neon } from '@neondatabase/serverless';
-import { verifyToken } from '@clerk/backend';
-import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
+import { SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { householdScope, loadOwnedLocation, loadOwnedInventoryItem, warnRejectedFk } from './household.js';
-import { householdGate } from './household.js';
-import { AUTHORIZED_PARTIES } from './request-context.js';
+import { requestContext } from './request-context.js';
 import { mergeCore } from './merge.js';
 // BUG-PARENTOWN-001: body-supplied PARENT-id loaders. loadOwnedPlantingRef REPLACES household.js's
 // loadOwnedPlanting on this path — same query plus the load-bearing `project_id IS NULL` conjunct on
@@ -35,6 +33,7 @@ import { setOverwinterCore } from './overwinterAttr.js';
 // the INSERT below cannot 42703.
 const EVENT_SOURCE_STATUS = 'app_status';
 
+// photo-access.js reads the CloudFront signing key through this client; the kit holds its own for garden-app/secrets.
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 const s3 = new S3Client({
   region: process.env.AWS_REGION ?? 'us-east-1',
@@ -83,15 +82,6 @@ async function featuredPhotoUrls(storagePath) {
       .catch(() => null),
   ]);
   return { featured_photo_view_url, featured_photo_thumb_url };
-}
-
-let _secrets = null;
-async function getSecrets() {
-  if (_secrets) return _secrets;
-  const cmd = new GetSecretValueCommand({ SecretId: process.env.SECRET_NAME ?? 'garden-app/secrets' });
-  const res = await sm.send(cmd);
-  _secrets = JSON.parse(res.SecretString);
-  return _secrets;
 }
 
 // ── V4-SOURCEREG-001 — the two source FKs on the plants write paths ──────────────────────────────
@@ -235,34 +225,12 @@ export const handler = async (event) => {
   // path here) still take the byte-identical identity branch. See lambda/http-response.js.
   const resp = jsonResponder(event, CORS);
 
-  if (event.requestContext?.http?.method === 'OPTIONS') {
-    return { statusCode: 204, headers: CORS, body: '' };
-  }
-
-  const secrets = await getSecrets();
-
-  const authHeader = event.headers?.authorization ?? event.headers?.Authorization ?? '';
-  const token = authHeader.replace(/^Bearer\s+/i, '');
-  let userId;
-  try {
-    const payload = await verifyToken(token, {
-      secretKey: secrets.CLERK_SECRET_KEY,
-      authorizedParties: AUTHORIZED_PARTIES,
-    });
-    userId = payload.sub;
-  } catch (err) {
-    console.error('verifyToken failed:', err?.message ?? String(err));
-    return resp(401, { error: 'Unauthorized' });
-  }
-  // Adversarial-review hardening: householdScope('') returns [''] and `'' = ANY(ARRAY[''])` is TRUE
-  // in Postgres, so an empty/absent JWT subject would be a live ownership value rather than a
-  // no-match. Clerk never issues one; this makes that assumption enforced instead of relied upon.
-  if (!userId) return resp(401, { error: 'Unauthorized' });
-  const gateRefusal = householdGate(userId);
-  if (gateRefusal) return resp(gateRefusal.status, gateRefusal.body);
-
-  const sql = neon(secrets.NEON_DATABASE_URL);
-  // HOUSEHOLD-MODE: widened at V3-ROLES teardown
+  // The kit answers OPTIONS and every sign-in refusal (401, the household gate's 403) before any statement, through
+  // this resp, so refusals keep its Vary and isBase64Encoded. householdIds stays a line of its own, after the kit's
+  // empty-sub 401: household-mode.test.js pins it here.
+  const ctx = await requestContext(event, { resp, neon });
+  if (ctx.response) return ctx.response;
+  const { userId, sql } = ctx;
   const householdIds = householdScope(userId);
   const method = event.requestContext?.http?.method ?? 'GET';
   const rawPath = event.rawPath ?? '/api/plants';

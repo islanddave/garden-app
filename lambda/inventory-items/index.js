@@ -1,12 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { neon } from '@neondatabase/serverless';
-import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { householdScope, loadOwnedLocation, loadOwnedPhoto, warnRejectedFk } from './household.js';
-import { householdGate } from './household.js';
-import { AUTHORIZED_PARTIES } from './request-context.js';
+import { requestContext } from './request-context.js';
 import { resolvePhotoViewUrl } from './photo-access.js';
 import {
   validateExtractRequest, buildAnthropicRequest, parseExtractResponse, MAX_IMAGE_B64_CHARS, EXTRACT_LIMIT,
@@ -56,6 +54,7 @@ import {
   TOO_MANY_PARENTS,
 } from './seed-lot-additions.js';
 
+// photo-access.js reads the CloudFront signing key through this client, and so does getSecrets below.
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 const s3 = new S3Client({
   region: process.env.AWS_REGION ?? 'us-east-1',
@@ -75,6 +74,8 @@ async function getFeaturedPhotoViewUrl(storagePath) {
   }
 }
 
+// Only extract-seeds' refetch-on-missing-key reads this cache; sign-in reads ctx.secrets from the kit's own cache, which
+// this refetch does not refresh.
 let _secrets = null;
 async function getSecrets() {
   if (_secrets) return _secrets;
@@ -582,35 +583,12 @@ export const handler = async (event) => {
   // under the responder's threshold (every error path) take the byte-identical identity branch.
   const resp = jsonResponder(event, CORS);
 
-  if (event.requestContext?.http?.method === 'OPTIONS') {
-    return { statusCode: 204, headers: CORS, body: '' };
-  }
-
-  const secrets = await getSecrets();
-
-  const authHeader = event.headers?.authorization ?? event.headers?.Authorization ?? '';
-  const token = authHeader.replace(/^Bearer\s+/i, '');
-  let userId;
-  try {
-    const payload = await verifyToken(token, {
-      secretKey: secrets.CLERK_SECRET_KEY,
-      authorizedParties: AUTHORIZED_PARTIES,
-    });
-    userId = payload.sub;
-  } catch (err) {
-    console.error('verifyToken failed:', err?.message ?? String(err));
-    return resp(401, { error: 'Unauthorized' });
-  }
-  // V4-AUTHZRESIDUE-001 (mirrors lambda/plants + lambda/photos): householdScope('') returns [''] and
-  // `'' = ANY(ARRAY[''])` is TRUE in Postgres, so an empty/absent JWT subject would be a live
-  // ownership value rather than a no-match. verifyToken rejects such a token first, so this is
-  // defence-in-depth; the point is that the invariant is ENFORCED here rather than relied upon.
-  if (!userId) return resp(401, { error: 'Unauthorized' });
-  const gateRefusal = householdGate(userId);
-  if (gateRefusal) return resp(gateRefusal.status, gateRefusal.body);
-
-  const sql = neon(secrets.NEON_DATABASE_URL);
-  // HOUSEHOLD-MODE: widened at V3-ROLES teardown
+  // The kit answers OPTIONS and every sign-in refusal (401, the household gate's 403) before any statement, through
+  // this resp, so refusals keep its Vary and isBase64Encoded. householdIds stays a line of its own, after the kit's
+  // empty-sub 401: household-mode.test.js pins it here.
+  const ctx = await requestContext(event, { resp, neon });
+  if (ctx.response) return ctx.response;
+  const { secrets, userId, sql } = ctx;
   const householdIds = householdScope(userId);
   const method = event.requestContext?.http?.method ?? 'GET';
   const rawPath = event.rawPath ?? '/api/inventory-items';
