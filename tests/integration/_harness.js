@@ -5,7 +5,7 @@
 import { neon } from '@neondatabase/serverless'
 import { vi } from 'vitest'
 import { assertEphemeralDatabase } from './_cleanup.js'
-import { applyHouseholdDefault, setHouseholdDefault } from '../../lambda/_test-stubs/householdDefault.js'
+import { applyHouseholdDefault, setHouseholdDefault as setStubHouseholdDefault } from '../../lambda/_test-stubs/householdDefault.js'
 
 // BUG-INTFIXTURELEAK-001: fail closed before a single fixture row is written. globalSetup performs
 // the same check in the parent process; this second call covers a worker that somehow starts without
@@ -53,7 +53,11 @@ vi.mock('@clerk/backend', () => ({
     return Promise.resolve({ sub: _testUserId })
   }),
 }))
-export { applyHouseholdDefault as householdDefault, setHouseholdDefault }
+// DO NOT turn these into `export { … }` of the imports: vi.mock hoisting rewrites this file's imports to a
+// dynamic import, an export specifier then names no binding, and vite's export getter swallows that into
+// undefined ("householdDefault is not a function" in every int file that uses them).
+export function householdDefault(sub) { return applyHouseholdDefault(sub) }
+export function setHouseholdDefault(on) { return setStubHouseholdDefault(on) }
 
 export function makeEvent({ method = 'GET', path = '/api/events', body = null, userId = _testUserId } = {}) {
   // Emulate the AWS Function URL v2 payload: rawPath carries NO query string; the query is
