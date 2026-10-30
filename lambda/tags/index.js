@@ -12,11 +12,8 @@
 // NOTE: @neondatabase/serverless 0.10.x has NO sql.unsafe / sql.query — all identifiers are literal in-template.
 
 import { neon } from '@neondatabase/serverless';
-import { verifyToken } from '@clerk/backend';
-import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { householdScope } from './household.js';
-import { householdGate } from './household.js';
-import { AUTHORIZED_PARTIES } from './request-context.js';
+import { requestContext } from './request-context.js';
 import { assembleBulkEntities } from './bulk.js';
 import { applyDerive } from './crop-derive.js';
 import { checkRateLimit, withRetryAfter } from './rate-limit.js';
@@ -26,16 +23,6 @@ import {
 
 // Every entity_tag target id is a uuid column; shape-check before binding (same constant as household.js).
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
-let _secrets = null;
-async function getSecrets() {
-  if (_secrets) return _secrets;
-  const cmd = new GetSecretValueCommand({ SecretId: process.env.SECRET_NAME ?? 'garden-app/secrets' });
-  const res = await sm.send(cmd);
-  _secrets = JSON.parse(res.SecretString);
-  return _secrets;
-}
 
 const CORS = {}; // Lambda URL config owns CORS — handler must not duplicate.
 function resp(statusCode, body) {
@@ -62,35 +49,14 @@ async function entityExists(sql, entityType, entityId, household) {
 }
 
 export const handler = async (event) => {
-  if (event.requestContext?.http?.method === 'OPTIONS') return { statusCode: 204, headers: CORS, body: '' };
-
-  const secrets = await getSecrets();
-  const authHeader = event.headers?.authorization ?? event.headers?.Authorization ?? '';
-  const token = authHeader.replace(/^Bearer\s+/i, '');
-  let userId;
-  try {
-    const payload = await verifyToken(token, {
-      secretKey: secrets.CLERK_SECRET_KEY,
-      authorizedParties: AUTHORIZED_PARTIES,
-    });
-    userId = payload.sub;
-  } catch (err) {
-    console.error('verifyToken failed:', err?.message ?? String(err));
-    return resp(401, { error: 'Unauthorized' });
-  }
-  // V4-AUTHZRESIDUE-001 (mirrors lambda/plants + lambda/photos): householdScope('') returns [''] and
-  // `'' = ANY(ARRAY[''])` is TRUE in Postgres, so an empty/absent JWT subject would be a live
-  // ownership value rather than a no-match. verifyToken rejects such a token first, so this is
-  // defence-in-depth; the point is that the invariant is ENFORCED here rather than relied upon.
-  if (!userId) return resp(401, { error: 'Unauthorized' });
-  const gateRefusal = householdGate(userId);
-  if (gateRefusal) return resp(gateRefusal.status, gateRefusal.body);
-
-  const sql = neon(secrets.NEON_DATABASE_URL);
+  // The kit answers OPTIONS and every sign-in refusal (401, the household gate's 403) before any statement, and
+  // scopes only after its empty-sub 401.
+  const ctx = await requestContext(event, { resp, neon, scope: householdScope });
+  if (ctx.response) return ctx.response;
+  const { userId, sql, householdIds: household } = ctx;
   // AE-047: Neon pooler intermittently defaults default_transaction_read_only=on; force RW before any write.
   try { await sql`SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE`; } catch { /* read paths tolerate */ }
 
-  const household = householdScope(userId);
   const method = event.requestContext?.http?.method ?? 'GET';
   const path = event.rawPath ?? '/api/tags';
   const qp = event.queryStringParameters ?? {};
