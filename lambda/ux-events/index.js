@@ -16,21 +16,7 @@
 // CORS is owned by the Lambda Function URL config (handler keeps CORS={}), per L-097.
 
 import { neon } from '@neondatabase/serverless';
-import { verifyToken } from '@clerk/backend';
-import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
-import { householdGate } from './household.js';
-import { AUTHORIZED_PARTIES } from './request-context.js';
-
-const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
-
-let _secrets = null;
-async function getSecrets() {
-  if (_secrets) return _secrets;
-  const cmd = new GetSecretValueCommand({ SecretId: process.env.SECRET_NAME ?? 'garden-app/secrets' });
-  const res = await sm.send(cmd);
-  _secrets = JSON.parse(res.SecretString);
-  return _secrets;
-}
+import { requestContext } from './request-context.js';
 
 const CORS = {}; // Lambda URL config is sole CORS source — handler must not duplicate.
 
@@ -79,32 +65,10 @@ function adminSubs() {
 }
 
 export const handler = async (event) => {
-  if (event.requestContext?.http?.method === 'OPTIONS') {
-    return { statusCode: 204, headers: CORS, body: '' };
-  }
-
-  const secrets = await getSecrets();
-
-  const authHeader = event.headers?.authorization ?? event.headers?.Authorization ?? '';
-  const token = authHeader.replace(/^Bearer\s+/i, '');
-  let userId;
-  try {
-    const payload = await verifyToken(token, {
-      secretKey: secrets.CLERK_SECRET_KEY,
-      authorizedParties: AUTHORIZED_PARTIES,
-    });
-    userId = payload.sub;
-  } catch (err) {
-    console.error('verifyToken failed:', err?.message ?? String(err));
-    return resp(401, { error: 'Unauthorized' });
-  }
-  // SEC-60: a verified token with no subject is refused before anything runs (the household gate and every
-  // statement after it key on the subject). Guard: lambda/authz-write-fk.test.js, every dir with a household.js.
-  if (!userId) return resp(401, { error: 'Unauthorized' });
-  const gateRefusal = householdGate(userId);
-  if (gateRefusal) return resp(gateRefusal.status, gateRefusal.body);
-
-  const sql = neon(secrets.NEON_DATABASE_URL);
+  // The kit answers OPTIONS and every sign-in refusal (401, the household gate's 403) before any statement.
+  const ctx = await requestContext(event, { resp, neon });
+  if (ctx.response) return ctx.response;
+  const { userId, sql } = ctx;
   const method = event.requestContext?.http?.method ?? 'GET';
 
   try {
