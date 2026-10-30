@@ -4,7 +4,7 @@
 // is absorbed by ON CONFLICT, other errors by its catch). 23514/23503 are unreachable: the beacon's
 // vocabularies mirror its CHECKs and nothing takes a request-supplied FK.
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
-import { directSql, callHandler, makeEvent, setTestUserId, testRunId, insertProject } from './_harness.js'
+import { directSql, callHandler, makeEvent, setTestUserId, testRunId, insertProject, householdDefault } from './_harness.js'
 // After _harness.js, whose vi.mock replaces this module with the stub; imported first it would be the real one.
 import { verifyToken } from '@clerk/backend'
 import { handler } from '../../lambda/daily-plan-read/index.js'
@@ -12,7 +12,7 @@ import { handler } from '../../lambda/daily-plan-read/index.js'
 const ORIGINS = ['https://garden.futureishere.net', 'https://dg6mmjhepoyt9.cloudfront.net']
 // Clerk refuses a token whose azp is not in authorizedParties; this models that check on the list the handler passes.
 const signedFrom = (azp, sub) => (_token, opts) => (opts.authorizedParties.includes(azp)
-  ? Promise.resolve({ sub, azp })
+  ? (householdDefault(sub), Promise.resolve({ sub, azp }))
   : Promise.reject(new Error(`Invalid JWT Authorized party claim (azp) "${azp}"`)))
 const raw = async (event) => {
   const r = await handler(event)

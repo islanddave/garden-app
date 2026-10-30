@@ -3,7 +3,7 @@
 // Read-only: no 23514/23505/23503 is reachable; the one database error a request can cause (a NUL byte in
 // the subject, 22021) pins the generic 500. Trap: this handler has NO empty-subject 401 guard today.
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
-import { directSql, callHandler, makeEvent, setTestUserId, testRunId } from './_harness.js'
+import { directSql, callHandler, makeEvent, setTestUserId, testRunId, householdDefault } from './_harness.js'
 // After _harness.js, whose vi.mock replaces this module with the stub; imported first it would be the real one.
 import { verifyToken } from '@clerk/backend'
 import { handler } from '../../lambda/achievements/index.js'
@@ -11,7 +11,7 @@ import { handler } from '../../lambda/achievements/index.js'
 const ORIGINS = ['https://garden.futureishere.net', 'https://dg6mmjhepoyt9.cloudfront.net']
 // Clerk refuses a token whose azp is not in authorizedParties; this models that check on the list the handler passes.
 const signedFrom = (azp, sub) => (_token, opts) => (opts.authorizedParties.includes(azp)
-  ? Promise.resolve({ sub, azp })
+  ? (householdDefault(sub), Promise.resolve({ sub, azp }))
   : Promise.reject(new Error(`Invalid JWT Authorized party claim (azp) "${azp}"`)))
 const raw = async (event) => {
   const r = await handler(event)
