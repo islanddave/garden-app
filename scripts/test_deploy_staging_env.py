@@ -1,4 +1,4 @@
-"""deploy-staging.yml's seven read-merge env steps, executed as GitHub's runner executes them (OPS-STAGINGENVREAD-001).
+"""deploy-staging.yml's six read-merge env steps, executed as GitHub's runner executes them (OPS-STAGINGENVREAD-001).
 
 Run: python3 -m pytest -q scripts/test_deploy_staging_env.py
 
@@ -47,8 +47,6 @@ WHOLE_MAP = "Environment.Variables"
 SMOKE_USER = "user_STAGINGSMOKE"
 ADMINS = f"user_3D2gM0hIl03gjW3JM2DjtPzm0jI,{SMOKE_USER}"
 HOUSEHOLD = "user_a,user_b"
-EVENTS = "garden-events-staging"
-HH_QUERY = WHOLE_MAP + ".GARDEN_HOUSEHOLD_IDS"
 LIVE_ENV = {"SECRET_NAME": "garden-app/secrets-staging", "FB_SHARE_ENABLED": "1", "SET_BY_HAND": "keep me"}
 
 # probes: the single-key reads a step makes before the whole-map read, as {(function, --query): text reply}.
@@ -70,18 +68,15 @@ SITES = [
          {"${{ secrets.CLERK_TEST_USER_ID }}": SMOKE_USER}, "garden-varieties-staging",
          {("garden-varieties-staging", WHOLE_MAP + ".ADMIN_CLERK_SUBS"): "None"},
          {"ADMIN_CLERK_SUBS": ADMINS}, [], True, 1, "leaving ADMIN_CLERK_SUBS untouched"),
+    # SEC-13a: one step for every staging function that reads the key; the list comes from the staging
+    # environment's GARDEN_HOUSEHOLD_IDS secret through the step's env (FN, HH_CANON), so `subs` also fills env.
     Site("household", "Ensure GARDEN_HOUSEHOLD_IDS env for household-scoped staging fns (read-merge)",
-         {"${{ matrix.function }}": "harvests"}, "garden-harvests-staging",
-         {(EVENTS, HH_QUERY): HOUSEHOLD},
+         {"${{ matrix.function }}": "harvests", "${{ secrets.GARDEN_HOUSEHOLD_IDS }}": HOUSEHOLD},
+         "garden-harvests-staging", {},
          {"GARDEN_HOUSEHOLD_IDS": HOUSEHOLD}, [], True, 1, "leaving GARDEN_HOUSEHOLD_IDS untouched"),
-    # BUG-AUTHZLAMBDA-001: the shared-state membership gate. Pinned value (Dave + smoke user), not the sibling's.
-    Site("shared-state-household", "Ensure GARDEN_HOUSEHOLD_IDS env for shared-state-staging",
-         {"${{ secrets.CLERK_TEST_USER_ID }}": SMOKE_USER}, "garden-shared-state-staging",
-         {("garden-shared-state-staging", HH_QUERY): "None"},
-         {"GARDEN_HOUSEHOLD_IDS": ADMINS}, [], True, 1, "leaving GARDEN_HOUSEHOLD_IDS untouched"),
-    Site("facebook-share", "Ensure facebook-share-staging config (household + admin + bucket + secret; read-merge)",
+    Site("facebook-share", "Ensure facebook-share-staging config (admin + bucket + secret; read-merge)",
          {"${{ secrets.CLERK_TEST_USER_ID }}": SMOKE_USER}, "garden-facebook-share-staging",
-         {(EVENTS, HH_QUERY): "None"},
+         {},
          {"S3_PHOTOS_BUCKET": "garden-photos-staging", "ADMIN_CLERK_SUBS": ADMINS,
           "FB_SECRET_NAME": "garden-app/facebook-page-token-staging"},
          ["--timeout", "60", "--memory-size", "512"], True, 1, "leaving config untouched"),
@@ -140,9 +135,22 @@ def _body(site):
     return body
 
 
-def _run(tmp_path, site, whole_map, probes=None, update=None):
+def _step_env(site):
+    """The step's own `env:` block, with the site's expression substitutions applied."""
+    _, step = _step(WORKFLOW, JOB, site.name)
+    out = {}
+    for key, value in (step.get("env") or {}).items():
+        for expression, sub in site.subs.items():
+            value = str(value).replace(expression, sub)
+        assert "${{" not in value, "the step env holds an expression this harness does not substitute"
+        out[key] = value
+    return out
+
+
+def _run(tmp_path, site, whole_map, probes=None, update=None, secret=None):
     """Run one step's body. whole_map: the reply to the read of the function's whole env, or None when the step is
-    expected not to make it. probes: replies to the single-key reads, overriding the site's own."""
+    expected not to make it. probes: replies to the single-key reads, overriding the site's own. secret: the
+    GARDEN_HOUSEHOLD_IDS secret as the household step's env receives it, overriding the site's own."""
     bindir, scratch = tmp_path / "bin", tmp_path / "tmp"
     bindir.mkdir()
     scratch.mkdir()
@@ -161,6 +169,9 @@ def _run(tmp_path, site, whole_map, probes=None, update=None):
                AWS_ENDPOINT_URL="http://127.0.0.1:1", AWS_CONFIG_FILE=os.devnull,
                AWS_SHARED_CREDENTIALS_FILE=os.devnull, AWS_EC2_METADATA_DISABLED="true")
     env.pop("AWS_PROFILE", None)
+    env.update(_step_env(site))
+    if secret is not None:
+        env["HH_CANON"] = secret
     assert shutil.which("aws", path=env["PATH"]) == str(stub)
     proc = _run_as_runner(tmp_path, _body(site).replace("/tmp/", f"{scratch}/"), env)
     calls = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
@@ -296,31 +307,101 @@ def test_the_function_was_created_and_read_before_any_of_these_steps_runs():
 @pytest.mark.parametrize("site,query,value", [
     (BY_ID["photos-bucket"], WHOLE_MAP + ".S3_PHOTOS_BUCKET", "garden-photos-staging"),
     (BY_ID["ux-admin"], WHOLE_MAP + ".ADMIN_CLERK_SUBS", ADMINS),
-    (BY_ID["varieties-admin"], WHOLE_MAP + ".ADMIN_CLERK_SUBS", ADMINS),
-    (BY_ID["shared-state-household"], HH_QUERY, ADMINS)],
-    ids=["photos-bucket", "ux-admin", "varieties-admin", "shared-state-household"])
+    (BY_ID["varieties-admin"], WHOLE_MAP + ".ADMIN_CLERK_SUBS", ADMINS)],
+    ids=["photos-bucket", "ux-admin", "varieties-admin"])
 def test_a_value_that_is_already_correct_is_left_alone(tmp_path, site, query, value):
     run = _run(tmp_path, site, None, probes={f"{site.fn} {query}": {"out": value + "\n"}})
     assert run.proc.returncode == 0 and len(run.calls) == 1 and run.annotations == []
     assert f"already correct on {site.fn}" in run.proc.stdout
 
 
-@pytest.mark.parametrize("reply", [{"out": "None\n"}, {"out": "\n"}, {"rc": 254, "err": "throttled\n"}],
-                         ids=["unset", "empty", "unreadable"])
-def test_household_step_stops_before_the_read_when_the_sibling_has_no_ids(tmp_path, reply):
-    """The path staging takes today (run 37163373530): two warnings, exit 0, the function's env never read."""
-    site = BY_ID["household"]
-    run = _run(tmp_path, site, None, probes={f"{EVENTS} {HH_QUERY}": reply})
-    assert run.proc.returncode == 0 and len(run.calls) == 1
-    assert len(run.annotations) == 2 and run.annotations[0].startswith("::warning::B1(staging)")
+# ── SEC-13a: the household step takes the staging secret and never shrinks a live list ─────────────────────────
+
+def _masked(run):
+    return [a[len("::add-mask::"):] for a in run.annotations if a.startswith("::add-mask::")]
 
 
-def test_facebook_share_merges_the_household_ids_when_the_sibling_has_them(tmp_path):
+def _said(run):
+    """stdout + stderr without the ::add-mask:: commands, which the runner never shows."""
+    return [ln for ln in (run.proc.stdout + "\n" + run.proc.stderr).splitlines()
+            if not ln.lstrip().startswith("::add-mask::")]
+
+
+HH_SITE = BY_ID["household"]
+
+
+@pytest.mark.parametrize("secret", ["", "   ", " , ,", "\n"], ids=["empty", "blank", "separators", "newline"])
+def test_household_step_with_no_secret_stops_before_any_aws_call(tmp_path, secret):
+    run = _run(tmp_path, HH_SITE, None, secret=secret)
+    assert run.proc.returncode == 1 and run.calls == []
+    assert [a for a in run.annotations if a.startswith("::error::")] == [
+        "::error::garden-harvests-staging: this environment's GARDEN_HOUSEHOLD_IDS secret is empty or missing; "
+        "nothing written"]
+
+
+@pytest.mark.parametrize("live,secret,written,verdict", [
+    ("user_a", "user_a,user_b", "user_a,user_b", "widened"),
+    ("user_b , user_a", "user_a,user_b", "user_a,user_b", "normalized"),
+    (None, "user_a,user_b\n", "user_a,user_b", "added"),
+], ids=["narrower-is-widened", "same-set-other-bytes", "secret-with-a-newline"])
+def test_household_step_writes_the_secret_over_a_narrower_or_absent_list(tmp_path, live, secret, written, verdict):
+    env = dict(LIVE_ENV, **({"GARDEN_HOUSEHOLD_IDS": live} if live is not None else {}))
+    run = _run(tmp_path, HH_SITE, _ok(env), secret=secret)
+    assert run.proc.returncode == 0, run.proc.stdout + run.proc.stderr
+    assert [json.loads(u["env_file"]) for u in run.updates] == [{"Variables": {**env, "GARDEN_HOUSEHOLD_IDS": written}}]
+    assert f"GARDEN_HOUSEHOLD_IDS {verdict} on garden-harvests-staging (2 entries, sha256 " in run.proc.stdout
+
+
+@pytest.mark.parametrize("live,rc,said", [
+    ("user_a,user_b", 0, None),
+    ("user_a,user_b,user_c", 0, "::warning::garden-harvests-staging carries a wider GARDEN_HOUSEHOLD_IDS than this "
+                                "environment's secret (a hand widening?): kept, because a deploy never shrinks the list."),
+    ("user_a,user_x", 1, "::error::garden-harvests-staging: its GARDEN_HOUSEHOLD_IDS and this environment's secret "
+                         "name different members. Nothing written: a person decides which list is right."),
+], ids=["same-is-left-alone", "wider-is-kept", "different-members-are-refused"])
+def test_household_step_never_shrinks_or_replaces_a_live_list(tmp_path, live, rc, said):
+    run = _run(tmp_path, HH_SITE, _ok(dict(LIVE_ENV, GARDEN_HOUSEHOLD_IDS=live)), secret="user_a,user_b")
+    assert run.proc.returncode == rc and run.updates == [], run.proc.stdout + run.proc.stderr
+    notes = [a for a in run.annotations if not a.startswith("::add-mask::")]
+    assert notes == ([] if said is None else [a for a in notes if a.startswith(said)]) and len(notes) == (said is not None)
+    if said is None:
+        assert "GARDEN_HOUSEHOLD_IDS already correct on garden-harvests-staging (2 entries, sha256 " in run.proc.stdout
+
+
+@pytest.mark.parametrize("live", [None, "user_a", "user_a,user_b,user_c", "user_a,user_x", "user_b,user_a"],
+                         ids=["added", "widened", "wider", "differ", "normalized"])
+def test_household_step_masks_every_entry_first_and_never_prints_one(tmp_path, live):
+    """The logs are public. Every entry of the secret and of the live list is masked before anything else is printed,
+    and no other output line carries one. A failed mask is a leak the runner cannot take back."""
+    env = dict(LIVE_ENV, **({"GARDEN_HOUSEHOLD_IDS": live} if live is not None else {}))
+    run = _run(tmp_path, HH_SITE, _ok(env), secret="user_a,user_b")
+    entries = {"user_a", "user_b"} | set((live or "").split(",")) - {""}
+    assert set(_masked(run)) == entries
+    first = run.proc.stdout.splitlines()
+    assert first[:2] == ["::add-mask::user_a", "::add-mask::user_b"], first
+    leaked = [ln for ln in _said(run) for e in entries if e in ln]
+    assert leaked == [], leaked
+
+
+def test_household_step_covers_every_staging_function_that_reads_the_key():
+    """Twin of the removed shared-state step: shared-state (whose membership gate 403s without the key) and every
+    other staging URL function are in the one step's `if:`; photocdn-derivative, which reads no list, is not."""
+    _, step = _step(WORKFLOW, JOB, HH_SITE.name)
+    gated = set(re.findall(r"matrix\.function == '([a-z0-9-]+)'", step["if"]))
+    legs = set(_workflow(WORKFLOW)["jobs"][JOB]["strategy"]["matrix"]["function"])
+    assert "shared-state" in gated and gated == legs - {"photocdn-derivative"}
+    assert step["env"] == {"FN": "garden-${{ matrix.function }}-staging",
+                           "HH_CANON": "${{ secrets.GARDEN_HOUSEHOLD_IDS }}"}
+
+
+def test_facebook_share_leaves_the_household_list_as_it_is(tmp_path):
+    """The household step owns GARDEN_HOUSEHOLD_IDS; facebook-share's read-merge keeps whatever is live."""
     site = BY_ID["facebook-share"]
-    run = _run(tmp_path, site, _ok(LIVE_ENV), probes={f"{EVENTS} {HH_QUERY}": {"out": HOUSEHOLD + "\n"}})
+    live = dict(LIVE_ENV, GARDEN_HOUSEHOLD_IDS="user_a,user_b")
+    run = _run(tmp_path, site, _ok(live))
     assert run.proc.returncode == 0, run.proc.stderr
-    assert json.loads(run.updates[0]["env_file"]) == {
-        "Variables": {**LIVE_ENV, **site.adds, "GARDEN_HOUSEHOLD_IDS": HOUSEHOLD}}
+    assert json.loads(run.updates[0]["env_file"]) == {"Variables": {**live, **site.adds}}
+    assert "user_a" not in run.proc.stdout + run.proc.stderr
 
 
 @pytest.mark.parametrize("live,warned", [(LIVE_ENV, True), ({**LIVE_ENV, "DERIVATIVES_BUCKET": "some-bucket"}, False)],
