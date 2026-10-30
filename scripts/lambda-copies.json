@@ -65,6 +65,13 @@
       "lambda/tags/rate-limit.js",
       "lambda/varieties/rate-limit.js"
     ],
+    "lambda/audit-actor.js": [
+      "lambda/events/audit-actor.js",
+      "lambda/plants/audit-actor.js",
+      "lambda/preservation/audit-actor.js",
+      "lambda/projects/audit-actor.js",
+      "lambda/varieties/audit-actor.js"
+    ],
     "lambda/request-context.js": [
       "lambda/achievements/request-context.js",
       "lambda/app-events/request-context.js",

@@ -28,6 +28,7 @@ import { handler } from '../../lambda/varieties/index.js'
 const RUN = testRunId()
 const USER = `user_int_facts_${RUN}`
 const FOREIGN = `user_int_facts_foreign_${RUN}`
+const MATE = `user_int_facts_mate_${RUN}` // same household as USER in the withActor case only
 
 let varietyId, rankedId, marketId, foreignId, unrankedId
 
@@ -72,6 +73,7 @@ afterAll(async () => {
   await directSql`DELETE FROM entity WHERE cultivar_ref_id IN (
     SELECT id FROM plant_varieties WHERE created_by IN (${USER}, ${FOREIGN}))`
   await directSql`DELETE FROM plant_varieties WHERE created_by IN (${USER}, ${FOREIGN})`
+  await directSql`DELETE FROM public.audit_events WHERE actor_clerk_sub = ${MATE}`
 })
 
 // The tests below run in file order and each starts from the state the previous one left, so the
@@ -302,5 +304,29 @@ describe('V5-VARIETYFACTSEDIT-001 — the pairing preflight agrees with the live
     expect(status).toBe(400)
     expect(body.error).toBe('Constraint violation: chk_plant_varieties_scoville')
     expect((await directSql`SELECT scoville_min FROM plant_varieties WHERE id = ${id}`)[0].scoville_min).toBe(100)
+  })
+})
+
+// D2 W1: the PUT's transaction runs through withActor. A household mate editing a member's row is the case where the
+// row's owner and the caller differ, so the audit row must name the caller (neither the owner nor 'system').
+describe('D2 withActor — a household mate\'s varieties PUT is audited as the mate', () => {
+  it('the plant_varieties audit row for the mate\'s edit names the mate', async () => {
+    const saved = process.env.GARDEN_HOUSEHOLD_IDS
+    process.env.GARDEN_HOUSEHOLD_IDS = `${USER},${MATE}`
+    const region = `mate edit ${RUN}`
+    try {
+      setTestUserId(MATE)
+      const { status, body } = await put(rankedId, { origin_region: region })
+      expect(status, JSON.stringify(body)).toBe(200)
+      const rows = await directSql`
+        SELECT actor_clerk_sub FROM public.audit_events
+         WHERE table_name = 'plant_varieties' AND row_id = ${rankedId} AND action = 'UPDATE'
+           AND after_jsonb->>'origin_region' = ${region}`
+      expect(rows.map((r) => r.actor_clerk_sub)).toEqual([MATE])
+    } finally {
+      setTestUserId(USER)
+      if (saved === undefined) delete process.env.GARDEN_HOUSEHOLD_IDS
+      else process.env.GARDEN_HOUSEHOLD_IDS = saved
+    }
   })
 })

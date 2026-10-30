@@ -273,7 +273,7 @@ describe('the profile write is inside the cultivar transaction (static guards)',
   // invariant and a best-effort, so it is pinned against the source instead: a post-commit write
   // fails OPEN (the applyDerive idiom two lines below it), and failing open on an existence
   // invariant silently re-creates the gap this change closes.
-  const txStart = SRC.indexOf('await sql.transaction([', SRC.indexOf('const newVarietyId'));
+  const txStart = SRC.indexOf('await withActor(sql, userId, () => [', SRC.indexOf('const newVarietyId'));
   const txEnd = SRC.indexOf(']);', txStart);
 
   it('the transaction array contains both INSERTs', () => {

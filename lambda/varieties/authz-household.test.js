@@ -506,10 +506,13 @@ describe('varieties write predicates — source-level invariants', () => {
     // restore arm of POST /api/varieties/sources — public.source carries trg_audit_source_upd, so
     // that UPDATE is audited and must name the human who asked for it rather than 'system'. 5 -> 6 on
     // 2026-09-29 (V5-SOURCECONTACT-001), PATCH /api/varieties/sources/:id, same table, same reason.
-    const binds = [...SRC.matchAll(/set_config\('app\.actor_clerk_sub', \$\{([^}]*)\}, true\)/g)].map((m) => m[1]);
-    expect(binds).toHaveLength(6);
-    for (const b of binds) expect(b).toBe('auditActor(userId)');
-    expect(SRC).not.toMatch(/set_config\('app\.actor_clerk_sub', \$\{[^}]*household/);
+    // D2 W1: every bind is now a withActor call (its helper checks the actor through auditActor), so the
+    // actor argument is what is asserted, over every call; no raw bind is left in this file.
+    const actors = [...SRC.matchAll(/\bwithActor\(sql, ([^,]+),/g)].map((m) => m[1]);
+    expect(actors).toHaveLength(6);
+    for (const a of actors) expect(a).toBe('userId');
+    expect(SRC).not.toMatch(/set_config\('app\.actor_clerk_sub', \$\{/);
+    expect(SRC).not.toMatch(/withActor\(sql, [^,]*household/);
   });
 
   it('POST still stamps created_by from the JWT sub only (no widening on create)', () => {

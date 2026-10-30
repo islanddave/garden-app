@@ -31,6 +31,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, extname, relative, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as acorn from 'acorn'
+import { withActor } from './audit-actor.js'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const LAMBDA = join(ROOT, 'lambda')
@@ -82,6 +83,40 @@ const isAuditedWrite = (n) => isSqlTemplate(n) && (AUDITED_DML.test(sqlText(n)) 
 const SET_CONFIG = /set_config\(\s*'app\.actor_clerk_sub'\s*,\s*\?\s*,\s*true\s*\)/
 const isSetConfig = (n) => isSqlTemplate(n) && SET_CONFIG.test(sqlText(n))
 
+// withActor(sql, actor, () => [ … ] | () => <array variable>) runs its batch behind the set_config that the dir's
+// ./audit-actor.js copy builds. A withActor group's element0 is THAT node, read from the copy the file imports, so a
+// helper that drops, reorders or session-scopes the GUC reds every withActor row, and a file whose withActor is not
+// the imported helper gets element0 null.
+const isWithActorCall = (n) =>
+  n.type === 'CallExpression' && n.callee.type === 'Identifier' && n.callee.name === 'withActor'
+const parseFile = (rel) =>
+  acorn.parse(readFileSync(join(ROOT, rel), 'utf8'), { ecmaVersion: 'latest', sourceType: 'module', locations: true })
+function withActorFn(rel) {
+  let fn = null
+  walkAst(parseFile(rel), (n) => { if (n.type === 'FunctionDeclaration' && n.id?.name === 'withActor') fn = n })
+  return fn
+}
+function helperGuc(rel) {
+  let guc = null
+  const fn = withActorFn(rel)
+  if (fn) walkAst(fn.body, (n) => { if (isSqlTransaction(n) && n.arguments[0]?.type === 'ArrayExpression') guc = n.arguments[0].elements[0] ?? null })
+  return guc
+}
+const importsWithActor = (ast) => ast.body.some((s) => s.type === 'ImportDeclaration' && s.source.value === './audit-actor.js' &&
+  s.specifiers.some((sp) => sp.type === 'ImportSpecifier' && sp.imported.name === 'withActor' && sp.local.name === 'withActor'))
+// Members of an array variable a builder returns: its initializer plus every push/unshift to it in the file.
+function arrayMembers(ast, name) {
+  const members = []
+  walkAst(ast, (n) => {
+    if (n.type === 'VariableDeclarator' && n.id.type === 'Identifier' && n.id.name === name && n.init?.type === 'ArrayExpression') {
+      members.push(...n.init.elements.filter(Boolean))
+    }
+    if (n.type === 'CallExpression' && n.callee.type === 'MemberExpression' && n.callee.object.type === 'Identifier' &&
+        n.callee.object.name === name && ['push', 'unshift'].includes(n.callee.property.name)) members.push(...n.arguments)
+  })
+  return members
+}
+
 const FILES = walkFiles(LAMBDA).map((f) => relative(ROOT, f))
 
 // ── Model every sql.transaction() call site in lambda/ ─────────────────────────────────────────
@@ -131,6 +166,19 @@ function groupsIn(rel) {
                   element0: lastUnshift ? lastUnshift.arguments[0] : (init?.elements[0] ?? null),
                   members })
   }
+
+  // withActor form. A builder that is not `() => [ … ]` or `() => <array variable>` contributes no members, so an
+  // audited write inside it counts as unbatched below (fail closed).
+  const helper = join(dirname(rel), 'audit-actor.js')
+  const guc = importsWithActor(ast) && FILES.includes(helper) ? helperGuc(helper) : null
+  walkAst(ast, (n) => {
+    if (!isWithActorCall(n)) return
+    const [, actor = null, build] = n.arguments
+    const body = build?.type === 'ArrowFunctionExpression' || build?.type === 'FunctionExpression' ? build.body : null
+    const members = body?.type === 'ArrayExpression' ? body.elements.filter(Boolean)
+      : body?.type === 'Identifier' ? arrayMembers(ast, body.name) : []
+    groups.push({ file: rel, line: n.loc.start.line, kind: 'withActor', actor, element0: guc, members })
+  })
   return groups
 }
 
@@ -194,7 +242,7 @@ describe('BUG-EVENTAUDITACTOR-001 — actor GUC shares a transaction with every 
   })
 
   // ── the core property ───────────────────────────────────────────────────────────────────────
-  it.each(AUDITING_GROUPS.map((g) => [`${g.file}:${g.line}`, g]))(
+  it.each(AUDITING_GROUPS.map((g) => [`${g.file}:${g.line}${g.kind === 'withActor' ? ' (withActor)' : ''}`, g]))(
     'sql.transaction at %s writes an audited table, so its first statement sets the actor GUC',
     (_label, g) => {
       expect(g.element0).not.toBeNull()
@@ -209,6 +257,86 @@ describe('BUG-EVENTAUDITACTOR-001 — actor GUC shares a transaction with every 
       .map((w) => `${w.file}:${w.line}  ${w.text.trim().replace(/\s+/g, ' ').slice(0, 80)}`)
     expect(stray).toEqual([])
   })
+
+  // ── withActor (D2 R-W1-1): the helper, and every call to it ─────────────────────────────────────
+  const WITH_ACTOR = GROUPS.filter((g) => g.kind === 'withActor')
+
+  it('every withActor call is its dir\'s ./audit-actor.js copy, whose batch leads with the actor GUC', () => {
+    expect(WITH_ACTOR.length).toBeGreaterThanOrEqual(8)
+    expect(WITH_ACTOR.filter((g) => !isSetConfig(g.element0)).map((g) => `${g.file}:${g.line}`)).toEqual([])
+  })
+
+  it('withActor\'s actor argument is the caller (userId / ctx.userId), never a literal', () => {
+    const caller = (a) => (a?.type === 'Identifier' && a.name === 'userId') ||
+      (a?.type === 'MemberExpression' && a.object.type === 'Identifier' && a.object.name === 'ctx' && a.property.name === 'userId')
+    expect(WITH_ACTOR.filter((g) => !caller(g.actor)).map((g) => `${g.file}:${g.line}`)).toEqual([])
+  })
+
+  it('the helper checks the actor, leads its batch with the transaction-local GUC, then runs the builder', () => {
+    const fn = withActorFn('lambda/audit-actor.js')
+    expect(fn, 'lambda/audit-actor.js defines no withActor').toBeTruthy()
+    const [, actorParam, buildParam] = fn.params
+    let batch = null
+    walkAst(fn.body, (n) => { if (isSqlTransaction(n)) batch = n.arguments[0] })
+    expect(batch?.type).toBe('ArrayExpression')
+    const [guc, rest, ...extra] = batch.elements
+    expect(isSetConfig(guc)).toBe(true)
+    const bind = guc.quasi.expressions[0]
+    expect(bind.type === 'CallExpression' && bind.callee.name === 'auditActor' && bind.arguments[0]?.name === actorParam.name).toBe(true)
+    expect(rest?.type === 'SpreadElement' && rest.argument.type === 'CallExpression' && rest.argument.callee.name === buildParam.name).toBe(true)
+    expect(extra).toEqual([])
+  })
+
+  // M4: one refusal rule. The helper's predicate is the same text as the two writers' copies.
+  it('auditActor is byte-equal in audit-actor.js, varieties/validate.js and photos/photoDelete.js', () => {
+    const rule = (rel) => {
+      const src = readFileSync(join(ROOT, rel), 'utf8')
+      let fn = null
+      walkAst(acorn.parse(src, { ecmaVersion: 'latest', sourceType: 'module' }), (n) => {
+        if (n.type === 'FunctionDeclaration' && n.id?.name === 'auditActor') fn = n
+      })
+      return fn && src.slice(fn.params[0].start, fn.end)
+    }
+    const master = rule('lambda/audit-actor.js')
+    expect(master).toMatch(/userId\.trim\(\) === ''/)
+    expect(rule('lambda/varieties/validate.js')).toBe(master)
+    expect(rule('lambda/photos/photoDelete.js')).toBe(master)
+  })
+
+  // Records each statement when it is BUILT, as the preservation unit mocks do, so construction order is visible.
+  function recordingSql() {
+    const sql = (strings, ...values) => { const s = { text: strings.join('?'), values }; sql.built.push(s); return s }
+    sql.built = []
+    sql.batches = []
+    sql.transaction = async (stmts) => { sql.batches.push(stmts); return stmts.map(() => []) }
+    return sql
+  }
+  const GUC_TEXT = "SELECT set_config('app.actor_clerk_sub', ?, true)"
+
+  it('withActor builds the GUC before it calls the builder, and sends it as element 0', async () => {
+    const sql = recordingSql()
+    let builtFirst = null
+    const out = await withActor(sql, 'user_a', () => {
+      builtFirst = sql.built.map((s) => s.text)
+      return [sql`UPDATE event_log SET note = ${'x'} WHERE id = ${1}`]
+    })
+    expect(builtFirst).toEqual([GUC_TEXT])
+    expect(sql.batches.map((b) => b.map((s) => s.text))).toEqual([[GUC_TEXT, 'UPDATE event_log SET note = ? WHERE id = ?']])
+    expect(sql.batches[0][0].values).toEqual(['user_a'])
+    expect(out).toHaveLength(2) // the GUC's row is index 0, so `const [, rows] = await withActor(…)` keeps its index
+  })
+
+  it.each([['empty', ''], ['undefined', undefined], ['null', null], ['whitespace only', '   '], ['a number', 0], ['an object', {}]])(
+    'withActor refuses an actor that is %s before it builds a statement or calls the builder',
+    async (_label, actor) => {
+      const sql = recordingSql()
+      let called = false
+      await expect((async () => withActor(sql, actor, () => { called = true; return [] }))()).rejects.toThrow(/audit actor is absent/)
+      expect(sql.built).toEqual([])
+      expect(sql.batches).toEqual([])
+      expect(called).toBe(false)
+    },
+  )
 
   // ── the five paths this ticket repaired, named so a failure says WHICH one regressed ────────
   const site = (file, needle) => {
