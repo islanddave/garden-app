@@ -261,8 +261,16 @@ export function OverlayHost({ ariaLabel, size = 'peek', children }) {
   )
 }
 
-// SINGLE source of truth for BOTH route trees (design V102 §3). Each `element` is IDENTICAL to the
-// historical inline JSX — <Protected> + route-level <ErrorBoundary> preserved verbatim — so the two
+// The one way to declare a signed-in content route: <Protected> around a route-scoped <ErrorBoundary>,
+// so a throw costs the route and not the whole PWA (the service worker serves the bundle cache-first,
+// so an app-level blank survives a reload). A route that skips it fails the structural case in
+// App.routes.test.jsx. Redirect-only and auth routes (/, /login, /auth/callback, ...) stay bare.
+function protectedRoute(content) {
+  return <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}>{content}</ErrorBoundary></Protected>
+}
+
+// SINGLE source of truth for BOTH route trees (design V102 §3). Each `element` is built by
+// protectedRoute (<Protected> + route-level <ErrorBoundary>) — so the two
 // trees cannot drift and the overlay tree can never drop a boundary. Only `overlayable` routes
 // appear in the overlay tree, where their element is wrapped in <OverlayHost>; in the page tree the
 // SAME element renders unwrapped (full page). Declaration order is preserved from the original for
@@ -280,14 +288,14 @@ export function renderRoutes({ overlay, user, loading }) {
     // matching lambda bypass (GET /api/projects/public/:slug, dispatched before verifyToken) moved
     // behind the auth gate in the same change — half of this is worse than neither half, either a
     // route that renders an empty shell or an API that still answers anonymously.
-    { path: '/garden/:slug',  element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><ProjectPublic /></ErrorBoundary></Protected> },
+    { path: '/garden/:slug',  element: protectedRoute(<ProjectPublic />) },
     // ErrorBoundary is NOT decorative here: /garden was the only data-fetching route without one,
     // and it is the app's most-used surface. A throw escaped to the app-level boundary and blanked
     // the whole PWA — and because the service worker serves the bundle cache-first, a reload gets
     // the same broken bundle, so the user cannot recover without relaunching the installed app.
     // Scoped like every sibling route so a Garden throw costs Garden, not the application.
-    { path: '/garden',        element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><Garden /></ErrorBoundary></Protected> },
-    { path: '/feed',          element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><FeedPage /></ErrorBoundary></Protected> },
+    { path: '/garden',        element: protectedRoute(<Garden />) },
+    { path: '/feed',          element: protectedRoute(<FeedPage />) },
     { path: '/auth/callback', element: <AuthCallback /> },
     // V4-PERFCLERK-001 C — the INVERSE leak, and the one easiest to miss. Every other route is
     // Protected, so `loading` is handled once inside <Protected>; /login is the only route whose
@@ -296,16 +304,16 @@ export function renderRoutes({ overlay, user, loading }) {
     // signed-out-shell flash, just pointing the other way. Previously invisible because the splash
     // covered it; now that the shell paints during the window it would be on screen.
     { path: '/login',         element: loading ? <RouteSkeleton /> : (user ? <Navigate to="/today" replace /> : <Login />) },
-    { path: '/dashboard',     element: <Protected><Dashboard /></Protected> },
-    { path: '/locations',     element: <Protected><Locations /></Protected> },
-    { path: '/locations/:id', element: <Protected><LocationDetail /></Protected> },
+    { path: '/dashboard',     element: protectedRoute(<Dashboard />) },
+    { path: '/locations',     element: protectedRoute(<Locations />) },
+    { path: '/locations/:id', element: protectedRoute(<LocationDetail />) },
     // V4-SPACEPHOTO-001 Lane C. Spread-in, NOT a `flag ? A : B` element swap: with the flag off the
     // paths are ABSENT from the table entirely (so /space falls through to the '*' catch-all exactly
     // as it does today, and App.routes.test.jsx's exact route-count pin is the mechanical proof of
     // inertness). /space is the single-space entry point; /space/:spaceId is the multi-space form.
     ...(SPACE_PHOTOS_ENABLED ? [
-      { path: '/space',           element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><SpaceDetail /></ErrorBoundary></Protected> },
-      { path: '/space/:spaceId',  element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><SpaceDetail /></ErrorBoundary></Protected> },
+      { path: '/space',           element: protectedRoute(<SpaceDetail />) },
+      { path: '/space/:spaceId',  element: protectedRoute(<SpaceDetail />) },
     ] : []),
     { path: '/tasks',         element: <Navigate to="/today" replace /> },
     // `/zone` USED TO BE REGISTERED HERE and is GONE as of V4-AMBIENTZONE-001 (2026-08-20), along
@@ -323,9 +331,9 @@ export function renderRoutes({ overlay, user, loading }) {
     // V4-PROJHIDE-001: the /projects tree is no longer a user-facing view — redirect its index to
     // /garden when hidden. Every other project route (new/:id/inactive/project-types/scoped shims/
     // admin classify) stays reachable-but-unlinked. Flag OFF renders the exact prior ProjectList.
-    { path: '/projects',      element: PROJECTS_HIDDEN ? <Navigate to="/garden" replace /> : <Protected><ProjectList /></Protected> },
-    { path: '/projects/new',  element: <Protected><ProjectNew /></Protected> },
-    { path: '/projects/:id',  element: <Protected><ProjectDetail /></Protected> },
+    { path: '/projects',      element: PROJECTS_HIDDEN ? <Navigate to="/garden" replace /> : protectedRoute(<ProjectList />) },
+    { path: '/projects/new',  element: protectedRoute(<ProjectNew />) },
+    { path: '/projects/:id',  element: protectedRoute(<ProjectDetail />) },
     // Unlinked per the PROJHIDE note above, but flipping that flag back does NOT restore its entry
     // point: Dashboard gates the link on `!PROJECTS_HIDDEN && inactiveCount > 0`, and the count
     // counts containers in status harvested/ended — of which prod had ZERO on 2026-08-20 (as it has
@@ -342,111 +350,111 @@ export function renderRoutes({ overlay, user, loading }) {
     // re-open only alongside a redesign of what "inactive" means (handlers.js:711-716 already
     // records that 'harvested' is a repeatable, loggable status, so pairing it with 'ended' is
     // semantically stale).
-    { path: '/inactive',      element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><InactiveProjects /></ErrorBoundary></Protected> },
-    { path: '/inventory',     element: <Protected><Inventory /></Protected> },
-    { path: '/inventory/add', element: <Protected><InventoryAdd /></Protected> },
-    { path: '/inventory/add-seeds', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><AddSeeds /></ErrorBoundary></Protected> },
-    { path: '/inventory/:id', element: <Protected><InventoryDetail /></Protected> },
+    { path: '/inactive',      element: protectedRoute(<InactiveProjects />) },
+    { path: '/inventory',     element: protectedRoute(<Inventory />) },
+    { path: '/inventory/add', element: protectedRoute(<InventoryAdd />) },
+    { path: '/inventory/add-seeds', element: protectedRoute(<AddSeeds />) },
+    { path: '/inventory/:id', element: protectedRoute(<InventoryDetail />) },
     // V5-SEEDSTAB-001 — ONE Seeds page (My seeds · Saved seeds · Sow now), a full page like the two it
     // replaces: a destination Dave navigates TO and works in, not a flyover over something else.
     // The page wraps each view in its own boundary too, so a Sow now engine throw costs that view and
     // leaves the switch and the other two usable; this one catches what the shell itself raises.
-    { path: '/seeds',         element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><Seeds /></ErrorBoundary></Protected> },
+    { path: '/seeds',         element: protectedRoute(<Seeds />) },
     // The two pages Seeds replaced, as REPLACE redirects into it (see LegacySeedsRedirect.jsx). Every
     // in-app door targets /seeds directly; these exist for bookmarks and restored tabs.
-    { path: '/sow',           element: <Protected><LegacySeedsRedirect view="sow" /></Protected> },
-    { path: '/seeds/saved',   element: <Protected><LegacySeedsRedirect view="saved" /></Protected> },
+    { path: '/sow',           element: protectedRoute(<LegacySeedsRedirect view="sow" />) },
+    { path: '/seeds/saved',   element: protectedRoute(<LegacySeedsRedirect view="saved" />) },
     // V5-HARVESTONEDOOR-001: HarvestSessionRedirect sends `?session=harvest` on to the combined
     // harvest page and lets every other /log through untouched — see that file for why the
     // launcher-cached PWA shortcut makes this necessary even though all in-app producers are
     // repointed in this same change. It sits INSIDE the boundary so a throw in the redirect is
     // caught like any other route error.
-    { path: '/log',           overlayable: true, ariaLabel: 'Log an event',      size: 'full', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><HarvestSessionRedirect><EventNew /></HarvestSessionRedirect></ErrorBoundary></Protected> },
-    { path: '/log/many',      overlayable: true, ariaLabel: 'Log many',          size: 'full', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><LogMany /></ErrorBoundary></Protected> },
+    { path: '/log',           overlayable: true, ariaLabel: 'Log an event',      size: 'full', element: protectedRoute(<HarvestSessionRedirect><EventNew /></HarvestSessionRedirect>) },
+    { path: '/log/many',      overlayable: true, ariaLabel: 'Log many',          size: 'full', element: protectedRoute(<LogMany />) },
     // V5-HARVESTONEDOOR-001 — the combined harvest page: one door, a voice/manual selector, voice by
     // default. Inherits V5-HARVESTVOICEFLOW-001's reasoning for NOT being `overlayable`, and now has
     // a second, independent reason: EventNew gates every weigh-in-session behaviour on
     // `harvestSessionParam && !inOverlay`, so an overlayable route here would make the Manual half
     // silently degrade to the plain single-event form. Both halves need full-page, for different
     // reasons, and either one alone is sufficient to keep it off the overlay list.
-    { path: '/log/harvest',   element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><HarvestLog /></ErrorBoundary></Protected> },
+    { path: '/log/harvest',   element: protectedRoute(<HarvestLog />) },
     // Legacy. Kept because the launcher-cached PWA shortcut and any bookmark still name it.
-    { path: '/log/voice',     element: <Protected><VoiceHarvestRedirect /></Protected> },
-    { path: '/put-up',        overlayable: true, ariaLabel: 'Put-Up',             size: 'full', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><PutUp /></ErrorBoundary></Protected> },
-    { path: '/photos',        element: <Protected><PhotoLibrary /></Protected> },
+    { path: '/log/voice',     element: protectedRoute(<VoiceHarvestRedirect />) },
+    { path: '/put-up',        overlayable: true, ariaLabel: 'Put-Up',             size: 'full', element: protectedRoute(<PutUp />) },
+    { path: '/photos',        element: protectedRoute(<PhotoLibrary />) },
     // W-RESTORE. Declared AFTER /photos and matched with `end: true` by react-router v6, so the two
     // never compete. Boundaried like its data-fetching siblings: a throw here must cost this page,
     // not the shell — and this is the page a user reaches specifically because something already
     // went wrong, so it is the worst possible place to white-screen the PWA.
-    { path: '/photos/deleted', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><RecentlyDeleted /></ErrorBoundary></Protected> },
-    { path: '/harvests',      element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><Harvests /></ErrorBoundary></Protected> },
-    { path: '/favorites',     element: <Protected><Favorites /></Protected> },
-    { path: '/search',        overlayable: true, ariaLabel: 'Search your garden', size: 'peek', element: <Protected><Search /></Protected> },
-    { path: '/project-types', element: <Protected><ProjectTypes /></Protected> },
+    { path: '/photos/deleted', element: protectedRoute(<RecentlyDeleted />) },
+    { path: '/harvests',      element: protectedRoute(<Harvests />) },
+    { path: '/favorites',     element: protectedRoute(<Favorites />) },
+    { path: '/search',        overlayable: true, ariaLabel: 'Search your garden', size: 'peek', element: protectedRoute(<Search />) },
+    { path: '/project-types', element: protectedRoute(<ProjectTypes />) },
     { path: '/plants',        element: <PlantsRedirect /> },
-    { path: '/plants/catch-up', element: <Protected><PlantsCatchUp /></Protected> },
-    { path: '/events/:eventId', element: <Protected><EventDetail /></Protected> },
+    { path: '/plants/catch-up', element: protectedRoute(<PlantsCatchUp />) },
+    { path: '/events/:eventId', element: protectedRoute(<EventDetail />) },
     // V4-ARCHIVEBROWSE-001. Declared BEFORE /plantings/:plantingId. React Router v6 ranks a static
     // segment above a dynamic one regardless of declaration order, so this is belt-and-braces rather
     // than load-bearing — but the failure it guards against is silent (PlantingDetail would fetch
     // planting id "archived" and render a not-found), so the ordering is made obvious rather than
     // left to ranking rules a future edit might not know about. Boundaried like its data-fetching
     // siblings: this is a recovery surface, so it is the worst place to white-screen the PWA.
-    { path: '/plantings/archived', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><ArchivedPlantings /></ErrorBoundary></Protected> },
+    { path: '/plantings/archived', element: protectedRoute(<ArchivedPlantings />) },
     // End of season — close out the plantings a frost finishes. Its only door is the More row of the
     // same name (moreRegistry.js): an installed PWA has no address bar, so the two ship together. A
     // page, not `overlayable`: a list Dave works through, with its own sticky bar and confirm sheet.
-    { path: '/season-end',    element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><SeasonEnd /></ErrorBoundary></Protected> },
+    { path: '/season-end',    element: protectedRoute(<SeasonEnd />) },
     // Season stats — the eight-section season read-out (V5-SEASONSTATS-001). Its only door is the More
     // row of the same name, right after End of season (moreRegistry.js), so the two ship together.
-    { path: '/season-stats',  element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><PageChunkRoute chunk={seasonStatsChunk} /></ErrorBoundary></Protected> },
+    { path: '/season-stats',  element: protectedRoute(<PageChunkRoute chunk={seasonStatsChunk} />) },
     // Source edit (V5-SOURCECONTACT-001) — name, website, Instagram, Facebook, address for one seed
     // source. Reached from a saved-seed lot's "Edit source" chip on Season stats (SeedLotCard.jsx).
-    { path: '/sources/:id',   element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><PageChunkRoute chunk={sourceEditChunk} /></ErrorBoundary></Protected> },
-    { path: '/plantings/:plantingId', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><PlantingDetail /></ErrorBoundary></Protected> },
-    { path: '/varieties/:varietyId/edit', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><VarietyEdit /></ErrorBoundary></Protected> },
+    { path: '/sources/:id',   element: protectedRoute(<PageChunkRoute chunk={sourceEditChunk} />) },
+    { path: '/plantings/:plantingId', element: protectedRoute(<PlantingDetail />) },
+    { path: '/varieties/:varietyId/edit', element: protectedRoute(<VarietyEdit />) },
     { path: '/projects/:id/events/:eventId', element: <ScopedEventRedirect /> },
     { path: '/projects/:id/plantings/:plantingId', element: <ScopedPlantingRedirect /> },
-    { path: '/achievements',  element: <Protected><Achievements /></Protected> },
-    { path: '/findings',      element: <Protected><Findings /></Protected> },
-    { path: '/today',         element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><TodayV2 /></ErrorBoundary></Protected> },
-    { path: '/capture',       element: <Protected><CaptureFlow /></Protected> },
+    { path: '/achievements',  element: protectedRoute(<Achievements />) },
+    { path: '/findings',      element: protectedRoute(<Findings />) },
+    { path: '/today',         element: protectedRoute(<TodayV2 />) },
+    { path: '/capture',       element: protectedRoute(<CaptureFlow />) },
     // V4-COLLECTIONSPLIT-001 — the loading boundary belongs HERE, at the route, not at the shell:
     // a shell-level boundary would blank TopChrome/BottomNav while the chunk lands.
     // V4-LAZYRETRY-001 — /collection was the ONE route with no boundary of its own, so a throw from
     // it (chunk miss, or anything the page itself raises) reached the app-level boundary and blanked
     // the whole PWA. Scoped like every sibling now. CollectionRoute already handles a failed CHUNK
     // without throwing; this catches what it cannot — a runtime throw from inside the loaded page.
-    { path: '/collection',    element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><CollectionRoute /></ErrorBoundary></Protected> },
-    { path: '/admin/classify', element: <Protected><ProjectsAdminClassify /></Protected> },
-    { path: '/admin/garden-activity', element: <Protected><GardenActivity /></Protected> },
+    { path: '/collection',    element: protectedRoute(<CollectionRoute />) },
+    { path: '/admin/classify', element: protectedRoute(<ProjectsAdminClassify />) },
+    { path: '/admin/garden-activity', element: protectedRoute(<GardenActivity />) },
     // V4-CROPTYPERETIRE-001 — retire and bring back crop types. Server-gated (ADMIN_CLERK_SUBS on the
     // varieties Lambda); a non-admin sees the same neutral placard as garden-activity.
-    { path: '/admin/crop-types', element: <Protected><CropTypesAdmin /></Protected> },
+    { path: '/admin/crop-types', element: protectedRoute(<CropTypesAdmin />) },
     // BUG-VOICEDUPE-002 raw Web Speech capture. Unlinked + Jen-invisible, same convention as
     // /admin/garden-activity. Shows only this browser's own localStorage — no server call.
-    { path: '/admin/voice-debug', element: <Protected><VoiceDebug /></Protected> },
+    { path: '/admin/voice-debug', element: protectedRoute(<VoiceDebug />) },
     // V5-ADMINCENTER-001 — the admin centre. It lives under /admin/* for ONE reason and it is not
     // taste: DebugMenu.reachability.test.jsx fails the build if an /admin/<segment> route has no row
     // in DebugMenu's LINKS, and Dave runs an installed PWA with no address bar, so a surface with no
     // door does not exist for him. /settings/admin would have escaped that gate entirely. The path
     // string must stay SINGLE-QUOTED — the gate's regex is /path:\s*'(\/admin\/[^']*)'/ and a
     // double-quoted or templated path passes it vacuously by not being seen at all.
-    { path: '/admin/config', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><AdminConfig /></ErrorBoundary></Protected> },
+    { path: '/admin/config', element: protectedRoute(<AdminConfig />) },
     // OPS-DEBUGMENU-001 — the index for the three routes above. They were all built "unlinked,
     // reachable by URL", which in an INSTALLED PWA means not reachable at all: there is no address
     // bar on Dave's home-screen app. This page is the address bar. Any new /admin/* route must get a
     // row in its LINKS list or it ships unreachable on the app's actual platform.
-    { path: '/admin',         element: <Protected><DebugMenu /></Protected> },
-    { path: '/helper',        element: <Protected><GardenHelper /></Protected> },
-    { path: '/settings',      element: <Protected><Settings /></Protected> },
-    { path: '/settings/notifications', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><SettingsNotifications /></ErrorBoundary></Protected> },
+    { path: '/admin',         element: protectedRoute(<DebugMenu />) },
+    { path: '/helper',        element: protectedRoute(<GardenHelper />) },
+    { path: '/settings',      element: protectedRoute(<Settings />) },
+    { path: '/settings/notifications', element: protectedRoute(<SettingsNotifications />) },
     // V4-HANDEDNESSCONTROLS-001 (BD-054) — handedness. Sibling of /settings/notifications rather
     // than a section of it: that page is about critter visits.
-    { path: '/settings/controls', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><SettingsControls /></ErrorBoundary></Protected> },
-    { path: '/field',         element: <Protected><FieldCapture /></Protected> },
-    { path: '/about',         element: <Protected><About /></Protected> },
-    { path: '/releases',      element: <Protected><ReleaseNotes /></Protected> },
+    { path: '/settings/controls', element: protectedRoute(<SettingsControls />) },
+    { path: '/field',         element: protectedRoute(<FieldCapture />) },
+    { path: '/about',         element: protectedRoute(<About />) },
+    { path: '/releases',      element: protectedRoute(<ReleaseNotes />) },
     { path: '*',              element: <Navigate to="/today" replace /> },
   ]
   const list = overlay ? routes.filter(r => r.overlayable) : routes

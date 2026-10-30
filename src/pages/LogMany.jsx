@@ -23,6 +23,7 @@ import {
 import LogManyVoice from '../components/LogManyVoice.jsx'
 import { careLocations } from '../lib/voiceCareResolve.js'
 import { undoCareBatch } from '../lib/voiceCareBatch.js'
+import { todayLocalISO } from '../lib/dateLocal.js'
 
 // Bulk "Quick Log" (Unit A). Apply ONE event type to MANY plantings at once —
 // one event per planting — without per-item tapping. Scope: All active / By Project /
@@ -88,13 +89,6 @@ function genKey() {
   return 'k-' + Date.now() + '-' + Math.random().toString(16).slice(2)
 }
 
-// Local-time YYYY-MM-DD for the back-date input's `max` (no future dates) and the
-// "reset to today" comparison. toISOString() would shift behind-UTC offsets a day.
-function todayYMD() {
-  const d = new Date()
-  const pad = n => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-}
 
 const DRAFT_KEY = 'logmany'
 
@@ -708,7 +702,7 @@ export default function LogMany() {
           locations={locations}
           runDryRun={runDryRun}
           formState={{
-            backDated: !!eventDate && eventDate !== todayYMD(),
+            backDated: !!eventDate && eventDate !== todayLocalISO(),
             hasNote: !!notes.trim(),
             depthChosen: depthApplies && (batchDepthTouched || rowDepthCount > 0),
             picksMade: selectionTouched,
@@ -775,12 +769,12 @@ export default function LogMany() {
         <input
           type="date"
           value={eventDate}
-          max={todayYMD()}
+          max={todayLocalISO()}
           onChange={e => setEventDate(e.target.value)}
           aria-label="Event date (leave as today, or back-date)"
           style={selectStyle}
         />
-        {eventDate && eventDate !== todayYMD() && (
+        {eventDate && eventDate !== todayLocalISO() && (
           <button type="button" onClick={() => setEventDate('')} style={{ ...linkBtn, marginTop: 8 }}>
             Reset to today
           </button>

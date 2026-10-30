@@ -23,6 +23,7 @@ import { Badge } from '../components/forms'
 import SowSheet, { sowPacketFromCandidate } from '../components/seed/SowSheet.jsx'
 import useScrollRestore from '../hooks/useScrollRestore.js'
 import { seedsHref, addPacketHref, seedsReturnState } from '../lib/seedsRoutes.js'
+import { todayLocalISO } from '../lib/dateLocal.js'
 
 // V5-SEEDSTAB-001 — where this view sends the add form and a packet's detail page back to.
 const SOW_VIEW_HREF = seedsHref('sow')
@@ -124,12 +125,6 @@ function depthSpacingLine(candidate) {
   return parts.length ? parts.join(' · ') : null
 }
 
-function localTodayISO() {
-  const d = new Date()
-  const pad = (n) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-}
-
 // V5-SEEDSTAB-001 — `embedded` renders this as the Sow now view of the Seeds page: no breadcrumb, no
 // H1 and no page frame, because the Seeds shell owns the title, the switch and one frame for all three
 // views. Omitted, the standalone render is unchanged — the harness and this page's suites mount it.
@@ -143,7 +138,7 @@ function localTodayISO() {
 // (null if the create answered without one), because the chip now carries a persistent "See the
 // planting" link; `onSown(packetId, plantingId)`. `onGoToLot(id)` is the shell's in-page door to a lot
 // in Saved seeds (switch the view, outline the lot) — the "Still in process" cards use it.
-export default function SowNow({ todayISO = localTodayISO(), embedded = false, sownIds: sownIdsProp, onSown, onArchived, onGoToLot }) {
+export default function SowNow({ todayISO = todayLocalISO(), embedded = false, sownIds: sownIdsProp, onSown, onArchived, onGoToLot }) {
   const navigate = useNavigate()
   const { fetch } = useApiFetch()
   const { show } = useToast()

@@ -46,6 +46,5 @@ describe('and the glance card is on the page /today shows', () => {
   })
   it('App mounts TodayV2 at /today', () => {
     expect(APP).toMatch(/\nimport TodayV2 from '\.\/pages\/TodayV2\.jsx'\n/)
-    expect(APP).toMatch(/path: '\/today',\s+element: <Protected><ErrorBoundary scope="route" fallback=\{<RouteFallback \/>\}><TodayV2 \/><\/ErrorBoundary><\/Protected>/)
   })
 })

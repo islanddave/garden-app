@@ -52,17 +52,11 @@ import { T } from '../forms/formStyles.js'
 import { bucketize } from '../../lib/sowEngine.js'
 import { seedsHref } from '../../lib/seedsRoutes.js'
 import Icon from '../Icon.jsx'
+import { todayLocalISO } from '../../lib/dateLocal.js'
 
 export const CULTIVATION_LEAD_CAP = 2
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-
-// Same local-ISO convention as CareNeeded: the engine buckets against the day Dave is looking at.
-function todayLocalISO() {
-  const d = new Date()
-  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000)
-  return local.toISOString().slice(0, 10)
-}
 
 // today + daysLeft -> "Sep 20", UTC-anchored like sowEngine's own date math (no zone drift).
 function closeDateLabel(todayISO, daysLeft) {

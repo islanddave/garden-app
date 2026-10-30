@@ -77,7 +77,7 @@ function drift() {
   if (!shell.includes("paddingBottom: 'calc(var(--bottom-nav-height) + env(safe-area-inset-bottom) + var(--today-band-height, 0px))'")) out.push('tests/harness/todayshell.jsx no longer reserves the nav band the way App.jsx does')
   // S8c (L8): /today is TodayV2 itself, from a static import (never React.lazy, V4-LAZYRETRY-001), and that is what
   // todayshell.jsx mounts — so the page this gate measures is the page App mounts.
-  if (!/\nimport TodayV2 from '\.\/pages\/TodayV2\.jsx'\n/.test(app) || !/\{ path: '\/today',\s+element: <Protected><ErrorBoundary scope="route" fallback=\{<RouteFallback \/>\}><TodayV2 \/><\/ErrorBoundary><\/Protected> \}/.test(app)) out.push('src/App.jsx no longer mounts TodayV2 at /today from a static import inside the route boundary — tests/harness/todayshell.jsx mounts it that way')
+  if (!/\nimport TodayV2 from '\.\/pages\/TodayV2\.jsx'\n/.test(app) || !/\{ path: '\/today',\s+element: protectedRoute\(<TodayV2 \/>\) \}/.test(app)) out.push('src/App.jsx no longer mounts TodayV2 at /today from a static import inside the route boundary — tests/harness/todayshell.jsx mounts it that way')
   if (!/\nimport TodayV2 from '\.\.\/\.\.\/src\/pages\/TodayV2\.jsx'\n/.test(shell)) out.push('tests/harness/todayshell.jsx no longer imports TodayV2, the page App mounts at /today')
   // The payload builders todayshell.jsx copies from todaymeasure.jsx (one module for both is deferred past S8c; this
   // guard holds the copy until then).
