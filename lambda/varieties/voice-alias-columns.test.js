@@ -19,25 +19,18 @@
 // Static source inspection rather than import: lambda/_test-stubs make the handlers importable, but
 // the stub never evaluates SQL, so the columns a statement names are visible only in its source text.
 import { describe, it, expect } from 'vitest';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { decommentSqlDashBare as decomment } from '../_test-stubs/handlerSource.js';
+import { SQL_TEMPLATE, handlersIn } from '../_test-stubs/columnContract.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-
-// A column NAMED IN A COMMENT is not a column reference. The `--(\s.*)?$` arm matches a BARE `--`
-// separator line as well as `-- text`; the `--\s.*$` form does not, and a surviving `--` hides the
-// declaration that follows it (scripts/dev-main-schema-audit.py:261-273).
-const decomment = (s) => s.split('\n')
-  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--(\s.*)?$/, '$1'))
-  .join('\n');
 
 // Every handler in THIS directory — the same set Phase 4 groups together. Read from disk rather than
 // hardcoded, so a handler added here that touches voice_alias is covered the day it lands instead of
 // the day someone remembers to extend a list.
-const HANDLERS = readdirSync(__dirname)
-  .filter((f) => f.endsWith('.js') && !/\.(test|spec)\.js$/.test(f))
-  .sort();
+const HANDLERS = handlersIn(__dirname);
 
 // L-081 KEYED contract. Every column below verified present on public.voice_alias in live prod Neon
 // on 2026-08-31, read through the read-only role, immediately after applying
@@ -54,8 +47,6 @@ const AUDIT_COLUMNS = {
 };
 
 const VOICE_ALIAS_COLUMNS = AUDIT_COLUMNS.voice_alias;
-
-const SQL_TEMPLATE = /sql`([\s\S]*?)`/g;
 
 // Statements that touch voice_alias at all — FROM/INSERT INTO alike. Phase 4 itself credits only
 // FROM/JOIN, but this file's own assertions cover the INSERT too: the write names four of these six

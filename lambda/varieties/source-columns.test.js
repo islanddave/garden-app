@@ -26,24 +26,7 @@
 // through the vitest.config.ts stub aliases — but the assertions here are about SQL TEXT, which is
 // what the auditor itself reads, and reading it the same way is the point.)
 import { describe, it, expect } from 'vitest';
-import { readFileSync, readdirSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
-// A column NAMED IN A COMMENT is not a column reference. The `--(\s.*)?$` arm matches a BARE `--`
-// separator line as well as `-- text`; a surviving `--` hides the CTE declaration that follows it
-// (scripts/dev-main-schema-audit.py:261-273).
-const decomment = (s) => s.split('\n')
-  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--(\s.*)?$/, '$1'))
-  .join('\n');
-
-// Every handler in THIS directory — the same set Phase 4 groups together. Read from disk rather
-// than hardcoded, so a handler added here that binds either relation is covered the day it lands.
-const HANDLERS = readdirSync(__dirname)
-  .filter((f) => f.endsWith('.js') && !/\.(test|spec)\.js$/.test(f))
-  .sort();
+import { ownContract, tableReads } from '../_test-stubs/columnContract.js';
 
 // L-081 KEYED contract. Every column below verified present on live prod Neon 2026-09-04 through
 // information_schema.columns (source: 12 columns, source_kind: 7) — EXCEPT instagram_url and
@@ -60,43 +43,11 @@ const AUDIT_COLUMNS = {
 
 const RELATIONS = Object.keys(AUDIT_COLUMNS);
 
-// Extraction mirrors scripts/dev-main-schema-audit.py:238-286 so this guard sees the same
-// statements Phase 4 credits. Only SQL inside a tagged sql`` template counts.
-const SQL_TEMPLATE = /sql`([\s\S]*?)`/g;
-// `IS [NOT] DISTINCT FROM x.col` contains the literal token FROM. Scrub it BEFORE scanning or the
-// operator's right-hand alias is captured as a relation (dev-main-schema-audit.py:239-242).
-const DISTINCT_FROM = /\bIS\s+(?:NOT\s+)?DISTINCT\s+FROM\b/gi;
-
-// `public.source` is a strict PREFIX of `public.source_kind`, and this is the one place in this
-// file where getting that wrong is silent: without the trailing \b, every source_kind statement
-// also reads as a source statement, the counts still add up, and source's contract inherits
-// source_kind's columns. \b fails before `_`, which is what keeps the two apart.
-const bindings = (rel, s) => [...s.matchAll(
-  new RegExp(String.raw`\b(?:FROM|JOIN)\s+(?:public\.)?${rel}\b(?!\s*\.)\s*(?:AS\s+)?([a-z_][a-z0-9_]*)?`, 'gi'),
-)].map((m) => (m[1] ?? '').toLowerCase());
-
-const NOT_AN_ALIAS = new Set([
-  'on', 'where', 'using', 'left', 'right', 'inner', 'outer', 'full', 'cross', 'join', 'lateral',
-  'group', 'order', 'limit', 'offset', 'having', 'union', 'except', 'intersect', 'set', 'and',
-  'or', 'not', 'as', 'select', 'from', 'with', 'values', 'for', 'window', 'returning', 'when',
-]);
-
-const aliasesOf = (rel, s) => [...new Set(bindings(rel, s).filter((b) => b && !NOT_AN_ALIAS.has(b)))].sort();
-const unaliasedIn = (rel, s) => bindings(rel, s).filter((b) => !b || NOT_AN_ALIAS.has(b)).length;
-
-// Scoped to statements that BIND the relation, so an `x.col` belonging to some other query in the
-// same file can never be read as this table's.
-const columnsOf = (rel, s) => [...new Set(aliasesOf(rel, s).flatMap((a) => [...s.matchAll(
-  new RegExp(String.raw`\b${a}\.([a-z_][a-z0-9_]*)\b`, 'gi'),
-)].map((m) => m[1].toLowerCase())))];
-
-const ALL_STATEMENTS = HANDLERS.flatMap((f) => {
-  const src = decomment(readFileSync(resolve(__dirname, f), 'utf8'));
-  return [...src.matchAll(SQL_TEMPLATE)]
-    .map((m) => m[1].replace(DISTINCT_FROM, ' '))
-    .map((sql) => ({ file: f, sql }));
-});
-const statementsFor = (rel) => ALL_STATEMENTS.filter((s) => bindings(rel, s.sql).length > 0);
+// Each relation's statements in this directory's handlers, scanned by lambda/_test-stubs/columnContract.js.
+// `public.source` is a strict PREFIX of `public.source_kind`; the scanner's trailing \b (it fails before
+// `_`) is what keeps the two apart. Without it every source_kind statement also reads as a source
+// statement, the counts still add up, and source's contract silently inherits source_kind's columns.
+const READS = Object.fromEntries(RELATIONS.map((rel) => [rel, tableReads(import.meta.url, rel)]));
 
 // Reads that name the relation with NO alias. Nothing can attribute their bare identifiers
 // automatically, so each arm is PINNED to its literal SQL and its columns are listed by hand. Edit
@@ -189,20 +140,20 @@ const UNALIASED_ARMS = {
 
 describe('OPS-SCHEMAAUDITJOIN-001 — lambda/varieties source + source_kind column contract', () => {
   it('finds the statements, so the assertions below are not vacuous', () => {
-    expect(HANDLERS.length).toBeGreaterThan(0);
+    expect(READS.source.handlers.length).toBeGreaterThan(0);
     // Exact counts, not floors: a new statement against either table should be reviewed against the
     // contract rather than inherit it. Update these in the same commit that adds one.
     // source 2 -> 5 and source_kind 4 -> 5 on 2026-09-29 (V5-SOURCECONTACT-001): GET + PATCH
     // /sources/:id add the by-id read, the pre-write read, the rename probe, and a second live-kind
     // check (the PATCH's copy of the POST's).
-    expect(statementsFor('source')).toHaveLength(5);
-    expect(statementsFor('source_kind')).toHaveLength(5);
+    expect(READS.source.statements).toHaveLength(5);
+    expect(READS.source_kind.statements).toHaveLength(5);
   });
 
   it('keeps public.source and public.source_kind apart despite the prefix', () => {
     // The failure this guards is silent: a prefix match would make every source_kind statement also
     // count as a source statement and hand source's contract four columns it never reads.
-    const sourceSql = statementsFor('source').map((s) => s.sql);
+    const sourceSql = READS.source.statements.map((s) => s.sql);
     expect(sourceSql.every((s) => /public\.source\b/.test(s))).toBe(true);
     expect(sourceSql.some((s) => /public\.source_kind\b/.test(s))).toBe(false);
   });
@@ -211,19 +162,14 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/varieties source + source_kind colu
     it(`${rel}: accounts for every unaliased read`, () => {
       // An unaliased read added without a pin here would slip past columnsOf() entirely and the
       // tightness assertion below would still pass — this count is what closes that hole.
-      const bare = statementsFor(rel).reduce((n, s) => n + unaliasedIn(rel, s.sql), 0);
-      expect(bare).toBe(UNALIASED_ARMS[rel].length);
+      expect(READS[rel].unaliased).toBe(UNALIASED_ARMS[rel].length);
       for (const arm of UNALIASED_ARMS[rel]) {
-        const src = decomment(readFileSync(resolve(__dirname, arm.file), 'utf8'));
-        expect(arm.pin.test(src), `unaliased arm no longer matches in ${arm.file}: ${arm.pin}`).toBe(true);
+        expect(READS[rel].pinHolds(arm), `unaliased arm no longer matches in ${arm.file}: ${arm.pin}`).toBe(true);
       }
     });
 
     it(`${rel}: references no column absent from the contract, and declares none it does not use`, () => {
-      const referenced = [...new Set([
-        ...statementsFor(rel).flatMap((s) => columnsOf(rel, s.sql)),
-        ...UNALIASED_ARMS[rel].flatMap((a) => a.columns),
-      ])].sort();
+      const referenced = READS[rel].referenced(UNALIASED_ARMS[rel]);
       expect(referenced.length).toBeGreaterThan(0);
       // Both directions. An extra column is not harmless padding: the contract is what Phase 1
       // audits against prod, so one nothing reads makes the audit assert something the code doesn't.
@@ -243,12 +189,7 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/varieties source + source_kind colu
     for (const rel of RELATIONS) {
       for (const col of NOT_ON_TABLE[rel]) {
         expect(AUDIT_COLUMNS[rel]).not.toContain(col);
-        for (const { file, sql } of statementsFor(rel)) {
-          for (const a of aliasesOf(rel, sql)) {
-            expect(sql, `${file}: ${a}.${col} is not a ${rel} column`)
-              .not.toMatch(new RegExp(String.raw`\b${a}\.${col}\b`, 'i'));
-          }
-        }
+        expect(READS[rel].refsTo(col)).toEqual([]);
         for (const arm of UNALIASED_ARMS[rel]) {
           expect(arm.columns, `${arm.file}: ${col} is not a ${rel} column`).not.toContain(col);
         }
@@ -262,15 +203,10 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/varieties source + source_kind colu
     // uncovered. A misspelled KEY is worse — Phase 1's empty-relation guard returns exit 2 and
     // schema-audit.yml maps exit 2 to a ::warning and exit 0, so one typo silences all four phases
     // behind a green check. Replicate the auditor's own two regexes against this file's own source.
-    const self = readFileSync(fileURLToPath(import.meta.url), 'utf8');
-    const decl = self.match(/const\s+AUDIT_COLUMNS\s*=\s*\{([\s\S]*?)\};/);
-    expect(decl).not.toBeNull();
-    // The match must stop at the block's OWN `};`, not run on to the next one in the file.
-    expect(decl[1]).not.toMatch(/\bconst\b/);
-    const pairs = [...decl[1].matchAll(/['"]?([a-zA-Z_]\w*)['"]?\s*:\s*\[([^\]]*)\]/g)];
-    expect(pairs.map((m) => m[1])).toEqual(RELATIONS);
-    for (const [, rel, body] of pairs) {
-      const cols = [...body.matchAll(/['"]([a-zA-Z_][a-zA-Z0-9_]*)['"]/g)].map((m) => m[1]);
+    const parsed = ownContract(import.meta.url);
+    expect(parsed).not.toBeNull();
+    expect(parsed.map(([key]) => key)).toEqual(RELATIONS);
+    for (const [rel, cols] of parsed) {
       expect(cols).toEqual(AUDIT_COLUMNS[rel]);
     }
   });
