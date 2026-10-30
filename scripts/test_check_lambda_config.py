@@ -173,13 +173,12 @@ def test_deploy_workflow_sets_the_rain_autolog_key_the_manifest_declares():
 
 
 def test_deploy_workflow_sets_the_household_key_the_manifest_declares():
-    """BUG-AUTHZLAMBDA-001 — same rule as above for GARDEN_HOUSEHOLD_IDS on the two functions that
-    joined in that fix: shared-state (membership gate, fails closed to 403) and daily-plan
-    (household(Space)). Each must be in the `if:` of the deploy step that read-merges the key, or
-    the manifest declaration has no setter behind it and a wiped key reds every promote with
-    nothing in the deploy to restore it. Named explicitly, so dropping the manifest line and the
-    `if:` term together cannot pass. (Older household fns had the key set by hand and are not in
-    that `if:`; this test does not widen to them.)
+    """BUG-AUTHZLAMBDA-001 / SEC-13a — every function whose manifest declares GARDEN_HOUSEHOLD_IDS
+    must be in the `if:` of the deploy step that read-merges the key, or the declaration has no
+    setter behind it and a wiped key reds every promote with nothing in the deploy to restore it;
+    for a URL handler a missing key is also a household 403 (the SEC-13a gate fails closed). Every
+    URL function declares it. shared-state and daily-plan stay named explicitly, so dropping a
+    manifest line and its `if:` term together cannot pass for them.
     """
     import re
     wf = os.path.join(os.path.dirname(__file__), "..", ".github", "workflows", "deploy-lambda.yml")
@@ -214,6 +213,14 @@ def test_deploy_workflow_sets_the_household_key_the_manifest_declares():
         assert fn in gated, "%s is not in the household ensure step's `if:`" % fn
         assert clc.load_manifest()["garden-" + fn]["env"].get("GARDEN_HOUSEHOLD_IDS") is True, \
             "garden-%s must declare GARDEN_HOUSEHOLD_IDS present" % fn
+    manifest = clc.load_manifest()
+    declaring = {fn[len("garden-"):] for fn, spec in manifest.items()
+                 if (spec.get("env") or {}).get("GARDEN_HOUSEHOLD_IDS") is True}
+    assert declaring == gated, "the household ensure step's `if:` must be exactly the functions declaring the key"
+    url_fns = {fn[len("garden-"):] for fn, spec in manifest.items() if isinstance(spec.get("url"), dict)}
+    assert len(url_fns) >= 20 and url_fns <= declaring, \
+        "every URL function must declare GARDEN_HOUSEHOLD_IDS (its household gate fails closed without it): %s" \
+        % sorted(url_fns - declaring)
     inv = os.path.join(os.path.dirname(__file__), "..", ".github", "workflows", "verify-lambda-invariants.yml")
     with open(inv) as fh:
         loops = [l for l in fh.read().splitlines()
@@ -221,6 +228,39 @@ def test_deploy_workflow_sets_the_household_key_the_manifest_declares():
     assert len(loops) == 1 and "GARDEN_HOUSEHOLD_IDS" in loops[0].split(";")[0].split(), \
         "verify-lambda-invariants' daily-plan invariant-1 key loop must assert GARDEN_HOUSEHOLD_IDS"
 
+
+
+# SEC-13a S5: the household list must never reach the (public) Actions log. A line that echoes or printfs one of
+# the variables that hold it is allowed only when it goes into a pipe or a file, never to the log itself.
+_HH_VARS = __import__("re").compile(r"\$\{?(HH|HH_CANON|LIVE|LIVE_RAW|CANON)\b")
+
+
+def _household_log_leaks(workflow):
+    import re
+    import yaml
+    with open(os.path.join(os.path.dirname(__file__), "..", ".github", "workflows", workflow)) as fh:
+        doc = yaml.safe_load(fh)
+    leaks, fb_steps = [], 0
+    for job in doc["jobs"].values():
+        for st in job.get("steps", []):
+            run, name = st.get("run", ""), str(st.get("name", ""))
+            if name.startswith("Ensure facebook-share"):
+                fb_steps += 1
+                if "GARDEN_HOUSEHOLD_IDS" in run or "$HH" in run:
+                    leaks.append("%s: the facebook-share step still reads or writes the household list" % name)
+            for line in run.splitlines():
+                text = line.strip()
+                if text.startswith("#") or not re.match(r"(echo|printf)\b", text):
+                    continue
+                if _HH_VARS.search(text) and "|" not in text and ">" not in text:
+                    leaks.append("%s: %s" % (name, text))
+    return leaks, fb_steps
+
+
+def test_no_deploy_step_prints_the_household_list():
+    leaks, fb_steps = _household_log_leaks("deploy-lambda.yml")
+    assert fb_steps == 1, "the facebook-share step was renamed or removed: re-point this check"
+    assert leaks == [], "these lines put the household list into the public Actions log:\n  " + "\n  ".join(leaks)
 
 def test_manifest_declares_every_env_var_daily_plan_reads():
     """The daily-plan flag set is declared EXHAUSTIVELY — a read-but-undeclared var is how

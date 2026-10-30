@@ -423,6 +423,7 @@
     "timeout": 30,
     "reserved_concurrency": 10,
     "env": {
+      "GARDEN_HOUSEHOLD_IDS": true,
       "ADMIN_CLERK_SUBS": true
     },
     "url": {
@@ -436,6 +437,9 @@
     "memory": 256,
     "timeout": 30,
     "reserved_concurrency": 10,
+    "env": {
+      "GARDEN_HOUSEHOLD_IDS": true
+    },
     "url": {
       "cors_origins": [
         "https://garden.futureishere.net"
@@ -447,6 +451,9 @@
     "memory": 256,
     "timeout": 30,
     "reserved_concurrency": 10,
+    "env": {
+      "GARDEN_HOUSEHOLD_IDS": true
+    },
     "url": {
       "cors_origins": [
         "https://garden.futureishere.net"
@@ -458,6 +465,9 @@
     "memory": 256,
     "timeout": 30,
     "reserved_concurrency": 10,
+    "env": {
+      "GARDEN_HOUSEHOLD_IDS": true
+    },
     "url": {
       "cors_origins": [
         "https://garden.futureishere.net"
@@ -469,6 +479,9 @@
     "memory": 256,
     "timeout": 30,
     "reserved_concurrency": 30,
+    "env": {
+      "GARDEN_HOUSEHOLD_IDS": true
+    },
     "url": {
       "cors_origins": [
         "https://garden.futureishere.net"
