@@ -1,6 +1,7 @@
 import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
+import { householdGate, householdActive } from './household.js';
 
 // garden_shared_state — the shared-garden reward substrate (V3-REWARDSTATE-001).
 // Workspace-shared (not per-user): until V4 Workspaces there is no `workspaces` table on
@@ -9,17 +10,6 @@ import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-sec
 // workspace_id DEFAULT on the 8 Foundation tables. The data is common to the household, so the
 // caller must be a household MEMBER, not just a logged-in user (BUG-AUTHZLAMBDA-001 B6).
 const SENTINEL_WORKSPACE = '00000000-0000-0000-0000-000000000001';
-
-// Membership on the RAW GARDEN_HOUSEHOLD_IDS list, read at call time. Deliberately not "the
-// caller's household scope includes the caller": household.js returns [userId] for a non-member,
-// so that test is always true. Fails closed: an unset, blank or one-entry list admits nobody (a
-// one-entry list is not a household — householdActive() needs length > 1 for the same reason).
-// Known limitation: one global list over a sentinel-pinned row; per-Space gating comes with Spaces.
-function householdMembership(userId) {
-  const ids = (process.env.GARDEN_HOUSEHOLD_IDS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
-  if (ids.length < 2) return 'env-missing';
-  return ids.includes(userId) ? null : 'non-member';
-}
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 
@@ -76,12 +66,15 @@ export const handler = async (event) => {
     return resp(401, { error: 'Unauthorized' });
   }
   if (!userId) return resp(401, { error: 'Unauthorized' });
+  const gateRefusal = householdGate(userId);
+  if (gateRefusal) return resp(gateRefusal.status, gateRefusal.body);
 
-  // Gate before neon() so a non-member costs no DB connection. The client turns any non-OK into
-  // null and renders nothing, so this log line is the only place a denial is visible.
-  const denied = householdMembership(userId);
-  if (denied) {
-    console.warn(JSON.stringify({ msg: 'household-membership-denied', userId, reason: denied }));
+  // The shared row belongs to one household, and a one-entry list is not a household, so it refuses even
+  // its one member, still before neon(). The client turns any non-OK into null and renders nothing, so
+  // this log line is the only place a denial is visible. Known limitation: one global list over a
+  // sentinel-pinned row; per-Space gating comes with Spaces. Guard: membership-gate.test.js.
+  if (!householdActive()) {
+    console.warn(JSON.stringify({ msg: 'household-membership-denied', userId, reason: 'env-missing' }));
     return resp(403, { error: 'Forbidden' });
   }
 

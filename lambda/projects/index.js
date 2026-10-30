@@ -4,6 +4,7 @@ import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-sec
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { householdScope, loadOwnedLocation, warnRejectedFk } from './household.js';
+import { householdGate } from './household.js';
 import { loadOwnedProject } from './authz-parents.js';
 import { resolvePhotoViewUrl } from './photo-access.js';
 import { isStatusChange, formatStatusChangeNote, buildStatusChangeMetadata, STATUS_CHANGE_EVENT_TYPE } from './statusEvents.js';
@@ -265,6 +266,8 @@ export const handler = async (event) => {
   // ownership value rather than a no-match. verifyToken rejects such a token first, so this is
   // defence-in-depth; the point is that the invariant is ENFORCED here rather than relied upon.
   if (!userId) return resp(401, { error: 'Unauthorized' });
+  const gateRefusal = householdGate(userId);
+  if (gateRefusal) return resp(gateRefusal.status, gateRefusal.body);
 
   const method = event.requestContext?.http?.method ?? 'GET';
   const rawPath = event.rawPath ?? '/api/projects';

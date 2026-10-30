@@ -277,11 +277,11 @@ describe('critter — database errors', () => {
     expect(r.body).toEqual({ error: 'Internal Server Error' })
   })
 
-  it('22021 (NUL in the subject) on the prefs read is a generic 500', async () => {
+  it('SEC-13a: a NUL in the subject can never be a household member: 403 before the prefs read (it was 22021, a 500)', async () => {
     setTestUserId(`c6_critter_nul_${RUN}\u0000`)
     const r = await raw(makeEvent({ method: 'GET', path: '/api/notifications/prefs' }))
-    expect(r.status).toBe(500)
-    expect(r.body).toEqual({ error: 'Internal Server Error' })
+    expect(r.status).toBe(403)
+    expect(r.body).toEqual({ error: 'Forbidden' })
   })
 })
 

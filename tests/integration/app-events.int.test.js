@@ -2,8 +2,8 @@
 // Pins today's /api/app-events replies on real Postgres (OPS-CODEREVIEW-001 C6) so D1/D2/D2b changes are seen.
 // The 23514 reply echoes the constraint name (D2b replaces that); 23505/23503 are unreachable (uuid PK, no FK).
 // A token with no subject is 401 before the limiter and the household gate (SEC-60).
-import { describe, it, expect, afterAll, vi } from 'vitest'
-import { directSql, callHandler, makeEvent, setTestUserId, testRunId, householdDefault } from './_harness.js'
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
+import { directSql, callHandler, makeEvent, setTestUserId, testRunId, householdDefault, setHouseholdDefault } from './_harness.js'
 // After _harness.js, whose vi.mock replaces this module with the stub; imported first it would be the real one.
 import { verifyToken } from '@clerk/backend'
 import { handler } from '../../lambda/app-events/index.js'
@@ -202,5 +202,43 @@ describe('app-events — database errors (the replies D2b changes)', () => {
     const r = await post({ event_name: 'nul\u0000name' })
     expect(r.status).toBe(500)
     expect(r.body).toEqual({ error: 'Internal server error' })
+  })
+})
+
+describe('app-events — SEC-13a household gate, before the limiter', () => {
+  const MEMBER = `c6_appev_hh_member_${RUN}`
+  const MATE = `c6_appev_hh_mate_${RUN}`
+  const OUTSIDER = `c6_appev_hh_outsider_${RUN}`
+  let savedIds
+
+  beforeAll(() => {
+    savedIds = process.env.GARDEN_HOUSEHOLD_IDS
+    process.env.GARDEN_HOUSEHOLD_IDS = `${MEMBER},${MATE}`
+    setHouseholdDefault(false)
+  })
+
+  afterAll(async () => {
+    setHouseholdDefault(true)
+    if (savedIds === undefined) delete process.env.GARDEN_HOUSEHOLD_IDS
+    else process.env.GARDEN_HOUSEHOLD_IDS = savedIds
+    await directSql`DELETE FROM app_events WHERE user_clerk_sub IN (${MEMBER}, ${OUTSIDER})`
+    await directSql`DELETE FROM rate_limit_buckets WHERE actor_clerk_sub IN (${MEMBER}, ${OUTSIDER})`
+  })
+
+  it('SEC-13a: a verified non-member POST -> 403, and neither a rate_limit_buckets row nor an app_events row is written', async () => {
+    setTestUserId(OUTSIDER)
+    const r = await post({ event_name: 'sec13a_outsider' })
+    expect(r.status).toBe(403)
+    expect(r.body).toEqual({ error: 'Forbidden' })
+    expect(await directSql`SELECT 1 FROM rate_limit_buckets WHERE actor_clerk_sub = ${OUTSIDER}`).toEqual([])
+    expect(await rowsFor(OUTSIDER)).toEqual([])
+  })
+
+  it('SEC-13a: a listed member is admitted: 201, one app_events row and one bucket unit', async () => {
+    setTestUserId(MEMBER)
+    const r = await post({ event_name: 'sec13a_member' })
+    expect(r.status).toBe(201)
+    expect((await rowsFor(MEMBER)).map((row) => row.event_name)).toEqual(['sec13a_member'])
+    expect(await directSql`SELECT 1 FROM rate_limit_buckets WHERE actor_clerk_sub = ${MEMBER}`).toHaveLength(1)
   })
 })

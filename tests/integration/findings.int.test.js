@@ -1,7 +1,7 @@
 // new-file: no integration test existed for findings
 // Pins today's /api/findings replies and row filters on real Postgres (OPS-CODEREVIEW-001 C6), so D2/D3 are seen.
-// Read-only: no 23514/23505/23503 is reachable; the one database error a request can cause (a NUL byte in
-// the subject, 22021) pins the generic 500. Trap: rows without a canonical entity are dropped silently.
+// Read-only: no 23514/23505/23503 is reachable, and since SEC-13a no request reaches a database error: a NUL byte in
+// the subject (22021) is refused at the household gate (403). Trap: rows without a canonical entity are dropped silently.
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import { directSql, callHandler, makeEvent, setTestUserId, testRunId, insertProject, householdDefault } from './_harness.js'
 // After _harness.js, whose vi.mock replaces this module with the stub; imported first it would be the real one.
@@ -125,10 +125,10 @@ describe('findings — sign-in and origin', () => {
 })
 
 describe('findings — database errors', () => {
-  it('22021 (NUL in the subject) is a generic 500', async () => {
+  it('SEC-13a: a NUL in the subject can never be a household member: 403 before the database (it was 22021, a 500)', async () => {
     setTestUserId(`c6_find_nul_${RUN}\u0000`)
     const r = await get()
-    expect(r.status).toBe(500)
-    expect(r.body).toEqual({ error: 'Internal server error' })
+    expect(r.status).toBe(403)
+    expect(r.body).toEqual({ error: 'Forbidden' })
   })
 })

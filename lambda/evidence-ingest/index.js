@@ -17,6 +17,7 @@ import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-sec
 import { validateEvidenceInput } from './validate.js';
 import { adminOnlyFields, isAdmin } from './tierGate.js';
 import { householdScope, warnRejectedFk } from './household.js';
+import { householdGate } from './household.js';
 import { loadOwnedPlantingRef } from './authz-parents.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
@@ -57,6 +58,8 @@ export const handler = async (event) => {
   // subject would be a live ownership value rather than a no-match. verifyToken rejects such a token
   // first; this is the second layer, and it must sit BEFORE householdScope (V4-AUTHZRESIDUE-001).
   if (!userId) return resp(401, { error: 'Unauthorized' });
+  const gateRefusal = householdGate(userId);
+  if (gateRefusal) return resp(gateRefusal.status, gateRefusal.body);
   const householdIds = householdScope(userId);
 
   const method = event.requestContext?.http?.method ?? 'POST';

@@ -30,6 +30,7 @@ import { loadEventPhotos } from './eventPhotos.js';
 import { validateClear, resolveFlagPair, resolveMetadataArm } from './clearFields.js';
 import { computeStreak, STREAK_GRACE_DAYS } from './streak.js';
 import { householdScope, loadOwnedLocation, loadOwnedInventoryItem, warnRejectedFk } from './household.js';
+import { householdGate } from './household.js';
 import {
   FRUITING_SOURCE_STATUSES, FLOWERING_SOURCE_STATUSES,
   HARVESTED_EVENT_TYPES, HARVESTED_SOURCE_STATUSES,
@@ -211,6 +212,8 @@ export const handler = async (event) => {
   // ownership value rather than a no-match. verifyToken rejects such a token first, so this is
   // defence-in-depth; the point is that the invariant is ENFORCED here rather than relied upon.
   if (!userId) return resp(401, { error: 'Unauthorized' });
+  const gateRefusal = householdGate(userId);
+  if (gateRefusal) return resp(gateRefusal.status, gateRefusal.body);
 
   const sql = neon(secrets.NEON_DATABASE_URL);
   // HOUSEHOLD-MODE: widened at V3-ROLES teardown (event ENTITY reads/writes only; achievement/XP/streak queries stay per-user)

@@ -7,6 +7,7 @@ import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { householdScope } from './household.js';
+import { householdGate } from './household.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 
@@ -134,6 +135,8 @@ export const handler = async (event) => {
   // ownership value rather than a no-match. verifyToken rejects such a token first, so this is
   // defence-in-depth; the point is that the invariant is ENFORCED here rather than relied upon.
   if (!userId) return resp(401, { error: 'Unauthorized' });
+  const gateRefusal = householdGate(userId);
+  if (gateRefusal) return resp(gateRefusal.status, gateRefusal.body);
 
   const sql = neon(secrets.NEON_DATABASE_URL);
   const method = event.requestContext?.http?.method ?? 'GET';

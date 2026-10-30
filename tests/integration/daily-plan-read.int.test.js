@@ -200,11 +200,11 @@ describe('daily-plan-read — sign-in and origin', () => {
 })
 
 describe('daily-plan-read — database errors', () => {
-  it('22021 (NUL in the subject) on the plan read is a generic 500', async () => {
+  it('SEC-13a: a NUL in the subject can never be a household member: 403 before the plan read (it was 22021, a 500)', async () => {
     setTestUserId(`c6_dpr_nul_${RUN}\u0000`)
     const r = await get()
-    expect(r.status).toBe(500)
-    expect(r.body).toEqual({ error: 'Internal server error' })
+    expect(r.status).toBe(403)
+    expect(r.body).toEqual({ error: 'Forbidden' })
   })
 
   it('22021 (NUL in model_version) on the beacon is swallowed: 202 accepted 0, nothing written', async () => {
