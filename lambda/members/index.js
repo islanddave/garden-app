@@ -94,10 +94,13 @@ export const handler = async (event) => {
 
   try {
     const clerk = createClerkClient({ secretKey: secrets.CLERK_SECRET_KEY });
-    const list = await clerk.users.getUserList({ limit: 50 });
+    const ids = householdScope(userId);
+    // R1-11: ask Clerk for exactly the household's ids. A page of all users (it was the first 50) drops a
+    // member who sorts past it. Guard: index.test.js "R1-11", tests/integration/members-authz.int.test.js.
+    const list = await clerk.users.getUserList({ userId: ids, limit: ids.length });
     // v1 returns { data, totalCount }; tolerate an array too.
     const users = Array.isArray(list) ? list : (list?.data ?? []);
-    const hh = new Set(householdScope(userId)); // 0A.6: roster scoped to the caller household
+    const hh = new Set(ids); // 0A.6: roster scoped to the caller household (kept: defence in depth)
     const members = users
       .filter((u) => !isSystemUser(u))  // exclude service/bot accounts from caretaker roster (DRG-ASSIGN-FIX)
       .filter((u) => hh.has(u.id))      // 0A.6: strangers see only themselves; household sees household

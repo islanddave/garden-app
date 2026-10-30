@@ -23,9 +23,11 @@ vi.mock('@aws-sdk/client-secrets-manager', () => ({
 }))
 vi.mock('@clerk/backend', () => ({
   verifyToken: () => Promise.resolve({ sub: h.state.sub }),
-  createClerkClient: () => ({ users: { getUserList: (params) => {
+  // Like the Backend API: `userId` filters to those ids, then `limit` (default 10) pages the result.
+  createClerkClient: () => ({ users: { getUserList: (params = {}) => {
     h.listCalls.push(params)
-    return Promise.resolve({ data: h.users, totalCount: h.users.length })
+    const all = Array.isArray(params.userId) ? h.users.filter((u) => params.userId.includes(u.id)) : h.users
+    return Promise.resolve({ data: all.slice(0, params.limit ?? 10), totalCount: all.length })
   } } }),
 }))
 
@@ -79,5 +81,22 @@ describe('LEAK-GATE /api/members — household scope + email drop (0A.6 / v3.74)
     const { body } = await call(OWNER)
     expect(body.schema_version).toBeDefined()
     expect(Array.isArray(body.members)).toBe(true)
+  })
+})
+
+describe('R1-11 /api/members — the roster is read by id, not as a page of every Clerk user', () => {
+  it('R1-11: household members past the first 50 Clerk users are still listed, and Clerk is asked for exactly their ids', async () => {
+    const saved = h.users
+    const filler = Array.from({ length: 58 }, (_, i) => ({ id: `user_filler_${i}`, firstName: `F${i}`, emailAddresses: [] }))
+    h.users = [...filler.slice(0, 54), saved[0], saved[1], ...filler.slice(54)]
+    h.listCalls.length = 0
+    try {
+      const { status, body } = await call(OWNER)
+      expect(status).toBe(200)
+      expect(body.members.map((m) => m.id).sort()).toEqual([OWNER, MATE].sort())
+      expect(h.listCalls).toEqual([{ userId: [OWNER, MATE], limit: 2 }])
+    } finally {
+      h.users = saved
+    }
   })
 })
