@@ -12,24 +12,11 @@
 // `v.value.<x>`), so it contributed ZERO pairs and passed the ratchet while carrying both holes.
 // That enumeration gap is fixed in the ratchet itself; the gates below are the live half.
 import { neon } from '@neondatabase/serverless';
-import { verifyToken } from '@clerk/backend';
-import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { validateEvidenceInput } from './validate.js';
 import { adminOnlyFields, isAdmin } from './tierGate.js';
 import { householdScope, warnRejectedFk } from './household.js';
-import { householdGate } from './household.js';
-import { AUTHORIZED_PARTIES } from './request-context.js';
+import { requestContext } from './request-context.js';
 import { loadOwnedPlantingRef } from './authz-parents.js';
-
-const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
-let _secrets = null;
-async function getSecrets() {
-  if (_secrets) return _secrets;
-  const cmd = new GetSecretValueCommand({ SecretId: process.env.SECRET_NAME ?? 'garden-app/secrets' });
-  const res = await sm.send(cmd);
-  _secrets = JSON.parse(res.SecretString);
-  return _secrets;
-}
 
 const CORS = {}; // Lambda URL config is sole CORS source — handler must not duplicate.
 function resp(statusCode, body) {
@@ -37,31 +24,12 @@ function resp(statusCode, body) {
 }
 
 export const handler = async (event) => {
-  if (event.requestContext?.http?.method === 'OPTIONS') return { statusCode: 204, headers: CORS, body: '' };
-
-  const secrets = await getSecrets();
-
-  const authHeader = event.headers?.authorization ?? event.headers?.Authorization ?? '';
-  const token = authHeader.replace(/^Bearer\s+/i, '');
-  let userId;
-  try {
-    const payload = await verifyToken(token, {
-      secretKey: secrets.CLERK_SECRET_KEY,
-      authorizedParties: AUTHORIZED_PARTIES,
-    });
-    userId = payload.sub;
-  } catch (err) {
-    console.error('verifyToken failed:', err?.message ?? String(err));
-    return resp(401, { error: 'Unauthorized' });
-  }
-
-  // householdScope('') returns [''] and `'' = ANY(ARRAY[''])` is TRUE in Postgres, so an empty JWT
-  // subject would be a live ownership value rather than a no-match. verifyToken rejects such a token
-  // first; this is the second layer, and it must sit BEFORE householdScope (V4-AUTHZRESIDUE-001).
-  if (!userId) return resp(401, { error: 'Unauthorized' });
-  const gateRefusal = householdGate(userId);
-  if (gateRefusal) return resp(gateRefusal.status, gateRefusal.body);
-  const householdIds = householdScope(userId);
+  // The kit answers OPTIONS and every sign-in refusal (401, the household gate's 403) before any statement, and
+  // scopes only after its empty-sub 401. It gets no neon: the client is built below, after validation and the tier
+  // gate (pinned by tierGate.test.js), so a refused payload costs no connection.
+  const ctx = await requestContext(event, { resp, scope: householdScope });
+  if (ctx.response) return ctx.response;
+  const { secrets, userId, householdIds } = ctx;
 
   const method = event.requestContext?.http?.method ?? 'POST';
   const rawPath = event.rawPath ?? '/api/evidence';
