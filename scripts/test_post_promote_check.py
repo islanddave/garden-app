@@ -2,6 +2,7 @@
 """scripts/post-promote-check.py with a stubbed `aws` and urllib: exact 401 on every URL function, zero
 log counts, exit 0/1/2. Trap: it must never print a URL, token, id or log body, and no workflow may call it."""
 import argparse
+import base64
 import datetime
 import importlib.util
 import io
@@ -23,6 +24,17 @@ _spec.loader.exec_module(ppc)
 FNS = ppc.url_functions()
 HOUSEHOLD = "user_2abcDEFghiJKLmnoPQRstu,user_3zyxWVUtsrQPOnmlKJIhgf"
 UUID = "0f0f0f0f-1111-2222-3333-444444444444"
+# Prod's shape: these URL functions' log groups carry no tokenless-request-401 filter, every other one does.
+UNFILTERED = {"garden-daily-plan-read", "garden-evidence-ingest", "garden-inventory-items", "garden-locations",
+              "garden-plants"}
+FILTERED = set(FNS) - UNFILTERED
+BEARER = "Bearer ci.smoke.probe"
+# describe-metric-filters ignores --filter-name-prefix without --log-group-name, so the real answer carries
+# every filter in the region: other filters on unfiltered groups, and a tokenless filter on a group with no URL.
+FILTERS = ([["tokenless-request-401", f"/aws/lambda/{fn}"] for fn in sorted(FILTERED)]
+           + [["tokenless-request-401", "/aws/lambda/garden-xp-reconcile"],
+              ["household-authz-fk-reject", "/aws/lambda/garden-plants"],
+              ["household-authz-fk-reject", "/aws/lambda/garden-locations"]])
 
 
 def url_of(fn):
@@ -30,7 +42,8 @@ def url_of(fn):
 
 
 class FakeAws:
-    """subprocess.run for `aws`: URL lookups and filter-log-events, overridable per function."""
+    """subprocess.run for `aws`: URL lookups, filter-log-events and the metric-filter read, overridable per
+    function; the metric-filter read is keyed by function "" since it names none."""
 
     def __init__(self, counts=None, fail=None, stdout=None):
         self.counts = counts or {}      # (fn, pattern key) -> n
@@ -41,8 +54,11 @@ class FakeAws:
     def __call__(self, cmd, **kw):
         self.calls.append(cmd)
         op = cmd[2]
-        fn = cmd[cmd.index("--function-name" if op == "get-function-url-config" else "--log-group-name") + 1]
-        fn = fn.rsplit("/", 1)[-1]
+        if op == "describe-metric-filters":
+            fn = ""
+        else:
+            fn = cmd[cmd.index("--function-name" if op == "get-function-url-config" else "--log-group-name") + 1]
+            fn = fn.rsplit("/", 1)[-1]
         f = self.fail.get((fn, op))
         if isinstance(f, BaseException):
             raise f
@@ -52,6 +68,8 @@ class FakeAws:
             return subprocess.CompletedProcess(cmd, f, "", err)
         if (fn, op) in self.stdout:
             return subprocess.CompletedProcess(cmd, 0, self.stdout[(fn, op)], err)
+        if op == "describe-metric-filters":
+            return subprocess.CompletedProcess(cmd, 0, json.dumps(FILTERS), "")
         if op == "get-function-url-config":
             return subprocess.CompletedProcess(cmd, 0, url_of(fn) + "\n", "")
         key = next(k for k, p in ppc.PATTERNS.items() if p == cmd[cmd.index("--filter-pattern") + 1])
@@ -59,12 +77,19 @@ class FakeAws:
         return subprocess.CompletedProcess(cmd, 0, json.dumps([f"{UUID}-{i}" for i in range(n)]), "")
 
 
-def fake_urlopen(statuses):
-    """urlopen answering 401 by default; statuses maps a function to a status or an exception."""
+def fake_urlopen(statuses, bearer_fns, seen):
+    """urlopen answering 401 by default; statuses maps a function to a status or an exception. Every probe of
+    a function in bearer_fns must carry the garbage bearer and every other probe no Authorization header at
+    all: a header-less probe of a filtered function pages, and a bearer on an unfiltered one drops the
+    no-token assertion. seen records each function's header."""
     def urlopen(req, timeout):
         assert timeout == ppc.HTTP_TIMEOUT and req.get_method() == "GET"
-        assert not req.has_header("Authorization")
         fn = next(f for f in FNS if req.full_url == url_of(f))
+        seen[fn] = req.get_header("Authorization")
+        if fn in bearer_fns:
+            assert req.get_header("Authorization") == BEARER, fn
+        else:
+            assert not req.has_header("Authorization"), fn
         s = statuses.get(fn, 401)
         if isinstance(s, BaseException):
             raise s
@@ -84,10 +109,11 @@ def fake_urlopen(statuses):
     return urlopen
 
 
-def run(monkeypatch, capsys, aws=None, statuses=None, argv=()):
+def run(monkeypatch, capsys, aws=None, statuses=None, argv=(), bearer_fns=FILTERED, seen=None):
     aws = aws or FakeAws()
     monkeypatch.setattr(ppc.subprocess, "run", aws)
-    monkeypatch.setattr(ppc.urllib.request, "urlopen", fake_urlopen(statuses or {}))
+    monkeypatch.setattr(ppc.urllib.request, "urlopen", fake_urlopen(statuses or {}, bearer_fns,
+                                                                    {} if seen is None else seen))
     code = ppc.main(list(argv))
     return code, capsys.readouterr().out, aws
 
@@ -106,8 +132,61 @@ def test_all_401_and_zero_counts_is_pass(monkeypatch, capsys):
     assert code == 0 and out.splitlines()[-1] == "PASS"
     assert sum(1 for ln in out.splitlines() if ln.strip().startswith("PASS ")) == 23
     assert "GET 401 denied=0 errors=0 runtime=0" in line_for(out, "garden-critter")
-    assert len(aws.calls) == 23 * 4
+    assert len(aws.calls) == 1 + 23 * 4
     assert all(c[0] == "aws" and c[-2:] == ["--region", "us-east-1"] for c in aws.calls)
+
+
+def test_filtered_functions_get_the_garbage_bearer_and_the_rest_no_header(monkeypatch, capsys):
+    seen = {}
+    code, out, aws = run(monkeypatch, capsys, seen=seen)
+    assert code == 0 and out.splitlines()[-1] == "PASS"
+    assert {fn for fn, h in seen.items() if h == BEARER} == FILTERED
+    assert {fn for fn, h in seen.items() if h is None} == UNFILTERED
+    assert "probe mode filter-aware: 18 tokenless-filtered functions get a garbage bearer, " \
+           "5 unfiltered get no Authorization header" in out
+    reads = [c for c in aws.calls if c[2] == "describe-metric-filters"]
+    assert len(reads) == 1 and reads[0][reads[0].index("--filter-name-prefix") + 1] == "tokenless-request-401"
+
+
+def test_no_tokenless_filter_anywhere_probes_every_function_without_a_header(monkeypatch, capsys):
+    aws = FakeAws(stdout={("", "describe-metric-filters"): "[]"})
+    code, out, _ = run(monkeypatch, capsys, aws=aws, bearer_fns=set())
+    assert code == 0 and "0 tokenless-filtered functions get a garbage bearer, 23 unfiltered" in out
+
+
+@pytest.mark.parametrize("fail, raw, why", [
+    (254, None, "aws logs describe-metric-filters exited 254"),
+    (FileNotFoundError("aws"), None, "aws logs describe-metric-filters did not run (FileNotFoundError)"),
+    (subprocess.TimeoutExpired("aws", 120), None, "aws logs describe-metric-filters did not run (TimeoutExpired)"),
+    (None, "not json", "describe-metric-filters output is not JSON"),
+    (None, '{"metricFilters": []}', "describe-metric-filters output is not a list of name, group pairs"),
+    (None, '[["tokenless-request-401"]]', "describe-metric-filters output is not a list of name, group pairs"),
+])
+def test_an_unread_filter_set_puts_the_bearer_on_every_probe(monkeypatch, capsys, fail, raw, why):
+    """A header-less probe of a filtered function pages, so an unknown filter set never falls back to one."""
+    aws = FakeAws(fail={("", "describe-metric-filters"): fail} if fail else {},
+                  stdout={("", "describe-metric-filters"): raw} if raw else {})
+    seen = {}
+    code, out, _ = run(monkeypatch, capsys, aws=aws, bearer_fns=set(FNS), seen=seen)
+    assert set(seen.values()) == {BEARER} and len(seen) == 23
+    assert code == 0 and out.splitlines()[-1] == "PASS"
+    assert "probe mode all-bearer: filtered/unfiltered unknown, all 23 functions get a garbage bearer" in out
+    assert f"no-Authorization-header 401 assertion skipped: cannot read the tokenless filters ({why})" in out
+
+
+def test_an_unread_filter_set_still_fails_a_non_401(monkeypatch, capsys):
+    aws = FakeAws(fail={("", "describe-metric-filters"): 254})
+    code, out, _ = run(monkeypatch, capsys, aws=aws, bearer_fns=set(FNS), statuses={"garden-plants": 403})
+    assert code == 1 and line_for(out, "garden-plants").strip().startswith("FAIL")
+
+
+def test_the_probe_bearer_cannot_decode_to_a_jwt_header():
+    """Each handler then 401s inside verifyToken before any JWKS fetch, logging a line the tokenless alarm's
+    "Invalid JWT form" pattern does not match."""
+    assert ppc.PROBE_BEARER == "ci.smoke.probe"
+    head = ppc.PROBE_BEARER.split(".")[0]
+    with pytest.raises(ValueError):
+        json.loads(base64.urlsafe_b64decode(head + "=" * (-len(head) % 4)))
 
 
 def test_each_function_reads_its_own_log_group_since_the_start(monkeypatch, capsys):
@@ -196,16 +275,19 @@ def test_an_unreadable_manifest_is_exit_2(monkeypatch, capsys, tmp_path):
     assert code == 2 and "cannot read the manifest (FileNotFoundError)" in out and aws.calls == []
 
 
-@pytest.mark.parametrize("scenario", ["pass", "fail", "unread"])
+@pytest.mark.parametrize("scenario", ["pass", "fail", "unread", "nofilter"])
 def test_no_id_url_or_body_is_ever_printed(monkeypatch, capsys, scenario):
     unread = {("garden-events", "filter-log-events"): 254}
     aws, statuses = {
         "pass": (FakeAws(), {}),
         "fail": (FakeAws(counts={("garden-critter", "denied"): 2}, fail=unread), {"garden-favorites": 403}),
         "unread": (FakeAws(fail=unread), {}),
+        "nofilter": (FakeAws(fail={("", "describe-metric-filters"): 254}), {}),
     }[scenario]
-    _, out, _ = run(monkeypatch, capsys, aws=aws, statuses=statuses)
-    for leak in ("user_", "769788341849", "arn:", "https://", "lambda-url", "x7q2", "userId", "An error occurred"):
+    bearer_fns = set(FNS) if scenario == "nofilter" else FILTERED
+    _, out, _ = run(monkeypatch, capsys, aws=aws, statuses=statuses, bearer_fns=bearer_fns)
+    for leak in ("user_", "769788341849", "arn:", "https://", "lambda-url", "x7q2", "userId", "An error occurred",
+                 "ci.smoke.probe", "Bearer"):
         assert leak not in out
     assert not re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", out)
 

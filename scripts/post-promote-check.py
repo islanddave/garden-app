@@ -7,13 +7,18 @@ Run from the garden-app checkout with prod AWS credentials in the shell:
     python3 scripts/post-promote-check.py --since 2026-11-01T14:00:00Z
 
 For every function scripts/lambda-config-expected.json gives a Function URL:
-  (a) a GET with no token must answer exactly 401 (403, 5xx, a timeout or no answer is FAIL);
+  (a) a GET must answer exactly 401 (403, 5xx, a timeout or no answer is FAIL). A function whose log group
+      carries a tokenless-request-401 metric filter gets a garbage bearer instead of no header: a header-less
+      401 logs Clerk's "Invalid JWT form", which that filter counts toward the garden-tokenless-requests alarm,
+      so one header-less run pages. The rest get no Authorization header, keeping "no token -> 401" asserted.
+      If the filter set cannot be read, every function gets the bearer and the no-header assertion is skipped;
   (b) CloudWatch Logs counts since --since, each of which must be 0:
       denied   { $.msg = "household-membership-denied" }   the shared-state gate's JSON line; the pattern
                household-observability.sh alarms on, so a line quoting the literal elsewhere never counts
       errors   ERROR -"verifyToken failed"                 every console.error line (each handler's catch-all
                before its 500, the runtime's Invoke Error / Uncaught Exception on a throw or a failed load)
                except the 401 path, which every handler logs at ERROR, this tool's own probes included
+               (with or without the bearer the line starts "verifyToken failed:")
       runtime  ?"Task timed out" ?"Status: timeout" ?"Status: error"   timeouts, out-of-memory, init failures;
                one timeout can log two such lines
 Exit 0 PASS, 1 FAIL, 2 could not verify (a manifest or AWS read failed and nothing FAILed).
@@ -44,6 +49,10 @@ PATTERNS = {
     "errors": 'ERROR -"verifyToken failed"',
     "runtime": '?"Task timed out" ?"Status: timeout" ?"Status: error"',
 }
+TOKENLESS_FILTER = "tokenless-request-401"
+# deploy.yml's smoke canary sends the same value. Its first segment does not base64-decode to JSON, so
+# verifyToken throws "Unexpected end of data" before any JWKS fetch, a line the tokenless filter does not match.
+PROBE_BEARER = "ci.smoke.probe"
 
 
 class Unread(Exception):
@@ -86,10 +95,30 @@ def function_url(fn):
     return url
 
 
-def probe(url):
-    """The status of a GET with no token, or a short reason it got none."""
+def tokenless_filtered():
+    """The function names whose log group carries a tokenless-request-401 metric filter. Raises Unread."""
+    # AWS ignores --filter-name-prefix unless --log-group-name is also given, so this returns every filter
+    # in the region; the name test below is the real filter.
+    out = aws("logs", "describe-metric-filters", "--filter-name-prefix", TOKENLESS_FILTER,
+              "--query", "metricFilters[].[filterName, logGroupName]", "--output", "json")
     try:
-        with urllib.request.urlopen(urllib.request.Request(url, method="GET"), timeout=HTTP_TIMEOUT) as r:
+        pairs = json.loads(out)
+    except ValueError:
+        raise Unread("describe-metric-filters output is not JSON")
+    if not isinstance(pairs, list) or not all(
+            isinstance(p, list) and len(p) == 2 and all(isinstance(x, str) for x in p) for p in pairs):
+        raise Unread("describe-metric-filters output is not a list of name, group pairs")
+    prefix = "/aws/lambda/"
+    return {group[len(prefix):] for name, group in pairs
+            if name.startswith(TOKENLESS_FILTER) and group.startswith(prefix)}
+
+
+def probe(url, bearer=False):
+    """The status of a GET with no Authorization header (or the garbage bearer), or a short reason it got none."""
+    headers = {"Authorization": f"Bearer {PROBE_BEARER}"} if bearer else {}
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers, method="GET"),
+                                    timeout=HTTP_TIMEOUT) as r:
             return r.status
     except urllib.error.HTTPError as e:
         return e.code
@@ -112,10 +141,10 @@ def count(fn, pattern, start_ms):
     return len(ids)
 
 
-def check_function(fn, start_ms):
+def check_function(fn, start_ms, bearer=False):
     """(verdict, detail) with verdict True PASS, False FAIL, None could not verify."""
     try:
-        status = probe(function_url(fn))
+        status = probe(function_url(fn), bearer)
         counts = {k: count(fn, p, start_ms) for k, p in PATTERNS.items()}
     except Unread as e:
         return None, f"could not verify: {e}"
@@ -155,8 +184,19 @@ def main(argv=None):
         return 2
     since = datetime.datetime.fromtimestamp(args.since / 1000, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     print(f"post-promote-check: {len(fns)} URL functions, logs since {since}")
+    try:
+        bearer_fns = tokenless_filtered() & set(fns)
+        print(f"post-promote-check: probe mode filter-aware: {len(bearer_fns)} tokenless-filtered functions get a "
+              f"garbage bearer, {len(fns) - len(bearer_fns)} unfiltered get no Authorization header")
+    except Unread as e:
+        # Never fall back to header-less probes: with the filter set unknown, any of them could page.
+        bearer_fns = set(fns)
+        print(f"post-promote-check: probe mode all-bearer: filtered/unfiltered unknown, all {len(fns)} functions "
+              f"get a garbage bearer")
+        print(f"post-promote-check: no-Authorization-header 401 assertion skipped: cannot read the tokenless "
+              f"filters ({e})")
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
-        results = list(pool.map(lambda fn: check_function(fn, args.since), fns))
+        results = list(pool.map(lambda fn: check_function(fn, args.since, fn in bearer_fns), fns))
     for fn, (ok, detail) in zip(fns, results):
         mark = "PASS" if ok else "FAIL" if ok is False else "UNREAD"
         print(f"  {mark:6} {fn:28} {detail}")
