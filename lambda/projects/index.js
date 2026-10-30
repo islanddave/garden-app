@@ -4,6 +4,7 @@ import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { householdScope, loadOwnedLocation, warnRejectedFk } from './household.js';
 import { requestContext } from './request-context.js';
+import { withActor } from './audit-actor.js';
 import { loadOwnedProject } from './authz-parents.js';
 import { resolvePhotoViewUrl } from './photo-access.js';
 import { isStatusChange, formatStatusChangeNote, buildStatusChangeMetadata, STATUS_CHANGE_EVENT_TYPE } from './statusEvents.js';
@@ -765,7 +766,6 @@ export const handler = async (event) => {
         // TRANSACTION as the project status UPDATE, only on a real change. container has no
         // RLS (explicit household scope above); event_log + entity_memory do -> set_config.
         const _stmts = [
-          sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
           sql`
           UPDATE public.container
           SET
@@ -827,7 +827,7 @@ export const handler = async (event) => {
               updated_at = NOW()
           `);
         }
-        const _txr = await sql.transaction(_stmts);
+        const _txr = await withActor(sql, userId, () => _stmts);
         const rows = _txr[1];
         if (!rows.length) return resp(404, { error: 'Not found' });
         return resp(200, rows[0]);

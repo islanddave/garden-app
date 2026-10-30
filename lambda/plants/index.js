@@ -10,6 +10,7 @@ import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { householdScope, loadOwnedLocation, loadOwnedInventoryItem, warnRejectedFk } from './household.js';
 import { requestContext } from './request-context.js';
+import { withActor } from './audit-actor.js';
 import { mergeCore } from './merge.js';
 // BUG-PARENTOWN-001: body-supplied PARENT-id loaders. loadOwnedPlantingRef REPLACES household.js's
 // loadOwnedPlanting on this path — same query plus the load-bearing `project_id IS NULL` conjunct on
@@ -1342,7 +1343,6 @@ export const handler = async (event) => {
         // hook this is in-txn). event_log + entity_memory have RLS -> set_config the actor;
         // garden_node has none (explicit household scope, verified 2026-06-18).
         const _stmts = [
-          sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
           sql`
           UPDATE public.garden_node p
           SET
@@ -1574,7 +1574,7 @@ export const handler = async (event) => {
                            OR gp.transplanted_at IS NOT NULL
                            OR gp.planted_out_at IS NOT NULL))
         `);
-        const _txr = await sql.transaction(_stmts);
+        const _txr = await withActor(sql, userId, () => _stmts);
         const rows = _txr[1];
         if (!rows.length) return resp(404, { error: 'Not found' });
 

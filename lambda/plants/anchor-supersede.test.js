@@ -48,7 +48,7 @@ describe('plants PUT retires a contradicted derivation in the same transaction',
   it('runs AFTER the plants UPDATE, so it sees the date this request just wrote', () => {
     const write = PUT.indexOf('UPDATE public.garden_node p')
     const retire = PUT.indexOf('UPDATE public.plant_anchor_derivation d')
-    const exec = PUT.indexOf('sql.transaction(_stmts)')
+    const exec = PUT.indexOf('withActor(sql, userId, () => _stmts)')
     expect(write).toBeGreaterThan(-1)
     expect(retire).toBeGreaterThan(write)
     expect(exec).toBeGreaterThan(retire)
@@ -58,7 +58,8 @@ describe('plants PUT retires a contradicted derivation in the same transaction',
     // The handler reads the updated planting positionally. A statement inserted ahead of the
     // garden_node UPDATE would return the retire's (empty) result as the planting and 404 every
     // successful edit.
-    expect(PUT).toMatch(/const _txr = await sql\.transaction\(_stmts\);\s*const rows = _txr\[1\];/)
+    // withActor prepends exactly one statement, the actor GUC (lambda/audit-actor-guc.test.js), so the UPDATE is _txr[1].
+    expect(PUT).toMatch(/const _txr = await withActor\(sql, userId, \(\) => _stmts\);\s*const rows = _txr\[1\];/)
   })
 
   it('retires only for a planting that now holds an observed anchor — all three columns', () => {
