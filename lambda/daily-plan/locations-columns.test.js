@@ -41,6 +41,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import handler from './handler.js';
+import { ownContract } from '../_test-stubs/columnContract.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const { run } = handler;
@@ -126,13 +127,10 @@ describe('OPS-L081LOCHEATED-001 — daily-plan `locations` column contract (L-08
   it('exposes the contract in the shape scripts/dev-main-schema-audit.py parses, under its Phase 1 glob', () => {
     // The auditor reads TEXT: replicate its own regexes against this file. The closing `};` is load-bearing
     // (without it the block is ignored with no warning), and the body must hold pairs only.
-    const self = readFileSync(fileURLToPath(import.meta.url), 'utf8');
-    const decl = self.match(/const\s+AUDIT_COLUMNS\s*=\s*\{([\s\S]*?)\};/);
-    expect(decl).not.toBeNull();
-    expect(decl[1]).not.toMatch(/\bconst\b/);
-    const pairs = [...decl[1].matchAll(/['"]?([a-zA-Z_]\w*)['"]?\s*:\s*\[([^\]]*)\]/g)];
-    expect(pairs.map((m) => m[1])).toEqual(['locations']);
-    expect([...pairs[0][2].matchAll(/['"]([a-zA-Z_][a-zA-Z0-9_]*)['"]/g)].map((m) => m[1])).toEqual(AUDIT_COLUMNS.locations);
+    const parsed = ownContract(import.meta.url);
+    expect(parsed).not.toBeNull();
+    expect(parsed.map(([key]) => key)).toEqual(['locations']);
+    expect(parsed[0][1]).toEqual(AUDIT_COLUMNS.locations);
     // and the auditor's discovery glob, read from the script rather than restated, still matches this name
     const audit = readFileSync(join(__dirname, '..', '..', 'scripts', 'dev-main-schema-audit.py'), 'utf8');
     const glob = audit.match(/^PHASE1_GLOB\s*=\s*"([^"]+)"/m)[1];
