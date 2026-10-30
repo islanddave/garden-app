@@ -4,14 +4,16 @@
 //
 // AUTH MODEL: PURELY per-user — every branch gates on `user_id = ${userId}` (GET list :72, GET
 // single-check :62-66, POST upsert :84-86 with ON CONFLICT (user_id,entity_type,entity_id), DELETE
-// :99-102). No household widening (favorites has no household.js — bookmarks are personal, not
-// shared). No FK on entity_id and no deleted_at column (hard delete), so a custom block, not the
+// :99-102). No household widening: favorites ships household.js only for the SEC-13a gate; bookmarks are
+// personal, not shared. No FK on entity_id and no deleted_at column (hard delete), so a custom block, not the
 // generic matrix. entity_id is an unvalidated uuid — favoriting an arbitrary/foreign uuid is benign
 // (the row stores only the uuid the caller already supplied; reads never JOIN the entity, so nothing
 // about it leaks — see the report note, not a finding).
-import { describe, it, expect, afterAll } from 'vitest'
+import { describe, it, expect, afterAll, vi } from 'vitest'
 import { randomUUID } from 'node:crypto'
-import { directSql, callHandler, setTestUserId, testRunId } from './_harness.js'
+import { directSql, callHandler, makeEvent, setTestUserId, testRunId } from './_harness.js'
+// After _harness.js, whose vi.mock replaces this module with the stub; imported first it would be the real one.
+import { verifyToken } from '@clerk/backend'
 import { handler as favoritesHandler } from '../../lambda/favorites/index.js'
 
 describe('AUTHZ favorites /api/favorites — per-user scope (user_id) (0A.5)', () => {
@@ -87,5 +89,16 @@ describe('AUTHZ favorites /api/favorites — per-user scope (user_id) (0A.5)', (
     expect(status).toBe(200)
     const rows = await directSql`SELECT id FROM favorites WHERE id = ${ownerFavId}`
     expect(rows.length).toBe(0)
+  })
+})
+
+describe('favorites — SEC-60: a verified token with no subject', () => {
+  it('SEC-60: a POST with no subject is 401 and writes no favorite (it reached the INSERT: 23502, a 500)', async () => {
+    const entity = randomUUID()
+    vi.mocked(verifyToken).mockImplementationOnce(() => Promise.resolve({}))
+    const r = await favoritesHandler(makeEvent({ method: 'POST', path: '/api/favorites', body: { entity_type: 'project', entity_id: entity } }))
+    expect(r.statusCode).toBe(401)
+    expect(JSON.parse(r.body)).toEqual({ error: 'Unauthorized' })
+    expect(await directSql`SELECT 1 FROM favorites WHERE entity_id = ${entity}::uuid`).toEqual([])
   })
 })

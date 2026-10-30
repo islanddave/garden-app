@@ -1,7 +1,7 @@
 // new-file: no integration test existed for achievements
 // Pins today's /api/achievements replies on real Postgres (OPS-CODEREVIEW-001 C6) so D1/D2/D2b changes are seen.
 // Read-only: no 23514/23505/23503 is reachable; the one database error a request can cause (a NUL byte in
-// the subject, 22021) pins the generic 500. Trap: this handler has NO empty-subject 401 guard today.
+// the subject, 22021) pins the generic 500. A verified token with no subject is 401 (SEC-60).
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import { directSql, callHandler, makeEvent, setTestUserId, testRunId, householdDefault } from './_harness.js'
 // After _harness.js, whose vi.mock replaces this module with the stub; imported first it would be the real one.
@@ -137,12 +137,11 @@ describe('achievements — sign-in and origin', () => {
     expect(r.status).toBe(200)
   })
 
-  it('TODAY: a verified token with no subject is served (no empty-subject guard), as a user with nothing earned', async () => {
+  it('SEC-60: a verified token with no subject is 401 (it was served as a user with nothing earned)', async () => {
     vi.mocked(verifyToken).mockImplementationOnce(() => Promise.resolve({}))
     const r = await raw(makeEvent({ method: 'GET', path: '/api/achievements' }))
-    expect(r.status).toBe(200)
-    expect(r.body.earned).toEqual([])
-    expect(r.body.total_visible).toBe(visible.length)
+    expect(r.status).toBe(401)
+    expect(r.body).toEqual({ error: 'Unauthorized' })
   })
 })
 

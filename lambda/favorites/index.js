@@ -51,6 +51,9 @@ export const handler = async (event) => {
     console.error('verifyToken failed:', err?.message ?? String(err));
     return resp(401, { error: 'Unauthorized' });
   }
+  // SEC-60: a verified token with no subject is refused before anything runs (the household gate and every
+  // statement after it key on the subject). Guard: lambda/authz-write-fk.test.js, every dir with a household.js.
+  if (!userId) return resp(401, { error: 'Unauthorized' });
 
   const sql = neon(secrets.NEON_DATABASE_URL);
   const method = event.requestContext?.http?.method ?? 'GET';

@@ -1,7 +1,7 @@
 // new-file: no integration test existed for app-events
 // Pins today's /api/app-events replies on real Postgres (OPS-CODEREVIEW-001 C6) so D1/D2/D2b changes are seen.
 // The 23514 reply echoes the constraint name (D2b replaces that); 23505/23503 are unreachable (uuid PK, no FK).
-// Trap: no empty-subject guard, so a subject-less token reaches checkRateLimit, which refuses it (429).
+// A token with no subject is 401 before the limiter and the household gate (SEC-60).
 import { describe, it, expect, afterAll, vi } from 'vitest'
 import { directSql, callHandler, makeEvent, setTestUserId, testRunId, householdDefault } from './_harness.js'
 // After _harness.js, whose vi.mock replaces this module with the stub; imported first it would be the real one.
@@ -188,12 +188,11 @@ describe('app-events — database errors (the replies D2b changes)', () => {
     expect(await rowsFor(LONG_SUB)).toEqual([])
   })
 
-  // SEC-13b S2: the limiter refuses a missing actor before any statement. SEC-60 later moves this to a 401.
-  it('SEC-13b: a token with no subject -> 429 from the limiter, and no row of any kind is written', async () => {
+  it('SEC-60: a token with no subject -> 401 (it was the limiter\'s 429), and no row of any kind is written', async () => {
     vi.mocked(verifyToken).mockImplementationOnce(() => Promise.resolve({}))
     const r = await raw(makeEvent({ method: 'POST', path: '/api/app-events', body: { event_name: 'nosub' } }))
-    expect(r.status).toBe(429)
-    expect(r.body).toEqual({ error: 'Rate limit exceeded — 1000/hour for app_events.write' })
+    expect(r.status).toBe(401)
+    expect(r.body).toEqual({ error: 'Unauthorized' })
     expect(await directSql`SELECT 1 FROM app_events WHERE event_name = 'nosub' AND (user_clerk_sub IS NULL OR user_clerk_sub = '')`).toEqual([])
     expect(await directSql`SELECT 1 FROM rate_limit_buckets WHERE actor_clerk_sub IS NULL OR actor_clerk_sub = ''`).toEqual([])
   })
