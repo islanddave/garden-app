@@ -32,23 +32,11 @@
 // Static source inspection rather than import: lambda/_test-stubs make the handlers importable, but
 // the stub never evaluates SQL, so the columns a statement names are visible only in its source text.
 import { describe, it, expect } from 'vitest';
-import { readFileSync, readdirSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { handlersIn, ownContract, tableReads } from '../_test-stubs/columnContract.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-
-// A column NAMED IN A COMMENT is not a column reference. Same decomment as the sibling contracts
-// (scripts/dev-main-schema-audit.py:295-308).
-const decomment = (s) => s.split('\n')
-  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--(\s.*)?$/, '$1'))
-  .join('\n');
-
-// Every handler in THIS directory — the same set Phase 4 groups together. Read from disk, so a handler
-// added here that reads one of these relations is held to this contract the day it lands.
-const HANDLERS = readdirSync(__dirname)
-  .filter((f) => f.endsWith('.js') && !/\.(test|spec)\.js$/.test(f))
-  .sort();
 
 // L-081 KEYED contract, the columns as merge.js's own SQL names them. All present in the migration DDL:
 // kitchen_batch_input.id (v5-inflightbatch-001/0a) and .plant_id (v5-putupmake-001/0a, 1b, which ships
@@ -67,39 +55,9 @@ const AUDIT_COLUMNS = {
 
 const TABLES = Object.keys(AUDIT_COLUMNS);
 
-// Extraction mirrors scripts/dev-main-schema-audit.py:272-320 so this guard sees the statements Phase 4
-// credits. Only SQL inside a tagged sql`` template counts. `IS [NOT] DISTINCT FROM x.col` carries the
-// literal token FROM, so it is scrubbed before scanning (merge.js's findings DELETE has one).
-const SQL_TEMPLATE = /sql`([\s\S]*?)`/g;
-const DISTINCT_FROM = /\bIS\s+(?:NOT\s+)?DISTINCT\s+FROM\b/gi;
-
-// The alias group is OPTIONAL: the snapshot reads' unaliased `FROM <table> WHERE ...` captures the next
-// keyword, which NOT_AN_ALIAS rejects and UNALIASED_ARMS then accounts for by hand. UPDATE <table> is
-// not a FROM/JOIN binding (the repoint UPDATEs), the same as the auditor's own relation parse.
-const bindings = (table, s) => [...s.matchAll(new RegExp(
-  String.raw`\b(?:FROM|JOIN)\s+(?:public\.)?${table}\b(?!\s*\.)\s*(?:AS\s+)?([a-z_][a-z0-9_]*)?`, 'gi',
-))].map((m) => (m[1] ?? '').toLowerCase());
-
-const NOT_AN_ALIAS = new Set([
-  'on', 'where', 'using', 'left', 'right', 'inner', 'outer', 'full', 'cross', 'join', 'lateral',
-  'group', 'order', 'limit', 'offset', 'having', 'union', 'except', 'intersect', 'set', 'and',
-  'or', 'not', 'as', 'select', 'from', 'with', 'values', 'for', 'window', 'returning', 'when',
-]);
-
-const aliasesOf = (table, s) => [...new Set(bindings(table, s).filter((b) => b && !NOT_AN_ALIAS.has(b)))].sort();
-const unaliasedIn = (table, s) => bindings(table, s).filter((b) => !b || NOT_AN_ALIAS.has(b)).length;
-
-// Scoped to statements that BIND the table, so an `x.col` belonging to some other query in the same file
-// can never be read as this table's.
-const columnsOf = (table, s) => [...new Set(aliasesOf(table, s).flatMap((a) => [...s.matchAll(
-  new RegExp(String.raw`\b${a}\.([a-z_][a-z0-9_]*)\b`, 'gi'),
-)].map((m) => m[1].toLowerCase())))];
-
-const TEMPLATES = HANDLERS.flatMap((file) => {
-  const src = decomment(readFileSync(resolve(__dirname, file), 'utf8'));
-  return [...src.matchAll(SQL_TEMPLATE)].map((m) => ({ file, sql: m[1].replace(DISTINCT_FROM, ' ') }));
-});
-const statementsOf = (table) => TEMPLATES.filter(({ sql }) => bindings(table, sql).length > 0);
+// Each relation's statements in this directory's handlers, scanned by lambda/_test-stubs/columnContract.js.
+// UPDATE <table> is not a binding (the repoint UPDATEs), the same as the auditor's own relation parse.
+const READS = Object.fromEntries(TABLES.map((table) => [table, tableReads(import.meta.url, table)]));
 
 // Reads that name the table with NO alias: merge.js's step-6 snapshot of every row about to move, which a
 // restore replays. Each is PINNED to its literal SQL with its columns listed by hand — edit the query and
@@ -125,14 +83,13 @@ const EXPECTED = {
 
 describe('OPS-SCHEMAAUDITJOIN-001 — lambda/plants merge-surface column contract', () => {
   it('finds the statements for every declared relation, so the assertions below are not vacuous', () => {
-    expect(HANDLERS).toContain('merge.js');
+    expect(handlersIn(__dirname)).toContain('merge.js');
     expect(Object.keys(EXPECTED)).toEqual(TABLES);
     for (const table of TABLES) {
-      const stmts = statementsOf(table);
+      const stmts = READS[table].statements;
       expect(stmts, table).toHaveLength(EXPECTED[table].statements);
       expect([...new Set(stmts.map((s) => s.file))], table).toEqual(['merge.js']);
-      expect([...new Set(stmts.flatMap((s) => aliasesOf(table, s.sql)))].sort(), table)
-        .toEqual(EXPECTED[table].aliases);
+      expect(READS[table].aliases, table).toEqual(EXPECTED[table].aliases);
     }
   });
 
@@ -141,21 +98,16 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/plants merge-surface column contrac
     // assertion below would still pass — this count is what closes that hole.
     for (const table of TABLES) {
       const arms = UNALIASED_ARMS.filter((a) => a.table === table);
-      const bare = statementsOf(table).reduce((n, s) => n + unaliasedIn(table, s.sql), 0);
-      expect(bare, table).toBe(arms.length);
+      expect(READS[table].unaliased, table).toBe(arms.length);
       for (const arm of arms) {
-        const src = decomment(readFileSync(resolve(__dirname, arm.file), 'utf8'));
-        expect(arm.pin.test(src), `unaliased arm no longer matches in ${arm.file}: ${arm.pin}`).toBe(true);
+        expect(READS[table].pinHolds(arm), `unaliased arm no longer matches in ${arm.file}: ${arm.pin}`).toBe(true);
       }
     }
   });
 
   it('references no column absent from the contract, and declares none it does not use', () => {
     for (const table of TABLES) {
-      const referenced = [...new Set([
-        ...statementsOf(table).flatMap((s) => columnsOf(table, s.sql)),
-        ...UNALIASED_ARMS.filter((a) => a.table === table).flatMap((a) => a.columns),
-      ])].sort();
+      const referenced = READS[table].referenced(UNALIASED_ARMS.filter((a) => a.table === table));
       // Both directions. The contract is what Phase 1 audits against prod, so a column nothing reads
       // makes the audit assert something the code never does.
       expect(referenced, table).toEqual([...AUDIT_COLUMNS[table]].sort());
@@ -181,12 +133,7 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/plants merge-surface column contrac
     for (const table of TABLES) {
       for (const col of NOT_ON_TABLE[table]) {
         expect(AUDIT_COLUMNS[table], `${col} is not a ${table} column`).not.toContain(col);
-        for (const { file, sql } of statementsOf(table)) {
-          for (const a of aliasesOf(table, sql)) {
-            expect(sql, `${file}: ${a}.${col} is not a ${table} column`)
-              .not.toMatch(new RegExp(String.raw`\b${a}\.${col}\b`, 'i'));
-          }
-        }
+        expect(READS[table].refsTo(col)).toEqual([]);
       }
     }
   });
@@ -196,15 +143,10 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/plants merge-surface column contrac
     // warning, and Phase 4 keeps counting all four relations as uncovered. A misspelled KEY is worse —
     // Phase 1 audits a relation that does not exist. Replicate the auditor's own two regexes
     // (dev-main-schema-audit.py:124-127) against this file's own source.
-    const self = readFileSync(fileURLToPath(import.meta.url), 'utf8');
-    const decl = self.match(/const\s+AUDIT_COLUMNS\s*=\s*\{([\s\S]*?)\};/);
-    expect(decl).not.toBeNull();
-    // The match must stop at the block's OWN `};`, not run on to the next one in the file.
-    expect(decl[1]).not.toMatch(/\bconst\b/);
-    const pairs = [...decl[1].matchAll(/['"]?([a-zA-Z_]\w*)['"]?\s*:\s*\[([^\]]*)\]/g)];
-    expect(pairs.map((m) => m[1])).toEqual(TABLES);
-    for (const [, table, body] of pairs) {
-      const cols = [...body.matchAll(/['"]([a-zA-Z_][a-zA-Z0-9_]*)['"]/g)].map((m) => m[1]);
+    const parsed = ownContract(import.meta.url);
+    expect(parsed).not.toBeNull();
+    expect(parsed.map(([key]) => key)).toEqual(TABLES);
+    for (const [table, cols] of parsed) {
       expect(cols, table).toEqual(AUDIT_COLUMNS[table]);
     }
   });

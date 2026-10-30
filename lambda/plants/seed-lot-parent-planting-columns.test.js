@@ -41,23 +41,7 @@
 // the stub never evaluates SQL. So nothing here proves a
 // statement RUNS; that is tests/integration's job (seed-lots-reverse, plant-merge-surfaces).
 import { describe, it, expect } from 'vitest';
-import { readFileSync, readdirSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
-// A column NAMED IN A COMMENT is not a column reference. The `--(\s.*)?$` arm matches a BARE `--`
-// separator line as well as `-- text` (scripts/dev-main-schema-audit.py, _decomment_js).
-const decomment = (s) => s.split('\n')
-  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--(\s.*)?$/, '$1'))
-  .join('\n');
-
-// Every handler in THIS directory — the same set Phase 4 groups together. Read from disk rather than
-// hardcoded, so a handler added here that touches the table is held to this contract the day it lands.
-const HANDLERS = readdirSync(__dirname)
-  .filter((f) => f.endsWith('.js') && !/\.(test|spec)\.js$/.test(f))
-  .sort();
+import { ownContract, tableReads } from '../_test-stubs/columnContract.js';
 
 // L-081 KEYED contract: EVERY column of the table that any statement in lambda/plants names, in a
 // SELECT list, a predicate or a SET. Six of the table's eight; created_by and created_at are named by
@@ -73,40 +57,10 @@ const AUDIT_COLUMNS = {
 const TABLE = 'seed_lot_parent_planting';
 const CONTRACT_COLUMNS = AUDIT_COLUMNS[TABLE];
 
-// Only SQL inside a tagged sql`` template counts. `IS [NOT] DISTINCT FROM x.col` carries the literal
-// token FROM, so it is scrubbed before scanning, as the auditor does.
-const SQL_TEMPLATE = /sql`([\s\S]*?)`/g;
-const DISTINCT_FROM = /\bIS\s+(?:NOT\s+)?DISTINCT\s+FROM\b/gi;
-
-// FROM, JOIN **and UPDATE** bind the table (see the header). The alias group is OPTIONAL: an unaliased
-// `FROM <table> WHERE` or `UPDATE <table> SET` captures the next keyword, which NOT_AN_ALIAS rejects
-// and UNALIASED_ARMS then accounts for by hand.
-const bindings = (s) => [...s.matchAll(
-  /\b(?:FROM|JOIN|UPDATE)\s+(?:public\.)?seed_lot_parent_planting\b(?!\s*\.)\s*(?:AS\s+)?([a-z_][a-z0-9_]*)?/gi,
-)].map((m) => (m[1] ?? '').toLowerCase());
-
-const NOT_AN_ALIAS = new Set([
-  'on', 'where', 'using', 'left', 'right', 'inner', 'outer', 'full', 'cross', 'join', 'lateral',
-  'group', 'order', 'limit', 'offset', 'having', 'union', 'except', 'intersect', 'set', 'and',
-  'or', 'not', 'as', 'select', 'from', 'with', 'values', 'for', 'window', 'returning', 'when',
-]);
-
-const aliasesOf = (s) => [...new Set(bindings(s).filter((b) => b && !NOT_AN_ALIAS.has(b)))].sort();
-const unaliasedIn = (s) => bindings(s).filter((b) => !b || NOT_AN_ALIAS.has(b)).length;
-
-// Scoped to statements that BIND the table, so an `l.col` belonging to one of merge.js's other
-// prunes — every one of them aliases its loser row `l` — can never be read as this table's.
-const columnsOf = (s) => [...new Set(aliasesOf(s).flatMap((a) => [...s.matchAll(
-  new RegExp(String.raw`\b${a}\.([a-z_][a-z0-9_]*)\b`, 'gi'),
-)].map((m) => m[1].toLowerCase())))];
-
-const STATEMENTS = HANDLERS.flatMap((f) => {
-  const src = decomment(readFileSync(resolve(__dirname, f), 'utf8'));
-  return [...src.matchAll(SQL_TEMPLATE)]
-    .map((m) => m[1].replace(DISTINCT_FROM, ' '))
-    .filter((s) => bindings(s).length > 0)
-    .map((sql) => ({ file: f, sql }));
-});
+// The seed_lot_parent_planting statements in this directory's handlers, scanned by lambda/_test-stubs/columnContract.js.
+// UPDATE binds too (see the header). Every merge.js prune aliases its loser row `l`; columns are read
+// only through aliases that bind this table, so those `l.col`s never count here.
+const READS = tableReads(import.meta.url, 'seed_lot_parent_planting', { verbs: 'FROM|JOIN|UPDATE' });
 
 // Statements that name the table with NO alias. Nothing can attribute their bare identifiers
 // automatically, so each is PINNED to its literal SQL with its columns listed by hand. Edit the
@@ -143,7 +97,7 @@ const SET_ARMS = [
 
 describe('OPS-SCHEMAAUDITJOIN-001 — lambda/plants seed_lot_parent_planting column contract', () => {
   it('finds the seed_lot_parent_planting statements, so the assertions below are not vacuous', () => {
-    expect(HANDLERS.length).toBeGreaterThan(0);
+    expect(READS.handlers.length).toBeGreaterThan(0);
     // Exact count, not a floor: a new statement against this table should be reviewed against the
     // contract rather than inherit it. Update this number in the same commit that adds one.
     // 1 in index.js (the seed-lots read) + 5 in merge.js (two snapshot reads, the lot lock, the prune,
@@ -151,23 +105,23 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/plants seed_lot_parent_planting col
     // 5 -> 6: the lot lock. It reaches this table inside an EXISTS, to find the lots whose links the
     // merge will write, and names `sl.inventory_item_id` and `sl.plant_id` only — both already in the
     // contract. No role and no deleted_at there, on purpose: every role, live or retired.
-    expect(STATEMENTS).toHaveLength(6);
-    expect(STATEMENTS.map((s) => s.file).sort())
+    expect(READS.statements).toHaveLength(6);
+    expect(READS.statements.map((s) => s.file).sort())
       .toEqual(['index.js', 'merge.js', 'merge.js', 'merge.js', 'merge.js', 'merge.js']);
     // ol / sl are the reverse read's two bindings, and sl is the lot lock's as well; l / o / w are
     // the merge's loser row, a lower-id loser's and the winner's, the aliases every prune in merge.js
     // uses.
-    expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
+    expect(READS.aliases)
       .toEqual(['l', 'o', 'ol', 'sl', 'w']);
   });
 
   it('accounts for every unaliased statement on the table', () => {
     // An unaliased statement added without a pin here would slip past columnsOf() entirely and the
     // tightness assertion below would still pass — this count is what closes that hole.
-    const bare = STATEMENTS.reduce((n, s) => n + unaliasedIn(s.sql), 0);
+    const bare = READS.unaliased;
     expect(bare).toBe(UNALIASED_ARMS.length);
     for (const arm of [...UNALIASED_ARMS, ...SET_ARMS]) {
-      const src = decomment(readFileSync(resolve(__dirname, arm.file), 'utf8'));
+      const src = READS.source(arm.file);
       expect(arm.pin.test(src), `arm no longer matches in ${arm.file}: ${arm.pin}`).toBe(true);
     }
   });
@@ -176,7 +130,7 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/plants seed_lot_parent_planting col
     // The hole the header describes, closed by count: an UPDATE added here with a bare SET target
     // nobody pinned would name a column this contract never lists, and every other assertion in this
     // file would still pass.
-    const updates = STATEMENTS.reduce(
+    const updates = READS.statements.reduce(
       (n, s) => n + (s.sql.match(/\bUPDATE\s+(?:public\.)?seed_lot_parent_planting\b/gi) || []).length, 0);
     expect(updates).toBe(UNALIASED_ARMS.filter((a) => a.update).length + SET_ARMS.length);
     expect(updates).toBe(2);
@@ -184,7 +138,7 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/plants seed_lot_parent_planting col
 
   it('references no column absent from the contract, and declares none it does not use', () => {
     const referenced = [...new Set([
-      ...STATEMENTS.flatMap((s) => columnsOf(s.sql)),
+      ...READS.statements.flatMap((s) => READS.columnsOf(s.sql)),
       ...UNALIASED_ARMS.flatMap((a) => a.columns),
       ...SET_ARMS.flatMap((a) => a.columns),
     ])].sort();
@@ -208,8 +162,8 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/plants seed_lot_parent_planting col
     ];
     for (const col of NOT_ON_TABLE) {
       expect(CONTRACT_COLUMNS).not.toContain(col);
-      for (const { file, sql } of STATEMENTS) {
-        for (const a of aliasesOf(sql)) {
+      for (const { file, sql } of READS.statements) {
+        for (const a of READS.aliasesOf(sql)) {
           expect(sql, `${file}: ${a}.${col} is not a ${TABLE} column`)
             .not.toMatch(new RegExp(String.raw`\b${a}\.${col}\b`, 'i'));
         }
@@ -225,8 +179,8 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/plants seed_lot_parent_planting col
     // and a created_by on every row. An INSERT here would need both, and an ownership decision
     // recorded in lambda/authz-write-fk.test.js. Release 1 reads and writes 'seed_parent' only:
     // 'pollen_parent' exists in the CHECK and nowhere else.
-    for (const f of HANDLERS) {
-      const src = decomment(readFileSync(resolve(__dirname, f), 'utf8'));
+    for (const f of READS.handlers) {
+      const src = READS.source(f);
       expect(src, f).not.toMatch(/INSERT\s+INTO\s+(?:public\.)?seed_lot_parent_planting\b/i);
       expect(src, f).not.toMatch(/pollen_parent/);
     }
@@ -237,14 +191,10 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/plants seed_lot_parent_planting col
     // NO warning and Phase 4 just keeps counting this relation as uncovered. A misspelled KEY is
     // worse — Phase 1 audits a relation that does not exist. Replicate the auditor's own two regexes
     // against this file's own source.
-    const self = readFileSync(fileURLToPath(import.meta.url), 'utf8');
-    const decl = self.match(/const\s+AUDIT_COLUMNS\s*=\s*\{([\s\S]*?)\};/);
-    expect(decl).not.toBeNull();
-    // The match must stop at the block's OWN `};`, not run on to the next one in the file.
-    expect(decl[1]).not.toMatch(/\bconst\b/);
-    const pairs = [...decl[1].matchAll(/['"]?([a-zA-Z_]\w*)['"]?\s*:\s*\[([^\]]*)\]/g)];
-    expect(pairs.map((m) => m[1])).toEqual([TABLE]);
-    const cols = [...pairs[0][2].matchAll(/['"]([a-zA-Z_][a-zA-Z0-9_]*)['"]/g)].map((m) => m[1]);
+    const parsed = ownContract(import.meta.url);
+    expect(parsed).not.toBeNull();
+    expect(parsed.map(([key]) => key)).toEqual([TABLE]);
+    const cols = parsed[0][1];
     expect(cols).toEqual(CONTRACT_COLUMNS);
   });
 });
@@ -253,12 +203,12 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/plants seed_lot_parent_planting col
 // every one of them is about how the LINK is read; that file keeps the lot's columns and the lot's
 // household scope.
 describe('GET /api/plants/:id/seed-lots — read through the parent links', () => {
-  const stmt = STATEMENTS.find((s) => s.file === 'index.js');
+  const stmt = READS.statements.find((s) => s.file === 'index.js');
   const sql = stmt?.sql ?? '';
   const flat = sql.replace(/\s+/g, ' ');
 
   it('is the one statement in index.js on the table', () => {
-    expect(STATEMENTS.filter((s) => s.file === 'index.js')).toHaveLength(1);
+    expect(READS.statements.filter((s) => s.file === 'index.js')).toHaveLength(1);
     expect(sql).toMatch(/FROM\s+public\.inventory_items\s+i\b/);
   });
 
@@ -375,7 +325,7 @@ describe('GET /api/plants/:id/seed-lots — read through the parent links', () =
   });
 
   it('answers in the shape it always has, behind the same ownership gate', () => {
-    const src = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
+    const src = READS.source('index.js');
     const route = src.slice(src.indexOf('if (seedLotsMatch) {'));
     const body = route.slice(0, route.indexOf('if (idMatch) {'));
     expect(body).toMatch(/const parent = await loadOwnedPlantingRef\(sql, plantId, householdIds\);/);
