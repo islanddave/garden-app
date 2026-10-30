@@ -9,6 +9,7 @@ import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { householdScope } from './household.js';  // V4-ASSIGNLENS-001 opt-in household widening (per-dir copy; bundle-safe)
 import { householdGate } from './household.js';
+import { AUTHORIZED_PARTIES } from './request-context.js';
 import { applyDone, planItemIds } from './doneEvents.js';  // V3-TODAYDONE-001 vocabulary + pure fold (per-dir copy; bundle-safe)
 import { matchCueImpressionRoute, handleCueImpressionPost } from './cue-impression.js';  // OPS-CUEINSTRUMENT-001 write path (dependency-free; CI-executable)
 import { readColdRange } from './coldRange.js';  // V5-WXCOLDBAND-001 tonight's forecast cold range (own module; dependency-free)
@@ -48,7 +49,7 @@ export const handler = async (event) => {
   try {
     const payload = await verifyToken(token, {
       secretKey: secrets.CLERK_SECRET_KEY,
-      authorizedParties: ['https://garden.futureishere.net', 'https://dg6mmjhepoyt9.cloudfront.net'],
+      authorizedParties: AUTHORIZED_PARTIES,
     });
     userId = payload.sub;
   } catch (err) {

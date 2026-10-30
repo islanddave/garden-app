@@ -70,6 +70,7 @@ import { applyDerive } from './crop-derive.js';
 import { checkRateLimit, withRetryAfter } from './rate-limit.js';
 import { householdScope, loadOwnedPhoto, warnRejectedFk } from './household.js';
 import { householdGate } from './household.js';
+import { AUTHORIZED_PARTIES } from './request-context.js';
 import { loadOwnedProject } from './authz-parents.js';
 import { managedPrincipalPatterns, canEditSource, canEditVariety } from './authz.js';
 import { blendRoute, restoreConflictMessage } from './blend.js';
@@ -170,10 +171,7 @@ export const handler = async (event) => {
   try {
     const payload = await verifyToken(token, {
       secretKey: secrets.CLERK_SECRET_KEY,
-      authorizedParties: [
-        'https://garden.futureishere.net',
-        'https://dg6mmjhepoyt9.cloudfront.net',
-      ],
+      authorizedParties: AUTHORIZED_PARTIES,
     });
     userId = payload.sub;
   } catch (err) {

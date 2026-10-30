@@ -6,6 +6,7 @@ import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { householdScope, loadOwnedSpace, loadOwnedLocation, loadOwnedInventoryItem, warnRejectedFk } from './household.js';
 import { householdGate } from './household.js';
+import { AUTHORIZED_PARTIES } from './request-context.js';
 // BUG-PARENTOWN-001: body-supplied PARENT-id loaders for the five photo parents household.js does
 // not cover. See lambda/authz-parents.js for the contract and for why they live in a separate file.
 import { loadOwnedProject, loadOwnedPlantingRef, loadOwnedEvent } from './authz-parents.js';
@@ -545,10 +546,7 @@ export const handler = async (event) => {
   try {
     const payload = await verifyToken(token, {
       secretKey: secrets.CLERK_SECRET_KEY,
-      authorizedParties: [
-        'https://garden.futureishere.net',
-        'https://dg6mmjhepoyt9.cloudfront.net',
-      ],
+      authorizedParties: AUTHORIZED_PARTIES,
     });
     userId = payload.sub;
   } catch (err) {

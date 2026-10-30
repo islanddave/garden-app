@@ -38,6 +38,7 @@ import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } fro
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { householdScope } from './household.js';
 import { householdGate } from './household.js';
+import { AUTHORIZED_PARTIES } from './request-context.js';
 import { isJpeg, stripJpegExif } from './exif.js';
 import {
   GRAPH_VERSION, MAX_PHOTOS, photoUploadUrl, feedUrl, nodeUrl,
@@ -259,7 +260,7 @@ export const handler = async (event, context) => {
   try {
     const payload = await verifyToken(token, {
       secretKey: secrets.CLERK_SECRET_KEY,
-      authorizedParties: ['https://garden.futureishere.net', 'https://dg6mmjhepoyt9.cloudfront.net'],
+      authorizedParties: AUTHORIZED_PARTIES,
     });
     userId = payload.sub;
   } catch (err) {

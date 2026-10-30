@@ -8,6 +8,7 @@ import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { householdScope, loadOwnedPhoto } from './household.js';
 import { householdGate } from './household.js';
+import { AUTHORIZED_PARTIES } from './request-context.js';
 import { reconcilePlantAttribution, plantingLabel } from './attribution.js';
 import { VALID_SOURCE_KINDS, normalizeSourceLabel } from './provenance.js';
 import { classifyUseBy, dayMs, USE_SOON_FRACTION, etDay, ET_TZ } from './useBy.js';
@@ -195,10 +196,7 @@ export const handler = async (event) => {
   try {
     const payload = await verifyToken(token, {
       secretKey: secrets.CLERK_SECRET_KEY,
-      authorizedParties: [
-        'https://garden.futureishere.net',
-        'https://dg6mmjhepoyt9.cloudfront.net',
-      ],
+      authorizedParties: AUTHORIZED_PARTIES,
     });
     userId = payload.sub;
   } catch (err) {

@@ -40,6 +40,7 @@ import {
   adminRefusal, isAdmin, projectAppConfig, APP_CONFIG_KEYS, UUID_RE,
 } from './validators.js'
 import { householdGate } from './household.js'
+import { AUTHORIZED_PARTIES } from './request-context.js'
 
 // Deploy marker — fires once per cold start. Smoke step greps last 5min CloudWatch for this string.
 // L-072 / L-104 family: green tests ≠ green deploy. Marker proves the *running* Lambda is current.
@@ -191,10 +192,7 @@ export const handler = async (event) => {
   try {
     const payload = await verifyToken(token, {
       secretKey: secrets.CLERK_SECRET_KEY,
-      authorizedParties: [
-        'https://garden.futureishere.net',
-        'https://dg6mmjhepoyt9.cloudfront.net',
-      ],
+      authorizedParties: AUTHORIZED_PARTIES,
     })
     userId = payload.sub
   } catch (err) {

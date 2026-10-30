@@ -16,6 +16,7 @@ import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { householdScope } from './household.js';
 import { householdGate } from './household.js';
+import { AUTHORIZED_PARTIES } from './request-context.js';
 import { assembleBulkEntities } from './bulk.js';
 import { applyDerive } from './crop-derive.js';
 import { checkRateLimit, withRetryAfter } from './rate-limit.js';
@@ -70,11 +71,7 @@ export const handler = async (event) => {
   try {
     const payload = await verifyToken(token, {
       secretKey: secrets.CLERK_SECRET_KEY,
-      authorizedParties: [
-        'https://garden.futureishere.net',
-        'https://dg6mmjhepoyt9.cloudfront.net',
-        'https://staging.garden.futureishere.net',
-      ],
+      authorizedParties: AUTHORIZED_PARTIES,
     });
     userId = payload.sub;
   } catch (err) {

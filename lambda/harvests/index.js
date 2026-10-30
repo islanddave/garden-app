@@ -45,6 +45,7 @@ import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { householdScope } from './household.js';
 import { householdGate } from './household.js';
+import { AUTHORIZED_PARTIES } from './request-context.js';
 // Pure, DB-free helpers live in ./aggregate.js so they unit-test without this file's runtime deps
 // (neon/clerk/aws — absent from root package.json under CI `npm ci`). See lambda/preservation/attribution.js.
 import { parseTimeframe, encodeCursor, decodeCursor, projectEntry, computeAggregates, applyWeights, applyCropHeroPhotos } from './aggregate.js';
@@ -107,7 +108,7 @@ export const handler = async (event) => {
   try {
     const payload = await verifyToken(token, {
       secretKey: secrets.CLERK_SECRET_KEY,
-      authorizedParties: ['https://garden.futureishere.net', 'https://dg6mmjhepoyt9.cloudfront.net'],
+      authorizedParties: AUTHORIZED_PARTIES,
     });
     userId = payload.sub;
   } catch (err) {

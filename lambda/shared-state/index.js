@@ -2,6 +2,7 @@ import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { householdGate, householdActive } from './household.js';
+import { AUTHORIZED_PARTIES } from './request-context.js';
 
 // garden_shared_state — the shared-garden reward substrate (V3-REWARDSTATE-001).
 // Workspace-shared (not per-user): until V4 Workspaces there is no `workspaces` table on
@@ -55,10 +56,7 @@ export const handler = async (event) => {
   try {
     const payload = await verifyToken(token, {
       secretKey: secrets.CLERK_SECRET_KEY,
-      authorizedParties: [
-        'https://garden.futureishere.net',
-        'https://dg6mmjhepoyt9.cloudfront.net',
-      ],
+      authorizedParties: AUTHORIZED_PARTIES,
     });
     userId = payload.sub;
   } catch (err) {

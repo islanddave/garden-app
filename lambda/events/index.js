@@ -31,6 +31,7 @@ import { validateClear, resolveFlagPair, resolveMetadataArm } from './clearField
 import { computeStreak, STREAK_GRACE_DAYS } from './streak.js';
 import { householdScope, loadOwnedLocation, loadOwnedInventoryItem, warnRejectedFk } from './household.js';
 import { householdGate } from './household.js';
+import { AUTHORIZED_PARTIES } from './request-context.js';
 import {
   FRUITING_SOURCE_STATUSES, FLOWERING_SOURCE_STATUSES,
   HARVESTED_EVENT_TYPES, HARVESTED_SOURCE_STATUSES,
@@ -197,10 +198,7 @@ export const handler = async (event) => {
   try {
     const payload = await verifyToken(token, {
       secretKey: secrets.CLERK_SECRET_KEY,
-      authorizedParties: [
-        'https://garden.futureishere.net',
-        'https://dg6mmjhepoyt9.cloudfront.net',
-      ],
+      authorizedParties: AUTHORIZED_PARTIES,
     });
     userId = payload.sub;
   } catch (err) {
