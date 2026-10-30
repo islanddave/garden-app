@@ -21,21 +21,13 @@
 // columns the migration's own post gates assert, so a column the handler reads that the view does not
 // project reds HERE, offline, rather than first in the prod audit.
 import { describe, it, expect } from 'vitest';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { decommentSqlDashBare as decomment } from '../_test-stubs/handlerSource.js';
+import { DISTINCT_FROM, SQL_TEMPLATE, handlersIn, tableReads } from '../_test-stubs/columnContract.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-
-// Same comment stripping as scripts/dev-main-schema-audit.py _decomment_js.
-const decomment = (s) => s.split('\n')
-  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--(\s.*)?$/, '$1'))
-  .join('\n');
-
-// Every handler in THIS directory — the set Phase 4 groups together.
-const HANDLERS = readdirSync(__dirname)
-  .filter((f) => f.endsWith('.js') && !/\.(test|spec)\.js$/.test(f))
-  .sort();
 
 // L-081 KEYED contract: exactly the columns season-stats.js names, per view.
 const AUDIT_COLUMNS = {
@@ -57,35 +49,18 @@ const AUDIT_COLUMNS = {
 
 const RELATIONS = Object.keys(AUDIT_COLUMNS);
 
-// Extraction mirrors scripts/dev-main-schema-audit.py: only SQL inside a tagged sql`` template counts.
-const SQL_TEMPLATE = /sql`([\s\S]*?)`/g;
-const DISTINCT_FROM = /\bIS\s+(?:NOT\s+)?DISTINCT\s+FROM\b/gi;
+// Each view's statements in this directory's handlers, scanned by lambda/_test-stubs/columnContract.js. Its
+// trailing \b keeps stat_planting from matching stat_planting_harvest: several of these names are
+// prefixes of one another.
+const READS = Object.fromEntries(RELATIONS.map((rel) => [rel, tableReads(import.meta.url, rel)]));
 
-// Trailing \b keeps stat_planting from matching stat_planting_harvest, and stat_heat_clock_crop from
-// matching nothing else by prefix — several of these names are prefixes of one another.
-const bindings = (rel, s) => [...s.matchAll(
-  new RegExp(String.raw`\b(?:FROM|JOIN)\s+(?:public\.)?${rel}\b(?!\s*\.)\s*(?:AS\s+)?([a-z_][a-z0-9_]*)?`, 'gi'),
-)].map((m) => (m[1] ?? '').toLowerCase());
-
-const NOT_AN_ALIAS = new Set([
-  'on', 'where', 'using', 'left', 'right', 'inner', 'outer', 'full', 'cross', 'join', 'lateral',
-  'group', 'order', 'limit', 'offset', 'having', 'union', 'except', 'intersect', 'set', 'and',
-  'or', 'not', 'as', 'select', 'from', 'with', 'values', 'for', 'window', 'returning', 'when',
-]);
-
-const aliasesOf = (rel, s) => [...new Set(bindings(rel, s).filter((b) => b && !NOT_AN_ALIAS.has(b)))].sort();
-const unaliasedIn = (rel, s) => bindings(rel, s).filter((b) => !b || NOT_AN_ALIAS.has(b)).length;
-const columnsOf = (rel, s) => [...new Set(aliasesOf(rel, s).flatMap((a) => [...s.matchAll(
-  new RegExp(String.raw`\b${a}\.([a-z_][a-z0-9_]*)\b`, 'gi'),
-)].map((m) => m[1].toLowerCase())))];
-
-const ALL_STATEMENTS = HANDLERS.flatMap((f) => {
+// Every sql template in this directory's handlers, bound or not, for the coverage check below.
+const ALL_STATEMENTS = handlersIn(__dirname).flatMap((f) => {
   const src = decomment(readFileSync(resolve(__dirname, f), 'utf8'));
   return [...src.matchAll(SQL_TEMPLATE)]
     .map((m) => m[1].replace(DISTINCT_FROM, ' '))
     .map((sql) => ({ file: f, sql }));
 });
-const statementsFor = (rel) => ALL_STATEMENTS.filter((s) => bindings(rel, s.sql).length > 0);
 
 // The named columns each view's post gates assert (generated from the views' real output on prod).
 // TWO gate files since V5-SEEDMULTIPARENT-001 (R2a): stat_saved_lot gained parent_count as its last
@@ -107,12 +82,12 @@ function gateColumns(rel) {
 
 describe('V5-SEASONSTATS-001 — lambda/harvests stat_* view column contract', () => {
   it('finds the statements, so the assertions below are not vacuous', () => {
-    expect(HANDLERS).toContain('season-stats.js');
+    expect(handlersIn(__dirname)).toContain('season-stats.js');
     // Exactly one read per view: a second statement should be reviewed against the contract rather
     // than inherit it. Update in the same commit that adds one.
     for (const rel of RELATIONS) {
-      expect(statementsFor(rel), rel).toHaveLength(1);
-      expect(statementsFor(rel)[0].file, rel).toBe('season-stats.js');
+      expect(READS[rel].statements, rel).toHaveLength(1);
+      expect(READS[rel].statements[0].file, rel).toBe('season-stats.js');
     }
   });
 
@@ -132,8 +107,8 @@ describe('V5-SEASONSTATS-001 — lambda/harvests stat_* view column contract', (
 
   for (const rel of RELATIONS) {
     it(`${rel}: no unaliased read, and the columns read are exactly the contract`, () => {
-      expect(statementsFor(rel).reduce((n, s) => n + unaliasedIn(rel, s.sql), 0)).toBe(0);
-      const referenced = [...new Set(statementsFor(rel).flatMap((s) => columnsOf(rel, s.sql)))].sort();
+      expect(READS[rel].unaliased).toBe(0);
+      const referenced = READS[rel].referenced();
       expect(referenced.length).toBeGreaterThan(0);
       expect(referenced).toEqual([...AUDIT_COLUMNS[rel]].sort());
     });

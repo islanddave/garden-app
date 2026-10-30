@@ -27,23 +27,17 @@
 //
 // Static source inspection, like every contract in this directory.
 import { describe, it, expect } from 'vitest';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { decommentSqlDashBare as decomment } from '../_test-stubs/handlerSource.js';
+import { handlersIn, ownContract } from '../_test-stubs/columnContract.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// A construct NAMED IN A COMMENT is not that construct — the sibling contracts' decomment step, in
-// cultivar-columns.test.js's form (it also strips a bare `--` separator line).
-const decomment = (s) => s.split('\n')
-  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--(\s.*)?$/, '$1'))
-  .join('\n');
-
 // Every handler module in THIS directory — the set Phase 4 groups together. Read from disk, so a
 // module added here that names the table is covered the day it lands.
-const HANDLERS = readdirSync(__dirname)
-  .filter((f) => f.endsWith('.js') && !/\.(test|spec)\.js$/.test(f))
-  .sort();
+const HANDLERS = handlersIn(__dirname);
 
 const TABLE = 'seed_lot_parent_planting';
 
@@ -310,14 +304,12 @@ describe('V5-SEEDMULTIPARENT-001 — lambda/inventory-items seed_lot_parent_plan
     // uncovered, which is the ratchet going from 47 to 48.
     const self = readFileSync(fileURLToPath(import.meta.url), 'utf8');
     expect(self).not.toMatch(/const\s+AUDIT_TABLES\s*=/);
-    const decl = self.match(/const\s+AUDIT_COLUMNS\s*=\s*\{([\s\S]*?)\};/);
-    expect(decl, 'AUDIT_COLUMNS literal not found by the auditor pattern').not.toBeNull();
-    expect(decl[1]).not.toMatch(/\bconst\b/);
-    const pairs = [...decl[1].matchAll(/['"]?([a-zA-Z_]\w*)['"]?\s*:\s*\[([^\]]*)\]/g)];
-    expect(pairs.map((m) => m[1])).toEqual([TABLE, ADDITION_TABLE]);
-    const cols = [...pairs[0][2].matchAll(/['"]([a-zA-Z_][a-zA-Z0-9_]*)['"]/g)].map((m) => m[1]);
+    const parsed = ownContract(import.meta.url);
+    expect(parsed, 'AUDIT_COLUMNS literal not found by the auditor pattern').not.toBeNull();
+    expect(parsed.map(([key]) => key)).toEqual([TABLE, ADDITION_TABLE]);
+    const cols = parsed[0][1];
     expect(cols).toEqual(CONTRACT);
-    const additionCols = [...pairs[1][2].matchAll(/['"]([a-zA-Z_][a-zA-Z0-9_]*)['"]/g)].map((m) => m[1]);
+    const additionCols = parsed[1][1];
     expect(additionCols).toEqual(ADDITION_CONTRACT);
   });
 });

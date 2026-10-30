@@ -36,6 +36,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ownContract } from '../_test-stubs/columnContract.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -140,14 +141,11 @@ describe('BUG-SPACESREADUNSCOPED-001 — daily-plan `spaces` column contract (L-
 
   it('exposes the contract in the shape scripts/dev-main-schema-audit.py parses, under its Phase 1 glob', () => {
     // The auditor reads TEXT: replicate its own regexes against this file. The closing `};` is load-bearing.
-    const self = readFileSync(fileURLToPath(import.meta.url), 'utf8');
-    const decl = self.match(/const\s+AUDIT_COLUMNS\s*=\s*\{([\s\S]*?)\};/);
-    expect(decl).not.toBeNull();
-    expect(decl[1]).not.toMatch(/\bconst\b/);
-    const pairs = [...decl[1].matchAll(/['"]?([a-zA-Z_]\w*)['"]?\s*:\s*\[([^\]]*)\]/g)];
-    expect(pairs.map((m) => m[1])).toEqual(['spaces', 'plots']);
-    expect([...pairs[0][2].matchAll(/['"]([a-zA-Z_][a-zA-Z0-9_]*)['"]/g)].map((m) => m[1])).toEqual(AUDIT_COLUMNS.spaces);
-    expect([...pairs[1][2].matchAll(/['"]([a-zA-Z_][a-zA-Z0-9_]*)['"]/g)].map((m) => m[1])).toEqual(AUDIT_COLUMNS.plots);
+    const parsed = ownContract(import.meta.url);
+    expect(parsed).not.toBeNull();
+    expect(parsed.map(([key]) => key)).toEqual(['spaces', 'plots']);
+    expect(parsed[0][1]).toEqual(AUDIT_COLUMNS.spaces);
+    expect(parsed[1][1]).toEqual(AUDIT_COLUMNS.plots);
     const audit = readFileSync(join(__dirname, '..', '..', 'scripts', 'dev-main-schema-audit.py'), 'utf8');
     const glob = audit.match(/^PHASE1_GLOB\s*=\s*"([^"]+)"/m)[1];
     expect(new RegExp(`^${glob.replace(/\./g, '\\.').replace(/\*/g, '.*')}$`).test(basename(fileURLToPath(import.meta.url)))).toBe(true);

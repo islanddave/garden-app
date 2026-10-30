@@ -18,22 +18,16 @@
 //
 // Static source inspection rather than import: index.js loads its runtime deps at module scope.
 import { describe, it, expect } from 'vitest';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { decommentSqlDashBare as decomment } from '../_test-stubs/handlerSource.js';
+import { SQL_TEMPLATE, handlersIn } from '../_test-stubs/columnContract.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// A column NAMED IN A COMMENT is not a column reference. The `--(\s.*)?$` arm matches a BARE `--`
-// separator line as well as `-- text` (scripts/dev-main-schema-audit.py:261-273).
-const decomment = (s) => s.split('\n')
-  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--(\s.*)?$/, '$1'))
-  .join('\n');
-
 // Every handler module in THIS directory, read from disk — the set Phase 4 groups together.
-const HANDLERS = readdirSync(__dirname)
-  .filter((f) => f.endsWith('.js') && !/\.(test|spec)\.js$/.test(f))
-  .sort();
+const HANDLERS = handlersIn(__dirname);
 
 // L-081 KEYED contract, per migrations/v5-varietyblend-001 (R2A-CONTRACT section 1). The table also
 // has id, created_at and deleted_at; they are DELIBERATELY ABSENT because no statement here names
@@ -47,7 +41,6 @@ const COMPONENT_COLUMNS = AUDIT_COLUMNS.variety_blend_component;
 // Every column the table has, so a statement naming one that is not contracted is seen.
 const TABLE_COLUMNS = ['id', 'blend_variety_id', 'component_variety_id', 'created_by', 'created_at', 'deleted_at'];
 
-const SQL_TEMPLATE = /sql`([\s\S]*?)`/g;
 const TOUCHES = /\b(?:FROM|JOIN|INSERT\s+INTO|UPDATE)\s+(?:public\.)?variety_blend_component\b/i;
 
 const STATEMENTS = HANDLERS.flatMap((f) => {

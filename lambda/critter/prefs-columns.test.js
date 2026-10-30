@@ -29,23 +29,17 @@
 //
 // Static source inspection rather than import: the contract has to be asserted against the SQL TEXT.
 import { describe, it, expect } from 'vitest';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { decommentSqlDashBare as decomment } from '../_test-stubs/handlerSource.js';
+import { DISTINCT_FROM, SQL_TEMPLATE, handlersIn, ownContract } from '../_test-stubs/columnContract.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// A column NAMED IN A COMMENT is not a column reference. The `--(\s.*)?$` arm matches a BARE `--`
-// separator line as well as `-- text` (scripts/dev-main-schema-audit.py:261-273).
-const decomment = (s) => s.split('\n')
-  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--(\s.*)?$/, '$1'))
-  .join('\n');
-
 // Every handler in THIS directory — the same set Phase 4 groups together. Read from disk rather than
 // hardcoded, so a handler added here that touches the table is covered the day it lands.
-const HANDLERS = readdirSync(__dirname)
-  .filter((f) => f.endsWith('.js') && !/\.(test|spec)\.js$/.test(f))
-  .sort();
+const HANDLERS = handlersIn(__dirname);
 
 // L-081 KEYED contract: every user_notification_prefs column this directory's SQL names, and no other.
 // The first seventeen predate V5-NAVCUSTOM-001; more_pins and bar_layout exist only once
@@ -56,9 +50,6 @@ const AUDIT_COLUMNS = {
 
 const PREFS_COLUMNS = AUDIT_COLUMNS.user_notification_prefs;
 
-const SQL_TEMPLATE = /sql`([\s\S]*?)`/g;
-// `IS [NOT] DISTINCT FROM x.col` contains the literal token FROM (dev-main-schema-audit.py:239-242).
-const DISTINCT_FROM = /\bIS\s+(?:NOT\s+)?DISTINCT\s+FROM\b/gi;
 // Mirrors the auditor's Phase 4 extractor for this one relation. Built fresh on every call, never
 // shared: .test() on a /g/ regex advances lastIndex and would skip matches silently.
 const relationRe = () => /\b(?:FROM|JOIN)\s+(?:public\.)?user_notification_prefs\b(?!\s*\.)/gi;
@@ -210,14 +201,10 @@ describe('OPS-L081COLS-001 — lambda/critter user_notification_prefs column con
     // warning and NO skip count. A misspelled KEY is worse: Phase 1's empty-relation guard returns exit 2
     // and schema-audit.yml maps exit 2 to a ::warning and exit 0, so one typo silences all four phases
     // behind a green check. Replicate the auditor's own two regexes against this file's own source.
-    const self = readFileSync(fileURLToPath(import.meta.url), 'utf8');
-    const decl = self.match(/const\s+AUDIT_COLUMNS\s*=\s*\{([\s\S]*?)\};/);
-    expect(decl).not.toBeNull();
-    // The match must stop at the block's OWN `};`, not run on to the next one in the file.
-    expect(decl[1]).not.toMatch(/\bconst\b/);
-    const pairs = [...decl[1].matchAll(/['"]?([a-zA-Z_]\w*)['"]?\s*:\s*\[([^\]]*)\]/g)];
-    expect(pairs.map((m) => m[1])).toEqual(['user_notification_prefs']);
-    const cols = [...pairs[0][2].matchAll(/['"]([a-zA-Z_][a-zA-Z0-9_]*)['"]/g)].map((m) => m[1]);
+    const parsed = ownContract(import.meta.url);
+    expect(parsed).not.toBeNull();
+    expect(parsed.map(([key]) => key)).toEqual(['user_notification_prefs']);
+    const cols = parsed[0][1];
     expect(cols).toEqual(PREFS_COLUMNS);
   });
 });

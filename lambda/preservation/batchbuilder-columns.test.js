@@ -15,6 +15,8 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { decommentSqlDashBare as decomment } from '../_test-stubs/handlerSource.js';
+import { ownContract } from '../_test-stubs/columnContract.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -36,9 +38,6 @@ const PINNED = {
   kitchen_batch_input: ['pantry_item_id'],
 };
 
-const decomment = (s) => s.split('\n')
-  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--(\s.*)?$/, '$1'))
-  .join('\n');
 // Scoped to release 3's own modules: the pantry-server lane's pantryItems.js / pantryRoutes.js read
 // pantry_item under their own contract (pantry-columns.test.js), and its `i` alias is shared with
 // kitchen_batch_input elsewhere, so a directory-wide scan would credit those reads here.
@@ -78,11 +77,8 @@ describe('V5-BATCHBUILDER-001 — pantry_item / pantry_item_id contract', () => 
   });
 
   it('exposes the contract in the shape scripts/dev-main-schema-audit.py can parse', () => {
-    const self = readFileSync(fileURLToPath(import.meta.url), 'utf8');
-    const decl = self.match(/const\s+AUDIT_COLUMNS\s*=\s*\{([\s\S]*?)\};/);
-    expect(decl).not.toBeNull();
-    expect(decl[1]).not.toMatch(/\bconst\b/);
-    const pairs = [...decl[1].matchAll(/['"]?([a-zA-Z_]\w*)['"]?\s*:\s*\[([^\]]*)\]/g)];
-    expect(pairs.map((m) => m[1])).toEqual(Object.keys(AUDIT_COLUMNS));
+    const parsed = ownContract(import.meta.url);
+    expect(parsed).not.toBeNull();
+    expect(parsed.map(([key]) => key)).toEqual(Object.keys(AUDIT_COLUMNS));
   });
 });

@@ -22,19 +22,13 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { decommentSqlDashBare as decomment } from '../_test-stubs/handlerSource.js';
+import { DISTINCT_FROM, SQL_TEMPLATE, handlersIn, ownContract } from '../_test-stubs/columnContract.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// A column NAMED IN A COMMENT is not a column reference. The `--(\s.*)?$` arm matches a bare `--`
-// separator line too (scripts/dev-main-schema-audit.py _decomment_js).
-const decomment = (s) => s.split('\n')
-  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--(\s.*)?$/, '$1'))
-  .join('\n');
-
 // Every handler in THIS directory: the same set Phase 4 groups together.
-const HANDLERS = readdirSync(__dirname)
-  .filter((f) => f.endsWith('.js') && !/\.(test|spec)\.js$/.test(f))
-  .sort();
+const HANDLERS = handlersIn(__dirname);
 
 // L-081 KEYED contract: every column the two refusals' SQL names, per relation. Each is a column the
 // Pantry list already reads on prod through lambda/preservation (pantryRoutes.js listPantry), whose own
@@ -50,8 +44,6 @@ const AUDIT_COLUMNS = {
 
 // Extraction mirrors scripts/dev-main-schema-audit.py parse_sql_relations, so this guard sees the
 // statements Phase 4 credits. Only SQL inside a tagged sql`` template counts.
-const SQL_TEMPLATE = /sql`([\s\S]*?)`/g;
-const DISTINCT_FROM = /\bIS\s+(?:NOT\s+)?DISTINCT\s+FROM\b/gi;
 const RELATION = /\b(?:FROM|JOIN)\s+(?:public\.)?([a-z_][a-z0-9_]*)(?!\s*\.)/gi;
 const CTE_DECL = /(?:\bWITH\s+(?:RECURSIVE\s+)?|,)\s*([a-z_][a-z0-9_]*)\s+AS\s*(?:NOT\s+)?(?:MATERIALIZED\s*)?\(/gi;
 
@@ -131,14 +123,10 @@ describe('Put-Up R2a — lambda/storage-location preservation_log / pantry_item 
   it('exposes the contract in the shape scripts/dev-main-schema-audit.py can parse', () => {
     // The terminating `};` is mandatory: without it _AUDIT_COLUMNS_DECL ignores the whole block with no
     // warning, and Phase 4 keeps counting both relations as uncovered. Plain string literals only.
-    const self = readFileSync(fileURLToPath(import.meta.url), 'utf8');
-    const decl = self.match(/const\s+AUDIT_COLUMNS\s*=\s*\{([\s\S]*?)\};/);
-    expect(decl).not.toBeNull();
-    expect(decl[1]).not.toMatch(/\bconst\b/);
-    const pairs = [...decl[1].matchAll(/['"]?([a-zA-Z_]\w*)['"]?\s*:\s*\[([^\]]*)\]/g)];
-    expect(pairs.map((m) => m[1])).toEqual(Object.keys(AUDIT_COLUMNS));
-    for (const [, table, body] of pairs) {
-      const cols = [...body.matchAll(/['"]([a-zA-Z_][a-zA-Z0-9_]*)['"]/g)].map((m) => m[1]);
+    const parsed = ownContract(import.meta.url);
+    expect(parsed).not.toBeNull();
+    expect(parsed.map(([key]) => key)).toEqual(Object.keys(AUDIT_COLUMNS));
+    for (const [table, cols] of parsed) {
       expect(cols).toEqual(AUDIT_COLUMNS[table]);
     }
   });

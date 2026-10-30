@@ -24,12 +24,10 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { decommentSqlDashSpace as decomment } from '../_test-stubs/handlerSource.js';
+import { ownContract } from '../_test-stubs/columnContract.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-
-const decomment = (s) => s.split('\n')
-  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
-  .join('\n');
 
 // V5-SEEDMULTIPARENT-001 — TWO modules read garden_node now. seed-lot-parents.js carries the counted
 // ownership gate and the parents read (the `source_plants` projection), and that read is the one new
@@ -296,15 +294,10 @@ describe('BUG-SEEDDETAIL500-001 — garden_node column contract', () => {
     // The auditor's own regexes (_AUDIT_COLUMNS_DECL, _AUDIT_COLUMNS_PAIR, the quoted-identifier
     // collector), run over this file: what it will audit against prod must be exactly the literal the
     // assertions above use. The terminating `};` is mandatory — without it the auditor skips the block.
-    const self = readFileSync(fileURLToPath(import.meta.url), 'utf8');
-    const decl = self.match(/const\s+AUDIT_COLUMNS\s*=\s*\{([\s\S]*?)\};/);
-    expect(decl, 'AUDIT_COLUMNS literal not found by the auditor pattern').toBeTruthy();
-    // The match must stop at the block's OWN `};`, not run on to the next one in the file.
-    expect(decl[1]).not.toMatch(/\bconst\b/);
-    const pairs = [...decl[1].matchAll(/['"]?([a-zA-Z_]\w*)['"]?\s*:\s*\[([^\]]*)\]/g)];
-    expect(pairs.map((m) => m[1]).sort()).toEqual(Object.keys(AUDIT_COLUMNS).sort());
-    for (const [, table, body] of pairs) {
-      const cols = [...body.matchAll(/['"]([a-zA-Z_][a-zA-Z0-9_]*)['"]/g)].map((m) => m[1]);
+    const parsed = ownContract(import.meta.url);
+    expect(parsed, 'AUDIT_COLUMNS literal not found by the auditor pattern').toBeTruthy();
+    expect(parsed.map(([key]) => key).sort()).toEqual(Object.keys(AUDIT_COLUMNS).sort());
+    for (const [table, cols] of parsed) {
       expect(cols, table).toEqual(AUDIT_COLUMNS[table]);
     }
   });

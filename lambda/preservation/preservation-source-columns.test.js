@@ -28,15 +28,9 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { decommentSqlDashBare as decomment } from '../_test-stubs/handlerSource.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-
-// A column NAMED IN A COMMENT is not a column reference. Without this the header above — which names
-// source_kind and source_label while explaining why they must be declared — would itself satisfy the
-// assertion that the SQL references them.
-const decomment = (s) => s.split('\n')
-  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--(\s.*)?$/, '$1'))
-  .join('\n');
 
 const HANDLER = 'sourceRoutes.js';
 const SRC = decomment(readFileSync(resolve(__dirname, HANDLER), 'utf8'));

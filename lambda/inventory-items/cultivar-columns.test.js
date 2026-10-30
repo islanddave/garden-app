@@ -22,26 +22,7 @@
 // Static source inspection rather than import: lambda/_test-stubs make the handlers importable, but
 // the stub never evaluates SQL, so the columns a statement names are visible only in its source text.
 import { describe, it, expect } from 'vitest';
-import { readFileSync, readdirSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
-// A column NAMED IN A COMMENT is not a column reference. The `--(\s.*)?$` arm matches a BARE `--`
-// separator line as well as `-- text`; the `--\s.*$` form that 156 other files in this repo carry
-// does not, and a surviving `--` hides the CTE declaration that follows it
-// (scripts/dev-main-schema-audit.py:261-273).
-const decomment = (s) => s.split('\n')
-  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--(\s.*)?$/, '$1'))
-  .join('\n');
-
-// Every handler in THIS directory — the same set Phase 4 groups together. Read from disk rather
-// than hardcoded, so a handler added here that JOINs cultivar is covered the day it lands
-// instead of the day someone remembers to extend a list.
-const HANDLERS = readdirSync(__dirname)
-  .filter((f) => f.endsWith('.js') && !/\.(test|spec)\.js$/.test(f))
-  .sort();
+import { SQL_TEMPLATE, ownContract, tableReads } from '../_test-stubs/columnContract.js';
 
 // L-081 KEYED contract. Every column below verified present on public.cultivar in live prod Neon on
 // 2026-08-29 (42 columns), read through the read-only role.
@@ -92,43 +73,8 @@ const AUDIT_COLUMNS = {
 
 const CULTIVAR_COLUMNS = AUDIT_COLUMNS.cultivar;
 
-// Extraction mirrors scripts/dev-main-schema-audit.py:238-286 so this guard sees the same
-// statements Phase 4 credits. Only SQL inside a tagged sql`` template counts.
-const SQL_TEMPLATE = /sql`([\s\S]*?)`/g;
-// `IS [NOT] DISTINCT FROM x.col` contains the literal token FROM. Scrub it BEFORE scanning or the
-// operator's right-hand alias is captured as a relation — that is where the auditor's `l` phantom
-// came from (dev-main-schema-audit.py:239-242).
-const DISTINCT_FROM = /\bIS\s+(?:NOT\s+)?DISTINCT\s+FROM\b/gi;
-
-// Regex literals are re-created on every evaluation, so each call gets a fresh lastIndex. The alias
-// group is OPTIONAL: an unaliased `FROM public.cultivar WHERE ...` captures the next keyword,
-// which NOT_AN_ALIAS rejects and UNALIASED_ARMS then has to account for by hand.
-const bindings = (s) => [...s.matchAll(
-  /\b(?:FROM|JOIN)\s+(?:public\.)?cultivar\b(?!\s*\.)\s*(?:AS\s+)?([a-z_][a-z0-9_]*)?/gi,
-)].map((m) => (m[1] ?? '').toLowerCase());
-
-const NOT_AN_ALIAS = new Set([
-  'on', 'where', 'using', 'left', 'right', 'inner', 'outer', 'full', 'cross', 'join', 'lateral',
-  'group', 'order', 'limit', 'offset', 'having', 'union', 'except', 'intersect', 'set', 'and',
-  'or', 'not', 'as', 'select', 'from', 'with', 'values', 'for', 'window', 'returning', 'when',
-]);
-
-const aliasesOf = (s) => [...new Set(bindings(s).filter((b) => b && !NOT_AN_ALIAS.has(b)))].sort();
-const unaliasedIn = (s) => bindings(s).filter((b) => !b || NOT_AN_ALIAS.has(b)).length;
-
-// Scoped to statements that BIND cultivar, so an `x.col` belonging to some other query in the
-// same file can never be read as this table's.
-const columnsOf = (s) => [...new Set(aliasesOf(s).flatMap((a) => [...s.matchAll(
-  new RegExp(String.raw`\b${a}\.([a-z_][a-z0-9_]*)\b`, 'gi'),
-)].map((m) => m[1].toLowerCase())))];
-
-const STATEMENTS = HANDLERS.flatMap((f) => {
-  const src = decomment(readFileSync(resolve(__dirname, f), 'utf8'));
-  return [...src.matchAll(SQL_TEMPLATE)]
-    .map((m) => m[1].replace(DISTINCT_FROM, ' '))
-    .filter((s) => bindings(s).length > 0)
-    .map((sql) => ({ file: f, sql }));
-});
+// The cultivar statements in this directory's handlers, scanned by lambda/_test-stubs/columnContract.js.
+const READS = tableReads(import.meta.url, 'cultivar');
 
 // Reads that name cultivar with NO alias. Nothing can attribute their bare identifiers
 // automatically — the surrounding query may scan other tables through their own aliases — so each
@@ -138,7 +84,7 @@ const UNALIASED_ARMS = [];
 
 describe('OPS-SCHEMAAUDITJOIN-001 — lambda/inventory-items cultivar column contract', () => {
   it('finds the cultivar statements, so the assertions below are not vacuous', () => {
-    expect(HANDLERS.length).toBeGreaterThan(0);
+    expect(READS.handlers.length).toBeGreaterThan(0);
     // Exact count, not a floor: a new statement against this table should be reviewed against the
     // contract rather than inherit it. Update this number in the same commit that adds one.
     // 3 -> 4 with V5-SEEDMULTIPARENT-001: seed-lot-parents.js readSourcePlants LEFT JOINs the
@@ -167,17 +113,17 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/inventory-items cultivar column con
     //                          the filed variety's rank in the scalar subquery the POST's RETURNING
     //                          uses (pv.id, pv.variety_rank: both already in the contract above, so
     //                          the list did not move), so a replay has a fresh create's projection.
-    expect(STATEMENTS).toHaveLength(13);
-    const perFile = Object.fromEntries(HANDLERS.map((f) => [f, STATEMENTS.filter((s) => s.file === f).length]));
+    expect(READS.statements).toHaveLength(13);
+    const perFile = Object.fromEntries(READS.handlers.map((f) => [f, READS.statements.filter((s) => s.file === f).length]));
     expect(Object.fromEntries(Object.entries(perFile).filter(([, count]) => count > 0))).toEqual({
       'index.js': 6, 'seed-lot-additions.js': 1, 'seed-lot-filing.js': 2, 'seed-lot-parents.js': 1, 'seed-lot-rules.js': 3,
     });
-    const openLots = STATEMENTS.find((s) => s.file === 'seed-lot-additions.js').sql;
-    expect(bindings(openLots)).toEqual(['pv', 'pv', 'pv']);
-    expect(columnsOf(openLots).sort()).toEqual(['crop_type_slug', 'display_name', 'id', 'variety_rank']);
+    const openLots = READS.statements.find((s) => s.file === 'seed-lot-additions.js').sql;
+    expect(READS.bindings(openLots)).toEqual(['pv', 'pv', 'pv']);
+    expect(READS.columnsOf(openLots).sort()).toEqual(['crop_type_slug', 'display_name', 'id', 'variety_rank']);
     // Two aliases, and they mean two different rows: `pv` is the variety a row resolves through
     // (the lot's, or a parent planting's); `fv` is the variety a lot is, or is about to be, FILED under.
-    expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
+    expect(READS.aliases)
       .toEqual(['fv', 'pv']);
   });
 
@@ -185,11 +131,11 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/inventory-items cultivar column con
     // R2A-CONTRACT section 3: "a soft-deleted cultivar still counts as the planting's variety here,
     // in the rules below and as a mix component". So no statement may filter the parent-side alias on
     // deleted_at or created_by; those two columns are in the contract for `fv` alone.
-    for (const { file, sql } of STATEMENTS) {
+    for (const { file, sql } of READS.statements) {
       expect(sql, `${file}: pv.deleted_at filters a planting's variety`).not.toMatch(/\bpv\.deleted_at\b/);
       expect(sql, `${file}: pv.created_by scopes a planting's variety`).not.toMatch(/\bpv\.created_by\b/);
     }
-    const filed = STATEMENTS.filter(({ sql }) => aliasesOf(sql).includes('fv'));
+    const filed = READS.statements.filter(({ sql }) => READS.aliasesOf(sql).includes('fv'));
     expect(filed.map((s) => s.file).sort()).toEqual(['seed-lot-filing.js', 'seed-lot-rules.js', 'seed-lot-rules.js']);
     for (const { file, sql } of filed) expect(sql, file).toMatch(/\bfv\.deleted_at IS NULL\b/);
   });
@@ -198,10 +144,10 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/inventory-items cultivar column con
     // The column does not exist until migrations/v5-varietyblend-001 is applied. Keeping it out of
     // every statement the app issues today means a deploy that got ahead of that migration breaks
     // only requests naming two or more parent plantings, which no shipped client sends.
-    const naming = STATEMENTS.filter(({ sql }) => /\bblend_key\b/.test(sql));
+    const naming = READS.statements.filter(({ sql }) => /\bblend_key\b/.test(sql));
     expect(naming.map((s) => s.file)).toEqual(['seed-lot-rules.js', 'seed-lot-rules.js', 'seed-lot-rules.js']);
     for (const f of ['index.js', 'seed-lot-parents.js', 'seed-lot-filing.js']) {
-      const src = decomment(readFileSync(resolve(__dirname, f), 'utf8'));
+      const src = READS.source(f);
       const templates = [...src.matchAll(SQL_TEMPLATE)].map((m) => m[1]);
       expect(templates.filter((t) => /\bblend_key\b/.test(t)), f).toEqual([]);
     }
@@ -211,7 +157,7 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/inventory-items cultivar column con
     // Release 2a: list (both templates), detail, and the POST and wide-PUT replies. The union above
     // stays green if one of them drops it, so it is pinned per statement.
     // Six with BUG-NEWLOTNOIDEMPOTENCYKEY-001: the by-key read that answers a replayed create.
-    const inIndex = STATEMENTS.filter((s) => s.file === 'index.js');
+    const inIndex = READS.statements.filter((s) => s.file === 'index.js');
     expect(inIndex).toHaveLength(6);
     for (const { sql } of inIndex) expect(sql).toMatch(/\bpv\.variety_rank\b/);
     // The two that are writes read it in RETURNING, off the row as the statement left it.
@@ -225,19 +171,14 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/inventory-items cultivar column con
   it('accounts for every unaliased cultivar read', () => {
     // An unaliased read added without a pin here would slip past columnsOf() entirely and the
     // tightness assertion below would still pass — this count is what closes that hole.
-    const bare = STATEMENTS.reduce((n, s) => n + unaliasedIn(s.sql), 0);
-    expect(bare).toBe(UNALIASED_ARMS.length);
+    expect(READS.unaliased).toBe(UNALIASED_ARMS.length);
     for (const arm of UNALIASED_ARMS) {
-      const src = decomment(readFileSync(resolve(__dirname, arm.file), 'utf8'));
-      expect(arm.pin.test(src), `unaliased arm no longer matches in ${arm.file}: ${arm.pin}`).toBe(true);
+      expect(READS.pinHolds(arm), `unaliased arm no longer matches in ${arm.file}: ${arm.pin}`).toBe(true);
     }
   });
 
   it('references no column absent from the contract, and declares none it does not use', () => {
-    const referenced = [...new Set([
-      ...STATEMENTS.flatMap((s) => columnsOf(s.sql)),
-      ...UNALIASED_ARMS.flatMap((a) => a.columns),
-    ])].sort();
+    const referenced = READS.referenced(UNALIASED_ARMS);
     expect(referenced.length).toBeGreaterThan(0);
     // Both directions. Extra columns are not harmless padding: the contract is what Phase 1 audits
     // against prod, so a column nothing reads makes the audit assert something the code never does.
@@ -248,7 +189,7 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/inventory-items cultivar column con
     // The contract above is a UNION over the directory, so it stays green if one of the three reads
     // drops the source while the other two keep it — and that read would then hand an estimated
     // figure to a card with nothing saying it is one (v5-scovillesource-001). Pinned per statement.
-    const withNumbers = STATEMENTS.filter(({ sql }) => /\bpv\.scoville_(?:min|max)\b/.test(sql));
+    const withNumbers = READS.statements.filter(({ sql }) => /\bpv\.scoville_(?:min|max)\b/.test(sql));
     expect(withNumbers).toHaveLength(3);
     for (const { file, sql } of withNumbers) {
       expect(sql, `${file}: a read projects the scoville numbers without their source`)
@@ -267,7 +208,7 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/inventory-items cultivar column con
       /\bpv\.days_to_maturity_min\b/, /\bpv\.days_to_maturity_max\b/, /\bpv\.dtm_basis\b/,
       /\bpv\.source_url\s+AS\s+variety_source_url\b/, /\bpv\.crop_type_slug\s+AS\s+crop_slug\b/,
     ];
-    const withNumbers = STATEMENTS.filter(({ sql }) => /\bpv\.scoville_(?:min|max)\b/.test(sql));
+    const withNumbers = READS.statements.filter(({ sql }) => /\bpv\.scoville_(?:min|max)\b/.test(sql));
     expect(withNumbers).toHaveLength(3);
     for (const { file, sql } of withNumbers) {
       for (const re of FACTS) expect(sql, `${file}: a seed read is missing ${re}`).toMatch(re);
@@ -286,12 +227,7 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/inventory-items cultivar column con
     const NOT_ON_TABLE = ['name', 'unit_weights', 'weight_confidence', 'weight_source', 'variety_id'];
     for (const col of NOT_ON_TABLE) {
       expect(CULTIVAR_COLUMNS).not.toContain(col);
-      for (const { file, sql } of STATEMENTS) {
-        for (const a of aliasesOf(sql)) {
-          expect(sql, `${file}: ${a}.${col} is not a cultivar column`)
-            .not.toMatch(new RegExp(String.raw`\b${a}\.${col}\b`, 'i'));
-        }
-      }
+      expect(READS.refsTo(col)).toEqual([]);
       for (const arm of UNALIASED_ARMS) {
         expect(arm.columns, `${arm.file}: ${col} is not a cultivar column`).not.toContain(col);
       }
@@ -304,14 +240,10 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/inventory-items cultivar column con
     // uncovered. A misspelled KEY is worse — Phase 1's empty-relation guard returns exit 2 and
     // schema-audit.yml maps exit 2 to a ::warning and exit 0, so one typo silences all four phases
     // behind a green check. Replicate the auditor's own two regexes against this file's own source.
-    const self = readFileSync(fileURLToPath(import.meta.url), 'utf8');
-    const decl = self.match(/const\s+AUDIT_COLUMNS\s*=\s*\{([\s\S]*?)\};/);
-    expect(decl).not.toBeNull();
-    // The match must stop at the block's OWN `};`, not run on to the next one in the file.
-    expect(decl[1]).not.toMatch(/\bconst\b/);
-    const pairs = [...decl[1].matchAll(/['"]?([a-zA-Z_]\w*)['"]?\s*:\s*\[([^\]]*)\]/g)];
-    expect(pairs.map((m) => m[1])).toEqual(['cultivar']);
-    const cols = [...pairs[0][2].matchAll(/['"]([a-zA-Z_][a-zA-Z0-9_]*)['"]/g)].map((m) => m[1]);
+    const parsed = ownContract(import.meta.url);
+    expect(parsed).not.toBeNull();
+    expect(parsed.map(([key]) => key)).toEqual(['cultivar']);
+    const cols = parsed[0][1];
     expect(cols).toEqual(CULTIVAR_COLUMNS);
   });
 });
