@@ -7,6 +7,7 @@
 //
 // AUDIT: preservation_log and kitchen_batch_input carry statement-level audit triggers, so the write runs
 // in sql.transaction([set_config('app.actor_clerk_sub', <sub>, true), <the one statement>]).
+import { withActor } from './audit-actor.js';
 import { randomUUID } from 'node:crypto';
 import { KITCHEN_UUID_RE, normalizeText } from './kitchenBatch.js';
 import { prepareLines, drawRefusal, MASS_UNITS, MASS_FACTORS } from './lineRoutes.js';
@@ -100,8 +101,7 @@ export async function fromJars(sql, body, userId, householdIds, readDetail) {
 
   let rows;
   try {
-    [, rows] = await sql.transaction([
-      sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+    [, rows] = await withActor(sql, userId, () => [
       sql`
       WITH locked AS (
         SELECT p.id FROM preservation_log p
