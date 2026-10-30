@@ -6,6 +6,7 @@
 import { neon } from '@neondatabase/serverless';
 import { householdScope, loadOwnedPhoto } from './household.js';
 import { requestContext } from './request-context.js';
+import { withActor } from './audit-actor.js';
 import { reconcilePlantAttribution, plantingLabel } from './attribution.js';
 import { VALID_SOURCE_KINDS, normalizeSourceLabel } from './provenance.js';
 import { classifyUseBy, dayMs, USE_SOON_FRACTION, etDay, ET_TZ } from './useBy.js';
@@ -451,8 +452,7 @@ export const handler = async (event) => {
         const hasNotes = has('notes');
         const useBy = body.use_by_target == null ? null : String(body.use_by_target).slice(0, 10);
 
-        const [, rows] = await sql.transaction([
-          sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+        const [, rows] = await withActor(sql, userId, () => [
           sql`
           WITH stored AS (
             SELECT package_count AS stored_package_count, remaining_count AS stored_remaining_count,

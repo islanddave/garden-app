@@ -29,6 +29,7 @@
 // in this directory. The ownership loader returns null for absent / malformed / out-of-household /
 // soft-deleted alike — that uniformity is itself the leak prevention, since "not found" vs
 // "forbidden" is a distinction worth having only to an attacker.
+import { withActor } from './audit-actor.js';
 import {
   PS_ORDER, PS_WRITABLE_COLUMNS, normalizeSourceRows, parentCache,
 } from './putUpSources.js';
@@ -162,8 +163,7 @@ async function replaceSources(sql, putUp, body, userId, householdIds) {
     // Put-Up release 1b: preservation_log carries trg_audit_preservation_log_upd, so its writes ride the
     // actor GUC in one transaction (lambda/audit-actor-guc.test.js) — whether or not this statement
     // touches a watched column today.
-    await sql.transaction([
-      sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+    await withActor(sql, userId, () => [
       softDelete(),
       sql`
       UPDATE preservation_log
@@ -190,8 +190,7 @@ async function replaceSources(sql, putUp, body, userId, householdIds) {
   // from a previous edit whose source row is now soft-deleted, which is the "false-provenance
   // generator" shape v4-putupprov-001's own header rejects a DEFAULT for.
   const cache = parentCache(rows);
-  await sql.transaction([
-    sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+  await withActor(sql, userId, () => [
     softDelete(),
     // ⚠ EVERY NULL PARAMETER CARRIES AN EXPLICIT ::cast. Neon cannot infer a type for a null bound
     // parameter and answers `could not determine data type of parameter` — a 500, not a 400, and one
