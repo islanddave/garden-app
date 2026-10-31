@@ -27,8 +27,6 @@
 // test load time). Mirrors the lambda/events/{index,validators}.js split.
 
 import { neon } from '@neondatabase/serverless';
-import { verifyToken } from '@clerk/backend';
-import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import {
   classifyRoute,
   resp,
@@ -39,58 +37,19 @@ import {
   handleSearch,
   UUID_RE,
 } from './handlers.js';
-import { householdGate } from './household.js';
-
-const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
-
-let _secrets = null;
-async function getSecrets() {
-  if (_secrets) return _secrets;
-  const cmd = new GetSecretValueCommand({ SecretId: process.env.SECRET_NAME ?? 'garden-app/secrets' });
-  const res = await sm.send(cmd);
-  _secrets = JSON.parse(res.SecretString);
-  return _secrets;
-}
+import { requestContext } from './request-context.js';
 
 // Re-export for backward compat with any caller importing UUID_RE from index.js.
 export { UUID_RE };
 
 export const handler = async (event) => {
-  if (event.requestContext?.http?.method === 'OPTIONS') {
-    return optionsResp();
-  }
-
-  const secrets = await getSecrets();
-
-  const authHeader = event.headers?.authorization ?? event.headers?.Authorization ?? '';
-  const token = authHeader.replace(/^Bearer\s+/i, '');
-  let userId;
-  try {
-    const payload = await verifyToken(token, {
-      secretKey: secrets.CLERK_SECRET_KEY,
-      authorizedParties: [
-        'https://garden.futureishere.net',
-        'https://dg6mmjhepoyt9.cloudfront.net',
-      ],
-    });
-    userId = payload.sub;
-  } catch (err) {
-    console.error('verifyToken failed:', err?.message ?? String(err));
-    return resp(401, { error: 'Unauthorized' });
-  }
-  // V4-AUTHZRESIDUE-001 (mirrors lambda/plants + lambda/photos): the scope helper maps '' to [''],
-  // and `'' = ANY(ARRAY[''])` is TRUE in Postgres, so an empty/absent JWT subject would be a live
-  // ownership value rather than a no-match. verifyToken rejects such a token first, so this is
-  // defence-in-depth; the point is that the invariant is ENFORCED here rather than relied upon.
-  // THIS WRAPPER IS THE ONE THAT HID: it does no scoping itself — it forwards userId to
-  // ./handlers.js, which does the scoping and interpolates ${userId} into 19 query sites. Scanning
-  // this file alone does not reveal it as an owner-scoped surface, which is exactly how it was
-  // missed; the CI guard in lambda/authz-write-fk.test.js now derives that set from the whole dir.
-  // (Deliberately avoids naming the helper — lambda/household-isolation.test.js asserts the literal
-  // token appears nowhere in this wrapper, since handlers.js is the in-scope surface.)
-  if (!userId) return resp(401, { error: 'Unauthorized' });
-  const gateRefusal = householdGate(userId);
-  if (gateRefusal) return resp(gateRefusal.status, gateRefusal.body);
+  // The kit answers OPTIONS (the same 204 as optionsResp()) and every sign-in refusal (401, the household gate's 403)
+  // before any statement. It gets no scope: this wrapper only forwards userId to ./handlers.js, which scopes and
+  // interpolates ${userId}, so lambda/authz-write-fk.test.js derives the scoped set from the whole dir. Never name the
+  // scope helper in this file, not even in a comment: lambda/household-isolation.test.js asserts its token is absent.
+  const ctx = await requestContext(event, { resp, neon });
+  if (ctx.response) return ctx.response;
+  const { userId, sql } = ctx;
 
   const method = event.requestContext?.http?.method ?? 'GET';
   const rawPath = event.rawPath ?? '/api/dashboard';
@@ -100,8 +59,6 @@ export const handler = async (event) => {
   if (route.kind === 'method-not-allowed') return resp(405, { error: 'Method not allowed' });
   if (route.kind === 'not-found') return resp(404, { error: 'Not found' });
   if (route.kind === 'uuid-not-found') return resp(404, { error: 'Not found' });
-
-  const sql = neon(secrets.NEON_DATABASE_URL);
 
   try {
     if (route.kind === 'search') return await handleSearch(sql, userId, event.queryStringParameters?.q ?? '');

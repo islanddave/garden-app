@@ -33,6 +33,8 @@ import { join, dirname, resolve, relative, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { softDeletePhoto } from './photos/photoDelete.js';
 import { auditActor } from './varieties/validate.js';
+import { withActor } from './varieties/audit-actor.js';
+import { auditActor as eventsAuditActor } from './events/audit-actor.js';
 
 const LAMBDA = dirname(fileURLToPath(import.meta.url));
 const HOUSE = ['user_a', 'user_b'];
@@ -111,6 +113,8 @@ const WRITERS = ['lambda/varieties/index.js', 'lambda/varieties/blend.js', 'lamb
 // source: photoDelete.js documents the idiom in a JSDoc block, and a construct named in a comment
 // is not that construct.
 const BIND_RE = /set_config\(\s*'app\.actor_clerk_sub'\s*,\s*\$\{([^}]*)\}/g;
+// A call to the dir's withActor (./audit-actor.js) binds the actor through that helper's auditActor.
+const WITH_ACTOR_RE = /\bwithActor\(\s*sql\s*,/g;
 const CULTIVAR_DML = /\b(insert\s+into|update|delete\s+from)\s+(public\.)?(plant_varieties|cultivar)\b/is;
 
 const ALL_JS = walkFiles(LAMBDA).map((f) => relative(resolve(LAMBDA, '..'), f));
@@ -126,6 +130,7 @@ describe('BUG-VARIETYACTOREMPTY-001 — the actor that lands can never be the em
     expect(ALL_JS.length).toBeGreaterThan(60);
     for (const w of WRITERS) expect(ALL_JS).toContain(w);
     const binds = WRITERS.flatMap((w) => [...SRC[w].matchAll(BIND_RE)]);
+    const actorCalls = WRITERS.flatMap((w) => [...SRC[w].matchAll(WITH_ACTOR_RE)]);
     // 5 in varieties/index.js, 1 in photos/photoDelete.js. An anti-vacuity FLOOR, not a ceiling on
     // audited writes: it goes up whenever either writer gains a bind, and the census below is what
     // decides whether that bind is acceptable. 5 -> 6 on 2026-09-04 (V4-SOURCEREG-001) for the
@@ -133,7 +138,9 @@ describe('BUG-VARIETYACTOREMPTY-001 — the actor that lands can never be the em
     // that write binds the actor too even though the table it audits is not cultivar. 6 -> 7 on
     // 2026-09-29 (V5-SOURCECONTACT-001) for PATCH /api/varieties/sources/:id, the same table and the
     // same reason. 7 -> 8 on 2026-10-06 (V5-VARIETYBLEND-001) for blend.js setActor.
-    expect(binds).toHaveLength(8);
+    // D2 W1 (R-W1-2): varieties' binds moved into withActor calls, one per transaction, so blend.js's one
+    // shared bind became two calls: 6 + 2 withActor calls + photoDelete's 1 bind = 9.
+    expect([...binds, ...actorCalls]).toHaveLength(9);
   });
 
   // ── the normalizer, driven directly (varieties copy) ──────────────────────────────────────────
@@ -187,6 +194,12 @@ describe('BUG-VARIETYACTOREMPTY-001 — the actor that lands can never be the em
       const varietiesRefused = (() => { try { auditActor(value); return false; } catch { return true; } })();
       const photosRefused = await deletePhoto(fakeSql(responder), value).then(() => false, () => true);
       expect(photosRefused, `copies disagree on ${label}`).toBe(varietiesRefused);
+      // The rule varieties' writes now bind through (M4): its withActor copy refuses exactly the same values.
+      const withActorRefused = await (async () => withActor(fakeSql(responder), value, () => []))().then(() => false, () => true);
+      expect(withActorRefused, `withActor disagrees on ${label}`).toBe(varietiesRefused);
+      // X-EV-1: events' one raw bind is guarded by its audit-actor.js copy's auditActor, called before its batch.
+      const xEv1Refused = (() => { try { eventsAuditActor(value); return false; } catch { return true; } })();
+      expect(xEv1Refused, `the X-EV-1 check disagrees on ${label}`).toBe(varietiesRefused);
     }
   });
 

@@ -32,12 +32,11 @@
 // a post attempt.
 import { randomUUID } from 'node:crypto';
 import { neon } from '@neondatabase/serverless';
-import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { householdScope } from './household.js';
-import { householdGate } from './household.js';
+import { requestContext } from './request-context.js';
 import { isJpeg, stripJpegExif } from './exif.js';
 import {
   GRAPH_VERSION, MAX_PHOTOS, photoUploadUrl, feedUrl, nodeUrl,
@@ -84,14 +83,6 @@ if (!BUCKET) throw new Error('S3_PHOTOS_BUCKET env var not set — check Lambda 
 const IG_STAGING_BUCKET = process.env.IG_STAGING_BUCKET || BUCKET;
 
 const SECRETS_TTL_MS = 5 * 60 * 1000;
-let _secrets = null, _secretsAt = 0;
-async function getSecrets() {
-  if (_secrets && (Date.now() - _secretsAt) < SECRETS_TTL_MS) return _secrets;
-  const res = await sm.send(new GetSecretValueCommand({ SecretId: process.env.SECRET_NAME ?? 'garden-app/secrets' }));
-  _secrets = JSON.parse(res.SecretString);
-  _secretsAt = Date.now();
-  return _secrets;
-}
 let _fb = null, _fbAt = 0;
 async function getFbSecret() {
   if (_fb && (Date.now() - _fbAt) < SECRETS_TTL_MS) return _fb;
@@ -248,31 +239,12 @@ function altField(alt) {
 // `context` is used only for its remaining-time budget (see pollDeadline). It is optional so the
 // handler stays invocable from tests and local scripts without a synthetic Lambda context.
 export const handler = async (event, context) => {
-  const method = event.requestContext?.http?.method ?? 'GET';
-  if (method === 'OPTIONS') return { statusCode: 204, headers: CORS, body: '' };
-
-  const secrets = await getSecrets();
-
-  const authHeader = event.headers?.authorization ?? event.headers?.Authorization ?? '';
-  const token = authHeader.replace(/^Bearer\s+/i, '');
-  let userId;
-  try {
-    const payload = await verifyToken(token, {
-      secretKey: secrets.CLERK_SECRET_KEY,
-      authorizedParties: ['https://garden.futureishere.net', 'https://dg6mmjhepoyt9.cloudfront.net'],
-    });
-    userId = payload.sub;
-  } catch (err) {
-    console.error('verifyToken failed:', err?.message ?? String(err));
-    return resp(401, { error: 'Unauthorized' });
-  }
-  // V4-AUTHZRESIDUE-001 (mirrors lambda/plants + lambda/photos): householdScope('') returns [''] and
-  // `'' = ANY(ARRAY[''])` is TRUE in Postgres, so an empty/absent JWT subject would be a live
-  // ownership value rather than a no-match. verifyToken rejects such a token first, so this is
-  // defence-in-depth; the point is that the invariant is ENFORCED here rather than relied upon.
-  if (!userId) return resp(401, { error: 'Unauthorized' });
-  const gateRefusal = householdGate(userId);
-  if (gateRefusal) return resp(gateRefusal.status, gateRefusal.body);
+  // The kit answers OPTIONS and every sign-in refusal (401, the household gate's 403) before any statement, and
+  // refetches garden-app/secrets on SECRETS_TTL_MS (lambda/site-constants.static.test.js, C4). It takes no neon and no
+  // scope: share() and instagramShare() build their own. ctx.method defaults to 'GET'.
+  const ctx = await requestContext(event, { resp, secretsTtlMs: SECRETS_TTL_MS });
+  if (ctx.response) return ctx.response;
+  const { secrets, userId, method } = ctx;
 
   if (!isAdmin(userId)) return resp(403, { error: 'Admin only' });
 

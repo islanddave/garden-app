@@ -95,7 +95,7 @@ describe('AUTHZ favorites /api/favorites — per-user scope (user_id) (0A.5)', (
 describe('favorites — SEC-60: a verified token with no subject', () => {
   it('SEC-60: a POST with no subject is 401 and writes no favorite (it reached the INSERT: 23502, a 500)', async () => {
     const entity = randomUUID()
-    vi.mocked(verifyToken).mockImplementationOnce(() => Promise.resolve({}))
+    vi.mocked(verifyToken).mockImplementationOnce(() => Promise.resolve({ azp: 'https://garden.futureishere.net' }))
     const r = await favoritesHandler(makeEvent({ method: 'POST', path: '/api/favorites', body: { entity_type: 'project', entity_id: entity } }))
     expect(r.statusCode).toBe(401)
     expect(JSON.parse(r.body)).toEqual({ error: 'Unauthorized' })

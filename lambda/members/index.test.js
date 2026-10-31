@@ -16,10 +16,15 @@ const decomment = (s) => s.split('\n')
   .join('\n');
 
 const SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
+// index.js signs in through its copy of the D2 kit (same zip); lambda/household-isolation.test.js holds the copy
+// byte-equal to lambda/request-context.js and checks its refusal order.
+const KIT = decomment(readFileSync(resolve(__dirname, 'request-context.js'), 'utf8'));
 
 describe('members lambda (GET /api/members)', () => {
   it('is Clerk-authed via verifyToken', () => {
-    expect(SRC).toMatch(/verifyToken\(/);
+    expect(SRC).toMatch(/const ctx = await requestContext\(event\b[\s\S]*?\);\n\s*if \(ctx\.response\) return ctx\.response;/);
+    expect(KIT).toMatch(/verifyToken\(/);
+    expect(KIT).toMatch(/CLERK_SECRET_KEY/);
     expect(SRC).toMatch(/CLERK_SECRET_KEY/);
   });
   it('sources the roster from Clerk, not the DB (no neon import)', () => {

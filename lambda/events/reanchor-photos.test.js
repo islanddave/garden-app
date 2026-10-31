@@ -123,10 +123,12 @@ describe('the re-anchor moves the event’s photos with it', () => {
     // property; both sibling photo writes are grouped the same way.
     const block = eventPut();
     const stmtAt = block.indexOf('UPDATE photos ph');
-    const txAt = block.lastIndexOf('await sql.transaction([', stmtAt);
+    // withActor's element 0 is the GUC bound to its actor argument (lambda/audit-actor-guc.test.js): the actor is
+    // userId, and no batch closes between the call and the statement.
+    const txAt = block.lastIndexOf('await withActor(sql, userId, () => [', stmtAt);
     expect(txAt).toBeGreaterThan(-1);
     const head = block.slice(txAt, stmtAt);
-    expect(head).toMatch(/set_config\('app\.actor_clerk_sub', \$\{userId\}, true\)/);
+    expect(head).not.toMatch(/\]\);/);
   });
 
   it('lands AFTER the care-cache recompute, which is already committed-event-dependent', () => {

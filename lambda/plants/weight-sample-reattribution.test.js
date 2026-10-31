@@ -47,7 +47,7 @@ describe('plants Lambda PUT — weight-sample re-attribution hook', () => {
   // A correction to a satellite table must never roll back the planting edit the user asked for.
   // Same posture as the events Lambda's auto-capture hook, which logs and continues.
   it('runs AFTER the transaction and cannot fail the save', () => {
-    const iTx = SRC.indexOf('await sql.transaction(_stmts)');
+    const iTx = SRC.indexOf('await withActor(sql, userId, () => _stmts)');
     const iHook = SRC.indexOf('reattribute_plant_weight_samples');
     expect(iTx).toBeGreaterThan(-1);
     expect(iHook).toBeGreaterThan(iTx);

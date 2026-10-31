@@ -662,7 +662,8 @@ describe('PATCH /api/varieties/sources/:id', () => {
     expect(cfgIdx).toBeGreaterThan(-1);
     expect(updIdx).toBeGreaterThan(cfgIdx);
     expect(stubState.sqlCalls[cfgIdx].values).toEqual([USER]);
-    expect(SRC).toMatch(/sql\.transaction\(\[\s*sql`SELECT set_config\('app\.actor_clerk_sub', \$\{auditActor\(userId\)\}, true\)`,\s*sql`\s*UPDATE public\.source\s+SET name\s+= CASE/);
+    // withActor's element 0 is the actor GUC (lambda/audit-actor-guc.test.js); the UPDATE is its builder's first statement.
+    expect(SRC).toMatch(/withActor\(sql, userId, \(\) => \[\s*sql`\s*UPDATE public\.source\s+SET name\s+= CASE/);
   });
 
   for (const f of ['website_url', 'instagram_url', 'facebook_url']) {

@@ -16,6 +16,7 @@
 // SHIP ORDERING. Old Lambda + new schema is INERT; new Lambda + old schema is HARD — every route here
 // 500s on missing tables. The migration is applied to prod BEFORE this code is promoted, and index.js
 // maps 42P01 so that window is diagnosable rather than an opaque "Internal server error".
+import { withActor } from './audit-actor.js';
 import { randomUUID } from 'node:crypto';
 import { loadOwnedPhoto } from './household.js';
 import { ET_TZ, etDay } from './useBy.js';
@@ -487,8 +488,7 @@ async function shuEstimateSave(sql, batchId, body, userId, householdIds) {
     if (!rows.length) return notFound;
     return { status: 200, body: rows[0] };
   }
-  const [, rows] = await sql.transaction([
-    sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+  const [, rows] = await withActor(sql, userId, () => [
     sql`
     UPDATE preservation_log SET shu_est_low = ${low}::int, shu_est_high = ${high}::int, shu_est_basis = 'computed'
     WHERE id = ${r.jar.id}::uuid AND batch_id = ${batchId}::uuid
@@ -681,8 +681,7 @@ async function updateBatch(sql, batchId, body, householdIds) {
 // jar's made count; nothing records the old count, so it stays raised.)
 // The whole statement rides a set_config: release F attaches an audit trigger to kitchen_batch_input.
 async function deleteBatch(sql, batchId, userId, householdIds) {
-  const [, rows] = await sql.transaction([
-    sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+  const [, rows] = await withActor(sql, userId, () => [
     sql`
     WITH pieced AS (
       SELECT s.id FROM kitchen_stage_log s
@@ -920,8 +919,7 @@ async function patchStage(sql, batch, stageId, body, userId, householdIds) {
   const phReading = body.ph_reading == null ? null : String(body.ph_reading).trim();
   const acts = has('acts') ? actsOf(body.acts).acts : null;
   const precision = normalizeText(body.entered_precision);
-  const [, rows] = await sql.transaction([
-    sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+  const [, rows] = await withActor(sql, userId, () => [
     sql`
     UPDATE kitchen_stage_log SET
       note                = CASE WHEN ${has('note')}::boolean THEN ${normalizeText(body.note)}::text ELSE note END,
@@ -1165,8 +1163,7 @@ async function closeBatch(sql, batchId, body, userId, householdIds) {
   const outputIds = outputIdsIn(body);
   // Put-Up release 1b: `linked` writes preservation_log, which now carries an audit trigger, so the
   // statement rides a set_config in one transaction (V4 "Audit").
-  const [, rows] = await sql.transaction([
-    sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+  const [, rows] = await withActor(sql, userId, () => [
     sql`
     WITH closed AS (
       UPDATE kitchen_batch
@@ -1280,8 +1277,7 @@ async function linkOutputs(sql, batchId, body, userId, householdIds) {
   const verr = validateOutputsPayload(body);
   if (verr) return bad(verr);
   const ids = outputLogIdsIn(body);
-  const [, rows] = await sql.transaction([
-    sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+  const [, rows] = await withActor(sql, userId, () => [
     sql`
     UPDATE preservation_log p
     SET batch_id = ${batchId}::uuid, updated_at = NOW()
@@ -1311,8 +1307,7 @@ async function linkOutputs(sql, batchId, body, userId, householdIds) {
 // status.
 async function unlinkOutput(sql, batchId, plId, userId, householdIds) {
   if (!KITCHEN_UUID_RE.test(String(plId))) return notFound;
-  const [, rows] = await sql.transaction([
-    sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+  const [, rows] = await withActor(sql, userId, () => [
     sql`
     WITH stored AS (
       SELECT p.put_up_stage_id
@@ -1458,8 +1453,7 @@ async function putUp(sql, batchId, body, userId, householdIds) {
   const drawnJars = [...new Set(plan.lines.map((l) => l.preservation_log_id).filter((v) => v != null))];
   let rows;
   try {
-    [, rows] = await sql.transaction([
-      sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+    [, rows] = await withActor(sql, userId, () => [
       sql`
       WITH gate AS (
         UPDATE kitchen_batch SET
@@ -1667,8 +1661,7 @@ async function undoPutUp(sql, batchId, stageId, userId, householdIds) {
   if (!KITCHEN_UUID_RE.test(String(stageId))) return notFound;
   let rows;
   try {
-    [, rows] = await sql.transaction([
-      sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+    [, rows] = await withActor(sql, userId, () => [
       sql`
       WITH target AS (
         SELECT s.id, s.created_at

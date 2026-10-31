@@ -17,6 +17,7 @@
 //     set to 0 in the same UPDATE, so the batch line never reads "about 92 g left" beside "used up".
 //   * The key is the tap's (V4 "Idempotency"): a 23505 on uq_pantry_use_idempotency_key is a replay.
 //   * preservation_log is audited, so the statement rides the actor GUC in one transaction.
+import { withActor } from './audit-actor.js';
 import { KITCHEN_UUID_RE, MASS_G } from './kitchenBatch.js';
 
 const MASS_UNITS = Object.keys(MASS_G);
@@ -63,8 +64,7 @@ export async function handlePantryUses({ sql, rawPath, method, rawBody, userId, 
   const n = all ? null : Number(body.count_used);
   let rows;
   try {
-    [, rows] = await sql.transaction([
-      sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+    [, rows] = await withActor(sql, userId, () => [
       sql`
       WITH prior AS (
         -- A tap already recorded under this key is a REPLAY, decided before anything moves: without

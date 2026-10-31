@@ -22,15 +22,14 @@
 //   4. GET / POST /api/events                  — base path
 
 import { neon } from '@neondatabase/serverless';
-import { verifyToken } from '@clerk/backend';
-import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { validatePostBody, validateBatchBody, validateHarvestFields, validateTreatmentCategory, validateEventMetadata, HARVEST_UNITS, MAX_PLAUSIBLE, UUID_RE, normalizeEventDate, eventDateBoundsError, PUT_FUTURE_BOUND_MS, normalizeNotes, toGrams, isUserSuppliedWeight, seedsWeightCalibration, buildBatchMetadataPlan, isRewardedEventType, NON_REWARD_EVENT_TYPES, readReductionPlan, orderEndStatusOffer, PLANT_REDUCTION_EVENT_TYPES, deriveEventProjectId, normalizeScopeIds, normalizeLegacyEventType, isPlantReductionEventType, eventTypeTokens, GIVEAWAY_EVENT_TYPE } from './validators.js';
 import { isEventOwned } from './eventOwnership.js';
 import { loadEventPhotos } from './eventPhotos.js';
 import { validateClear, resolveFlagPair, resolveMetadataArm } from './clearFields.js';
 import { computeStreak, STREAK_GRACE_DAYS } from './streak.js';
 import { householdScope, loadOwnedLocation, loadOwnedInventoryItem, warnRejectedFk } from './household.js';
-import { householdGate } from './household.js';
+import { requestContext } from './request-context.js';
+import { auditActor, withActor } from './audit-actor.js';
 import {
   FRUITING_SOURCE_STATUSES, FLOWERING_SOURCE_STATUSES,
   HARVESTED_EVENT_TYPES, HARVESTED_SOURCE_STATUSES,
@@ -40,17 +39,6 @@ import { applyBatchSideEffects } from './batchSideEffects.js';
 import { resolveSeedLotRewards } from './seedLotRewards.js';
 import { REPEAT_WINDOW_SECONDS, isRepeatGuarded, repeatLockKey } from './repeatGuard.js';
 import { randomUUID } from 'node:crypto';
-
-const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
-
-let _secrets = null;
-async function getSecrets() {
-  if (_secrets) return _secrets;
-  const cmd = new GetSecretValueCommand({ SecretId: process.env.SECRET_NAME ?? 'garden-app/secrets' });
-  const res = await sm.send(cmd);
-  _secrets = JSON.parse(res.SecretString);
-  return _secrets;
-}
 
 const CORS = {}; // Lambda URL config is sole CORS source — handler must not duplicate
 
@@ -185,37 +173,11 @@ export { HARVEST_UNITS, MAX_PLAUSIBLE, validatePostBody, UUID_RE };
 export const HIDE_EVENTS_UNDER_DELETED_PLANTING = false;
 
 export const handler = async (event) => {
-  if (event.requestContext?.http?.method === 'OPTIONS') {
-    return { statusCode: 204, headers: CORS, body: '' };
-  }
-
-  const secrets = await getSecrets();
-
-  const authHeader = event.headers?.authorization ?? event.headers?.Authorization ?? '';
-  const token = authHeader.replace(/^Bearer\s+/i, '');
-  let userId;
-  try {
-    const payload = await verifyToken(token, {
-      secretKey: secrets.CLERK_SECRET_KEY,
-      authorizedParties: [
-        'https://garden.futureishere.net',
-        'https://dg6mmjhepoyt9.cloudfront.net',
-      ],
-    });
-    userId = payload.sub;
-  } catch (err) {
-    console.error('verifyToken failed:', err?.message ?? String(err));
-    return resp(401, { error: 'Unauthorized' });
-  }
-  // V4-AUTHZRESIDUE-001 (mirrors lambda/plants + lambda/photos): householdScope('') returns [''] and
-  // `'' = ANY(ARRAY[''])` is TRUE in Postgres, so an empty/absent JWT subject would be a live
-  // ownership value rather than a no-match. verifyToken rejects such a token first, so this is
-  // defence-in-depth; the point is that the invariant is ENFORCED here rather than relied upon.
-  if (!userId) return resp(401, { error: 'Unauthorized' });
-  const gateRefusal = householdGate(userId);
-  if (gateRefusal) return resp(gateRefusal.status, gateRefusal.body);
-
-  const sql = neon(secrets.NEON_DATABASE_URL);
+  // The kit answers OPTIONS and every sign-in refusal (401, the household gate's 403) before any statement.
+  // householdIds stays a line of its own, after the kit's empty-sub 401: household-mode.test.js pins it here.
+  const ctx = await requestContext(event, { resp, neon });
+  if (ctx.response) return ctx.response;
+  const { userId, sql } = ctx;
   // HOUSEHOLD-MODE: widened at V3-ROLES teardown (event ENTITY reads/writes only; achievement/XP/streak queries stay per-user)
   const householdIds = householdScope(userId);
   const method = event.requestContext?.http?.method ?? 'GET';
@@ -594,6 +556,8 @@ export const handler = async (event) => {
       const overridesJson = JSON.stringify(overrides);
 
       // (3) One transaction: batch row + resolve-and-insert events + per-project entity_memory.
+      // X-EV-1: the one raw actor bind events keeps (household-mode.test.js pins its text); withActor's own check first.
+      auditActor(userId);
       await sql.transaction([
         sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
         sql`INSERT INTO event_batches
@@ -1055,8 +1019,7 @@ export const handler = async (event) => {
       `;
       if (!owned.length) return resp(404, { error: 'Not found' });
 
-      await sql.transaction([
-        sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+      await withActor(sql, userId, () => [
         sql`UPDATE event_log SET deleted_at = NOW(), updated_at = NOW()
             WHERE metadata->>'batch_id' = ${batchId} AND deleted_at IS NULL`,
         // Child-row handling — same three-way split as the single-event undo below (see the long
@@ -1398,8 +1361,7 @@ export const handler = async (event) => {
         // today. It is wired anyway because the day resolved_by joins that list — the obvious next
         // addition, it is literally an actor column — this becomes a silent 'system' attribution
         // with nothing in the diff to point at. Same grouping requirement as the PUT below.
-        const [, updated] = await sql.transaction([
-          sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+        const [, updated] = await withActor(sql, userId, () => [
           sql`
           UPDATE event_log el
           SET resolved_at = COALESCE(el.resolved_at, NOW()),
@@ -1893,8 +1855,7 @@ export const handler = async (event) => {
         // is discarded before this UPDATE ever opens. Transaction-local `true` and ${userId} from
         // the verified JWT, matching the four sibling sites at 456 / 851 / 2297 / 2819.
         // Statement 0 is the set_config; statement 1 is the UPDATE, hence the leading hole.
-        const [, updatedRows] = await sql.transaction([
-          sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+        const [, updatedRows] = await withActor(sql, userId, () => [
           sql`
           UPDATE event_log el
              SET event_type    = ${body.event_type},
@@ -2026,8 +1987,7 @@ export const handler = async (event) => {
           // between them, and merging them would newly make a harvest failure roll back the event
           // edit. Same round-trip count as before: the set_config rides in this batch, not a
           // second request.
-          const [, updatedHarvest] = await sql.transaction([
-            sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+          const [, updatedHarvest] = await withActor(sql, userId, () => [
             sql`
             UPDATE harvest_log h
                SET quantity         = ${hq}::numeric,
@@ -2395,16 +2355,11 @@ export const handler = async (event) => {
             `);
           }
           if (reanchor.length) {
-            // BUG-EVENTAUDITACTOR-001. The harvest_log re-anchor arm above writes project_id,
-            // which trg_audit_harvest_log_upd watches, and this array had no actor statement at
-            // all. Unshifted HERE rather than seeded at `const reanchor = []` so the guard above
-            // still counts ARMS — seeding it would make reanchor.length 1 on a cacheDirty edit
-            // that produced no arms and issue a transaction that does nothing. Element 0 by
-            // construction, and index-safe: the result of this transaction is never read
-            // positionally (or at all).
-            reanchor.unshift(sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`);
+            // BUG-EVENTAUDITACTOR-001: the harvest_log arm above writes project_id, which trg_audit_harvest_log_upd
+            // watches. withActor adds the GUC as element 0 here, never seeded into `reanchor`, so the guard above
+            // still counts ARMS and an arm-less edit issues no transaction.
             try {
-              await sql.transaction(reanchor);
+              await withActor(sql, userId, () => reanchor);
             } catch (e) {
               // The event_log UPDATE has ALREADY COMMITTED — it is a separate statement and the
               // neon HTTP driver auto-commits each one — so on failure the event has moved and the
@@ -2452,8 +2407,7 @@ export const handler = async (event) => {
         // below the event_log UPDATE this is non-atomic with it, so a throw here must not be able to
         // skip a recompute the already-committed event row depends on.
         if (projectChanged || plantChanged) {
-          await sql.transaction([
-            sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+          await withActor(sql, userId, () => [
             sql`
             UPDATE photos ph
                SET project_id = CASE WHEN ph.project_id IS NOT DISTINCT FROM ${oldProjectId}::uuid
@@ -2708,7 +2662,6 @@ export const handler = async (event) => {
         const undoQty = undoReduction ? undoReduction.qty : 0;
         const undoLost = undoReduction ? undoReduction.lostAccrual : 0;
         const stmts = [
-          sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
           sql`UPDATE event_log SET deleted_at = NOW(), updated_at = NOW()
               WHERE id = ${eventId} AND deleted_at IS NULL`,
           sql`UPDATE harvest_log SET deleted_at = NOW(), updated_at = NOW()
@@ -2851,7 +2804,7 @@ export const handler = async (event) => {
             FROM surv WHERE em.plant_id = ${plantId}
           `);
         }
-        await sql.transaction(stmts);
+        await withActor(sql, userId, () => stmts);
         return resp(200, { undone: true, id: eventId });
       }
 
@@ -3301,8 +3254,7 @@ export const handler = async (event) => {
         userId, plantId: body.plant_id ?? null, projectId, locationId: body.location_id ?? null, eventType,
       });
       const newEventId = randomUUID();
-      const txResult = await sql.transaction([
-        sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+      const txResult = await withActor(sql, userId, () => [
         sql`SELECT pg_advisory_xact_lock(hashtextextended(${repeatKey}, 0)) WHERE ${repeatGuarded}::boolean`,
         sql`
           WITH dup AS (

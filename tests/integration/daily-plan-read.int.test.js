@@ -179,7 +179,7 @@ describe('daily-plan-read — sign-in and origin', () => {
   })
 
   it('a verified token with no subject is 401 (empty-subject guard), beacon included', async () => {
-    vi.mocked(verifyToken).mockImplementationOnce(() => Promise.resolve({}))
+    vi.mocked(verifyToken).mockImplementationOnce(() => Promise.resolve({ azp: ORIGINS[0] }))
     const r = await raw(makeEvent({ method: 'POST', path: '/api/daily-plan/cue-impressions', body: { cue: 'rain', form: 'check' } }))
     expect(r.status).toBe(401)
     expect(r.body).toEqual({ error: 'Unauthorized' })

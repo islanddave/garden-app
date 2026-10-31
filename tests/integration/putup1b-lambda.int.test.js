@@ -367,3 +367,36 @@ describe('jars — POST additions, PATCH, Move', () => {
     expect(ms(again.body.updated_at)).toBeGreaterThan(made)
   })
 })
+
+// D2 W4c: the jar PATCH runs through withActor, and trg_audit_preservation_log_upd reads the actor GUC
+// (migrations/v5-putupmake-001/0a-additive-ddl.sql). A household mate relabelling a member's jar is the case where the
+// owner and the caller differ, so the audit row must name the caller.
+describe('D2 withActor — a household mate\'s jar edit is audited as the mate', () => {
+  it('the preservation_log audit row for the mate\'s relabel names the mate', async () => {
+    const MATE = `user_int_pu1b_mate_${RUN}`
+    setTestUserId(USER)
+    const made = await call('POST', '/api/preservation', {
+      label: `mate jar ${RUN}`, method: 'quick_pickle', preserved_at: '2026-10-01', preserved_at_precision: 'day',
+      package_count: 1, quantity_value: 16, quantity_unit: 'oz', idempotency_key: randomUUID(),
+    })
+    expect(made.status, JSON.stringify(made.body)).toBe(201)
+    const saved = process.env.GARDEN_HOUSEHOLD_IDS
+    process.env.GARDEN_HOUSEHOLD_IDS = `${USER},${MATE}`
+    const label = `mate relabel ${RUN}`
+    try {
+      setTestUserId(MATE)
+      const r = await callHandler(handler, { method: 'PATCH', path: `/api/preservation/${made.body.id}`, body: { label } })
+      expect(r.status, JSON.stringify(r.body)).toBe(200)
+      const rows = await directSql`
+        SELECT actor_clerk_sub FROM audit_events
+         WHERE table_name = 'preservation_log' AND row_id = ${made.body.id} AND action = 'UPDATE'
+           AND after_jsonb->>'label' = ${label}`
+      expect(rows.map((x) => x.actor_clerk_sub)).toEqual([MATE])
+    } finally {
+      setTestUserId(USER)
+      if (saved === undefined) delete process.env.GARDEN_HOUSEHOLD_IDS
+      else process.env.GARDEN_HOUSEHOLD_IDS = saved
+      await directSql`DELETE FROM audit_events WHERE actor_clerk_sub = ${MATE}`
+    }
+  })
+})

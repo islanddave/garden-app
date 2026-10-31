@@ -9,9 +9,9 @@
 //
 // NO RUNTIME DEPENDENCY, like lambda/inventory-items/seed-lot-parents.js: the driver, the
 // rate-limit spend and the id mint are handed in, so the unit suite can import this file and run
-// every helper. The one import is ./validate.js (pure), for auditActor: this file writes the audited
-// table, and lambda/audit-actor-empty.test.js requires every such writer to bind the actor through
-// the normalizer AT the bind, not to trust a caller to have done it.
+// every helper. The one import is ./audit-actor.js (pure), for withActor: this file writes the audited
+// table, and lambda/audit-actor-empty.test.js requires every such writer to check the actor where it
+// binds it, not to trust a caller to have done it.
 //
 // THE KEY (contract section 1). blend_key = the LEAF variety ids, lower-case, in uuid order, joined
 // by ','. A leaf is a variety whose own blend_key IS NULL. Components are FLAT: a mix named as a
@@ -28,7 +28,7 @@
 // 23505 arm answers by finding again. The household is an environment variable, not a column, so no
 // index could say it.
 
-import { auditActor } from './validate.js';
+import { withActor } from './audit-actor.js';
 
 // Same regex as index.js and household.js.
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -189,11 +189,6 @@ export const componentOf = (leaf) => ({
 });
 
 // ── Statement builders. None awaits: the caller awaits one, or places it in sql.transaction([...]). ──
-
-// Trigger trg_audit_plant_varieties reads this GUC. auditActor THROWS on an absent subject rather
-// than bind '' (BUG-VARIETYACTOREMPTY-001), and it is the first element of each transaction array
-// below, so the throw happens while the batch is being built and nothing is submitted.
-export const setActor = (sql, userId) => sql`SELECT set_config('app.actor_clerk_sub', ${auditActor(userId)}, true)`;
 
 // The rows behind a set of ids — the ids a request named, or the leaves a named mix brought with it.
 // NO owner predicate and NO deleted_at filter, both on purpose: the varieties list is global (any
@@ -369,8 +364,7 @@ export async function blendRoute(sql, { body, userId, household, spendCreate, ne
     // first unrestorable (R2-15). No rate-limit draw — nothing is created.
     for (const suffix of ['', ...NAME_SUFFIXES]) {
       try {
-        const [, , back] = await sql.transaction([
-          setActor(sql, userId),
+        const [, , back] = await withActor(sql, userId, () => [
           reviveBlend(sql, { id: found.id, household, name: suffix ? `${found.name}${suffix}` : null }),
           findBlend(sql, key, household),
         ]);
@@ -392,8 +386,7 @@ export async function blendRoute(sql, { body, userId, household, spendCreate, ne
   for (const suffix of ['', ...NAME_SUFFIXES]) {
     const id = String(newId()).toLowerCase();
     try {
-      const [, , , , back] = await sql.transaction([
-        setActor(sql, userId),
+      const [, , , , back] = await withActor(sql, userId, () => [
         insertBlend(sql, { id, name: `${autoName}${suffix}`, userId, key, facts }),
         insertBlendComponents(sql, { id, leafIds: sortedLeafIds, userId }),
         insertBlendProfile(sql, id),

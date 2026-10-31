@@ -22,7 +22,7 @@ vi.mock('@aws-sdk/client-secrets-manager', () => ({
   SecretsManagerClient: class { send() { return Promise.resolve({ SecretString: JSON.stringify({ CLERK_SECRET_KEY: 'stub' }) }) } },
 }))
 vi.mock('@clerk/backend', () => ({
-  verifyToken: () => Promise.resolve({ sub: h.state.sub }),
+  verifyToken: () => Promise.resolve({ sub: h.state.sub, azp: 'https://garden.futureishere.net' }),
   // Like the Backend API: `userId` filters to those ids, then `limit` (default 10) pages the result.
   createClerkClient: () => ({ users: { getUserList: (params = {}) => {
     h.listCalls.push(params)

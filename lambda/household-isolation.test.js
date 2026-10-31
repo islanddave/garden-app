@@ -126,11 +126,20 @@ const URL_DIRS = Object.entries(MANIFEST)
   .map(([fn]) => fn.slice('garden-'.length))
   .sort();
 const VERIFY_DIRS = readdirSync(LAMBDA_ROOT)
-  .filter((d) => exists(join(d, 'index.js')) && /verifyToken\(/.test(readCode(`${d}/index.js`)))
+  .filter((d) => exists(join(d, 'index.js')) && /verifyToken\(|requestContext\(/.test(readCode(`${d}/index.js`)))
   .sort();
 const GATE_IMPORT = /^import \{[^}]*\bhouseholdGate\b[^}]*\} from '\.\/household\.js';?$/m;
 const GATE_CALL = /const gateRefusal = householdGate\(userId\);?\n\s*if \(gateRefusal\) return resp\(gateRefusal\.status, gateRefusal\.body\)/;
 const WORK = /\bneon\(|checkRateLimit\(|sql`|createClerkClient\(|getUserList\(/;
+// D2 sign-in kit (lambda/request-context.js). A handler whose index.js calls requestContext( signs in through its dir's
+// kit copy, which ships in the same zip and is held byte-equal to the master below and by gen-lambda-copies --check, so
+// the per-handler checks read that copy. The kit spells the three refusal lines as the handlers did.
+const KIT_IMPORT = /^import \{[^}]*\brequestContext\b[^}]*\} from '\.\/request-context\.js';?$/m;
+const KIT_CALL = /const ctx = await requestContext\(event\b[\s\S]*?\);\n\s*if \(ctx\.response\) return ctx\.response;/;
+const KIT_FN = 'export async function requestContext(';
+const HANDLER_START = /export (?:const handler\b|async function handler\b)/;
+const usesKit = (d) => /requestContext\(/.test(readCode(`${d}/index.js`));
+const signInSource = (d) => readCode(usesKit(d) ? `${d}/request-context.js` : `${d}/index.js`);
 
 describe('SEC-13a household gate — every HTTP handler', () => {
   it('SEC-13a: the handlers that verify a Clerk token are exactly the manifest\'s URL functions', () => {
@@ -140,7 +149,7 @@ describe('SEC-13a household gate — every HTTP handler', () => {
 
   for (const d of VERIFY_DIRS) {
     it(`SEC-13a: ${d}/index.js gates right after the empty-sub 401 and before any statement`, () => {
-      const src = readCode(`${d}/index.js`);
+      const src = signInSource(d);
       expect(src).toMatch(GATE_IMPORT);
       expect(src).toMatch(GATE_CALL);
       const verify = src.indexOf('verifyToken(');
@@ -150,9 +159,87 @@ describe('SEC-13a household gate — every HTTP handler', () => {
       expect(sub401).toBeGreaterThan(verify);
       expect(gate).toBeGreaterThan(sub401);
       expect(src.slice(verify, gate)).not.toMatch(WORK);
+      if (usesKit(d)) {
+        // The handler hands the kit the request before anything else: nothing before the call may issue a statement,
+        // answer early or wait on anything, and it must not sign in a second way of its own.
+        const index = readCode(`${d}/index.js`);
+        expect(index).toMatch(KIT_IMPORT);
+        expect(index).toMatch(KIT_CALL);
+        expect(index).not.toMatch(/verifyToken\(/);
+        const start = index.search(HANDLER_START);
+        expect(start).toBeGreaterThan(-1);
+        const beforeKit = index.slice(start, index.search(KIT_CALL));
+        expect(beforeKit).not.toMatch(WORK);
+        expect(beforeKit).not.toMatch(/\breturn\b|\bawait\b/);
+        expect(read(`${d}/request-context.js`)).toBe(read('request-context.js'));
+      }
     });
   }
+
+  // Sliced from the function so the helper definitions above it (getSecrets, azpAllowed) cannot stand in for the calls.
+  it('D2: the sign-in kit refuses in order before any statement: OPTIONS, secrets, Clerk, azp, empty sub, gate, then neon and scope', () => {
+    const master = readCode('request-context.js');
+    expect(master.indexOf(KIT_FN)).toBeGreaterThan(-1);
+    const kit = master.slice(master.indexOf(KIT_FN));
+    const steps = ["'OPTIONS'", 'getSecrets(', 'verifyToken(', 'azpAllowed(', 'if (!userId) return resp(401', 'householdGate(userId)', 'neon(', 'scope('];
+    const at = steps.map((s) => kit.indexOf(s));
+    expect(at[0], steps[0]).toBeGreaterThan(-1);
+    for (let i = 1; i < steps.length; i += 1) expect(at[i], `${steps[i]} after ${steps[i - 1]}`).toBeGreaterThan(at[i - 1]);
+    expect(kit.slice(0, at[steps.indexOf('householdGate(userId)')])).not.toMatch(WORK);
+  });
+
+  // T8 (D2 F, secreview C6): every handler signs in through its kit copy, and no other non-test file in its dir calls
+  // Clerk's verifyToken, so neither the allow-list nor the azp rule has a second way around it.
+  it('D2 T8: every handler signs in through its kit, and no other non-test file in a handler dir calls verifyToken(', () => {
+    const jsFiles = (dir) => readdirSync(join(LAMBDA_ROOT, dir)).flatMap((e) => {
+      const rel = `${dir}/${e}`;
+      if (e === 'node_modules') return [];
+      if (statSync(join(LAMBDA_ROOT, rel)).isDirectory()) return jsFiles(rel);
+      return /\.[cm]?js$/.test(e) && !/\.test\.[cm]?js$/.test(e) ? [rel] : [];
+    });
+    expect(URL_DIRS.length).toBeGreaterThanOrEqual(20);
+    expect(URL_DIRS.filter((d) => !usesKit(d))).toEqual([]);
+    expect(URL_DIRS.filter((d) => !/verifyToken\(/.test(readCode(`${d}/request-context.js`)))).toEqual([]);
+    const callers = URL_DIRS.flatMap(jsFiles).filter((f) => !f.endsWith('/request-context.js') && /verifyToken\(/.test(readCode(f)));
+    expect(callers).toEqual([]);
+  });
 });
+
+// T7: one member request per handler that reaches the routes. `binds`: some statement binds the member's sub, so a
+// handler that hands its routes the wrong variable reds here. members proves it through the Clerk roster filter,
+// facebook-share through its admin check (flag off: 503 only once isAdmin(userId) passed), shared-state by reaching a
+// statement (its reads are not per user). `rows` is what every statement returns.
+const WIRING = {
+  achievements: { binds: true },
+  'app-events': { method: 'POST', path: '/api/app-events', body: { event_name: 'wiring' }, binds: true },
+  critter: { path: '/api/critters/collection', binds: true },
+  'daily-plan-read': { path: '/api/daily-plan', binds: true },
+  dashboard: { binds: true },
+  events: { binds: true },
+  'evidence-ingest': {
+    method: 'POST',
+    path: '/api/evidence',
+    body: { entity_id: '11111111-1111-4111-8111-111111111111', schema_version: 1, tier: 'first_party_log', axis: 'local', polarity: 'supporting', observed_at: '2026-06-16T00:00:00Z' },
+    rows: [{ id: '11111111-1111-4111-8111-111111111111', planting_ref_id: '22222222-2222-4222-8222-222222222222' }],
+    binds: true,
+  },
+  'facebook-share': { method: 'POST', path: '/api/share/facebook', admin: true },
+  favorites: { binds: true },
+  findings: { binds: true },
+  harvests: { binds: true },
+  'inventory-items': { binds: true },
+  locations: { binds: true },
+  members: { roster: true },
+  photos: { binds: true },
+  plants: { binds: true },
+  preservation: { binds: true },
+  projects: { binds: true },
+  'shared-state': { path: '/api/shared-state/featured-of-day' },
+  'storage-location': { binds: true },
+  tags: { binds: true },
+  'ux-events': { method: 'POST', path: '/api/ux-events', body: { flow_id: 'log_watering', session_id: 'wiring' }, binds: true },
+  varieties: { path: '/api/varieties/deleted', binds: true },
+};
 
 describe('SEC-13a household gate — every handler, executed under the stubs', () => {
   const MEMBER = 'user_sec13a_member';
@@ -184,7 +271,7 @@ describe('SEC-13a household gate — every handler, executed under the stubs', (
   });
   afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
-  it.each(VERIFY_DIRS)('SEC-13a: %s refuses a verified non-member with the generic 403 before any statement', async (d) => {
+  it.each(URL_DIRS)('SEC-13a: %s refuses a verified non-member with the generic 403 before any statement', async (d) => {
     const r = await call(d, STRANGER);
     expect(r).toEqual({ status: 403, body: { error: 'Forbidden' } });
     expect(stubState.sqlCalls).toEqual([]);
@@ -192,13 +279,13 @@ describe('SEC-13a household gate — every handler, executed under the stubs', (
     expect(denials()).toEqual([{ msg: 'household-membership-denied', userId: STRANGER, reason: 'non-member' }]);
   });
 
-  it.each(VERIFY_DIRS)('SEC-13a: %s admits a listed member past the gate', async (d) => {
+  it.each(URL_DIRS)('SEC-13a: %s admits a listed member past the gate', async (d) => {
     const r = await call(d, MATE);
     expect(r.status).not.toBe(401);
     expect(denials()).toEqual([]);
   });
 
-  it.each(VERIFY_DIRS)('SEC-13a: %s refuses even a member when the list is unset (fails closed)', async (d) => {
+  it.each(URL_DIRS)('SEC-13a: %s refuses even a member when the list is unset (fails closed)', async (d) => {
     delete process.env.GARDEN_HOUSEHOLD_IDS;
     const r = await call(d, MEMBER);
     expect(r).toEqual({ status: 403, body: { error: 'Forbidden' } });
@@ -206,11 +293,60 @@ describe('SEC-13a household gate — every handler, executed under the stubs', (
     expect(denials().map((x) => x.reason)).toEqual(['env-missing']);
   });
 
-  it.each(VERIFY_DIRS)('SEC-13a: %s still answers 401 to a token Clerk rejects (the gate never runs first)', async (d) => {
+  it.each(URL_DIRS)('SEC-13a: %s still answers 401 to a token Clerk rejects (the gate never runs first)', async (d) => {
     stubState.verifyTokenResult = new Error('garbage token');
     const { handler } = await import(`./${d}/index.js`);
     const res = await handler({ requestContext: { http: { method: 'GET' } }, rawPath: `/api/${d}`, headers: { authorization: 'Bearer ci.smoke.probe' } });
     expect(res.statusCode).toBe(401);
     expect(denials()).toEqual([]);
+  });
+
+  // SEC-60: Clerk passes `sub: ''`; householdScope('') is [''] and matches every row owned by ''.
+  it.each(URL_DIRS)('SEC-60: %s answers 401 to a verified token with an empty subject, before the gate and any statement', async (d) => {
+    const r = await call(d, '');
+    expect(r).toEqual({ status: 401, body: { error: 'Unauthorized' } });
+    expect(stubState.sqlCalls).toEqual([]);
+    expect(stubState.clerkListCalls).toEqual([]);
+    expect(denials()).toEqual([]);
+  });
+
+  // T8 (D2 F): azp is the kit's own rule (Clerk lets a token with no azp through). The stub's azp default is off, so
+  // the payload really has none; a listed member is used so only the azp rule can refuse it.
+  it.each(URL_DIRS)('D2 T8: %s answers 401 to a verified token with no azp and no issuer, before the gate and any statement', async (d) => {
+    stubState.azpDefault = false;
+    const r = await call(d, MEMBER);
+    expect(r).toEqual({ status: 401, body: { error: 'Unauthorized' } });
+    expect(stubState.sqlCalls).toEqual([]);
+    expect(stubState.clerkListCalls).toEqual([]);
+    expect(denials()).toEqual([]);
+  });
+
+  it.each(URL_DIRS)('D2 wiring: %s hands its routes the signed-in member', async (d) => {
+    const w = WIRING[d];
+    expect(w, `${d} needs a WIRING row`).toBeDefined();
+    if (w.admin) {
+      vi.stubEnv('ADMIN_CLERK_SUBS', MEMBER);
+      vi.stubEnv('FB_SHARE_ENABLED', '0');
+    }
+    if (w.rows) stubState.sqlHandler = () => w.rows;
+    stubState.verifyTokenResult = { sub: MEMBER };
+    const { handler } = await import(`./${d}/index.js`);
+    const res = await handler({
+      requestContext: { http: { method: w.method ?? 'GET' } },
+      rawPath: w.path ?? `/api/${d}`,
+      headers: { authorization: 'Bearer wiring' },
+      body: w.body ? JSON.stringify(w.body) : undefined,
+    });
+    expect(denials()).toEqual([]);
+    const bound = stubState.sqlCalls.flatMap((c) => c.values.flat(Infinity));
+    if (w.admin) {
+      expect(res.statusCode).toBe(503);
+      expect(JSON.parse(res.body).error).toBe('facebook_sharing_disabled');
+    } else if (w.roster) {
+      expect(stubState.clerkListCalls.map((c) => c.userId)).toContainEqual(expect.arrayContaining([MEMBER]));
+    } else {
+      expect(stubState.sqlCalls.length).toBeGreaterThan(0);
+      if (w.binds) expect(bound).toContain(MEMBER);
+    }
   });
 });

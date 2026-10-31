@@ -782,13 +782,14 @@ describe('the mix gets a care_profile row that keeps the standing cadence gates 
   it('static: one care_profile INSERT and one component INSERT in blend.js, both inside the creating transaction', () => {
     expect((BLEND_SRC.match(/INSERT INTO public\.care_profile/g) || [])).toHaveLength(1);
     expect((BLEND_SRC.match(/INSERT INTO public\.variety_blend_component/g) || [])).toHaveLength(1);
-    const tx = BLEND_SRC.slice(BLEND_SRC.lastIndexOf('await sql.transaction(['));
+    const tx = BLEND_SRC.slice(BLEND_SRC.lastIndexOf('await withActor(sql, userId, () => ['));
     const block = tx.slice(0, tx.indexOf(']);'));
-    expect(block).toMatch(/setActor\([\s\S]*insertBlend\([\s\S]*insertBlendComponents\([\s\S]*insertBlendProfile\([\s\S]*findBlend\(/);
-    // The audit actor is bound through the normalizer AT the bind (lambda/audit-actor-empty.test.js
-    // holds every writer of the audited table to this), and both transactions lead with it.
-    expect(BLEND_SRC).toMatch(/set_config\('app\.actor_clerk_sub', \$\{auditActor\(userId\)\}, true\)/);
-    expect((BLEND_SRC.match(/await sql\.transaction\(\[\s+setActor\(sql, userId\),/g) || [])).toHaveLength(2);
+    expect(block).toMatch(/^await withActor\(sql, userId, \(\) => \[\s*insertBlend\([\s\S]*insertBlendComponents\([\s\S]*insertBlendProfile\([\s\S]*findBlend\(/);
+    // The audit actor is withActor's element 0, checked by its auditActor before any statement is built
+    // (lambda/audit-actor-guc.test.js, lambda/audit-actor-empty.test.js), and both transactions go through it.
+    expect(BLEND_SRC).toMatch(/^import \{ withActor \} from '\.\/audit-actor\.js';$/m);
+    expect(BLEND_SRC).not.toMatch(/set_config\(/);
+    expect((BLEND_SRC.match(/await withActor\(sql, userId, \(\) => \[/g) || [])).toHaveLength(2);
     // And index.js keeps its own pins: the mix adds no statement there.
     expect((INDEX_SRC.match(/INSERT INTO public\.cultivar/g) || [])).toHaveLength(1);
     expect((INDEX_SRC.match(/INSERT INTO public\.care_profile/g) || [])).toHaveLength(1);

@@ -557,3 +557,31 @@ describe('project-less plantings — full by-id lifecycle (BUG-PLANTLESSWRITE-00
     expect(rows[0].deleted_at).toBeTruthy() // the DELETE always returns 200; assert the DB, not the echo
   })
 })
+
+// D2 W2: the PUT's batch runs through withActor, and public.garden_node is a view over plants, whose trg_audit_plants_upd
+// reads the actor GUC (migrations/v5-sourcenodeview-001, v5-plantsourceaudit-001). A household mate renaming a member's
+// planting is the case where the owner and the caller differ, so the audit row must name the caller.
+describe('D2 withActor — a household mate\'s plants PUT is audited as the mate', () => {
+  it('the plants audit row for the mate\'s rename names the mate', async () => {
+    const MATE = `user_int_plants_mate_${RUN}`
+    const [{ id }] = await directSql`
+      INSERT INTO plants (project_id, name, created_by) VALUES (${projectId}, ${'mate-plant-' + RUN}, ${USER}) RETURNING id`
+    const saved = process.env.GARDEN_HOUSEHOLD_IDS
+    process.env.GARDEN_HOUSEHOLD_IDS = `${USER},${MATE}`
+    const name = `mate rename ${RUN}`
+    try {
+      setTestUserId(MATE)
+      const r = await callHandler(handler, { method: 'PUT', path: `/api/plants/${id}`, body: { name } })
+      expect(r.status, JSON.stringify(r.body)).toBe(200)
+      const rows = await directSql`
+        SELECT actor_clerk_sub FROM public.audit_events
+         WHERE table_name = 'plants' AND row_id = ${id} AND action = 'UPDATE' AND after_jsonb->>'name' = ${name}`
+      expect(rows.map((x) => x.actor_clerk_sub)).toEqual([MATE])
+    } finally {
+      setTestUserId(USER)
+      if (saved === undefined) delete process.env.GARDEN_HOUSEHOLD_IDS
+      else process.env.GARDEN_HOUSEHOLD_IDS = saved
+      await directSql`DELETE FROM public.audit_events WHERE actor_clerk_sub = ${MATE}`
+    }
+  })
+})

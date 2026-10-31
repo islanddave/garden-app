@@ -20,9 +20,9 @@
 //     members may edit any live source, anyone else only their own (V5-SOURCECONTACT-001, authz.js)
 //
 // Audit: trigger trg_audit_plant_varieties writes to audit_events. Lambda sets
-// SET LOCAL app.actor_clerk_sub = $userId after BEGIN so trigger reads the actor. The bind goes
-// through auditActor() (./validate.js) — a NULL bind would silently set the GUC to '' rather than
-// leave it unset, which the trigger's COALESCE cannot catch. BUG-VARIETYACTOREMPTY-001.
+// SET LOCAL app.actor_clerk_sub = $userId after BEGIN so trigger reads the actor. Every write goes
+// through withActor() (./audit-actor.js), which refuses an absent actor — a NULL bind would silently set
+// the GUC to '' rather than leave it unset, which the trigger's COALESCE cannot catch. BUG-VARIETYACTOREMPTY-001.
 //
 // Rate limits (per design doc C-S1-C):
 //   plant_varieties.create — 60/hour per actor
@@ -59,32 +59,20 @@
 
 import { randomUUID } from 'node:crypto';
 import { neon } from '@neondatabase/serverless';
-import { verifyToken } from '@clerk/backend';
-import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import {
-  validateBody, validateCropTypeBody, resolveCropTypeName, validateClear, auditActor,
+  validateBody, validateCropTypeBody, resolveCropTypeName, validateClear,
   validateSourceBody, validateSourcePatch, validateSourceKindBody, resolveSourceKindName, foldSourceKey, blankToNull,
   normalizeOriginText, touchesBreeding, breedingPairingError, fillsCultivarRank, CONSTRAINT_MESSAGES,
 } from './validate.js';
 import { applyDerive } from './crop-derive.js';
 import { checkRateLimit, withRetryAfter } from './rate-limit.js';
 import { householdScope, loadOwnedPhoto, warnRejectedFk } from './household.js';
-import { householdGate } from './household.js';
+import { requestContext } from './request-context.js';
+import { withActor } from './audit-actor.js';
 import { loadOwnedProject } from './authz-parents.js';
 import { managedPrincipalPatterns, canEditSource, canEditVariety } from './authz.js';
 import { blendRoute, restoreConflictMessage } from './blend.js';
 import { listForAdmin, retireCropType, restoreCropType } from './crop-type-admin.js';
-
-const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
-
-let _secrets = null;
-async function getSecrets() {
-  if (_secrets) return _secrets;
-  const cmd = new GetSecretValueCommand({ SecretId: process.env.SECRET_NAME ?? 'garden-app/secrets' });
-  const res = await sm.send(cmd);
-  _secrets = JSON.parse(res.SecretString);
-  return _secrets;
-}
 
 const CORS = {}; // Lambda URL config owns CORS — handler must not duplicate
 
@@ -158,36 +146,13 @@ const NEW_CULTIVAR_PROFILE = {
 export const VARIETY_LIST_CAP = 2000
 
 export const handler = async (event) => {
-  if (event.requestContext?.http?.method === 'OPTIONS') {
-    return { statusCode: 204, headers: CORS, body: '' };
-  }
-
-  const secrets = await getSecrets();
-
-  const authHeader = event.headers?.authorization ?? event.headers?.Authorization ?? '';
-  const token = authHeader.replace(/^Bearer\s+/i, '');
-  let userId;
-  try {
-    const payload = await verifyToken(token, {
-      secretKey: secrets.CLERK_SECRET_KEY,
-      authorizedParties: [
-        'https://garden.futureishere.net',
-        'https://dg6mmjhepoyt9.cloudfront.net',
-      ],
-    });
-    userId = payload.sub;
-  } catch (err) {
-    console.error('verifyToken failed:', err?.message ?? String(err));
-    return resp(401, { error: 'Unauthorized' });
-  }
-
-  // V4-AUTHZRESIDUE-001 (mirrors lambda/plants + lambda/photos): householdScope('') returns [''] and
-  // `'' = ANY(ARRAY[''])` is TRUE in Postgres, so an empty/absent JWT subject would be a live
-  // ownership value rather than a no-match. verifyToken rejects such a token first, so this is
-  // defence-in-depth; the point is that the invariant is ENFORCED here rather than relied upon.
+  // The kit answers OPTIONS and every sign-in refusal (401, the household gate's 403) before any statement.
+  const ctx = await requestContext(event, { resp });
+  if (ctx.response) return ctx.response;
+  const { secrets, userId } = ctx;
+  // The kit has already refused an empty sub. This copy, the client and `household` below stay in this file because
+  // authz-household.test.js reads all three here, the 401 ahead of the other two.
   if (!userId) return resp(401, { error: 'Unauthorized' });
-  const gateRefusal = householdGate(userId);
-  if (gateRefusal) return resp(gateRefusal.status, gateRefusal.body);
 
   const sql = neon(secrets.NEON_DATABASE_URL);
   const method = event.requestContext?.http?.method ?? 'GET';
@@ -395,8 +360,7 @@ export const handler = async (event) => {
             // (public.crop_types has no such trigger, which is why the template above has no
             // transaction here.) The `AND deleted_at IS NOT NULL` keeps a concurrent restore from
             // writing a second, empty audit row.
-            const [, restoredRows] = await sql.transaction([
-              sql`SELECT set_config('app.actor_clerk_sub', ${auditActor(userId)}, true)`,
+            const [, restoredRows] = await withActor(sql, userId, () => [
               sql`
                 UPDATE public.source
                    SET deleted_at = NULL
@@ -538,8 +502,7 @@ export const handler = async (event) => {
         // 'system' instead of the person who made the edit.
         let updatedRows;
         try {
-          [, updatedRows] = await sql.transaction([
-            sql`SELECT set_config('app.actor_clerk_sub', ${auditActor(userId)}, true)`,
+          [, updatedRows] = await withActor(sql, userId, () => [
             sql`
               UPDATE public.source
                  SET name          = CASE WHEN ${has('name')}::boolean          THEN ${name}::text ELSE name END,
@@ -712,8 +675,7 @@ export const handler = async (event) => {
       // a plain-English 409 here, never the generic arm's index name.
       let rows;
       try {
-        [, rows] = await sql.transaction([
-          sql`SELECT set_config('app.actor_clerk_sub', ${auditActor(userId)}, true)`,
+        [, rows] = await withActor(sql, userId, () => [
           sql`
             UPDATE public.cultivar
                SET deleted_at = NULL
@@ -1032,8 +994,7 @@ export const handler = async (event) => {
           fillRank = fillsCultivarRank(body, clear, current);
         }
 
-        const [, updateRows] = await sql.transaction([
-          sql`SELECT set_config('app.actor_clerk_sub', ${auditActor(userId)}, true)`,
+        const [, updateRows] = await withActor(sql, userId, () => [
           sql`
             UPDATE public.cultivar SET
               display_name         = COALESCE(${body.name ?? null}, display_name),
@@ -1090,8 +1051,7 @@ export const handler = async (event) => {
       }
 
       if (method === 'DELETE') {
-        const [, deleteRows] = await sql.transaction([
-          sql`SELECT set_config('app.actor_clerk_sub', ${auditActor(userId)}, true)`,
+        const [, deleteRows] = await withActor(sql, userId, () => [
           sql`
             UPDATE public.cultivar
             SET deleted_at = NOW()
@@ -1275,8 +1235,7 @@ export const handler = async (event) => {
       // point: a post-commit write (the applyDerive idiom below) fails OPEN, which for an existence
       // invariant means quietly re-creating the exact gap this closes.
       const newVarietyId = randomUUID();
-      const [, insertRows] = await sql.transaction([
-        sql`SELECT set_config('app.actor_clerk_sub', ${auditActor(userId)}, true)`,
+      const [, insertRows] = await withActor(sql, userId, () => [
         sql`
           INSERT INTO public.cultivar (
             id, display_name, species, genus,

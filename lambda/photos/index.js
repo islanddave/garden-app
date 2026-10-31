@@ -1,11 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { neon } from '@neondatabase/serverless';
-import { verifyToken } from '@clerk/backend';
-import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
+import { SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { householdScope, loadOwnedSpace, loadOwnedLocation, loadOwnedInventoryItem, warnRejectedFk } from './household.js';
-import { householdGate } from './household.js';
+import { requestContext } from './request-context.js';
 // BUG-PARENTOWN-001: body-supplied PARENT-id loaders for the five photo parents household.js does
 // not cover. See lambda/authz-parents.js for the contract and for why they live in a separate file.
 import { loadOwnedProject, loadOwnedPlantingRef, loadOwnedEvent } from './authz-parents.js';
@@ -20,6 +19,7 @@ import { normalizeViewTier, viewTierKey, PHOTO_VIEW_TIERS } from './viewTier.js'
 import { softDeletePhoto, restorePhoto, listDeletedPhotos } from './photoDelete.js';
 import { checkRateLimit, withRetryAfter } from './rate-limit.js';
 
+// photo-access.js reads the CloudFront signing key through this client; the kit holds its own for garden-app/secrets.
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 // requestChecksumCalculation/responseChecksumValidation: newer SDK v3 versions (3.679+) default
 // to injecting x-amz-checksum-mode=ENABLED into GetObject presigned URLs as a query param.
@@ -33,16 +33,9 @@ const s3 = new S3Client({
 const BUCKET = process.env.S3_PHOTOS_BUCKET;
 if (!BUCKET) throw new Error('S3_PHOTOS_BUCKET env var not set — check Lambda configuration');
 
-let _secrets = null, _secretsAt = 0;
-const SECRETS_TTL_MS = 5 * 60 * 1000; // V3-PHOTODBG-001: refetch after 5min so a rotated secret doesn't strand a warm Lambda
-async function getSecrets() {
-  if (_secrets && (Date.now() - _secretsAt) < SECRETS_TTL_MS) return _secrets;
-  const cmd = new GetSecretValueCommand({ SecretId: process.env.SECRET_NAME ?? 'garden-app/secrets' });
-  const res = await sm.send(cmd);
-  _secrets = JSON.parse(res.SecretString);
-  _secretsAt = Date.now();
-  return _secrets;
-}
+// The kit refetches garden-app/secrets after this long, so a rotated secret doesn't strand a warm Lambda.
+// Pinned by lambda/site-constants.static.test.js (C4).
+const SECRETS_TTL_MS = 5 * 60 * 1000;
 
 const CORS = {}; // Lambda URL config is sole CORS source — handler must not duplicate
 
@@ -70,6 +63,12 @@ function resp(statusCode, body) {
     headers: { 'Content-Type': 'application/json', ...CORS },
     body: JSON.stringify(body),
   };
+}
+
+// The kit's onSecretsError: a secrets fetch failure is a retryable 503 here, not a thrown 502 the client cannot read.
+function secretsUnavailable(err) {
+  console.error('getSecrets failed', err?.message ?? err);
+  return resp(503, { error: 'Service temporarily unavailable' });
 }
 
 // V3-PHOTODBG-001: classify transient upstream failures (DB / Secrets Manager / network unreachable) so the
@@ -527,45 +526,13 @@ export const handler = async (event) => {
   // A-Pending-4 (T1-6, default-in): single method+path route log — makes CloudWatch invocation
   // evidence per-route (3.9/0A.6 dead-surface sheets) instead of per-function. No payloads logged.
   console.log('route', event.requestContext?.http?.method ?? 'GET', event.rawPath ?? '');
-  if (event.requestContext?.http?.method === 'OPTIONS') {
-    return { statusCode: 204, headers: CORS, body: '' };
-  }
-
-  let secrets;
-  try {
-    secrets = await getSecrets();
-  } catch (err) {
-    console.error('getSecrets failed', err?.message ?? err);
-    return resp(503, { error: 'Service temporarily unavailable' });
-  }
-
-  const authHeader = event.headers?.authorization ?? event.headers?.Authorization ?? '';
-  const token = authHeader.replace(/^Bearer\s+/i, '');
-  let userId;
-  try {
-    const payload = await verifyToken(token, {
-      secretKey: secrets.CLERK_SECRET_KEY,
-      authorizedParties: [
-        'https://garden.futureishere.net',
-        'https://dg6mmjhepoyt9.cloudfront.net',
-      ],
-    });
-    userId = payload.sub;
-  } catch (err) {
-    console.error('verifyToken failed:', err?.message ?? String(err));
-    return resp(401, { error: 'Unauthorized' });
-  }
-  // Adversarial-review hardening (mirrors lambda/plants/index.js): householdScope('') returns [''] and
-  // `'' = ANY(ARRAY[''])` is TRUE in Postgres, so an empty/absent JWT subject would be a live
-  // ownership value rather than a no-match — every `created_by = ANY(householdIds)` predicate in this
-  // file would then match rows whose created_by is ''. Clerk never issues one; this makes that
-  // assumption enforced instead of relied upon.
-  if (!userId) return resp(401, { error: 'Unauthorized' });
-  const gateRefusal = householdGate(userId);
-  if (gateRefusal) return resp(gateRefusal.status, gateRefusal.body);
-
-  const sql = neon(secrets.NEON_DATABASE_URL);
-  // HOUSEHOLD-MODE: widened at V3-ROLES teardown (photos scope SWITCHED uploaded_by -> created_by)
+  // The kit answers OPTIONS, a secrets failure (secretsUnavailable) and every sign-in refusal (401, the household
+  // gate's 403) before any statement, and refetches secrets on SECRETS_TTL_MS.
+  const ctx = await requestContext(event, { resp, neon, onSecretsError: secretsUnavailable, secretsTtlMs: SECRETS_TTL_MS });
+  if (ctx.response) return ctx.response;
+  const { userId, sql } = ctx;
+  // HOUSEHOLD-MODE: widened at V3-ROLES teardown (photos scope SWITCHED uploaded_by -> created_by). Its own line,
+  // after the kit's empty-sub 401: household-mode.test.js pins it here.
   const householdIds = householdScope(userId);
   const method = event.requestContext?.http?.method ?? 'GET';
   const rawPath = event.rawPath ?? '/api/photos';

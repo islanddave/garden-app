@@ -45,6 +45,11 @@ const decomment = (s) => s.split('\n')
 
 const SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
 const AUTHZ_SRC = decomment(readFileSync(resolve(__dirname, 'authz.js'), 'utf8'));
+// index.js signs in through this dir's copy of the D2 kit (held byte-equal to lambda/request-context.js by
+// lambda/household-isolation.test.js), so the sign-in pins below read the code that runs in this zip.
+const KIT_SRC = decomment(readFileSync(resolve(__dirname, 'request-context.js'), 'utf8'));
+const KIT_FN = KIT_SRC.slice(KIT_SRC.indexOf('export async function requestContext('));
+const KIT_CALL = /const ctx = await requestContext\(event\b[\s\S]*?\);\n\s*if \(ctx\.response\) return ctx\.response;/;
 
 const DAVE = 'user_3D2gM0hIl03gjW3JM2DjtPzm0jI';
 const JEN = 'user_3E2xA85kQhr1vSZhiv4W1GLudJV';
@@ -462,18 +467,25 @@ describe('varieties write predicates — source-level invariants', () => {
   // (Independently enforced fleet-wide by lambda/authz-write-fk.test.js, which auto-detects any dir
   // shipping a household.js copy — that is what caught this gap here.)
   it('an empty JWT sub is 401d BEFORE it can become an ownership array', () => {
-    expect(SRC).toMatch(/if \(!userId\) return resp\(401, \{ error: 'Unauthorized' \}\);/);
-    const guard = SRC.indexOf("if (!userId) return resp(401");
-    const use = SRC.search(/householdScope\s*\(\s*userId\s*\)/);
+    expect(KIT_SRC).toMatch(/if \(!userId\) return resp\(401, \{ error: 'Unauthorized' \}\);/);
+    const guard = KIT_FN.indexOf("if (!userId) return resp(401");
     expect(guard).toBeGreaterThan(-1);
+    expect(guard, 'the empty-sub guard must precede the household gate').toBeLessThan(KIT_FN.indexOf('householdGate(userId)'));
+    expect(guard).toBeLessThan(KIT_FN.indexOf('neon('));
+    expect(guard).toBeLessThan(KIT_FN.indexOf('scope('));
+    const call = SRC.search(KIT_CALL);
+    const use = SRC.search(/householdScope\s*\(\s*userId\s*\)/);
+    expect(call).toBeGreaterThan(-1);
     expect(use).toBeGreaterThan(-1);
-    expect(guard, 'the empty-sub guard must precede householdScope(userId)').toBeLessThan(use);
-    expect(guard).toBeLessThan(SRC.indexOf('const sql = neon('));
+    expect(call, 'the kit call must precede householdScope(userId)').toBeLessThan(use);
+    expect(call).toBeLessThan(SRC.indexOf('const sql = neon('));
   });
 
   // userId comes from the verified JWT sub and nowhere else — never a header or body field.
   it('userId is taken only from the verified token payload', () => {
-    expect(SRC).toMatch(/userId = payload\.sub/);
+    expect(KIT_SRC).toMatch(/userId = payload\.sub/);
+    expect(SRC).toMatch(KIT_CALL);
+    expect(SRC).toMatch(/const \{[^}]*\buserId\b[^}]*\} = ctx;/);
     expect(SRC).not.toMatch(/userId = (?:event|body|headers)/);
   });
 
@@ -494,10 +506,13 @@ describe('varieties write predicates — source-level invariants', () => {
     // restore arm of POST /api/varieties/sources — public.source carries trg_audit_source_upd, so
     // that UPDATE is audited and must name the human who asked for it rather than 'system'. 5 -> 6 on
     // 2026-09-29 (V5-SOURCECONTACT-001), PATCH /api/varieties/sources/:id, same table, same reason.
-    const binds = [...SRC.matchAll(/set_config\('app\.actor_clerk_sub', \$\{([^}]*)\}, true\)/g)].map((m) => m[1]);
-    expect(binds).toHaveLength(6);
-    for (const b of binds) expect(b).toBe('auditActor(userId)');
-    expect(SRC).not.toMatch(/set_config\('app\.actor_clerk_sub', \$\{[^}]*household/);
+    // D2 W1: every bind is now a withActor call (its helper checks the actor through auditActor), so the
+    // actor argument is what is asserted, over every call; no raw bind is left in this file.
+    const actors = [...SRC.matchAll(/\bwithActor\(sql, ([^,]+),/g)].map((m) => m[1]);
+    expect(actors).toHaveLength(6);
+    for (const a of actors) expect(a).toBe('userId');
+    expect(SRC).not.toMatch(/set_config\('app\.actor_clerk_sub', \$\{/);
+    expect(SRC).not.toMatch(/withActor\(sql, [^,]*household/);
   });
 
   it('POST still stamps created_by from the JWT sub only (no widening on create)', () => {

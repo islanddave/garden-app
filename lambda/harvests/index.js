@@ -41,10 +41,8 @@
 //     granting the photos bucket — would let this response carry both derivative URLs and cost zero
 //     extra round trips, which is exactly what it buys and why it stays Dave's call, not a lane's.
 import { neon } from '@neondatabase/serverless';
-import { verifyToken } from '@clerk/backend';
-import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { householdScope } from './household.js';
-import { householdGate } from './household.js';
+import { requestContext } from './request-context.js';
 // Pure, DB-free helpers live in ./aggregate.js so they unit-test without this file's runtime deps
 // (neon/clerk/aws — absent from root package.json under CI `npm ci`). See lambda/preservation/attribution.js.
 import { parseTimeframe, encodeCursor, decodeCursor, projectEntry, computeAggregates, applyWeights, applyCropHeroPhotos } from './aggregate.js';
@@ -57,21 +55,10 @@ import {
 import { matchSeasonStatsRoute, handleSeasonStatsGet } from './season-stats.js';
 export { parseTimeframe, encodeCursor, decodeCursor, isoWeekStart, projectEntry, computeAggregates, shapeWeightRow, applyWeights, applyCropHeroPhotos } from './aggregate.js';
 
-const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
-
 // Season = grow-year Nov 1 - Oct 31; day bucketing + season boundaries share this ONE zone (design §4).
 // The same constant the shipped harvest surfaces use (events lambda HARVEST_TZ) — not per-user in V1.
 const HARVEST_TZ = 'America/New_York';
 const PAGE_LIMIT = 50;
-
-let _secrets = null;
-async function getSecrets() {
-  if (_secrets) return _secrets;
-  const cmd = new GetSecretValueCommand({ SecretId: process.env.SECRET_NAME ?? 'garden-app/secrets' });
-  const res = await sm.send(cmd);
-  _secrets = JSON.parse(res.SecretString);
-  return _secrets;
-}
 
 const CORS = {}; // Lambda URL config is sole CORS source — handler must not duplicate.
 function resp(statusCode, body) {
@@ -95,33 +82,11 @@ function resp(statusCode, body) {
 // ── Handler ──────────────────────────────────────────────────────────────────────────────────────
 
 export const handler = async (event) => {
-  if (event.requestContext?.http?.method === 'OPTIONS') {
-    return { statusCode: 204, headers: CORS, body: '' };
-  }
-
-  const secrets = await getSecrets();
-
-  const authHeader = event.headers?.authorization ?? event.headers?.Authorization ?? '';
-  const token = authHeader.replace(/^Bearer\s+/i, '');
-  let userId;
-  try {
-    const payload = await verifyToken(token, {
-      secretKey: secrets.CLERK_SECRET_KEY,
-      authorizedParties: ['https://garden.futureishere.net', 'https://dg6mmjhepoyt9.cloudfront.net'],
-    });
-    userId = payload.sub;
-  } catch (err) {
-    console.error('verifyToken failed:', err?.message ?? String(err));
-    return resp(401, { error: 'Unauthorized' });
-  }
-  // V4-AUTHZRESIDUE-001 (mirrors lambda/plants + lambda/photos): householdScope('') returns [''] and
-  // `'' = ANY(ARRAY[''])` is TRUE in Postgres, so an empty/absent JWT subject would be a live
-  // ownership value rather than a no-match. verifyToken rejects such a token first, so this is
-  // defence-in-depth; the point is that the invariant is ENFORCED here rather than relied upon.
-  if (!userId) return resp(401, { error: 'Unauthorized' });
-  const gateRefusal = householdGate(userId);
-  if (gateRefusal) return resp(gateRefusal.status, gateRefusal.body);
-
+  // The kit answers OPTIONS and every sign-in refusal (401, the household gate's 403) before any statement, and
+  // scopes only after its empty-sub 401.
+  const ctx = await requestContext(event, { resp, neon, scope: householdScope });
+  if (ctx.response) return ctx.response;
+  const { userId, sql, householdIds } = ctx;
   const method = event.requestContext?.http?.method ?? 'GET';
   const rawPath = event.rawPath ?? '/api/harvests';
 
@@ -143,8 +108,8 @@ export const handler = async (event) => {
       }
     }
     const ctx = {
-      sql: neon(secrets.NEON_DATABASE_URL),
-      householdIds: householdScope(userId),
+      sql,
+      householdIds,
       userId,
       tz: HARVEST_TZ,
       query: event.queryStringParameters ?? {},
@@ -203,9 +168,6 @@ export const handler = async (event) => {
   // BD-040: null for a pre-deploy 2-part cursor, which the WHERE clause below branches on.
   const curCreated = cur ? (cur.createdAt ?? null) : null;
   const curId = cur ? cur.id : null;
-
-  const sql = neon(secrets.NEON_DATABASE_URL);
-  const householdIds = householdScope(userId);
 
   try {
     // V4-ARCHIVEHIDE-001 (L3). The three read models below (entries, aggregates, weight totals) join

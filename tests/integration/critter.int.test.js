@@ -246,7 +246,7 @@ describe('critter — sign-in and origin', () => {
   })
 
   it('a verified token with no subject is 401 (empty-subject guard)', async () => {
-    vi.mocked(verifyToken).mockImplementationOnce(() => Promise.resolve({ sub: '' }))
+    vi.mocked(verifyToken).mockImplementationOnce(() => Promise.resolve({ sub: '', azp: ORIGINS[0] }))
     const r = await raw(makeEvent({ method: 'POST', path: '/api/notifications/garden-view-opened' }))
     expect(r.status).toBe(401)
     expect(r.body).toEqual({ error: 'Unauthorized' })

@@ -1170,3 +1170,35 @@ describe('POST /api/events — the same event re-sent within 45 s writes one row
     expect(await rows(p)).toEqual({ live: 1, total: 1 })
   })
 })
+
+// D2 W3 (i3's case): the PUT's event_log UPDATE runs through withActor, and trg_audit_event_log_upd reads the actor
+// GUC (migrations/v4-harvestaudit-001/0b-arm-triggers.sql). A household mate editing a member's event is the case
+// where the owner and the caller differ, so every audit row for the edit must name the caller.
+describe('D2 withActor — a household mate\'s event edit is audited as the mate', () => {
+  it('the event_log audit rows for the mate\'s date edit name the mate', async () => {
+    const MATE = `user_int_events_mate_${RUN}`
+    const [{ id }] = await directSql`
+      INSERT INTO event_log (project_id, event_type, event_date, is_public, logged_by, created_by)
+      VALUES (${projectId}, 'observation', ${'2026-06-01T12:00:00.000Z'}, false, ${USER}, ${USER})
+      RETURNING id`
+    const saved = process.env.GARDEN_HOUSEHOLD_IDS
+    process.env.GARDEN_HOUSEHOLD_IDS = `${USER},${MATE}`
+    try {
+      setTestUserId(MATE)
+      const r = await callHandler(handler, {
+        method: 'PUT', path: `/api/events/${id}`, body: { event_type: 'observation', event_date: '2026-06-02T12:00:00.000Z' },
+      })
+      expect(r.status, JSON.stringify(r.body)).toBe(200)
+      const rows = await directSql`
+        SELECT actor_clerk_sub FROM public.audit_events
+         WHERE table_name = 'event_log' AND row_id = ${id} AND action = 'UPDATE'`
+      expect(rows.length).toBeGreaterThan(0)
+      expect([...new Set(rows.map((x) => x.actor_clerk_sub))]).toEqual([MATE])
+    } finally {
+      setTestUserId(USER)
+      if (saved === undefined) delete process.env.GARDEN_HOUSEHOLD_IDS
+      else process.env.GARDEN_HOUSEHOLD_IDS = saved
+      await directSql`DELETE FROM public.audit_events WHERE actor_clerk_sub = ${MATE}`
+    }
+  })
+})

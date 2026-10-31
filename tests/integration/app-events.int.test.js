@@ -189,7 +189,7 @@ describe('app-events — database errors (the replies D2b changes)', () => {
   })
 
   it('SEC-60: a token with no subject -> 401 (it was the limiter\'s 429), and no row of any kind is written', async () => {
-    vi.mocked(verifyToken).mockImplementationOnce(() => Promise.resolve({}))
+    vi.mocked(verifyToken).mockImplementationOnce(() => Promise.resolve({ azp: ORIGINS[0] }))
     const r = await raw(makeEvent({ method: 'POST', path: '/api/app-events', body: { event_name: 'nosub' } }))
     expect(r.status).toBe(401)
     expect(r.body).toEqual({ error: 'Unauthorized' })

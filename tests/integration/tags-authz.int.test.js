@@ -2,8 +2,10 @@
 // /api/tags + /api/entity-tags). The entity-tags attach path needs CUSTOM arms (the generic matrix
 // can't express its { direct, projected } read, its create-not-update write, or its 404-vs-403 axis
 // fork). The /api/tags CRUD sub-surface DOES fit the generic matrix (bonus coverage, same Lambda).
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { directSql, callHandler, testRunId, setTestUserId, insertProject } from './_harness.js'
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
+import { directSql, callHandler, makeEvent, testRunId, setTestUserId, insertProject, householdDefault } from './_harness.js'
+// After _harness.js, whose vi.mock replaces this module with the stub; imported first it would be the real one.
+import { verifyToken } from '@clerk/backend'
 import { describeAuthzMatrix } from './_authz.js'
 import { handler as tagsHandler } from '../../lambda/tags/index.js'
 
@@ -177,6 +179,44 @@ describe.skipIf(!HAS_TAGS)('AUTHZ entity-tags /api/entity-tags — attach househ
     })
     expect(status).toBe(200)
     expect(body.direct.map((t) => t.id)).not.toContain(ownerTagId)
+  })
+})
+
+// ── SEC-21: tags hands Clerk exactly the two production origins; a staging-origin token is refused ─────────────
+describe.skipIf(!HAS_TAGS)('tags — SEC-21 token origins', () => {
+  const RUN = testRunId()
+  const STAGED = `sec21_tags_staged_${RUN}`
+  const ADMITTED = `sec21_tags_prod_${RUN}`
+  const ORIGINS = ['https://garden.futureishere.net', 'https://dg6mmjhepoyt9.cloudfront.net']
+  // Clerk refuses a token whose azp is not in authorizedParties; this models that check on the list the handler passes.
+  const signedFrom = (azp, sub) => (_token, opts) => (opts.authorizedParties.includes(azp)
+    ? (householdDefault(sub), Promise.resolve({ sub, azp }))
+    : Promise.reject(new Error(`Invalid JWT Authorized party claim (azp) "${azp}"`)))
+
+  afterAll(async () => {
+    await directSql`DELETE FROM public.tag WHERE owner_id IN (${STAGED}, ${ADMITTED})`
+    await directSql`DELETE FROM rate_limit_buckets WHERE actor_clerk_sub IN (${STAGED}, ${ADMITTED})`
+  })
+
+  it('SEC-21: a token minted for the staging origin is 401, and the create reaches neither the limiter nor the table', async () => {
+    vi.mocked(verifyToken).mockImplementationOnce(signedFrom('https://staging.garden.futureishere.net', STAGED))
+    const r = await tagsHandler(makeEvent({ method: 'POST', path: '/api/tags', body: { facet: 'group', label: `sec21-staged-${RUN}` } }))
+    expect(r.statusCode).toBe(401)
+    expect(JSON.parse(r.body)).toEqual({ error: 'Unauthorized' })
+    expect(await directSql`SELECT 1 FROM rate_limit_buckets WHERE actor_clerk_sub = ${STAGED}`).toEqual([])
+    expect(await directSql`SELECT 1 FROM public.tag WHERE owner_id = ${STAGED}`).toEqual([])
+  })
+
+  it.each(ORIGINS)('SEC-21: a token minted for %s is admitted', async (azp) => {
+    vi.mocked(verifyToken).mockImplementationOnce(signedFrom(azp, ADMITTED))
+    const r = await tagsHandler(makeEvent({ method: 'GET', path: '/api/tags' }))
+    expect(r.statusCode).toBe(200)
+  })
+
+  it('SEC-21: the handler hands Clerk exactly the two production origins', async () => {
+    setTestUserId(ADMITTED)
+    await callHandler(tagsHandler, { method: 'GET', path: '/api/tags' })
+    expect(vi.mocked(verifyToken).mock.calls.at(-1)[1].authorizedParties).toEqual(ORIGINS)
   })
 })
 

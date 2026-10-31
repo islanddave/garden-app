@@ -19,13 +19,18 @@ const decomment = (s) => s.split('\n')
   .join('\n');
 
 const SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
+// index.js signs in through its copy of the D2 kit (same zip); lambda/household-isolation.test.js holds the copy
+// byte-equal to lambda/request-context.js and checks its refusal order.
+const KIT = decomment(readFileSync(resolve(__dirname, 'request-context.js'), 'utf8'));
+const KIT_CALL = /const ctx = await requestContext\(event\b[\s\S]*?\);\n\s*if \(ctx\.response\) return ctx\.response;/;
 
 describe('daily-plan-read Lambda — static read-path invariants', () => {
   const stmts = SRC.match(/sql`[\s\S]*?`/g) || [];
 
   it('authenticates with Clerk verifyToken against CLERK_SECRET_KEY', () => {
-    expect(SRC).toMatch(/verifyToken\(/);
-    expect(SRC).toMatch(/secretKey:\s*secrets\.CLERK_SECRET_KEY/);
+    expect(SRC).toMatch(KIT_CALL);
+    expect(KIT).toMatch(/verifyToken\(/);
+    expect(KIT).toMatch(/secretKey:\s*secrets\.CLERK_SECRET_KEY/);
   });
 
   it('is READ-ONLY — four SELECTs (plan read + V3-TODAYDONE-001 done-derivation + V4-ASSIGNLENS household read + BUG-BACKDATEDFEED-001 feed-cadence read), no write verbs', () => {
@@ -125,7 +130,8 @@ describe('daily-plan-read Lambda — static read-path invariants', () => {
   });
 
   it('returns 401 on auth failure and 500 on query error', () => {
-    expect(SRC).toMatch(/return resp\(401/);
+    expect(SRC).toMatch(KIT_CALL);
+    expect(KIT).toMatch(/return resp\(401/);
     expect(SRC).toMatch(/return resp\(500/);
   });
 });

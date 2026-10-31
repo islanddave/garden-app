@@ -23,7 +23,8 @@
 //   * Grams are computed IN SQL from one bound copy of MASS_G, never in JS: a JS float bound into a
 //     numeric column drifts, and a reversal must add back exactly what the draw took.
 // AUDIT: kitchen_batch_input (F) and preservation_log (1b) carry statement-level audit triggers, so
-// every write here runs in sql.transaction([set_config('app.actor_clerk_sub', <sub>, true), write]).
+// every write here runs through withActor, whose batch leads with the actor GUC.
+import { withActor } from './audit-actor.js';
 import { randomUUID } from 'node:crypto';
 import { MASS_G, KITCHEN_UUID_RE, normalizeText } from './kitchenBatch.js';
 import {
@@ -305,8 +306,7 @@ export async function addKeyedLines(sql, batchId, body, userId, householdIds) {
   const jarIds = uuids(prep.rows.map((r) => r.preservation_log_id));
   let rows;
   try {
-    [, rows] = await sql.transaction([
-      sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+    [, rows] = await withActor(sql, userId, () => [
       sql`
       WITH ins AS (
         INSERT INTO kitchen_batch_input (
@@ -452,8 +452,7 @@ export async function patchLine(sql, batchId, lineId, body, userId, householdIds
   const shuHigh = present.shu_rating_low && !present.shu_rating_high ? v('shu_rating_low') : v('shu_rating_high');
   let rows;
   try {
-    [, rows] = await sql.transaction([
-      sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+    [, rows] = await withActor(sql, userId, () => [
       sql`
       WITH upd AS (
         UPDATE kitchen_batch_input SET
@@ -539,8 +538,7 @@ export async function takeOutLine(sql, batchId, lineId, userId) {
   const line = await loadLine(sql, batchId, lineId);
   if (!line) return notFound;
   if (line.harvest_log_id != null) {
-    const [, rows] = await sql.transaction([
-      sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+    const [, rows] = await withActor(sql, userId, () => [
       sql`
       DELETE FROM kitchen_batch_input
       WHERE id = ${line.id}::uuid
@@ -551,8 +549,7 @@ export async function takeOutLine(sql, batchId, lineId, userId) {
     if (!rows.length) return notFound;
     return { status: 200, body: { ok: true, input: null } };
   }
-  const [, rows] = await sql.transaction([
-    sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+  const [, rows] = await withActor(sql, userId, () => [
     sql`
     WITH gone AS (
       UPDATE kitchen_batch_input SET deleted_at = now()
@@ -641,8 +638,7 @@ export async function restoreLine(sql, batchId, lineId, userId, householdIds) {
   }
   let rows;
   try {
-    [, rows] = await sql.transaction([
-      sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+    [, rows] = await withActor(sql, userId, () => [
       sql`
       WITH back AS (
         UPDATE kitchen_batch_input SET deleted_at = NULL

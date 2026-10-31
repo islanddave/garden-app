@@ -1,10 +1,10 @@
 import { neon } from '@neondatabase/serverless';
-import { verifyToken } from '@clerk/backend';
-import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
+import { SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { householdScope, loadOwnedLocation, warnRejectedFk } from './household.js';
-import { householdGate } from './household.js';
+import { requestContext } from './request-context.js';
+import { withActor } from './audit-actor.js';
 import { loadOwnedProject } from './authz-parents.js';
 import { resolvePhotoViewUrl } from './photo-access.js';
 import { isStatusChange, formatStatusChangeNote, buildStatusChangeMetadata, STATUS_CHANGE_EVENT_TYPE } from './statusEvents.js';
@@ -18,6 +18,7 @@ import { validateClear } from './validate.js';
 // the INSERT below cannot 42703.
 const EVENT_SOURCE_STATUS = 'app_status';
 
+// photo-access.js reads the CloudFront signing key through this client; the kit holds its own for garden-app/secrets.
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 // S3 client for featured-photo view URL enrichment.
 // Matches lambda/photos checksum hardening (3.679+ presign-URL incompatibility).
@@ -39,15 +40,6 @@ async function getFeaturedPhotoViewUrl(storagePath) {
   }
 }
 
-let _secrets = null;
-async function getSecrets() {
-  if (_secrets) return _secrets;
-  const cmd = new GetSecretValueCommand({ SecretId: process.env.SECRET_NAME ?? 'garden-app/secrets' });
-  const res = await sm.send(cmd);
-  _secrets = JSON.parse(res.SecretString);
-  return _secrets;
-}
-
 const CORS = {}; // Lambda URL config is sole CORS source — handler must not duplicate
 
 function resp(statusCode, body, extra = {}) {
@@ -56,6 +48,13 @@ function resp(statusCode, body, extra = {}) {
     headers: { 'Content-Type': 'application/json', ...CORS, ...extra },
     body: JSON.stringify(body),
   };
+}
+
+// The kit's onSecretsError: a fetch failure or a missing required key is a 500 here. It gets key names only, never values.
+function secretsFailure(err, { missing, keys }) {
+  if (missing) console.error('projects lambda: missing required secrets', keys);
+  else console.error('projects lambda: secrets fetch failed', err);
+  return resp(500, { error: 'Internal server error' });
 }
 
 // V3-REPARENT-001: native reparent core. One atomic CTE (a single neon request = one txn):
@@ -229,46 +228,13 @@ async function handlePublicProject(slug, secrets) {
 }
 
 export const handler = async (event) => {
-  if (event.requestContext?.http?.method === 'OPTIONS') {
-    return { statusCode: 204, headers: CORS, body: '' };
-  }
-
-  let secrets;
-  try {
-    secrets = await getSecrets();
-    if (!secrets.CLERK_SECRET_KEY || !secrets.NEON_DATABASE_URL) {
-      console.error('projects lambda: missing required secrets', Object.keys(secrets));
-      return resp(500, { error: 'Internal server error' });
-    }
-  } catch (err) {
-    console.error('projects lambda: secrets fetch failed', err);
-    return resp(500, { error: 'Internal server error' });
-  }
-
-  const authHeader = event.headers?.authorization ?? event.headers?.Authorization ?? '';
-  const token = authHeader.replace(/^Bearer\s+/i, '');
-  let userId;
-  try {
-    const payload = await verifyToken(token, {
-      secretKey: secrets.CLERK_SECRET_KEY,
-      authorizedParties: [
-        'https://garden.futureishere.net',
-        'https://dg6mmjhepoyt9.cloudfront.net',
-      ],
-    });
-    userId = payload.sub;
-  } catch (err) {
-    console.error('verifyToken failed:', err?.message ?? String(err));
-    return resp(401, { error: 'Unauthorized' });
-  }
-  // V4-AUTHZRESIDUE-001 (mirrors lambda/plants + lambda/photos): householdScope('') returns [''] and
-  // `'' = ANY(ARRAY[''])` is TRUE in Postgres, so an empty/absent JWT subject would be a live
-  // ownership value rather than a no-match. verifyToken rejects such a token first, so this is
-  // defence-in-depth; the point is that the invariant is ENFORCED here rather than relied upon.
-  if (!userId) return resp(401, { error: 'Unauthorized' });
-  const gateRefusal = householdGate(userId);
-  if (gateRefusal) return resp(gateRefusal.status, gateRefusal.body);
-
+  // The kit answers OPTIONS, a secrets failure (secretsFailure) and every sign-in refusal (401, the household gate's
+  // 403) before any statement. public-route.test.js holds the public dispatch below this return.
+  const ctx = await requestContext(event, {
+    resp, neon, requiredSecrets: ['CLERK_SECRET_KEY', 'NEON_DATABASE_URL'], onSecretsError: secretsFailure,
+  });
+  if (ctx.response) return ctx.response;
+  const { secrets, userId, sql } = ctx;
   const method = event.requestContext?.http?.method ?? 'GET';
   const rawPath = event.rawPath ?? '/api/projects';
   const qs = event.queryStringParameters ?? {};
@@ -310,8 +276,8 @@ export const handler = async (event) => {
   const reparentRestoreMatch = rawPath.match(/^\/api\/projects\/([^/]+)\/reparent\/restore$/);
 
   try {
-    const sql = neon(secrets.NEON_DATABASE_URL);
-    // HOUSEHOLD-MODE: widened at V3-ROLES teardown
+    // HOUSEHOLD-MODE: widened at V3-ROLES teardown. Its own line, after the kit's empty-sub 401: household-mode.test.js
+    // pins it here.
     const householdIds = householdScope(userId);
 
     // --- /api/projects/types/:id ---
@@ -800,7 +766,6 @@ export const handler = async (event) => {
         // TRANSACTION as the project status UPDATE, only on a real change. container has no
         // RLS (explicit household scope above); event_log + entity_memory do -> set_config.
         const _stmts = [
-          sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
           sql`
           UPDATE public.container
           SET
@@ -862,7 +827,7 @@ export const handler = async (event) => {
               updated_at = NOW()
           `);
         }
-        const _txr = await sql.transaction(_stmts);
+        const _txr = await withActor(sql, userId, () => _stmts);
         const rows = _txr[1];
         if (!rows.length) return resp(404, { error: 'Not found' });
         return resp(200, rows[0]);

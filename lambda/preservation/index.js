@@ -4,10 +4,9 @@
 // /api/preservation/whats-put-up and /api/preservation/use-soon are matched BEFORE the :id route.
 // Owner column is user_id (not created_by). Soft-Delete-Only: every read filters deleted_at IS NULL.
 import { neon } from '@neondatabase/serverless';
-import { verifyToken } from '@clerk/backend';
-import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { householdScope, loadOwnedPhoto } from './household.js';
-import { householdGate } from './household.js';
+import { requestContext } from './request-context.js';
+import { withActor } from './audit-actor.js';
 import { reconcilePlantAttribution, plantingLabel } from './attribution.js';
 import { VALID_SOURCE_KINDS, normalizeSourceLabel } from './provenance.js';
 import { classifyUseBy, dayMs, USE_SOON_FRACTION, etDay, ET_TZ } from './useBy.js';
@@ -46,17 +45,6 @@ import { handlePantryRoute, removeJar } from './pantryRoutes.js';
 // Put-Up release 4 — /api/recipes (the recipe library), importable for the same reason.
 import { handleRecipeRoute } from './recipeRoutes.js';
 import { MASS_UNITS, MASS_FACTORS } from './lineRoutes.js';
-
-const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
-
-let _secrets = null;
-async function getSecrets() {
-  if (_secrets) return _secrets;
-  const cmd = new GetSecretValueCommand({ SecretId: process.env.SECRET_NAME ?? 'garden-app/secrets' });
-  const res = await sm.send(cmd);
-  _secrets = JSON.parse(res.SecretString);
-  return _secrets;
-}
 
 const CORS = {}; // Lambda URL config is sole CORS source — handler must not duplicate
 
@@ -183,40 +171,11 @@ async function loadHarvestLog(sql, harvestLogId, householdIds) {
 // exists today.
 
 export const handler = async (event) => {
-  if (event.requestContext?.http?.method === 'OPTIONS') {
-    return { statusCode: 204, headers: CORS, body: '' };
-  }
-
-  const secrets = await getSecrets();
-
-  const authHeader = event.headers?.authorization ?? event.headers?.Authorization ?? '';
-  const token = authHeader.replace(/^Bearer\s+/i, '');
-  let userId;
-  try {
-    const payload = await verifyToken(token, {
-      secretKey: secrets.CLERK_SECRET_KEY,
-      authorizedParties: [
-        'https://garden.futureishere.net',
-        'https://dg6mmjhepoyt9.cloudfront.net',
-      ],
-    });
-    userId = payload.sub;
-  } catch (err) {
-    console.error('verifyToken failed:', err?.message ?? String(err));
-    return resp(401, { error: 'Unauthorized' });
-  }
-  // V4-AUTHZRESIDUE-001 (mirrors lambda/plants + lambda/photos): householdScope('') returns [''] and
-  // `'' = ANY(ARRAY[''])` is TRUE in Postgres, so an empty/absent JWT subject would be a live
-  // ownership value rather than a no-match — every `= ANY(householdIds)` predicate in this file
-  // would then match rows whose owner column is ''. verifyToken rejects such a token first, so this
-  // is defence-in-depth; the point is that the invariant is ENFORCED here rather than relied upon
-  // from one layer up.
-  if (!userId) return resp(401, { error: 'Unauthorized' });
-  const gateRefusal = householdGate(userId);
-  if (gateRefusal) return resp(gateRefusal.status, gateRefusal.body);
-
-  const sql = neon(secrets.NEON_DATABASE_URL);
-  const householdIds = householdScope(userId);
+  // The kit answers OPTIONS and every sign-in refusal (401, the household gate's 403) before any statement, and
+  // scopes only after its empty-sub 401, so no `= ANY(householdIds)` predicate here ever binds [''].
+  const ctx = await requestContext(event, { resp, neon, scope: householdScope });
+  if (ctx.response) return ctx.response;
+  const { userId, sql, householdIds } = ctx;
   const method = event.requestContext?.http?.method ?? 'GET';
   const rawPath = event.rawPath ?? '/api/preservation';
 
@@ -493,8 +452,7 @@ export const handler = async (event) => {
         const hasNotes = has('notes');
         const useBy = body.use_by_target == null ? null : String(body.use_by_target).slice(0, 10);
 
-        const [, rows] = await sql.transaction([
-          sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+        const [, rows] = await withActor(sql, userId, () => [
           sql`
           WITH stored AS (
             SELECT package_count AS stored_package_count, remaining_count AS stored_remaining_count,

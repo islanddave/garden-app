@@ -20,8 +20,9 @@
 // remaining_amount, deleted_at.
 //
 // AUDIT. pantry_item is unaudited (V4 §5.5). preservation_log is audited (1b), so the undo and removeJar
-// run in sql.transaction([set_config('app.actor_clerk_sub', <sub>, true), <write>]) — the grouping
-// lambda/audit-actor-guc.test.js asserts.
+// run through withActor, whose batch leads with the actor GUC — the grouping lambda/audit-actor-guc.test.js
+// asserts.
+import { withActor } from './audit-actor.js';
 import { MASS_G, normalizeText } from './kitchenBatch.js';
 import { loadPlantings } from './lineRoutes.js';
 import {
@@ -393,8 +394,7 @@ export async function undoUse(sql, useId, body, userId, householdIds) {
   if (!isUuid(key)) return bad('idempotency_key must be a uuid');
   let rows;
   try {
-    [, rows] = await sql.transaction([
-      sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+    [, rows] = await withActor(sql, userId, () => [
       sql`
       WITH prior AS (
         SELECT r.id, r.reverses_use_id FROM pantry_use r WHERE r.idempotency_key = ${key}::uuid
@@ -506,8 +506,7 @@ async function replayUndo(sql, useId, key, householdIds) {
 // (deleted_at is watched), so it rides the actor GUC.
 export async function removeJar(sql, jarId, userId, householdIds) {
   if (!isUuid(jarId)) return notFound;
-  const [, rows] = await sql.transaction([
-    sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+  const [, rows] = await withActor(sql, userId, () => [
     sql`
     WITH jar AS (
       SELECT p.id FROM preservation_log p

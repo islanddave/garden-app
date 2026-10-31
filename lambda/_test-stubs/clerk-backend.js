@@ -8,7 +8,9 @@ export async function verifyToken(token, opts) {
   if (r instanceof Error) throw r;
   if (r == null) throw new Error('stub: verifyTokenResult not configured');
   applyHouseholdDefault(r.sub);
-  return r;
+  // lambda/request-context.js refuses a token with no azp, so a payload that names none gets the prod origin while
+  // stubState.azpDefault is on. Only a missing key is filled: `azp: undefined` stays absent.
+  return stubState.azpDefault && !('azp' in r) ? { azp: 'https://garden.futureishere.net', ...r } : r;
 }
 
 // Backend API user list, as members/index.js calls it: `userId` filters to those ids, then `offset` and
