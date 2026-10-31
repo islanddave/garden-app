@@ -205,3 +205,58 @@ def test_the_code_update_settles_first_and_the_create_reads_the_manifest(steps, 
     assert "jq -er" in body and '--runtime "$RT"' in body and "nodejs2" not in body
     if steps is PROD_STEPS:  # prod tolerates a Failed last update so the code update can repair it
         assert '|| echo "::warning::$FUNCTION_NAME: last update not Successful' in body
+
+
+# get-function and update-function-code answer with the function's env (ADMIN_CLERK_SUBS) and a presigned
+# code URL; these logs are public, so the update path must print neither.
+DEPLOY_STUB = r"""#!%(python)s
+import json, os, sys
+a = sys.argv[1:]
+open(os.environ["STUB_LOG"], "a").write(json.dumps(a) + "\n")
+fn, env = os.environ["STUB_FN"], {"Variables": {"ADMIN_CLERK_SUBS": "user_SENTINEL"}}
+if a == ["lambda", "get-function", "--function-name", fn]:
+    print(json.dumps({"Configuration": {"FunctionName": fn, "Environment": env},
+                      "Code": {"Location": "https://SENTINEL.example/presigned"}}))
+elif a == ["lambda", "wait", "function-updated", "--function-name", fn]:
+    pass
+elif a[:5] == ["lambda", "update-function-code", "--function-name", fn, "--zip-file"] and len(a) == 6:
+    print(json.dumps({"FunctionName": fn, "Environment": env}))
+    sys.exit(int(os.environ["STUB_CODE_RC"]))
+else:
+    sys.stderr.write("stub refuses %%r\n" %% (a,))
+    sys.exit(252)
+"""
+
+DEPLOY_STEPS = [(PROD_STEPS, "Deploy or create ${{ matrix.function }}", "garden-tags"),
+                (STG_STEPS, "Deploy or create ${{ matrix.function }}-staging", "garden-tags-staging"),
+                (STG_STEPS, "Deploy or create photocdn-derivative-staging", "garden-photocdn-derivative-staging")]
+
+
+def _deploy(tmp_path, steps, prefix, fn, code_rc=0):
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    aws = bindir / "aws"
+    aws.write_text(DEPLOY_STUB % {"python": sys.executable})
+    aws.chmod(aws.stat().st_mode | stat.S_IXUSR)
+    body = tmp_path / "step.sh"
+    body.write_text(_named(steps, prefix)["run"].replace("${{ matrix.function }}", "tags"))
+    log = tmp_path / "aws.log"
+    env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}", STUB_LOG=str(log), STUB_FN=fn,
+               STUB_CODE_RC=str(code_rc))
+    proc = subprocess.run(RUNNER_SHELL + [str(body)], env=env, cwd=tmp_path, capture_output=True, text=True)
+    return proc, [json.loads(l) for l in log.read_text().splitlines()]
+
+
+@pytest.mark.parametrize("steps,prefix,fn", DEPLOY_STEPS, ids=["prod", "staging", "staging-photocdn"])
+def test_the_update_path_prints_no_function_config(tmp_path, steps, prefix, fn):
+    proc, calls = _deploy(tmp_path, steps, prefix, fn)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert calls[-1][:4] == ["lambda", "update-function-code", "--function-name", fn]
+    assert "SENTINEL" not in proc.stdout + proc.stderr
+    assert f"Updating existing function: {fn}" in proc.stdout
+
+
+@pytest.mark.parametrize("steps,prefix,fn", DEPLOY_STEPS, ids=["prod", "staging", "staging-photocdn"])
+def test_a_refused_code_update_still_fails_the_step(tmp_path, steps, prefix, fn):
+    proc, calls = _deploy(tmp_path, steps, prefix, fn, code_rc=254)
+    assert proc.returncode == 254 and calls[-1][1] == "update-function-code"

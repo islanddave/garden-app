@@ -200,8 +200,9 @@ jobs:
           FUNCTION_NAME="garden-${{ matrix.function }}"
           ZIP_FILE="fileb://lambda/${{ matrix.function }}.zip"
 
-          # Check if function exists; create on first deploy, update thereafter
-          if aws lambda get-function --function-name "$FUNCTION_NAME" 2>/dev/null; then
+          # Check if function exists; create on first deploy, update thereafter. Both calls answer with the
+          # function's env and a presigned code URL, so stdout is dropped: these logs are public.
+          if aws lambda get-function --function-name "$FUNCTION_NAME" >/dev/null 2>&1; then
             echo "Updating existing function: $FUNCTION_NAME"
             # Settle a runtime move first (normally a no-op). Tolerated: a function whose last update is Failed
             # still gets the code update that repairs it; one still InProgress fails it closed (ResourceConflict).
@@ -209,7 +210,7 @@ jobs:
               || echo "::warning::$FUNCTION_NAME: last update not Successful; trying the code update anyway"
             aws lambda update-function-code \
               --function-name "$FUNCTION_NAME" \
-              --zip-file "$ZIP_FILE"
+              --zip-file "$ZIP_FILE" >/dev/null
           else
             echo "Creating new function: $FUNCTION_NAME"
             RT=$(jq -er --arg f "$FUNCTION_NAME" '.[$f].runtime' scripts/lambda-config-expected.json) \
