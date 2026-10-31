@@ -15,7 +15,8 @@
 // WHO OWNS THE WORDS. A code this module knows gets this module's sentence, because the sentence has
 // to match what the surface offers (client_stale's is the only one with a button) and has to stay
 // true on a bundle nobody can update. A code it does NOT know gets the server's own text — the
-// server that invented the code is the only party that can explain it. A coded refusal with no text
+// server that invented the code is the only party that can explain it — except DB_ERROR_CODES below,
+// which return null like an uncoded failure. A coded refusal with no text
 // at all returns null, and so does every uncoded failure: the caller keeps its own copy for those
 // (offline, a timeout, an uncoded 400), so nothing that renders today changes.
 
@@ -160,13 +161,18 @@ export function existingPlaceId(err) {
   return null
 }
 
+// lambda/db-error.js's codes: a database refusal past the validators, whose text names only its kind
+// ("Constraint violation"). The caller's own copy says more ("Couldn't save that — try again").
+// putUpErrors.F.test.js holds this set to DB_ERROR_REPLIES.
+const DB_ERROR_CODES = new Set(['check_violation', 'not_null_violation', 'foreign_key_violation', 'unique_violation', 'schema_out_of_date'])
+
 // err -> { code, text, refresh } | null. `refresh` is true only for client_stale: the one refusal the
 // person can fix from here, and only by a tap (V4 §6.5 — never an automatic reload).
 export function describeRefusal(err) {
   const body = err && typeof err === 'object' ? err.body : null
   if (!body || typeof body !== 'object') return null
   const code = typeof body.code === 'string' ? body.code.trim() : ''
-  if (!code) return null
+  if (!code || DB_ERROR_CODES.has(code)) return null
   switch (code) {
     case REFUSAL_CODES.CLIENT_STALE:
       return { code, text: CLIENT_STALE_TEXT, refresh: true }
