@@ -11,6 +11,7 @@ import * as acorn from 'acorn';
 import { stubState, resetStubs } from './_test-stubs/state.js';
 import { DB_ERROR_REPLIES, dbErrorReply, logCaughtError } from './db-error.js';
 import { SEED_CONSTRAINT_MESSAGES } from './inventory-items/index.js';
+import { CONSTRAINT_MESSAGES as VARIETY_MESSAGES } from './varieties/validate.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const read = (rel) => readFileSync(join(here, rel), 'utf8');
@@ -62,6 +63,7 @@ const MAPPED = {
   locations: [{ code: '23505', status: 409, body: { error: 'Slug already exists', code: 'location_slug_conflict' } }],
   plants: [sentence('chk_plants_source_distinct', 'The originator and the place you got it from have to be two different sources. Clear one of them, or pick a different one.')],
   projects: [{ code: '23505', constraint: 'plant_projects_slug_key', status: 409, body: { error: 'Slug already exists', code: 'project_slug_conflict' } }],
+  varieties: Object.entries(VARIETY_MESSAGES).map(([c, e]) => sentence(c, e)),
 };
 
 // One request per adopter whose first statement runs inside the handler's outer try.
