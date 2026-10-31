@@ -226,7 +226,8 @@ describe('GOLDEN: "Sow this" and Sow now send the same planting', () => {
     expect(fromDetail).toEqual(fromSowNow)
     // And the agreed body is the Sow flow's, not merely two copies of the same wrong thing.
     expect(fromDetail).toMatchObject({
-      project_id: 'proj-beds', name: ITEM.name, variety_id: 'var-sungold', status: 'seed',
+      // BUG-ADDPLANTPREFILE-001: no place unless one was chosen; this used to expect PROJECTS[0].
+      project_id: null, name: ITEM.name, variety_id: 'var-sungold', status: 'seed',
       sown_at: todayLocalISO(), source_type: 'seed_packet', source_inventory_item_id: 'pkt-1',
       source_ref: "Johnny's",
     })
@@ -399,7 +400,7 @@ describe('the editor waits for the places', () => {
   // The race a packet's page makes possible: the sheet mounts with the page, so a tap can land before
   // GET /api/projects answers. PlantingEditor seeds its place from projects[0] ONCE, at mount — an
   // editor mounted on an empty list would POST project_id '' with no picker (PROJECTS_HIDDEN) to fix it.
-  it('a tap that beats the projects fetch shows a loading state, then an editor defaulted to a real place', async () => {
+  it('a tap that beats the projects fetch shows a loading state, then an editor that files no place of its own', async () => {
     let release
     projectsResponse = () => new Promise((r) => { release = () => r(PROJECTS) })
     await renderDetail()
@@ -410,7 +411,9 @@ describe('the editor waits for the places', () => {
 
     await act(async () => { release() })
     const body = await submitSheet()
-    expect(body.project_id).toBe('proj-beds')
+    // BUG-ADDPLANTPREFILE-001: the editor no longer takes projects[0] as its place, so a late list
+    // cannot misfile either; the server picks a same-crop container or none. Was 'proj-beds'.
+    expect(body).toHaveProperty('project_id', null)
   })
 
   it('a failed projects fetch still opens the editor (it says why a create fails), never an endless spinner', async () => {
