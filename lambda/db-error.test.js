@@ -53,6 +53,12 @@ const ARMS = {
   varieties: ['23514', '23502', '23503', '23505'],
 };
 
+// Replies a handler keys on (code, constraint) BEFORE the table, unchanged: one row per sentence family. A row with
+// no constraint answers every constraint of its code.
+const MAPPED = {
+  locations: [{ code: '23505', status: 409, body: { error: 'Slug already exists', code: 'location_slug_conflict' } }],
+};
+
 // One request per adopter whose first statement runs inside the handler's outer try.
 const REQUESTS = {
   'app-events': ['POST', '/api/app-events', { event_name: 'db-error-canary' }],
@@ -249,8 +255,14 @@ describe('the copies and the adopters', () => {
 
 describe.each(ADOPTERS)('%s: the catch, executed with canary errors', (dir) => {
   it.each(SHAPES)('SQLSTATE %s', async (code) => {
-    await expectCatch(dir, dbError(code));
+    await expectCatch(dir, dbError(code), (MAPPED[dir] ?? []).find((m) => m.code === code && m.constraint === undefined));
   });
+
+  for (const m of (MAPPED[dir] ?? []).filter((r) => r.constraint !== undefined)) {
+    it(`mapped ${m.code} ${m.constraint} keeps its sentence, consulted first`, async () => {
+      await expectCatch(dir, dbError(m.code, { constraint: m.constraint }), m);
+    });
+  }
 
   it('an error with no SQLSTATE answers the generic 500 and is logged whole', async () => {
     const err = Object.assign(new TypeError(CANARY.message), { detail: CANARY.detail });

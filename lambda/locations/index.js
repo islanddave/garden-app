@@ -4,6 +4,7 @@ import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { householdScope, loadOwnedLocation, warnRejectedFk } from './household.js';
 import { requestContext } from './request-context.js';
+import { dbErrorReply, logCaughtError } from './db-error.js';
 import { resolvePhotoViewUrl } from './photo-access.js';
 import { validateClear } from './validate.js';
 import { resolveLocationRow, loadLocationRef, AMBIGUOUS_REF_STATUS, AMBIGUOUS_REF_BODY } from './ref.js';
@@ -465,8 +466,8 @@ export const handler = async (event) => {
     return resp(405, { error: 'Method not allowed' });
 
   } catch (err) {
-    console.error('locations lambda error', err);
-    if (err.code === '23505') return resp(409, { error: 'Slug already exists' });
+    logCaughtError('locations lambda error', err);
+    if (err.code === '23505') return resp(409, { error: 'Slug already exists', code: 'location_slug_conflict' });
     // BUG-COALESCECLEAR-001 audit finding: this catch mapped ONLY 23505. Every sibling handler
     // (plants, projects, events) maps 23503 and 23514 too; locations was the one surface that never
     // adopted it, so a caller-provokable constraint violation surfaced as "Internal server error"
@@ -479,9 +480,11 @@ export const handler = async (event) => {
     // Nothing on the clear allowlist can reach either code — `description` carries no CHECK and no
     // FK, and the three CHECKs on this table (chk_lat_lng_co_null, locations_level_check,
     // locations_zone_level_check) reference no PUT arm. Added for parity, not because the channel
-    // needs it.
-    if (err.code === '23503') return resp(400, { error: `Foreign key violation: ${err.constraint ?? err.message}` });
-    if (err.code === '23514') return resp(400, { error: `Constraint violation: ${err.constraint ?? err.message}` });
+    // needs it. The two codes stay spelled out: lambda/locations/clear-fields.test.js pins them.
+    if (err.code === '23503' || err.code === '23514') {
+      const db = dbErrorReply(err, ['23503', '23514']);
+      return resp(db.status, db.body);
+    }
     return resp(500, { error: 'Internal server error' });
   }
 };
