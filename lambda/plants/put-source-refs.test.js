@@ -329,8 +329,8 @@ describe('V4-SOURCEREG-001 — distinctness', () => {
   });
 
   it('leaves every OTHER constraint on the generic arm', async () => {
-    // The map is keyed by name and consulted first; a constraint that is not in it must keep the
-    // text it has today, or this becomes a silent rewrite of unrelated error messages.
+    // The map is keyed by name and consulted first; a constraint that is not in it must take the
+    // generic reply, or this becomes a silent rewrite of unrelated error messages.
     stubState.sqlHandler = (text) => {
       if (/SELECT gn\.status AS old_status/.test(text)) return [{ old_status: 'active', proj_id: PROJECT }];
       if (/UPDATE public\.garden_node p/.test(text)) {
@@ -343,7 +343,7 @@ describe('V4-SOURCEREG-001 — distinctness', () => {
     };
     const { status, body } = parse(await handler(put({ notes: 'x' })));
     expect(status).toBe(400);
-    expect(body.error).toBe('Constraint violation: chk_plants_qty_lost_nonneg');
+    expect(body).toEqual({ error: 'Constraint violation', code: 'check_violation' });
   });
 });
 

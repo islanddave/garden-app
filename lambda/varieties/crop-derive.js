@@ -24,6 +24,8 @@
 // passed-in neon `sql` connection and runs IN-PROCESS (no HTTP, no admin gate) so the varieties Lambda
 // can call it post-commit, fail-open.
 
+import { logCaughtWarning } from './db-error.js';
+
 export const VALID_LIFECYCLE = ['annual', 'perennial', 'biennial', 'tender_perennial'];
 
 export function humanizeLifecycle(lc) {
@@ -337,7 +339,9 @@ export async function applyDerive(sql, cultivarId = null) {
       totals.links_removed += r.links_removed;
       totals.cultivars += 1;
     } catch (err) {
-      totals.failures.push({ cultivar_id: cv.id, error: err?.message ?? String(err) });
+      // WARN: the derive fails open; post-promote-check counts ERROR lines as faults.
+      logCaughtWarning(`crop-derive failed for cultivar ${cv.id}`, err);
+      totals.failures.push({ cultivar_id: cv.id, code: err?.code ?? null });
     }
   }
   return totals;

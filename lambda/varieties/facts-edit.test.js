@@ -469,7 +469,7 @@ describe('a CHECK refusal at the UPDATE (a concurrent write) answers in the pref
     refusedAtUpdate('chk_plant_varieties_lifecycle');
     const res = await put({ breeding_system: 'f1', breeding_source: 'breeder' });
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe('Constraint violation: chk_plant_varieties_lifecycle');
+    expect(res.body).toEqual({ error: 'Constraint violation', code: 'check_violation' });
   });
 
   it('the race sentences are the preflight\'s own sentences, not a second copy', () => {

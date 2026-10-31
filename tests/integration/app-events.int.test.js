@@ -1,8 +1,9 @@
 // new-file: no integration test existed for app-events
 // Pins today's /api/app-events replies on real Postgres (OPS-CODEREVIEW-001 C6) so D1/D2/D2b changes are seen.
-// The 23514 reply echoes the constraint name (D2b replaces that); 23505/23503 are unreachable (uuid PK, no FK).
+// The 23514 reply names the kind and its code, never the constraint (D2b); 23505/23503 are unreachable (uuid PK, no FK).
 // A token with no subject is 401 before the limiter and the household gate (SEC-60).
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
+import { format } from 'node:util'
 import { directSql, callHandler, makeEvent, setTestUserId, testRunId, householdDefault, setHouseholdDefault } from './_harness.js'
 // After _harness.js, whose vi.mock replaces this module with the stub; imported first it would be the real one.
 import { verifyToken } from '@clerk/backend'
@@ -19,6 +20,13 @@ const raw = async (event) => {
 }
 const post = (body) => callHandler(handler, { method: 'POST', path: '/api/app-events', body })
 const rowsFor = (sub) => directSql`SELECT * FROM app_events WHERE user_clerk_sub = ${sub} ORDER BY created_at`
+// Every console line written while fn runs, as CloudWatch would receive it.
+const logged = async (fn) => {
+  const lines = []
+  const spies = ['error', 'warn', 'log'].map((k) => vi.spyOn(console, k).mockImplementation((...a) => { lines.push(format(...a)) }))
+  try { return { result: await fn(), lines } } finally { spies.forEach((s) => s.mockRestore()) }
+}
+const catchLines = (lines, msg) => lines.map((l) => { try { return JSON.parse(l) } catch { return null } }).filter((o) => o?.msg === msg)
 
 const RUN = testRunId()
 const USER = `c6_appev_${RUN}`
@@ -180,12 +188,15 @@ describe('app-events — sign-in and origin', () => {
 })
 
 describe('app-events — database errors (the replies D2b changes)', () => {
-  it('23514: a subject over 255 chars -> 400 naming the CHECK constraint', async () => {
+  it('23514: a subject over 255 chars -> 400 Constraint violation with its code, naming no constraint', async () => {
     setTestUserId(LONG_SUB)
-    const r = await post({ event_name: 'long' })
+    const { result: r, lines } = await logged(() => post({ event_name: 'long' }))
     expect(r.status).toBe(400)
-    expect(r.body).toEqual({ error: 'Constraint violation: chk_app_events_user_clerk_sub_len' })
+    expect(r.body).toEqual({ error: 'Constraint violation', code: 'check_violation' })
     expect(await rowsFor(LONG_SUB)).toEqual([])
+    // The log line still names the CHECK that fired (the reply no longer does), and never the row.
+    expect(catchLines(lines, 'app-events lambda error')).toMatchObject([{ code: '23514', constraint: 'chk_app_events_user_clerk_sub_len' }])
+    expect(lines.join('\n')).not.toMatch(/Failing row contains|Key \(/)
   })
 
   it('SEC-60: a token with no subject -> 401 (it was the limiter\'s 429), and no row of any kind is written', async () => {

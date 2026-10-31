@@ -21,7 +21,8 @@
 //      with the constraint name the handler's catch maps to a sentence (the race path).
 // Read-backs go through directSql, never the handler's echo. No case here leaves a row holding
 // open_pollinated on a NULL rank: an OP write on an unranked row goes through the PUT, which fills it.
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
+import { format } from 'node:util'
 import { directSql, testRunId, setTestUserId, callHandler } from './_harness.js'
 import { handler } from '../../lambda/varieties/index.js'
 
@@ -33,6 +34,13 @@ const MATE = `user_int_facts_mate_${RUN}` // same household as USER in the withA
 let varietyId, rankedId, marketId, foreignId, unrankedId
 
 const put = (id, body) => callHandler(handler, { method: 'PUT', path: `/api/varieties/${id}`, body })
+// Every console line written while fn runs, as CloudWatch would receive it.
+const logged = async (fn) => {
+  const lines = []
+  const spies = ['error', 'warn', 'log'].map((k) => vi.spyOn(console, k).mockImplementation((...a) => { lines.push(format(...a)) }))
+  try { return { result: await fn(), lines } } finally { spies.forEach((s) => s.mockRestore()) }
+}
+const catchLines = (lines, msg) => lines.map((l) => { try { return JSON.parse(l) } catch { return null } }).filter((o) => o?.msg === msg)
 const facts = async (id) => (await directSql`
   SELECT origin_country, origin_region, breeding_system, breeding_source, scoville_source, variety_rank
     FROM plant_varieties WHERE id = ${id}`)[0]
@@ -292,18 +300,22 @@ describe('V5-VARIETYFACTSEDIT-001 — the pairing preflight agrees with the live
 
   // ...and the catch itself, end to end. A patch that passes every validator but not a CHECK the
   // preflight does not model (a Scoville minimum above the stored maximum) reaches the real catch, which
-  // still names an unmapped constraint the way it always has. That exact text is only possible when
-  // the driver hands the handler err.constraint, the field CONSTRAINT_MESSAGES is keyed by.
-  it('an unmapped CHECK refusal still answers "Constraint violation: <name>", through the real catch', async () => {
+  // answers the kind of refusal and names no constraint. The log line names it: that is only possible
+  // when the driver hands the handler err.constraint, the field CONSTRAINT_MESSAGES is keyed by.
+  it('an unmapped CHECK refusal answers the fixed "Constraint violation" with its code, and no constraint name', async () => {
     setTestUserId(USER)
     const [{ id }] = await directSql`
       INSERT INTO plant_varieties (name, created_by, scoville_min, scoville_max)
       VALUES (${'facts-var-heat-' + RUN}, ${USER}, 100, 200)
       RETURNING id`
-    const { status, body } = await put(id, { scoville_min: 500 })
+    const { result: { status, body }, lines } = await logged(() => put(id, { scoville_min: 500 }))
     expect(status).toBe(400)
-    expect(body.error).toBe('Constraint violation: chk_plant_varieties_scoville')
+    expect(body.error).toBe('Constraint violation')
+    expect(body.code).toBe('check_violation')
+    expect(JSON.stringify(body)).not.toMatch(/chk_/)
     expect((await directSql`SELECT scoville_min FROM plant_varieties WHERE id = ${id}`)[0].scoville_min).toBe(100)
+    expect(catchLines(lines, 'varieties lambda error')).toMatchObject([{ code: '23514', constraint: 'chk_plant_varieties_scoville' }])
+    expect(lines.join('\n')).not.toMatch(/Failing row contains|Key \(/)
   })
 })
 

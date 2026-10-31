@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describeRefusal, REFUSAL_CODES, onlyGLeftText, JAR_USED_UP_TEXT } from '../lib/putUpErrors.js'
+import { DB_ERROR_REPLIES } from '../../lambda/db-error.js'
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const err = (body) => Object.assign(new Error(body.error ?? 'x'), { status: 409, body })
@@ -42,5 +43,19 @@ describe('putUpErrors — release F codes', () => {
     const known = new Set(Object.values(REFUSAL_CODES))
     expect(sent.size).toBeGreaterThan(8)
     expect([...sent].filter((c) => !known.has(c) && !SERVER_WORDED.has(c))).toEqual([])
+  })
+
+  // lambda/db-error.js's codes name only the kind of refusal ("Constraint violation"): the screen keeps its own
+  // copy, as it did when those replies carried no code.
+  it('a generic database code gets the caller\'s own copy, never the server\'s text', () => {
+    const replies = Object.values(DB_ERROR_REPLIES)
+    expect(replies.length).toBeGreaterThanOrEqual(6)
+    for (const r of replies) {
+      const e = Object.assign(new Error(r.error), { status: r.status, body: { error: r.error, code: r.code } })
+      expect(describeRefusal(e), r.code).toBeNull()
+    }
+    expect(describeRefusal(err({ code: 'place_exists', error: 'A shelf called Top is already there.' })).text)
+      .toBe('A shelf called Top is already there.')
+    expect(describeRefusal(err({ code: 'not_found', error: 'That jar is gone.' })).text).toBe('That jar is gone.')
   })
 })

@@ -3,10 +3,11 @@
 // Two layers, per the repo's lambda convention (L-072): pure-logic tests run for real, and the
 // SQL wiring is pinned by static-source guards rather than a live DB. Runtime correctness against
 // real Postgres is proven separately on a Neon branch (see migrations/v4-plantmerge-001/gates.yml).
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { format } from 'node:util'
 import {
   mergeCore, planDedup, resolveStatus, resolvePhenology, sumQty, diffFingerprint,
   SURFACES, REPOINT_SURFACES, SNAPSHOT_VERSION,
@@ -670,6 +671,33 @@ describe('mergeCore — op_id replay scope (BUG-MERGEREPLAYSCOPE-001)', () => {
   })
 })
 
+// ── a drop set that is not chores-only is refused, and the reply carries no database text ───────────
+// archive_events_subset RAISEs (P0001) when a dropped event is not a chore. The reply is fixed; the RAISE
+// text goes to the log only, where class P0 keeps its message (D2b, secreview C1 and C8).
+describe('mergeCore — a drop set that is not chores-only', () => {
+  const ok = { opId: 'op1', userId: 'user_a', householdIds: ['user_a'] }
+
+  it('answers 422 with the fixed refusal and logs the RAISE', async () => {
+    const sql = mockSql(baseResponses([plantRow(WINNER), plantRow(LOSER1)]))
+    sql.transaction = async () => {
+      throw Object.assign(new Error('archive_events_subset: event 7 is not a chore'), {
+        code: 'P0001', routine: 'exec_stmt_raise', where: 'PL/pgSQL function archive_events_subset(uuid[]) line 12 at RAISE',
+      })
+    }
+    const lines = []
+    // WARN: an expected refusal; post-promote-check counts ERROR lines as faults.
+    vi.spyOn(console, 'warn').mockImplementation((...a) => { lines.push(a.map(String).join(' ')) })
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const r = await mergeCore(sql, { winnerId: WINNER, loserIds: [LOSER1], ...ok })
+    const errorCalls = errors.mock.calls.length
+    vi.restoreAllMocks()
+    expect(r).toEqual({ status: 422, body: { error: 'Refused: the drop set is not chores-only' } })
+    const logged = lines.map((l) => { try { return JSON.parse(l) } catch { return null } }).filter(Boolean)
+    expect(logged).toMatchObject([{ code: 'P0001', message: 'archive_events_subset: event 7 is not a chore' }])
+    expect(errorCalls).toBe(0)
+  })
+})
+
 // ── a deadlock is "run it again", not a broken merge ─────────────────────────────────────────
 // The cutover takes its seed lots first and the losers' photos later; a photo delete takes the photo
 // first and the lot that features it later. A loser's photo on a seed jar is in both, and on real
@@ -692,7 +720,16 @@ describe('mergeCore — a deadlocked cutover', () => {
 
   it('answers 409 and says nothing was merged and it can be run again', async () => {
     const sql = failing(deadlock())
+    const lines = []
+    vi.spyOn(console, 'warn').mockImplementation((...a) => { lines.push(format(...a)) })
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
     const r = await mergeCore(sql, { winnerId: WINNER, loserIds: [LOSER1], ...ok })
+    const errorCalls = errors.mock.calls.length
+    vi.restoreAllMocks()
+    // The reply drops the detail, so the log line is the diagnosis: the SQLSTATE, and no pid or lock text.
+    expect(lines.map((l) => JSON.parse(l))).toMatchObject([{ msg: 'plants merge deadlocked', code: '40P01' }])
+    expect(lines.join('\n')).not.toMatch(/Process \d+|ShareLock|photos/)
+    expect(errorCalls).toBe(0)
     // The status the other "try again" outcomes use (fingerprint drift, a unique collision), so a
     // caller that already treats a merge 409 as retryable needs nothing new.
     expect(r.status).toBe(409)
@@ -700,7 +737,7 @@ describe('mergeCore — a deadlocked cutover', () => {
     // wrote nothing, and the same request is safe to send again.
     expect(r.body.error).toMatch(/nothing was merged/)
     expect(r.body.error).toMatch(/run it again/)
-    expect(r.body.detail).toBe('deadlock detected')
+    expect(r.body).toEqual({ error: 'Merge was stopped by a concurrent change to the same rows — nothing was merged, run it again' })
     // Postgres's detail names backend pids and transaction ids. Not the caller's business.
     expect(JSON.stringify(r.body)).not.toMatch(/Process \d+|ShareLock/)
   })
@@ -1111,13 +1148,25 @@ describe('mergeCore — seed_lot_parent_planting', () => {
     // back, and the caller is told so instead of being handed a 500.
     const plants = [plantRow(WINNER), plantRow(LOSER1)]
     const sql = mockSql(baseResponses(plants))
+    // Shaped as the driver throws it: code and constraint are own fields, so the log takes its JSON branch.
     sql.transaction = async () => {
-      throw new Error('duplicate key value violates unique constraint "uq_slpp_item_plant_role_live"')
+      throw Object.assign(new Error('duplicate key value violates unique constraint "uq_slpp_item_plant_role_live"'), {
+        code: '23505', constraint: 'uq_slpp_item_plant_role_live', detail: 'Key (item_id, plant_id, role)=(CANARY_ITEM, CANARY_PLANT, seed_parent) already exists.',
+      })
     }
+    const lines = []
+    vi.spyOn(console, 'warn').mockImplementation((...a) => { lines.push(format(...a)) })
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
     const r = await mergeCore(sql, { winnerId: WINNER, loserIds: [LOSER1], ...ok })
+    const errorCalls = errors.mock.calls.length
+    vi.restoreAllMocks()
     expect(r.status).toBe(409)
     expect(r.body.error).toMatch(/collided/)
-    expect(r.body.detail).toMatch(/uq_slpp_item_plant_role_live/)
+    expect(r.body).toEqual({ error: 'Merge collided with existing rows' })
+    // The reply no longer names the index; the log line does, with no row values.
+    expect(lines.map((l) => JSON.parse(l))).toMatchObject([{ msg: 'plants merge collided', code: '23505', constraint: 'uq_slpp_item_plant_role_live' }])
+    expect(lines.join('\n')).not.toMatch(/CANARY|duplicate key/)
+    expect(errorCalls).toBe(0)
   })
 })
 

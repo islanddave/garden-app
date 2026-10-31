@@ -131,9 +131,10 @@ export default function Locations() {
       setForm(emptyCreateForm()); setShowAddForm(false); load()
     } catch (err) {
       const msg = err.message ?? ''
-      setFormError(msg.includes('already exists') || msg.includes('duplicate') || msg.includes('23505')
-        ? `Slug "${slug}" already exists. Try a different name.`
-        : msg)
+      // The code first; the text tests answer a server that predates it.
+      const slugTaken = (err.status === 409 && err.body?.code === 'location_slug_conflict')
+        || msg.includes('already exists') || msg.includes('duplicate') || msg.includes('23505')
+      setFormError(slugTaken ? `Slug "${slug}" already exists. Try a different name.` : msg)
     } finally {
       setSaving(false)
     }

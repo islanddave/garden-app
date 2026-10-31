@@ -129,7 +129,7 @@ describe('the catch-block mapping — the deep-link path the validator cannot se
     // is worse than an opaque accurate one.
     stubState.sqlHandler = raise('chk_inventory_metadata_size');
     const { body } = parse(await handler(put(deepLinkBody)));
-    expect(body.error).toBe('Constraint violation: chk_inventory_metadata_size');
+    expect(body).toEqual({ error: 'Constraint violation', code: 'check_violation' });
   });
 });
 

@@ -331,3 +331,35 @@ describe('ProjectDetail ↔ dirty guard — the union', () => {
     expect(isReloadBlocked()).toBe(false)
   })
 })
+
+// D2b: the edit form's two refusals are recognised by their codes first, and by text from an older server.
+describe('ProjectDetail — the edit form names a taken slug and an own-parent refusal', () => {
+  async function saveWith(postError) {
+    await renderPage()
+    await click('Edit')
+    fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'south beds' } })
+    wireApiFetch({ postError })
+    await click('Save changes')
+  }
+  const refused = (status, code) => Object.assign(new Error('Refused'), { status, body: { error: 'Refused', code } })
+
+  it('a 409 carrying project_slug_conflict says the slug is taken, whatever its text says', async () => {
+    await saveWith(refused(409, 'project_slug_conflict'))
+    await waitFor(() => expect(screen.getByText('Slug "tomatoes-2026" is already taken.')).toBeTruthy())
+  })
+
+  it('an older server\'s duplicate-key text still says the slug is taken', async () => {
+    await saveWith(new Error('duplicate key value violates unique constraint'))
+    await waitFor(() => expect(screen.getByText('Slug "tomatoes-2026" is already taken.')).toBeTruthy())
+  })
+
+  it('a 400 carrying project_own_parent says so, whatever its text says', async () => {
+    await saveWith(refused(400, 'project_own_parent'))
+    await waitFor(() => expect(screen.getByText('A project cannot be its own parent.')).toBeTruthy())
+  })
+
+  it('an older server\'s own-parent text still says so', async () => {
+    await saveWith(Object.assign(new Error('A project cannot be its own parent'), { status: 400 }))
+    await waitFor(() => expect(screen.getByText('A project cannot be its own parent.')).toBeTruthy())
+  })
+})
