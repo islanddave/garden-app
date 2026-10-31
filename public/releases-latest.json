@@ -1,7 +1,7 @@
 {
-  "version": "5.3.22",
-  "date": "2026-10-30",
+  "version": "5.3.23",
+  "date": "2026-10-31",
   "highlights": [
-    "Critter stickerbooks stay personal; app pages recover from errors instead of going blank"
+    "Adding a planting no longer files it under the wrong container, and sign-in now checks that you belong to the household before any garden data is shown or changed."
   ]
 }

@@ -1,5 +1,12 @@
 [
   {
+    "version": "5.3.23",
+    "date": "2026-10-31",
+    "highlights": [
+      "Adding a planting no longer files it under the wrong container, and sign-in now checks that you belong to the household before any garden data is shown or changed."
+    ]
+  },
+  {
     "version": "5.3.22",
     "date": "2026-10-30",
     "highlights": [
