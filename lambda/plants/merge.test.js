@@ -7,6 +7,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { format } from 'node:util'
 import {
   mergeCore, planDedup, resolveStatus, resolvePhenology, sumQty, diffFingerprint,
   SURFACES, REPOINT_SURFACES, SNAPSHOT_VERSION,
@@ -719,7 +720,16 @@ describe('mergeCore — a deadlocked cutover', () => {
 
   it('answers 409 and says nothing was merged and it can be run again', async () => {
     const sql = failing(deadlock())
+    const lines = []
+    vi.spyOn(console, 'warn').mockImplementation((...a) => { lines.push(format(...a)) })
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
     const r = await mergeCore(sql, { winnerId: WINNER, loserIds: [LOSER1], ...ok })
+    const errorCalls = errors.mock.calls.length
+    vi.restoreAllMocks()
+    // The reply drops the detail, so the log line is the diagnosis: the SQLSTATE, and no pid or lock text.
+    expect(lines.map((l) => JSON.parse(l))).toMatchObject([{ msg: 'plants merge deadlocked', code: '40P01' }])
+    expect(lines.join('\n')).not.toMatch(/Process \d+|ShareLock|photos/)
+    expect(errorCalls).toBe(0)
     // The status the other "try again" outcomes use (fingerprint drift, a unique collision), so a
     // caller that already treats a merge 409 as retryable needs nothing new.
     expect(r.status).toBe(409)
@@ -1138,13 +1148,25 @@ describe('mergeCore — seed_lot_parent_planting', () => {
     // back, and the caller is told so instead of being handed a 500.
     const plants = [plantRow(WINNER), plantRow(LOSER1)]
     const sql = mockSql(baseResponses(plants))
+    // Shaped as the driver throws it: code and constraint are own fields, so the log takes its JSON branch.
     sql.transaction = async () => {
-      throw new Error('duplicate key value violates unique constraint "uq_slpp_item_plant_role_live"')
+      throw Object.assign(new Error('duplicate key value violates unique constraint "uq_slpp_item_plant_role_live"'), {
+        code: '23505', constraint: 'uq_slpp_item_plant_role_live', detail: 'Key (item_id, plant_id, role)=(CANARY_ITEM, CANARY_PLANT, seed_parent) already exists.',
+      })
     }
+    const lines = []
+    vi.spyOn(console, 'warn').mockImplementation((...a) => { lines.push(format(...a)) })
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
     const r = await mergeCore(sql, { winnerId: WINNER, loserIds: [LOSER1], ...ok })
+    const errorCalls = errors.mock.calls.length
+    vi.restoreAllMocks()
     expect(r.status).toBe(409)
     expect(r.body.error).toMatch(/collided/)
     expect(r.body).toEqual({ error: 'Merge collided with existing rows' })
+    // The reply no longer names the index; the log line does, with no row values.
+    expect(lines.map((l) => JSON.parse(l))).toMatchObject([{ msg: 'plants merge collided', code: '23505', constraint: 'uq_slpp_item_plant_role_live' }])
+    expect(lines.join('\n')).not.toMatch(/CANARY|duplicate key/)
+    expect(errorCalls).toBe(0)
   })
 })
 
