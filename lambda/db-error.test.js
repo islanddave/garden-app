@@ -57,6 +57,7 @@ const ARMS = {
 // no constraint answers every constraint of its code.
 const MAPPED = {
   locations: [{ code: '23505', status: 409, body: { error: 'Slug already exists', code: 'location_slug_conflict' } }],
+  projects: [{ code: '23505', constraint: 'plant_projects_slug_key', status: 409, body: { error: 'Slug already exists', code: 'project_slug_conflict' } }],
 };
 
 // One request per adopter whose first statement runs inside the handler's outer try.

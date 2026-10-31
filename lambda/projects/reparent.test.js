@@ -1,10 +1,12 @@
 // V3-REPARENT-001 regression guard (projects). Static-source per L-072 (DB-free).
 // Runtime correctness (move/closure/cycle/dedup/version/restore) is proven separately
 // against a Neon COW branch in the build session; this pins the wiring against drift.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { stubState, resetStubs } from '../_test-stubs/state.js';
+import { handler, reparentCore } from './index.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // A construct NAMED IN A COMMENT is not that construct: deleting live code and leaving
@@ -80,5 +82,78 @@ describe('projects Lambda — V3-REPARENT-001 reparent + restore', () => {
     expect(block).toMatch(/SET parent_project_id = \$\{newParentId\}/);
     // subject enum cast for the event row
     expect(block).toMatch(/'container'::node_class/);
+  });
+});
+
+// D2b: the refusals a client branches on carry a stable code beside their unchanged text. Executed.
+describe('projects Lambda — D2b codes on the refusals the client reads', () => {
+  const USER = 'user_projects_codes';
+  const P = '11111111-1111-4111-8111-111111111111';
+  const Q = '22222222-2222-4222-8222-222222222222';
+  const OWN_PARENT = { status: 400, body: { error: 'A project cannot be its own parent', code: 'project_own_parent' } };
+  const call = async (method, rawPath, body) => {
+    const r = await handler({
+      requestContext: { http: { method } }, rawPath, headers: { authorization: 'Bearer stub-token' },
+      body: JSON.stringify(body), queryStringParameters: {},
+    });
+    return { status: r.statusCode, body: JSON.parse(r.body) };
+  };
+  // reparentCore's reads in order: the op_id replay, the target, the new parent; then the move, which may throw.
+  const core = (newParentId, moveError) => {
+    const reads = [[], [{ id: P, old_parent: null, version: 3 }], [{ id: Q }]];
+    const sql = async (strings) => {
+      if (moveError && strings.join('?').includes('WITH tgt AS')) throw moveError;
+      return reads.shift() ?? [];
+    };
+    return reparentCore(sql, { subjectId: P, newParentId, opId: 'op-1', expectedVersion: 3, userId: USER, householdIds: [USER] });
+  };
+
+  beforeEach(() => {
+    resetStubs();
+    stubState.verifyTokenResult = { sub: USER };
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete process.env.ADMIN_CLERK_SUBS;
+  });
+
+  it('reparentCore: a move under itself is 400 project_own_parent', async () => {
+    expect(await core(P)).toEqual(OWN_PARENT);
+  });
+
+  it('PATCH: parent_project_id equal to the project is 400 project_own_parent', async () => {
+    process.env.ADMIN_CLERK_SUBS = USER;
+    expect(await call('PATCH', `/api/projects/${P}`, { parent_project_id: P })).toEqual(OWN_PARENT);
+  });
+
+  it('PUT: parent_project_id equal to the project is 400 project_own_parent', async () => {
+    expect(await call('PUT', `/api/projects/${P}`, { parent_project_id: P })).toEqual(OWN_PARENT);
+  });
+
+  it('reparentCore: the trigger\'s cycle RAISE is 422 reparent_cycle', async () => {
+    const raise = Object.assign(new Error('reparent would create a cycle'), { code: 'P0001' });
+    expect(await core(Q, raise)).toEqual({ status: 422, body: { error: 'Move would create a cycle (target is a descendant of itself)', code: 'reparent_cycle' } });
+  });
+
+  it('reparentCore: a parent gone by the move is 422 reparent_parent_missing', async () => {
+    const fk = Object.assign(new Error('insert or update on table "plant_projects" violates foreign key constraint "plant_projects_parent_project_id_fkey"'), { code: '23503' });
+    expect(await core(Q, fk)).toEqual({ status: 422, body: { error: 'New parent does not exist', code: 'reparent_parent_missing' } });
+  });
+
+  it('a duplicate slug is 409 project_slug_conflict (it was a 500), naming neither the slug nor the constraint', async () => {
+    stubState.sqlHandler = () => {
+      throw Object.assign(new Error('duplicate key value violates unique constraint "plant_projects_slug_key"'), {
+        code: '23505', constraint: 'plant_projects_slug_key', detail: 'Key (slug)=(tomatoes-2026) already exists.',
+      });
+    };
+    expect(await call('POST', '/api/projects', { name: 'Tomatoes', slug: 'tomatoes-2026' }))
+      .toEqual({ status: 409, body: { error: 'Slug already exists', code: 'project_slug_conflict' } });
+  });
+
+  it('any other unique collision is 409 unique_violation, not the slug code', async () => {
+    stubState.sqlHandler = () => { throw Object.assign(new Error('duplicate key value violates unique constraint "x_key"'), { code: '23505', constraint: 'x_key' }); };
+    expect(await call('POST', '/api/projects', { name: 'Tomatoes', slug: 'tomatoes-2026' }))
+      .toEqual({ status: 409, body: { error: 'Unique violation', code: 'unique_violation' } });
   });
 });

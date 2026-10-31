@@ -5,6 +5,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { householdScope, loadOwnedLocation, warnRejectedFk } from './household.js';
 import { requestContext } from './request-context.js';
 import { withActor } from './audit-actor.js';
+import { dbErrorReply, logCaughtError } from './db-error.js';
 import { loadOwnedProject } from './authz-parents.js';
 import { resolvePhotoViewUrl } from './photo-access.js';
 import { isStatusChange, formatStatusChangeNote, buildStatusChangeMetadata, STATUS_CHANGE_EVENT_TYPE } from './statusEvents.js';
@@ -77,7 +78,7 @@ export async function reparentCore(sql, { subjectId, newParentId, opId, expected
     WHERE id = ${subjectId} AND deleted_at IS NULL AND created_by = ANY(${householdIds})
   `;
   if (!tgt.length) return { status: 404, body: { error: 'Project not found' } };
-  if (newParentId === subjectId) return { status: 400, body: { error: 'A project cannot be its own parent' } };
+  if (newParentId === subjectId) return { status: 400, body: { error: 'A project cannot be its own parent', code: 'project_own_parent' } };
   if (tgt[0].version !== expectedVersion) {
     return { status: 409, body: { error: 'Version conflict — reload and retry', current_version: tgt[0].version } };
   }
@@ -129,12 +130,12 @@ export async function reparentCore(sql, { subjectId, newParentId, opId, expected
     return { status: 200, body: { id: rows[0].id, parent_project_id: rows[0].parent_project_id, version: rows[0].version, old_parent_id: rows[0].old_parent_id } };
   } catch (err) {
     const msg = err?.message ?? String(err);
-    if (/cycle/i.test(msg)) return { status: 422, body: { error: 'Move would create a cycle (target is a descendant of itself)' } };
+    if (/cycle/i.test(msg)) return { status: 422, body: { error: 'Move would create a cycle (target is a descendant of itself)', code: 'reparent_cycle' } };
     if (/reparent_op_uniq|duplicate key/i.test(msg)) {
       const r = await sql`SELECT subject_id, new_parent_id, moved_at FROM reparent_event WHERE op_id = ${opId}`;
       if (r.length) return { status: 200, body: { id: r[0].subject_id, parent_project_id: r[0].new_parent_id, moved_at: r[0].moved_at, replayed: true } };
     }
-    if (/foreign key|fkey/i.test(msg)) return { status: 422, body: { error: 'New parent does not exist' } };
+    if (/foreign key|fkey/i.test(msg)) return { status: 422, body: { error: 'New parent does not exist', code: 'reparent_parent_missing' } };
     throw err;
   }
 }
@@ -603,7 +604,7 @@ export const handler = async (event) => {
         }
         const hasParent = Object.prototype.hasOwnProperty.call(body, 'parent_project_id');
         if (hasParent && body.parent_project_id === projectId) {
-          return resp(400, { error: 'A project cannot be its own parent' });
+          return resp(400, { error: 'A project cannot be its own parent', code: 'project_own_parent' });
         }
         if (!hasKind && !hasParent) {
           return resp(400, { error: 'PATCH body must include kind and/or parent_project_id' });
@@ -657,7 +658,7 @@ export const handler = async (event) => {
         const body = JSON.parse(event.body ?? '{}');
         // Prevent self-reference
         if (body.parent_project_id && body.parent_project_id === projectId) {
-          return resp(400, { error: 'A project cannot be its own parent' });
+          return resp(400, { error: 'A project cannot be its own parent', code: 'project_own_parent' });
         }
 
         // V1.2a-4 S1 (PROJ-RESCOPE): validate kind enum server-side. Mirrors
@@ -1040,16 +1041,17 @@ export const handler = async (event) => {
     return resp(405, { error: 'Method not allowed' });
 
   } catch (err) {
-    console.error('projects lambda error', err);
-    // BUG-PROJKINDCLEAR-001. Mirrors lambda/plants/index.js's catch verbatim. Without this, a
-    // constraint the CLIENT can provoke surfaces as a bare 500 with no message: `classification`
-    // is already CASE-clearable on both PATCH (:492) and PUT (:588), but
-    // plant_projects_kind_not_null_unless_deleted is VALIDATED and forbids NULL on a live row, so
-    // {kind: null} raises 23514 and the user sees "Internal server error". Latent today only
-    // because ProjectsAdminClassify guards the call — unexercised, not fixed. A caller-provokable
-    // constraint violation is a 400; only genuinely unexpected failures are 500s.
-    if (err.code === '23503') return resp(400, { error: `Foreign key violation: ${err.constraint ?? err.message}` });
-    if (err.code === '23514') return resp(400, { error: `Constraint violation: ${err.constraint ?? err.message}` });
+    logCaughtError('projects lambda error', err);
+    // The slug is the one unique key a person types; its own code lets the form say so. Any other 23505 is
+    // unique_violation. The slug is global until workspace-scoped slugs (5.3), so this can answer for a
+    // project in another household; the body names neither the slug nor the constraint.
+    if (err.code === '23505' && err.constraint === 'plant_projects_slug_key') {
+      return resp(409, { error: 'Slug already exists', code: 'project_slug_conflict' });
+    }
+    // BUG-PROJKINDCLEAR-001: a constraint the client can provoke ({kind: null} on
+    // plant_projects_kind_not_null_unless_deleted) is a 400, not a bare 500.
+    const db = dbErrorReply(err, ['23503', '23514', '23505']);
+    if (db) return resp(db.status, db.body);
     return resp(500, { error: 'Internal server error' });
   }
 };
