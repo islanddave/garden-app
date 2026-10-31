@@ -311,7 +311,7 @@ describe('POST with source_plant_ids — what is refused, and what it leaves unw
     });
     const res = parse(await handler(post(seedLot({ source_plant_ids: [A, B] }))));
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe('Foreign key violation: seed_lot_parent_planting_plant_id_fkey');
+    expect(res.body).toEqual({ error: 'Foreign key violation', code: 'foreign_key_violation' });
     expect(res.body.id).toBeUndefined();
   });
 });
@@ -410,12 +410,12 @@ describe('POST with source_plant_ids — a planting that changed AFTER the gate 
     // A division by zero is this transaction's own signal; a CHECK or a foreign key is not, and
     // turning those into "try again" would send the person round in a circle.
     const cases = [
-      ['23503', 'seed_lot_parent_planting_plant_id_fkey', 400, 'Foreign key violation: seed_lot_parent_planting_plant_id_fkey'],
-      ['23514', 'chk_inventory_metadata_size', 400, 'Constraint violation: chk_inventory_metadata_size'],
-      ['42P01', undefined, 500, 'Internal server error'],
+      ['23503', 'seed_lot_parent_planting_plant_id_fkey', 400, 'Foreign key violation', 'foreign_key_violation'],
+      ['23514', 'chk_inventory_metadata_size', 400, 'Constraint violation', 'check_violation'],
+      ['42P01', undefined, 500, 'Internal server error', undefined],
     ];
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    for (const [code, constraint, status, error] of cases) {
+    for (const [code, constraint, status, error, replyCode] of cases) {
       resetStubs();
       stubState.verifyTokenResult = { sub: USER };
       stubState.sqlHandler = world({ link: () => { throw Object.assign(new Error('boom'), { code, constraint }); } });
@@ -423,6 +423,7 @@ describe('POST with source_plant_ids — a planting that changed AFTER the gate 
       const res = parse(await handler(post(seedLot({ source_plant_ids: [A, B] }))));
       expect(res.status, code).toBe(status);
       expect(res.body.error, code).toBe(error);
+      expect(res.body, code).toEqual(replyCode ? { error, code: replyCode } : { error });
     }
   });
 

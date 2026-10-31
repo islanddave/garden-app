@@ -536,6 +536,6 @@ describe('PUT /:id/source-plants — the write', () => {
     });
     const res = parse(await handler(put({ source_plant_ids: [A] })));
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe('Foreign key violation: seed_lot_parent_planting_plant_id_fkey');
+    expect(res.body).toEqual({ error: 'Foreign key violation', code: 'foreign_key_violation' });
   });
 });

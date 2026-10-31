@@ -10,6 +10,7 @@ import { format } from 'node:util';
 import * as acorn from 'acorn';
 import { stubState, resetStubs } from './_test-stubs/state.js';
 import { DB_ERROR_REPLIES, dbErrorReply, logCaughtError } from './db-error.js';
+import { SEED_CONSTRAINT_MESSAGES } from './inventory-items/index.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const read = (rel) => readFileSync(join(here, rel), 'utf8');
@@ -55,8 +56,11 @@ const ARMS = {
 
 // Replies a handler keys on (code, constraint) BEFORE the table, unchanged: one row per sentence family. A row with
 // no constraint answers every constraint of its code.
+const sentence = (constraint, error) => ({ code: '23514', constraint, status: 400, body: { error } });
 const MAPPED = {
+  'inventory-items': Object.entries(SEED_CONSTRAINT_MESSAGES).map(([c, e]) => sentence(c, e)),
   locations: [{ code: '23505', status: 409, body: { error: 'Slug already exists', code: 'location_slug_conflict' } }],
+  plants: [sentence('chk_plants_source_distinct', 'The originator and the place you got it from have to be two different sources. Clear one of them, or pick a different one.')],
   projects: [{ code: '23505', constraint: 'plant_projects_slug_key', status: 409, body: { error: 'Slug already exists', code: 'project_slug_conflict' } }],
 };
 
@@ -242,6 +246,12 @@ describe('the copies and the adopters', () => {
   it('every copy is byte-identical to the master', () => {
     const master = read('db-error.js');
     for (const c of copies) expect(readFileSync(join(here, '..', c), 'utf8'), c).toBe(master);
+  });
+
+  it('every mapped row carries real text, so a renamed constraint cannot turn a row vacuous', () => {
+    for (const m of Object.values(MAPPED).flat()) {
+      expect(typeof m.body.error === 'string' && m.body.error.length > 0, JSON.stringify(m)).toBe(true);
+    }
   });
 
   it('every adopter ships a copy, has a request fixture and its arms, and there is at least one', () => {
