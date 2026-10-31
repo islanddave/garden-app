@@ -14,6 +14,7 @@
 import { neon } from '@neondatabase/serverless';
 import { householdScope } from './household.js';
 import { requestContext } from './request-context.js';
+import { dbErrorReply, logCaughtError } from './db-error.js';
 import { assembleBulkEntities } from './bulk.js';
 import { applyDerive } from './crop-derive.js';
 import { checkRateLimit, withRetryAfter } from './rate-limit.js';
@@ -314,11 +315,9 @@ export const handler = async (event) => {
 
     return resp(404, { error: 'Not found' });
   } catch (err) {
-    console.error('tags lambda error', err);
-    if (err.code === '23514') return resp(400, { error: `Constraint violation: ${err.constraint ?? err.message}` });
-    if (err.code === '23502') return resp(400, { error: `Required field missing: ${err.column ?? err.message}` });
-    if (err.code === '23503') return resp(400, { error: `Foreign key violation: ${err.constraint ?? err.message}` });
-    if (err.code === '23505') return resp(409, { error: `Unique violation: ${err.constraint ?? err.message}` });
+    logCaughtError('tags lambda error', err);
+    const db = dbErrorReply(err, ['23514', '23502', '23503', '23505']);
+    if (db) return resp(db.status, db.body);
     return resp(500, { error: 'Internal server error' });
   }
 };

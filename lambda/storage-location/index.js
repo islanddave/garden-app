@@ -6,6 +6,7 @@
 import { neon } from '@neondatabase/serverless';
 import { householdScope } from './household.js';
 import { requestContext } from './request-context.js';
+import { dbErrorReply, logCaughtError } from './db-error.js';
 
 const CORS = {}; // Lambda URL config is sole CORS source — handler must not duplicate
 
@@ -313,10 +314,9 @@ export const handler = async (event) => {
     return resp(405, { error: 'Method not allowed' });
 
   } catch (err) {
-    console.error('storage-location lambda error', err);
-    if (err.code === '23514') return resp(400, { error: `Constraint violation: ${err.constraint ?? err.message}` });
-    if (err.code === '23502') return resp(400, { error: `Required field missing: ${err.column ?? err.message}` });
-    if (err.code === '23503') return resp(400, { error: `Foreign key violation: ${err.constraint ?? err.message}` });
+    logCaughtError('storage-location lambda error', err);
+    const db = dbErrorReply(err, ['23514', '23502', '23503']);
+    if (db) return resp(db.status, db.body);
     return resp(500, { error: 'Internal server error' });
   }
 };
