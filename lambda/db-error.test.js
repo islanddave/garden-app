@@ -12,6 +12,9 @@ import { stubState, resetStubs } from './_test-stubs/state.js';
 import { DB_ERROR_REPLIES, dbErrorReply, logCaughtError } from './db-error.js';
 import { SEED_CONSTRAINT_MESSAGES } from './inventory-items/index.js';
 import { CONSTRAINT_MESSAGES as VARIETY_MESSAGES } from './varieties/validate.js';
+import { kitchenErrorMessage } from './preservation/kitchenBatch.js';
+import { jarErrorMessage } from './preservation/jarRules.js';
+import { sourceErrorMessage } from './preservation/sourceRoutes.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const read = (rel) => readFileSync(join(here, rel), 'utf8');
@@ -62,6 +65,13 @@ const MAPPED = {
   'inventory-items': Object.entries(SEED_CONSTRAINT_MESSAGES).map(([c, e]) => sentence(c, e)),
   locations: [{ code: '23505', status: 409, body: { error: 'Slug already exists', code: 'location_slug_conflict' } }],
   plants: [sentence('chk_plants_source_distinct', 'The originator and the place you got it from have to be two different sources. Clear one of them, or pick a different one.')],
+  preservation: [
+    sentence('chk_ksl_ph_scale', kitchenErrorMessage({ code: '23514', constraint: 'chk_ksl_ph_scale' })),
+    sentence('chk_preservation_log_label_nonblank', jarErrorMessage({ code: '23514', constraint: 'chk_preservation_log_label_nonblank' })),
+    sentence('chk_ps_garden_only', sourceErrorMessage({ code: '23514', constraint: 'chk_ps_garden_only' })),
+    sentence('chk_preservation_log_source_plant', 'This put-up is linked to a planting, so its source must be your own garden. Clear the planting first.'),
+    { code: '23514', constraint: 'chk_preservation_log_source_kind', status: 400, body: { error: 'Source is not valid', code: 'check_violation' } },
+  ],
   projects: [{ code: '23505', constraint: 'plant_projects_slug_key', status: 409, body: { error: 'Slug already exists', code: 'project_slug_conflict' } }],
   varieties: Object.entries(VARIETY_MESSAGES).map(([c, e]) => sentence(c, e)),
 };

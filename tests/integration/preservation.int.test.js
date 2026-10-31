@@ -15,10 +15,19 @@
 // quantity_value is NUMERIC -> the driver returns it as a JS string; readbacks coerce via Number().
 
 import { randomUUID } from 'node:crypto'
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
+import { format } from 'node:util'
 import { directSql, callHandler, testRunId, setTestUserId, insertProject } from './_harness.js'
 import { handler } from '../../lambda/preservation/index.js'
 import { PRESERVATION_EDITABLE_COLUMNS } from '../../lambda/preservation/provenance.js'
+
+// Every console line written while fn runs, as CloudWatch would receive it.
+const logged = async (fn) => {
+  const lines = []
+  const spies = ['error', 'warn', 'log'].map((k) => vi.spyOn(console, k).mockImplementation((...a) => { lines.push(format(...a)) }))
+  try { return { result: await fn(), lines } } finally { spies.forEach((s) => s.mockRestore()) }
+}
+const catchLines = (lines, msg) => lines.map((l) => { try { return JSON.parse(l) } catch { return null } }).filter((o) => o?.msg === msg)
 
 const RUN = testRunId()
 const USER = `user_int_pres_${RUN}`
@@ -750,15 +759,19 @@ describe('PUT /:id/sources — a failing row leaves the old list live (BUG-LAMBD
     const cacheBefore = await parentCache(id)
     expect(cacheBefore.source_label).toBe('Big Y') // CONTROL: the seeding PUT did write the cache
 
-    const r = await callHandler(handler, {
+    const { result: r, lines } = await logged(() => callHandler(handler, {
       method: 'PUT', path: srcPath,
       body: { sources: [
         { source_kind: 'store', display_label: 'new garlic ' + RUN, source_label: 'Market' },
         { source_kind: 'store', display_label: 'new pine nuts ' + RUN, source_label: 'Market', variety_id: randomUUID() },
       ] },
-    })
+    }))
     expect(r.status).toBe(400)
     expect(r.body.error).toMatch(/Foreign key violation/)
+    expect(r.body).toEqual({ error: 'Foreign key violation', code: 'foreign_key_violation' })
+    // The log line still names the foreign key that refused (the reply no longer does), and never the row.
+    expect(catchLines(lines, 'preservation lambda error')).toMatchObject([{ code: '23503', constraint: 'preservation_source_variety_id_fkey' }])
+    expect(lines.join('\n')).not.toMatch(/Failing row contains|Key \(/)
 
     // The old row is still live, unchanged; nothing from the failed batch exists, even soft-deleted.
     expect(await liveSources(id)).toEqual(before)
