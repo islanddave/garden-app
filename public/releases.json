@@ -1,5 +1,12 @@
 [
   {
+    "version": "5.3.24",
+    "date": "2026-10-31",
+    "highlights": [
+      "Behind-the-scenes security work: sign-in now runs through one shared check that only accepts logins made through the garden app itself, and garden edits are refused rather than saved without a record of who made them. No visible change."
+    ]
+  },
+  {
     "version": "5.3.23",
     "date": "2026-10-31",
     "highlights": [
