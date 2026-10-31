@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
-import { computeDerivedTags, humanizeLifecycle, VALID_LIFECYCLE, heatBand, parseDeterminacy, parseDayLength, alliumType, basilUse, beanType, beanHabit, beanUse } from './crop-derive.js';
+import { describe, it, expect, vi } from 'vitest';
+import { format } from 'node:util';
+import { applyDerive, computeDerivedTags, humanizeLifecycle, VALID_LIFECYCLE, heatBand, parseDeterminacy, parseDayLength, alliumType, basilUse, beanType, beanHabit, beanUse } from './crop-derive.js';
 
 const CROP_TYPES = {
   pepper: { slug: 'pepper', display_name: 'Pepper', default_lifecycle: 'tender_perennial' },
@@ -415,5 +416,28 @@ describe('computeDerivedTags — a user-typed genus cannot re-file the crop type
     // Off basil, the same species value changes nothing.
     expect(computeDerivedTags({ crop_type_slug: 'tomato', species: 'tenuiflorum' }, CT))
       .toEqual(computeDerivedTags({ crop_type_slug: 'tomato' }, CT));
+  });
+});
+
+// D2b (D2B-H): a failed cultivar is reported by its SQLSTATE, never by the database's message; the error goes to the log.
+describe('applyDerive — a failed cultivar', () => {
+  it('lists the cultivar with its code, and no message, detail or constraint reaches the totals or a log line', async () => {
+    const err = Object.assign(new Error('MSG_CANARY duplicate key value'), {
+      code: '23505', constraint: 'uq_entity_tag_canary', detail: 'Key (slug)=(DETAIL_CANARY) already exists.',
+    });
+    const sql = async (strings) => {
+      const text = strings.join('?');
+      if (text.includes('FROM public.crop_types')) return [];
+      if (text.includes('FROM public.plant_varieties')) return [{ id: 'cv-1', name: 'Sungold', crop_type_slug: null, lifecycle: null }];
+      throw err;
+    };
+    const lines = [];
+    vi.spyOn(console, 'error').mockImplementation((...a) => { lines.push(format(...a)); });
+    const totals = await applyDerive(sql, null);
+    vi.restoreAllMocks();
+    expect(totals.failures).toEqual([{ cultivar_id: 'cv-1', code: '23505' }]);
+    expect(JSON.stringify(totals)).not.toMatch(/MSG_CANARY|DETAIL_CANARY|uq_entity_tag_canary/);
+    expect(lines.join('\n')).not.toMatch(/MSG_CANARY|DETAIL_CANARY/);
+    expect(lines.map((l) => JSON.parse(l))).toMatchObject([{ code: '23505', constraint: 'uq_entity_tag_canary' }]);
   });
 });
