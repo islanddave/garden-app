@@ -326,8 +326,10 @@ def test_the_patterns_name_the_lines_the_handlers_log():
     with open(os.path.join(REPO, "lambda", "shared-state", "index.js"), encoding="utf-8") as fh:
         assert "msg: 'household-membership-denied'" in fh.read()
     assert ppc.PATTERNS["errors"] == 'ERROR -"verifyToken failed"'
+    # The 401 line lives in each handler dir's copy of the sign-in kit since D2 (ruling R-PD-1).
+    assert len(FNS) == 23
     for fn in FNS:
-        with open(os.path.join(REPO, "lambda", fn.removeprefix("garden-"), "index.js"), encoding="utf-8") as fh:
+        with open(os.path.join(REPO, "lambda", fn.removeprefix("garden-"), "request-context.js"), encoding="utf-8") as fh:
             assert "console.error('verifyToken failed:'" in fh.read(), fn
 
 
