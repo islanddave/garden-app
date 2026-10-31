@@ -8,6 +8,7 @@ import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { householdScope } from './household.js';  // V4-ASSIGNLENS-001 opt-in household widening (per-dir copy; bundle-safe)
+import { householdGate } from './household.js';
 import { applyDone, planItemIds } from './doneEvents.js';  // V3-TODAYDONE-001 vocabulary + pure fold (per-dir copy; bundle-safe)
 import { matchCueImpressionRoute, handleCueImpressionPost } from './cue-impression.js';  // OPS-CUEINSTRUMENT-001 write path (dependency-free; CI-executable)
 import { readColdRange } from './coldRange.js';  // V5-WXCOLDBAND-001 tonight's forecast cold range (own module; dependency-free)
@@ -59,6 +60,8 @@ export const handler = async (event) => {
   // ownership value rather than a no-match. verifyToken rejects such a token first, so this is
   // defence-in-depth; the point is that the invariant is ENFORCED here rather than relied upon.
   if (!userId) return resp(401, { error: 'Unauthorized' });
+  const gateRefusal = householdGate(userId);
+  if (gateRefusal) return resp(gateRefusal.status, gateRefusal.body);
 
   const method = event.requestContext?.http?.method ?? 'GET';
   const rawPath = event.rawPath ?? '/api/daily-plan';

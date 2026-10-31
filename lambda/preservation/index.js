@@ -7,6 +7,7 @@ import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { householdScope, loadOwnedPhoto } from './household.js';
+import { householdGate } from './household.js';
 import { reconcilePlantAttribution, plantingLabel } from './attribution.js';
 import { VALID_SOURCE_KINDS, normalizeSourceLabel } from './provenance.js';
 import { classifyUseBy, dayMs, USE_SOON_FRACTION, etDay, ET_TZ } from './useBy.js';
@@ -211,6 +212,8 @@ export const handler = async (event) => {
   // is defence-in-depth; the point is that the invariant is ENFORCED here rather than relied upon
   // from one layer up.
   if (!userId) return resp(401, { error: 'Unauthorized' });
+  const gateRefusal = householdGate(userId);
+  if (gateRefusal) return resp(gateRefusal.status, gateRefusal.body);
 
   const sql = neon(secrets.NEON_DATABASE_URL);
   const householdIds = householdScope(userId);

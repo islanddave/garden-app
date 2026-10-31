@@ -4,7 +4,7 @@
 // is absorbed by ON CONFLICT, other errors by its catch). 23514/23503 are unreachable: the beacon's
 // vocabularies mirror its CHECKs and nothing takes a request-supplied FK.
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
-import { directSql, callHandler, makeEvent, setTestUserId, testRunId, insertProject } from './_harness.js'
+import { directSql, callHandler, makeEvent, setTestUserId, testRunId, insertProject, householdDefault } from './_harness.js'
 // After _harness.js, whose vi.mock replaces this module with the stub; imported first it would be the real one.
 import { verifyToken } from '@clerk/backend'
 import { handler } from '../../lambda/daily-plan-read/index.js'
@@ -12,7 +12,7 @@ import { handler } from '../../lambda/daily-plan-read/index.js'
 const ORIGINS = ['https://garden.futureishere.net', 'https://dg6mmjhepoyt9.cloudfront.net']
 // Clerk refuses a token whose azp is not in authorizedParties; this models that check on the list the handler passes.
 const signedFrom = (azp, sub) => (_token, opts) => (opts.authorizedParties.includes(azp)
-  ? Promise.resolve({ sub, azp })
+  ? (householdDefault(sub), Promise.resolve({ sub, azp }))
   : Promise.reject(new Error(`Invalid JWT Authorized party claim (azp) "${azp}"`)))
 const raw = async (event) => {
   const r = await handler(event)
@@ -200,11 +200,11 @@ describe('daily-plan-read — sign-in and origin', () => {
 })
 
 describe('daily-plan-read — database errors', () => {
-  it('22021 (NUL in the subject) on the plan read is a generic 500', async () => {
+  it('SEC-13a: a NUL in the subject can never be a household member: 403 before the plan read (it was 22021, a 500)', async () => {
     setTestUserId(`c6_dpr_nul_${RUN}\u0000`)
     const r = await get()
-    expect(r.status).toBe(500)
-    expect(r.body).toEqual({ error: 'Internal server error' })
+    expect(r.status).toBe(403)
+    expect(r.body).toEqual({ error: 'Forbidden' })
   })
 
   it('22021 (NUL in model_version) on the beacon is swallowed: 202 accepted 0, nothing written', async () => {

@@ -29,10 +29,11 @@ const copyDirs = readdirSync(here, { withFileTypes: true })
 describe('household-columns.test.js stays in sync across every household.js dir', () => {
   const canonical = readFileSync(join(here, CONTRACT), 'utf8');
 
-  it('finds all 18 per-Lambda household.js dirs on disk', () => {
+  it('finds all 23 per-Lambda household.js dirs on disk', () => {
     // A guard on the guard: if this ever read 0, the per-dir assertions below would vanish and the
     // suite would still go green having checked nothing.
-    expect(copyDirs).toHaveLength(18);
+    // PIN: 18 household.js copies + the 5 the SEC-13a gate added; raise it only with a new copy dir.
+    expect(copyDirs).toHaveLength(23);
   });
 
   it('every dir shipping household.js also ships the contract beside it', () => {

@@ -5,7 +5,7 @@
 // gated migration step), so the suite stays GREEN pre-migration and exercises the real
 // contract once the table exists on the staging-derived ephemeral branch.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { directSql, callHandler, setTestUserId, testRunId } from './_harness.js';
+import { directSql, callHandler, setTestUserId, testRunId, setHouseholdDefault } from './_harness.js';
 import { handler } from '../../lambda/shared-state/index.js';
 
 const RUN = testRunId();
@@ -129,6 +129,7 @@ describe('garden_shared_state endpoints (integration, real Neon)', () => {
   it('a non-member with a valid token gets 403 on every route and writes nothing', async () => {
     const KEY = `int-stranger-${RUN}`;
     setTestUserId(STRANGER);
+    setHouseholdDefault(false); // the stranger stays outside the list: this case IS the household gate's refusal
     try {
       for (const [method, path, body] of [
         ['GET', `/api/shared-state/tally/${KEY}`],
@@ -140,6 +141,7 @@ describe('garden_shared_state endpoints (integration, real Neon)', () => {
         expect(r.status, `${method} ${path}`).toBe(403);
       }
     } finally {
+      setHouseholdDefault(true);
       setTestUserId(USER);
     }
     if (!tableExists) return;

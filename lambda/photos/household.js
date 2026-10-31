@@ -1,6 +1,6 @@
-// household.js — Household Mode scope helper (V2 multi-user bridge).
+// household.js — Household Mode scope helper (V2 multi-user bridge) and the SEC-13a household gate.
 // HOUSEHOLD-MODE: remove at V3-ROLES (DB-layer RLS via current_user_role() replaces this).
-// Returns the set of owner Clerk IDs whose rows a request may see/modify.
+// householdScope returns the set of owner Clerk IDs whose rows a request may see/modify.
 //
 // MEMBERSHIP-GATED: widen to the configured household ONLY when the requester is a member
 // of it; otherwise return just their own id. A non-member who authenticates must NEVER see
@@ -11,13 +11,28 @@
 // handler 502s at module load. Therefore an IDENTICAL copy of this file lives in each in-scope
 // Lambda dir and is imported as `./household.js`. This file (lambda/household.js) is the canonical
 // source + unit-test target; copies are kept byte-identical by lambda/household-copies-sync.test.js.
+// The one read of GARDEN_HOUSEHOLD_IDS: comma-separated Clerk subs, trimmed, empties dropped.
+function householdList() {
+  return (process.env.GARDEN_HOUSEHOLD_IDS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+}
 export function householdScope(userId) {
-  const raw = (process.env.GARDEN_HOUSEHOLD_IDS ?? '').split(',').map(s => s.trim()).filter(Boolean);
-  return raw.includes(userId) ? raw : [userId];
+  const raw = householdList();
+  return raw.includes(userId) ? raw : [userId]; // element equality on the parsed list, never a raw-string test
 }
 export function householdActive() {
-  const raw = (process.env.GARDEN_HOUSEHOLD_IDS ?? '').split(',').map(s => s.trim()).filter(Boolean);
-  return raw.length > 1;
+  return householdList().length > 1;
+}
+
+// SEC-13a: every HTTP handler calls this on the line after its empty-sub 401 and before neon(), any rate
+// limit, read or write, so a refused caller costs no statement and spends no bucket. Exact membership in
+// the parsed list (a Set); an unset or blank list admits nobody. One generic 403 body for every handler;
+// the reason goes to the log only (scripts/household-observability.sh watches this msg). Guards:
+// lambda/household.test.js (the rule) and lambda/household-isolation.test.js (every handler, the order).
+export function householdGate(userId) {
+  const members = new Set(householdList());
+  if (typeof userId === 'string' && members.has(userId)) return null;
+  console.warn(JSON.stringify({ msg: 'household-membership-denied', userId, reason: members.size ? 'non-member' : 'env-missing' }));
+  return { status: 403, body: { error: 'Forbidden' } };
 }
 
 // ── V4-AUTHZSWEEP-001 — write-FK ownership loaders ────────────────────────────────────────────────

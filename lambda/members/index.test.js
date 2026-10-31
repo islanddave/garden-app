@@ -1,5 +1,5 @@
-// PLANT-ASSIGN-001 members lambda static-source guards. Mirrors the other lambdas' static test pattern
-// (index.js imports @clerk/backend + @aws-sdk at module load, so we assert on source text, not by invoking).
+// PLANT-ASSIGN-001 members lambda static-source guards, plus the R1-11 roster case executed under
+// lambda/_test-stubs (whose @clerk/backend stub serves createClerkClient).
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
@@ -61,5 +61,25 @@ describe('members lambda (GET /api/members)', () => {
     // No email FIELD in the response object (comments mentioning the drop are fine).
     expect(block).not.toMatch(/email\s*:/);
     expect(block).not.toMatch(/emailAddresses/);
+  });
+});
+
+describe('members roster, executed under the stubs (lambda/_test-stubs)', () => {
+  it('R1-11: the roster asks Clerk for the household\'s ids, so a member beyond Clerk\'s first page still appears', async () => {
+    const { stubState, resetStubs } = await import('../_test-stubs/state.js');
+    resetStubs();
+    process.env.GARDEN_HOUSEHOLD_IDS = 'user_r111_a,user_r111_b';
+    try {
+      const filler = Array.from({ length: 58 }, (_, i) => ({ id: `user_r111_other_${i}`, firstName: `Other${i}` }));
+      stubState.clerkUsers = [...filler.slice(0, 54), { id: 'user_r111_a', firstName: 'Ann' }, { id: 'user_r111_b', firstName: 'Bea' }, ...filler.slice(54)];
+      stubState.verifyTokenResult = { sub: 'user_r111_a' };
+      const { handler } = await import('./index.js');
+      const res = await handler({ requestContext: { http: { method: 'GET' } }, rawPath: '/api/members', headers: { authorization: 'Bearer t' } });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body).members.map((m) => m.id)).toEqual(['user_r111_a', 'user_r111_b']);
+      expect(stubState.clerkListCalls).toEqual([{ userId: ['user_r111_a', 'user_r111_b'], limit: 2 }]);
+    } finally {
+      delete process.env.GARDEN_HOUSEHOLD_IDS;
+    }
   });
 });

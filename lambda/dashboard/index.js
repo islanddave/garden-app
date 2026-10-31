@@ -39,6 +39,7 @@ import {
   handleSearch,
   UUID_RE,
 } from './handlers.js';
+import { householdGate } from './household.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 
@@ -88,6 +89,8 @@ export const handler = async (event) => {
   // (Deliberately avoids naming the helper — lambda/household-isolation.test.js asserts the literal
   // token appears nowhere in this wrapper, since handlers.js is the in-scope surface.)
   if (!userId) return resp(401, { error: 'Unauthorized' });
+  const gateRefusal = householdGate(userId);
+  if (gateRefusal) return resp(gateRefusal.status, gateRefusal.body);
 
   const method = event.requestContext?.http?.method ?? 'GET';
   const rawPath = event.rawPath ?? '/api/dashboard';

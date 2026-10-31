@@ -15,6 +15,7 @@ import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { householdScope } from './household.js';
+import { householdGate } from './household.js';
 import { assembleBulkEntities } from './bulk.js';
 import { applyDerive } from './crop-derive.js';
 import { checkRateLimit, withRetryAfter } from './rate-limit.js';
@@ -85,6 +86,8 @@ export const handler = async (event) => {
   // ownership value rather than a no-match. verifyToken rejects such a token first, so this is
   // defence-in-depth; the point is that the invariant is ENFORCED here rather than relied upon.
   if (!userId) return resp(401, { error: 'Unauthorized' });
+  const gateRefusal = householdGate(userId);
+  if (gateRefusal) return resp(gateRefusal.status, gateRefusal.body);
 
   const sql = neon(secrets.NEON_DATABASE_URL);
   // AE-047: Neon pooler intermittently defaults default_transaction_read_only=on; force RW before any write.

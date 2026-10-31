@@ -10,6 +10,8 @@
 // A test drives behaviour by setting fields on `stubState` before importing/invoking the handler.
 // Call `resetStubs()` in beforeEach or state leaks between tests.
 
+import { resetHouseholdDefault } from './householdDefault.js';
+
 export const stubState = {
   // Secrets Manager, keyed by SecretId so the two different secrets the handler fetches are
   // distinguishable (garden-app/secrets vs garden-app/facebook-page-token).
@@ -17,6 +19,9 @@ export const stubState = {
   // Clerk. Either a payload object to return, or an Error to throw.
   verifyTokenResult: null,
   verifyTokenCalls: [],
+  // Clerk Backend API user list (createClerkClient().users.getUserList) and the params of every call.
+  clerkUsers: [],
+  clerkListCalls: [],
   // Neon. (strings, ...values) => rows. Default returns [] so a handler that queries does not crash.
   sqlHandler: () => [],
   sqlCalls: [],
@@ -53,6 +58,8 @@ export function resetStubs() {
   };
   stubState.verifyTokenResult = null;
   stubState.verifyTokenCalls = [];
+  stubState.clerkUsers = [];
+  stubState.clerkListCalls = [];
   stubState.sqlHandler = () => [];
   stubState.sqlCalls = [];
   stubState.s3Bytes = null;
@@ -64,6 +71,7 @@ export function resetStubs() {
   stubState.s3DeleteVersionDenied = false;
   stubState.presigns = [];
   stubState.cdnSigns = [];
+  resetHouseholdDefault();
 }
 
 resetStubs();

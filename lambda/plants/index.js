@@ -10,6 +10,7 @@ import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-sec
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { householdScope, loadOwnedLocation, loadOwnedInventoryItem, warnRejectedFk } from './household.js';
+import { householdGate } from './household.js';
 import { mergeCore } from './merge.js';
 // BUG-PARENTOWN-001: body-supplied PARENT-id loaders. loadOwnedPlantingRef REPLACES household.js's
 // loadOwnedPlanting on this path — same query plus the load-bearing `project_id IS NULL` conjunct on
@@ -259,6 +260,8 @@ export const handler = async (event) => {
   // in Postgres, so an empty/absent JWT subject would be a live ownership value rather than a
   // no-match. Clerk never issues one; this makes that assumption enforced instead of relied upon.
   if (!userId) return resp(401, { error: 'Unauthorized' });
+  const gateRefusal = householdGate(userId);
+  if (gateRefusal) return resp(gateRefusal.status, gateRefusal.body);
 
   const sql = neon(secrets.NEON_DATABASE_URL);
   // HOUSEHOLD-MODE: widened at V3-ROLES teardown

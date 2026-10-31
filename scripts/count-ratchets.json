@@ -47,7 +47,8 @@
   },
   "columns_tests_per_dir": {
     "lambda": 5,
-    "lambda/achievements": 1,
+    "lambda/achievements": 2,
+    "lambda/app-events": 2,
     "lambda/critter": 4,
     "lambda/daily-plan": 3,
     "lambda/daily-plan-read": 3,
@@ -55,7 +56,7 @@
     "lambda/events": 10,
     "lambda/evidence-ingest": 6,
     "lambda/facebook-share": 6,
-    "lambda/favorites": 1,
+    "lambda/favorites": 2,
     "lambda/findings": 4,
     "lambda/harvests": 8,
     "lambda/inventory-items": 8,
@@ -65,10 +66,10 @@
     "lambda/plants": 15,
     "lambda/preservation": 13,
     "lambda/projects": 7,
-    "lambda/shared-state": 1,
+    "lambda/shared-state": 2,
     "lambda/storage-location": 3,
     "lambda/tags": 7,
-    "lambda/ux-events": 4,
+    "lambda/ux-events": 5,
     "lambda/varieties": 10,
     "lambda/xp-reconcile": 1
   },
@@ -81,6 +82,11 @@
       "plants-columns.test.js"
     ],
     "lambda/achievements": [
+      "household-columns.test.js",
+      "select-columns.test.js"
+    ],
+    "lambda/app-events": [
+      "household-columns.test.js",
       "select-columns.test.js"
     ],
     "lambda/critter": [
@@ -137,6 +143,7 @@
       "select-columns.test.js"
     ],
     "lambda/favorites": [
+      "household-columns.test.js",
       "select-columns.test.js"
     ],
     "lambda/findings": [
@@ -225,6 +232,7 @@
       "select-columns.test.js"
     ],
     "lambda/shared-state": [
+      "household-columns.test.js",
       "select-columns.test.js"
     ],
     "lambda/storage-location": [
@@ -245,6 +253,7 @@
       "container-columns.test.js",
       "event-log-columns.test.js",
       "garden-node-columns.test.js",
+      "household-columns.test.js",
       "select-columns.test.js"
     ],
     "lambda/varieties": [
@@ -288,6 +297,41 @@
       "to": 3,
       "why": "spaces-columns.test.js declares the daily-plan `spaces` read (multi-space Phase 1 step 1.6). Neither existing file can take the key: locations-columns.test.js is keyed but pins its key set to exactly ['locations'] (locations-columns.test.js:134, 'One relation, one file'), and select-columns.test.js declares AUDIT_TABLES = ['weather_daily'] and asserts it (select-columns.test.js:72), so the auditor would cross-product spaces columns onto weather_daily.",
       "work_item": "BUG-SPACESREADUNSCOPED-001"
+    },
+    {
+      "what": "lambda/achievements",
+      "from": 1,
+      "to": 2,
+      "why": "household-columns.test.js: the SEC-13a household gate ships a household.js copy here, and lambda/household-columns-sync.test.js (GUARD) requires the byte-identical contract beside every household.js; a byte copy cannot share an existing file.",
+      "work_item": "OPS-CODEREVIEW-001 SEC-13a"
+    },
+    {
+      "what": "lambda/app-events",
+      "from": 0,
+      "to": 2,
+      "why": "household-columns.test.js: the SEC-13a household gate ships a household.js copy here, and lambda/household-columns-sync.test.js (GUARD) requires the byte-identical contract beside every household.js; a byte copy cannot share an existing file. app-events also gains select-columns.test.js: the copy's SELECTs end its NO_SQL_READS exemption (lambda/select-columns-enrollment.test.js).",
+      "work_item": "OPS-CODEREVIEW-001 SEC-13a"
+    },
+    {
+      "what": "lambda/favorites",
+      "from": 1,
+      "to": 2,
+      "why": "household-columns.test.js: the SEC-13a household gate ships a household.js copy here, and lambda/household-columns-sync.test.js (GUARD) requires the byte-identical contract beside every household.js; a byte copy cannot share an existing file.",
+      "work_item": "OPS-CODEREVIEW-001 SEC-13a"
+    },
+    {
+      "what": "lambda/shared-state",
+      "from": 1,
+      "to": 2,
+      "why": "household-columns.test.js: the SEC-13a household gate ships a household.js copy here, and lambda/household-columns-sync.test.js (GUARD) requires the byte-identical contract beside every household.js; a byte copy cannot share an existing file.",
+      "work_item": "OPS-CODEREVIEW-001 SEC-13a"
+    },
+    {
+      "what": "lambda/ux-events",
+      "from": 4,
+      "to": 5,
+      "why": "household-columns.test.js: the SEC-13a household gate ships a household.js copy here, and lambda/household-columns-sync.test.js (GUARD) requires the byte-identical contract beside every household.js; a byte copy cannot share an existing file.",
+      "work_item": "OPS-CODEREVIEW-001 SEC-13a"
     }
   ]
 }

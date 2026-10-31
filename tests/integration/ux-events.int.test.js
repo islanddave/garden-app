@@ -1,10 +1,10 @@
 // new-file: no integration test existed for ux-events
 // Pins today's /api/ux-events replies on real Postgres (OPS-CODEREVIEW-001 C6) so D1/D2/D2b changes are seen.
 // ux_events has no CHECK, UNIQUE or FK, so 23514/23505/23503 are unreachable; every database error a request
-// can cause (22007 bad client_ts, 23502 missing subject) is a generic 500. Trap: no empty-subject guard, and
-// malformed JSON is a 500, not a 400.
+// can cause (22007 bad client_ts) is a generic 500; a token with no subject is 401 before the INSERT (SEC-60).
+// Trap: malformed JSON is a 500, not a 400.
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
-import { directSql, callHandler, makeEvent, setTestUserId, testRunId } from './_harness.js'
+import { directSql, callHandler, makeEvent, setTestUserId, testRunId, householdDefault } from './_harness.js'
 // After _harness.js, whose vi.mock replaces this module with the stub; imported first it would be the real one.
 import { verifyToken } from '@clerk/backend'
 import { handler } from '../../lambda/ux-events/index.js'
@@ -12,7 +12,7 @@ import { handler } from '../../lambda/ux-events/index.js'
 const ORIGINS = ['https://garden.futureishere.net', 'https://dg6mmjhepoyt9.cloudfront.net']
 // Clerk refuses a token whose azp is not in authorizedParties; this models that check on the list the handler passes.
 const signedFrom = (azp, sub) => (_token, opts) => (opts.authorizedParties.includes(azp)
-  ? Promise.resolve({ sub, azp })
+  ? (householdDefault(sub), Promise.resolve({ sub, azp }))
   : Promise.reject(new Error(`Invalid JWT Authorized party claim (azp) "${azp}"`)))
 const raw = async (event) => {
   const r = await handler(event)
@@ -173,10 +173,11 @@ describe('ux-events — database errors', () => {
     expect(await rowsFor(DENIED)).toEqual([])
   })
 
-  it('23502 (TODAY: a token with no subject reaches the INSERT) is a generic 500', async () => {
+  it('SEC-60: a token with no subject is 401 and writes no row (it reached the INSERT: 23502, a 500)', async () => {
     vi.mocked(verifyToken).mockImplementationOnce(() => Promise.resolve({}))
     const r = await raw(makeEvent({ method: 'POST', path: '/api/ux-events', body: { flow_id: 'log_watering', session_id: 'nosub' } }))
-    expect(r.status).toBe(500)
-    expect(r.body).toEqual({ error: 'Internal server error' })
+    expect(r.status).toBe(401)
+    expect(r.body).toEqual({ error: 'Unauthorized' })
+    expect(await directSql`SELECT 1 FROM ux_events WHERE session_id = 'nosub' AND (clerk_sub IS NULL OR clerk_sub = '')`).toEqual([])
   })
 })

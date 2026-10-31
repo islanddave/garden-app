@@ -152,7 +152,7 @@ LAST = {}   # the whole of the last run_verify's output, for the tests that read
 
 
 def run_verify(monkeypatch, tmp_path, capsys, *, sha, version, modified, promote_run=None, gh=None,
-               headers=None):
+               headers=None, auth_status=401):
     """do_verify with every CDN check green, so the exit code is the Lambda window's alone.
     `modified` is {function: LastModified} overrides on top of 'everything predates the baseline'.
     `headers` replaces the index response headers (default: the live prod set, PROD_HEADERS)."""
@@ -173,7 +173,7 @@ def run_verify(monkeypatch, tmp_path, capsys, *, sha, version, modified, promote
             return 200, json.dumps({'version': version})
         if path == '/sw.js':
             return 200, f"const CACHE_VERSION = 'v{version}-{sha[:7]}'\n"
-        raise urllib.error.HTTPError(path, 401, 'Unauthorized', None, None)
+        raise urllib.error.HTTPError(path, auth_status, 'Unauthorized', None, None)
 
     def aws(wanted):
         mods = {'garden-' + n: BEFORE for n in wanted}
@@ -474,3 +474,14 @@ class TestSecurityHeaders:
         monkeypatch.setattr(smoke.urllib.request, 'urlopen', lambda req, timeout: Resp())
         assert smoke.fetch('/') == (200, '<html>')
         assert smoke.fetch('/', with_headers=True) == (200, '<html>', {'strict-transport-security': 'max-age=300'})
+
+
+@pytest.mark.parametrize('status,verdict', [(401, '[PASS]'), (403, '[FAIL]'), (200, '[FAIL]')])
+def test_the_auth_probe_accepts_exactly_401(monkeypatch, tmp_path, capsys, status, verdict):
+    """SEC-13a (D-G): 403 no longer passes. A tokenless request must be refused by verifyToken, before the household
+    gate, so a 403 here means the gate or something else moved ahead of auth."""
+    rc, _, _ = run_verify(monkeypatch, tmp_path, capsys, sha=DEPLOY_SHA, version='4.179.0',
+                          modified=all_redeployed, promote_run=DEPLOY_RUN, gh=recorded(DEPLOY_RUN), auth_status=status)
+    line = next(l for l in LAST['out'].splitlines() if 'auth path enforcing' in l)
+    assert verdict in line, line
+    assert rc == (0 if status == 401 else 1)

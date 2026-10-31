@@ -374,5 +374,5 @@ def test_every_call_site_is_still_a_plain_capture():
     uses = [line.strip() for line in text.splitlines()
             if "mint_session_token" in line and not line.lstrip().startswith("#")]
     calls = [line for line in uses if line != "mint_session_token() {"]
-    assert len(uses) == len(calls) + 1 and len(calls) == 76   # +6: block M5 (V5-TODAYREDESIGN-001 S7)
+    assert len(uses) == len(calls) + 1 and len(calls) == 78   # +2: the SEC-13a member and non-member loops
     assert all(re.fullmatch(r"[A-Za-z_]+=\$\(mint_session_token\)", line) for line in calls), calls

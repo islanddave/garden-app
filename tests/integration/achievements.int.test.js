@@ -1,9 +1,9 @@
 // new-file: no integration test existed for achievements
 // Pins today's /api/achievements replies on real Postgres (OPS-CODEREVIEW-001 C6) so D1/D2/D2b changes are seen.
-// Read-only: no 23514/23505/23503 is reachable; the one database error a request can cause (a NUL byte in
-// the subject, 22021) pins the generic 500. Trap: this handler has NO empty-subject 401 guard today.
+// Read-only: no 23514/23505/23503 is reachable, and since SEC-13a no request reaches a database error: a NUL byte in
+// the subject (22021) is refused at the household gate (403). A verified token with no subject is 401 (SEC-60).
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
-import { directSql, callHandler, makeEvent, setTestUserId, testRunId } from './_harness.js'
+import { directSql, callHandler, makeEvent, setTestUserId, testRunId, householdDefault } from './_harness.js'
 // After _harness.js, whose vi.mock replaces this module with the stub; imported first it would be the real one.
 import { verifyToken } from '@clerk/backend'
 import { handler } from '../../lambda/achievements/index.js'
@@ -11,7 +11,7 @@ import { handler } from '../../lambda/achievements/index.js'
 const ORIGINS = ['https://garden.futureishere.net', 'https://dg6mmjhepoyt9.cloudfront.net']
 // Clerk refuses a token whose azp is not in authorizedParties; this models that check on the list the handler passes.
 const signedFrom = (azp, sub) => (_token, opts) => (opts.authorizedParties.includes(azp)
-  ? Promise.resolve({ sub, azp })
+  ? (householdDefault(sub), Promise.resolve({ sub, azp }))
   : Promise.reject(new Error(`Invalid JWT Authorized party claim (azp) "${azp}"`)))
 const raw = async (event) => {
   const r = await handler(event)
@@ -137,20 +137,19 @@ describe('achievements — sign-in and origin', () => {
     expect(r.status).toBe(200)
   })
 
-  it('TODAY: a verified token with no subject is served (no empty-subject guard), as a user with nothing earned', async () => {
+  it('SEC-60: a verified token with no subject is 401 (it was served as a user with nothing earned)', async () => {
     vi.mocked(verifyToken).mockImplementationOnce(() => Promise.resolve({}))
     const r = await raw(makeEvent({ method: 'GET', path: '/api/achievements' }))
-    expect(r.status).toBe(200)
-    expect(r.body.earned).toEqual([])
-    expect(r.body.total_visible).toBe(visible.length)
+    expect(r.status).toBe(401)
+    expect(r.body).toEqual({ error: 'Unauthorized' })
   })
 })
 
 describe('achievements — database errors', () => {
-  it('an unmapped database error (22021, NUL in the subject) is a generic 500 that leaks nothing', async () => {
+  it('SEC-13a: a NUL in the subject can never be a household member: 403 before the database (it was 22021, a 500)', async () => {
     setTestUserId(`c6_ach_nul_${RUN}\u0000`)
     const r = await raw(makeEvent({ method: 'GET', path: '/api/achievements' }))
-    expect(r.status).toBe(500)
-    expect(r.body).toEqual({ error: 'Internal server error' })
+    expect(r.status).toBe(403)
+    expect(r.body).toEqual({ error: 'Forbidden' })
   })
 })

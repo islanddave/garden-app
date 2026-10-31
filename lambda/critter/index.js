@@ -39,6 +39,7 @@ import {
   validateMarkViewedPatchBody, validateAppConfigPatchBody,
   adminRefusal, isAdmin, projectAppConfig, APP_CONFIG_KEYS, UUID_RE,
 } from './validators.js'
+import { householdGate } from './household.js'
 
 // Deploy marker — fires once per cold start. Smoke step greps last 5min CloudWatch for this string.
 // L-072 / L-104 family: green tests ≠ green deploy. Marker proves the *running* Lambda is current.
@@ -205,6 +206,8 @@ export const handler = async (event) => {
   // ownership value rather than a no-match. verifyToken rejects such a token first, so this is
   // defence-in-depth; the point is that the invariant is ENFORCED here rather than relied upon.
   if (!userId) return resp(401, { error: 'Unauthorized' })
+  const gateRefusal = householdGate(userId)
+  if (gateRefusal) return resp(gateRefusal.status, gateRefusal.body)
 
   const sql = neon(secrets.NEON_DATABASE_URL)
   const ownerIds = [userId]

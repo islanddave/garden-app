@@ -69,6 +69,7 @@ import {
 import { applyDerive } from './crop-derive.js';
 import { checkRateLimit, withRetryAfter } from './rate-limit.js';
 import { householdScope, loadOwnedPhoto, warnRejectedFk } from './household.js';
+import { householdGate } from './household.js';
 import { loadOwnedProject } from './authz-parents.js';
 import { managedPrincipalPatterns, canEditSource, canEditVariety } from './authz.js';
 import { blendRoute, restoreConflictMessage } from './blend.js';
@@ -185,6 +186,8 @@ export const handler = async (event) => {
   // ownership value rather than a no-match. verifyToken rejects such a token first, so this is
   // defence-in-depth; the point is that the invariant is ENFORCED here rather than relied upon.
   if (!userId) return resp(401, { error: 'Unauthorized' });
+  const gateRefusal = householdGate(userId);
+  if (gateRefusal) return resp(gateRefusal.status, gateRefusal.body);
 
   const sql = neon(secrets.NEON_DATABASE_URL);
   const method = event.requestContext?.http?.method ?? 'GET';

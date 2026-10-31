@@ -13,6 +13,7 @@
 import { verifyToken, createClerkClient } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { householdScope } from './household.js';
+import { householdGate } from './household.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 const SCHEMA_VERSION = 1;
@@ -82,6 +83,8 @@ export const handler = async (event) => {
   // ownership value rather than a no-match. verifyToken rejects such a token first, so this is
   // defence-in-depth; the point is that the invariant is ENFORCED here rather than relied upon.
   if (!userId) return resp(401, { error: 'Unauthorized' });
+  const gateRefusal = householdGate(userId);
+  if (gateRefusal) return resp(gateRefusal.status, gateRefusal.body);
 
   const method = event.requestContext?.http?.method ?? 'GET';
   const rawPath = event.rawPath ?? '/api/members';
@@ -91,10 +94,13 @@ export const handler = async (event) => {
 
   try {
     const clerk = createClerkClient({ secretKey: secrets.CLERK_SECRET_KEY });
-    const list = await clerk.users.getUserList({ limit: 50 });
+    const ids = householdScope(userId);
+    // R1-11: ask Clerk for exactly the household's ids. A page of all users (it was the first 50) drops a
+    // member who sorts past it. Guard: index.test.js "R1-11", tests/integration/members-authz.int.test.js.
+    const list = await clerk.users.getUserList({ userId: ids, limit: ids.length });
     // v1 returns { data, totalCount }; tolerate an array too.
     const users = Array.isArray(list) ? list : (list?.data ?? []);
-    const hh = new Set(householdScope(userId)); // 0A.6: roster scoped to the caller household
+    const hh = new Set(ids); // 0A.6: roster scoped to the caller household (kept: defence in depth)
     const members = users
       .filter((u) => !isSystemUser(u))  // exclude service/bot accounts from caretaker roster (DRG-ASSIGN-FIX)
       .filter((u) => hh.has(u.id))      // 0A.6: strangers see only themselves; household sees household

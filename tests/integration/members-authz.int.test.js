@@ -10,6 +10,7 @@ const OWNER = 'user_hh_owner', MATE = 'user_hh_mate', STRANGER = 'user_stranger_
 
 const h = vi.hoisted(() => ({
   state: { sub: 'user_hh_owner' },
+  listCalls: [],
   users: [
     { id: 'user_hh_owner',         firstName: 'Dave',    lastName: 'N', emailAddresses: [{ emailAddress: 'dave@example.com' }] },
     { id: 'user_hh_mate',          firstName: 'Jen',     lastName: 'N', emailAddresses: [{ emailAddress: 'jen@example.com' }] },
@@ -22,7 +23,12 @@ vi.mock('@aws-sdk/client-secrets-manager', () => ({
 }))
 vi.mock('@clerk/backend', () => ({
   verifyToken: () => Promise.resolve({ sub: h.state.sub }),
-  createClerkClient: () => ({ users: { getUserList: () => Promise.resolve({ data: h.users, totalCount: h.users.length }) } }),
+  // Like the Backend API: `userId` filters to those ids, then `limit` (default 10) pages the result.
+  createClerkClient: () => ({ users: { getUserList: (params = {}) => {
+    h.listCalls.push(params)
+    const all = Array.isArray(params.userId) ? h.users.filter((u) => params.userId.includes(u.id)) : h.users
+    return Promise.resolve({ data: all.slice(0, params.limit ?? 10), totalCount: all.length })
+  } } }),
 }))
 
 const call = (sub) => {
@@ -51,14 +57,46 @@ describe('LEAK-GATE /api/members — household scope + email drop (0A.6 / v3.74)
     }
   })
 
-  it('non-member (stranger) sees ONLY themselves — fail-closed scope', async () => {
-    const { body } = await call(STRANGER)
-    expect(body.members.map((m) => m.id)).toEqual([STRANGER])
+  it('SEC-13a: a non-member with a valid token is refused 403, and Clerk is never asked for a user', async () => {
+    h.listCalls.length = 0
+    const { status, body } = await call(STRANGER)
+    expect(status).toBe(403)
+    expect(body).toEqual({ error: 'Forbidden' })
+    expect(h.listCalls).toEqual([])
+  })
+
+  it('a member of another household sees ONLY themselves (the roster is scoped to the caller household)', async () => {
+    const saved = process.env.GARDEN_HOUSEHOLD_IDS
+    process.env.GARDEN_HOUSEHOLD_IDS = STRANGER // STRANGER's own household of one
+    try {
+      const { status, body } = await call(STRANGER)
+      expect(status).toBe(200)
+      expect(body.members.map((m) => m.id)).toEqual([STRANGER])
+    } finally {
+      process.env.GARDEN_HOUSEHOLD_IDS = saved
+    }
   })
 
   it('envelope shape = { schema_version, members[] }', async () => {
     const { body } = await call(OWNER)
     expect(body.schema_version).toBeDefined()
     expect(Array.isArray(body.members)).toBe(true)
+  })
+})
+
+describe('R1-11 /api/members — the roster is read by id, not as a page of every Clerk user', () => {
+  it('R1-11: household members past the first 50 Clerk users are still listed, and Clerk is asked for exactly their ids', async () => {
+    const saved = h.users
+    const filler = Array.from({ length: 58 }, (_, i) => ({ id: `user_filler_${i}`, firstName: `F${i}`, emailAddresses: [] }))
+    h.users = [...filler.slice(0, 54), saved[0], saved[1], ...filler.slice(54)]
+    h.listCalls.length = 0
+    try {
+      const { status, body } = await call(OWNER)
+      expect(status).toBe(200)
+      expect(body.members.map((m) => m.id).sort()).toEqual([OWNER, MATE].sort())
+      expect(h.listCalls).toEqual([{ userId: [OWNER, MATE], limit: 2 }])
+    } finally {
+      h.users = saved
+    }
   })
 })

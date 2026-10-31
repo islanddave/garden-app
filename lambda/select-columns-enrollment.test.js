@@ -46,9 +46,9 @@ const UNENROLLED = []
 // exempted `members`, which reads locations and inventory_items from a SIBLING module. The check now
 // walks the whole Lambda and understands node-postgres .query() too. A guard that only inspects the
 // obvious file in the obvious dialect is the same vacuous gate this row is about.
-const NO_SQL_READS = [
-  'app-events', // sql`` present but INSERT-only (rate_limit_buckets upsert). No FROM, so no SELECT contract.
-]
+// Empty since SEC-13a: app-events was the one entry until its household.js copy (the household gate) brought the
+// household loaders' SELECTs in; it is enrolled now (lambda/app-events/select-columns.test.js).
+const NO_SQL_READS = []
 
 // Ceiling, not a target. Lower it with every enrolment; never raise it without a ledger row saying
 // why a new Lambda shipped uncovered.

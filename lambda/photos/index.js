@@ -5,6 +5,7 @@ import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-sec
 import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { householdScope, loadOwnedSpace, loadOwnedLocation, loadOwnedInventoryItem, warnRejectedFk } from './household.js';
+import { householdGate } from './household.js';
 // BUG-PARENTOWN-001: body-supplied PARENT-id loaders for the five photo parents household.js does
 // not cover. See lambda/authz-parents.js for the contract and for why they live in a separate file.
 import { loadOwnedProject, loadOwnedPlantingRef, loadOwnedEvent } from './authz-parents.js';
@@ -560,6 +561,8 @@ export const handler = async (event) => {
   // file would then match rows whose created_by is ''. Clerk never issues one; this makes that
   // assumption enforced instead of relied upon.
   if (!userId) return resp(401, { error: 'Unauthorized' });
+  const gateRefusal = householdGate(userId);
+  if (gateRefusal) return resp(gateRefusal.status, gateRefusal.body);
 
   const sql = neon(secrets.NEON_DATABASE_URL);
   // HOUSEHOLD-MODE: widened at V3-ROLES teardown (photos scope SWITCHED uploaded_by -> created_by)

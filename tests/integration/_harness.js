@@ -5,6 +5,7 @@
 import { neon } from '@neondatabase/serverless'
 import { vi } from 'vitest'
 import { assertEphemeralDatabase } from './_cleanup.js'
+import { applyHouseholdDefault, setHouseholdDefault as setStubHouseholdDefault } from '../../lambda/_test-stubs/householdDefault.js'
 
 // BUG-INTFIXTURELEAK-001: fail closed before a single fixture row is written. globalSetup performs
 // the same check in the parent process; this second call covers a worker that somehow starts without
@@ -42,10 +43,21 @@ vi.mock('@aws-sdk/client-secrets-manager', async (importOriginal) => {
   }
 })
 
-// Stub Clerk verifyToken — returns { sub: <testUserId> } without a network call.
+// Stub Clerk verifyToken — returns { sub: <testUserId> } without a network call, and makes that subject a
+// household member so the SEC-13a gate admits it (lambda/_test-stubs/householdDefault.js says how). A test
+// that overrides verifyToken with its own implementation calls householdDefault(sub) itself; a test of the
+// gate's refusal calls setHouseholdDefault(false) and restores it after.
 vi.mock('@clerk/backend', () => ({
-  verifyToken: vi.fn().mockImplementation(() => Promise.resolve({ sub: _testUserId })),
+  verifyToken: vi.fn().mockImplementation(() => {
+    applyHouseholdDefault(_testUserId)
+    return Promise.resolve({ sub: _testUserId })
+  }),
 }))
+// DO NOT turn these into `export { … }` of the imports: vi.mock hoisting rewrites this file's imports to a
+// dynamic import, an export specifier then names no binding, and vite's export getter swallows that into
+// undefined ("householdDefault is not a function" in every int file that uses them).
+export function householdDefault(sub) { return applyHouseholdDefault(sub) }
+export function setHouseholdDefault(on) { return setStubHouseholdDefault(on) }
 
 export function makeEvent({ method = 'GET', path = '/api/events', body = null, userId = _testUserId } = {}) {
   // Emulate the AWS Function URL v2 payload: rawPath carries NO query string; the query is

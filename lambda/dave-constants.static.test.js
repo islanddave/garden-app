@@ -44,13 +44,14 @@ const HOUSEHOLD_CLASS = 'lambda/household.js + lambda/<dir>/household.js copies'
 
 const DAVE_CONSTANTS = {
   [HOUSEHOLD_CLASS]: {
-    GARDEN_HOUSEHOLD_IDS: 2,
-    reason: 'householdScope(): the one household read every scoped Lambda shares, copied per Lambda dir because each '
-      + 'zips alone; its byte-sameness is lambda/household-copies-sync.test.js. Goes when householdScope reads the Space',
+    GARDEN_HOUSEHOLD_IDS: 1,
+    reason: 'householdList(): the one household read behind householdScope, householdActive and the SEC-13a householdGate, '
+      + 'copied per Lambda dir because each zips alone; its byte-sameness is lambda/household-copies-sync.test.js. Goes '
+      + 'when household scope reads the Space',
   },
   'lambda/daily-plan/householdScope.js': { GARDEN_HOUSEHOLD_IDS: 1 },
   'lambda/events/critterAward.js': { literal: 1, SENTINEL_WORKSPACE: 2 },
-  'lambda/shared-state/index.js': { literal: 1, SENTINEL_WORKSPACE: 5, GARDEN_HOUSEHOLD_IDS: 1 },
+  'lambda/shared-state/index.js': { literal: 1, SENTINEL_WORKSPACE: 5 },
   'scripts/seed-recipes.mjs': { GARDEN_HOUSEHOLD_IDS: 1 },
   'scripts/weather-observability.sh': {
     literal: 1,
@@ -94,7 +95,7 @@ describe('Dave-constant ratchet (1.14)', () => {
   const found = scanDaveConstants()
 
   it('found the known inventory (anti-vacuity)', () => {
-    expect(found['lambda/household.js']).toEqual({ GARDEN_HOUSEHOLD_IDS: 2 })
+    expect(found['lambda/household.js']).toEqual({ GARDEN_HOUSEHOLD_IDS: 1 })
     expect(Object.keys(found).filter((f) => HOUSEHOLD_COPY.test(f)).length).toBeGreaterThan(10)
   })
 

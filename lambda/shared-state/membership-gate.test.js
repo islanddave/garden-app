@@ -10,6 +10,7 @@
 // resolve to lambda/_test-stubs via the vitest.config.ts aliases.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { stubState, resetStubs } from '../_test-stubs/state.js';
+import { setHouseholdDefault } from '../_test-stubs/householdDefault.js';
 
 const { handler } = await import('./index.js');
 
@@ -35,6 +36,7 @@ const denials = (warn) => warn.mock.calls
 let warn;
 beforeEach(() => {
   resetStubs();
+  setHouseholdDefault(false); // these cases ARE the refusals: no harness household for the caller
   stubState.sqlHandler = () => [{ counter: 3 }];
   vi.stubEnv(ENV_KEY, `${DAVE},${JEN}`);
   warn = vi.spyOn(console, 'warn').mockImplementation(() => {});

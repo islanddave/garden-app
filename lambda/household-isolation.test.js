@@ -5,7 +5,9 @@
 // out-of-scope handler) and accidental scope loss (an in-scope file losing the import).
 // Static-source / filesystem scan — DB-free.
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { stubState, resetStubs } from './_test-stubs/state.js';
+import { setHouseholdDefault } from './_test-stubs/householdDefault.js';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -110,5 +112,105 @@ describe('Household Mode — surface isolation (G3)', () => {
       }
     }
     expect(offenders, `unexpected householdScope reference(s): ${offenders.join(', ')}`).toEqual([]);
+  });
+});
+
+// ── SEC-13a: the household-member gate in every HTTP handler ─────────────────────────────────────────────────────
+// Every handler that verifies a Clerk token must refuse a caller outside GARDEN_HOUSEHOLD_IDS with the one generic
+// 403, after verifyToken and the empty-sub 401 (an unauthenticated or garbage token stays 401: deploy.yml's prod
+// smoke needs exactly 401) and before neon(), a rate limit, a Clerk call, a read or a write. The row predicates are
+// the second layer; the integration suite tests them member against member.
+const MANIFEST = JSON.parse(readFileSync(resolve(LAMBDA_ROOT, '../scripts/lambda-config-expected.json'), 'utf8'));
+const URL_DIRS = Object.entries(MANIFEST)
+  .filter(([fn, spec]) => fn.startsWith('garden-') && spec && spec.url !== null && typeof spec.url === 'object')
+  .map(([fn]) => fn.slice('garden-'.length))
+  .sort();
+const VERIFY_DIRS = readdirSync(LAMBDA_ROOT)
+  .filter((d) => exists(join(d, 'index.js')) && /verifyToken\(/.test(readCode(`${d}/index.js`)))
+  .sort();
+const GATE_IMPORT = /^import \{[^}]*\bhouseholdGate\b[^}]*\} from '\.\/household\.js';?$/m;
+const GATE_CALL = /const gateRefusal = householdGate\(userId\);?\n\s*if \(gateRefusal\) return resp\(gateRefusal\.status, gateRefusal\.body\)/;
+const WORK = /\bneon\(|checkRateLimit\(|sql`|createClerkClient\(|getUserList\(/;
+
+describe('SEC-13a household gate — every HTTP handler', () => {
+  it('SEC-13a: the handlers that verify a Clerk token are exactly the manifest\'s URL functions', () => {
+    expect(VERIFY_DIRS.length).toBeGreaterThanOrEqual(20);
+    expect(VERIFY_DIRS).toEqual(URL_DIRS);
+  });
+
+  for (const d of VERIFY_DIRS) {
+    it(`SEC-13a: ${d}/index.js gates right after the empty-sub 401 and before any statement`, () => {
+      const src = readCode(`${d}/index.js`);
+      expect(src).toMatch(GATE_IMPORT);
+      expect(src).toMatch(GATE_CALL);
+      const verify = src.indexOf('verifyToken(');
+      const sub401 = src.search(/if \(!userId\) return resp\(401/);
+      const gate = src.indexOf('householdGate(userId)');
+      expect(verify).toBeGreaterThan(-1);
+      expect(sub401).toBeGreaterThan(verify);
+      expect(gate).toBeGreaterThan(sub401);
+      expect(src.slice(verify, gate)).not.toMatch(WORK);
+    });
+  }
+});
+
+describe('SEC-13a household gate — every handler, executed under the stubs', () => {
+  const MEMBER = 'user_sec13a_member';
+  const MATE = 'user_sec13a_mate';
+  const STRANGER = 'user_sec13a_stranger';
+  let warn;
+  const denials = () => warn.mock.calls
+    .map((c) => { try { return JSON.parse(c[0]); } catch { return null; } })
+    .filter((o) => o?.msg === 'household-membership-denied');
+  const call = async (d, sub) => {
+    stubState.verifyTokenResult = { sub };
+    const { handler } = await import(`./${d}/index.js`);
+    const res = await handler({
+      requestContext: { http: { method: 'GET' } },
+      rawPath: `/api/${d}`,
+      headers: { authorization: 'Bearer sec13a' },
+    });
+    return { status: res.statusCode, body: res.body ? JSON.parse(res.body) : null };
+  };
+
+  beforeEach(() => {
+    resetStubs();
+    setHouseholdDefault(false);
+    vi.stubEnv('GARDEN_HOUSEHOLD_IDS', `${MEMBER},${MATE}`);
+    vi.stubEnv('S3_PHOTOS_BUCKET', 'garden-photos-stub'); // facebook-share throws at module load without it
+    warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+  afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
+
+  it.each(VERIFY_DIRS)('SEC-13a: %s refuses a verified non-member with the generic 403 before any statement', async (d) => {
+    const r = await call(d, STRANGER);
+    expect(r).toEqual({ status: 403, body: { error: 'Forbidden' } });
+    expect(stubState.sqlCalls).toEqual([]);
+    expect(stubState.clerkListCalls).toEqual([]);
+    expect(denials()).toEqual([{ msg: 'household-membership-denied', userId: STRANGER, reason: 'non-member' }]);
+  });
+
+  it.each(VERIFY_DIRS)('SEC-13a: %s admits a listed member past the gate', async (d) => {
+    const r = await call(d, MATE);
+    expect(r.status).not.toBe(401);
+    expect(denials()).toEqual([]);
+  });
+
+  it.each(VERIFY_DIRS)('SEC-13a: %s refuses even a member when the list is unset (fails closed)', async (d) => {
+    delete process.env.GARDEN_HOUSEHOLD_IDS;
+    const r = await call(d, MEMBER);
+    expect(r).toEqual({ status: 403, body: { error: 'Forbidden' } });
+    expect(stubState.sqlCalls).toEqual([]);
+    expect(denials().map((x) => x.reason)).toEqual(['env-missing']);
+  });
+
+  it.each(VERIFY_DIRS)('SEC-13a: %s still answers 401 to a token Clerk rejects (the gate never runs first)', async (d) => {
+    stubState.verifyTokenResult = new Error('garbage token');
+    const { handler } = await import(`./${d}/index.js`);
+    const res = await handler({ requestContext: { http: { method: 'GET' } }, rawPath: `/api/${d}`, headers: { authorization: 'Bearer ci.smoke.probe' } });
+    expect(res.statusCode).toBe(401);
+    expect(denials()).toEqual([]);
   });
 });
