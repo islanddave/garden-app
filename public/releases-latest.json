@@ -1,7 +1,7 @@
 {
-  "version": "5.3.24",
+  "version": "5.3.25",
   "date": "2026-10-31",
   "highlights": [
-    "Behind-the-scenes security work: sign-in now runs through one shared check that only accepts logins made through the garden app itself, and garden edits are refused rather than saved without a record of who made them. No visible change."
+    "When the app refuses a change, its message no longer shows internal database names, and saving a project whose name and year are already taken now says so plainly instead of failing with a server error."
   ]
 }
