@@ -104,4 +104,11 @@ describe('ProjectDetail — V3-REPARENT-001 Move + Undo', () => {
     await openMoveAndSubmit()
     await waitFor(() => expect(screen.getByText(/can't move a project into one of its own sub-projects/i)).toBeDefined())
   })
+
+  it('D2b: a 422 carrying reparent_cycle surfaces the cycle message, whatever its text says', async () => {
+    wire({ reparentError: Object.assign(new Error('Refused'), { status: 422, body: { error: 'Refused', code: 'reparent_cycle' } }) })
+    await act(async () => { render(<ProjectDetail />) })
+    await openMoveAndSubmit()
+    await waitFor(() => expect(screen.getByText(/can't move a project into one of its own sub-projects/i)).toBeDefined())
+  })
 })

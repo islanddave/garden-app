@@ -645,7 +645,7 @@ export default function ProjectDetail() {
   function reparentErrCopy(err) {
     const st = err?.status
     if (st === 409) return 'This project changed on another device. Reload and try again.'
-    if (st === 422 && /cycle/i.test(err?.message ?? '')) return "You can't move a project into one of its own sub-projects."
+    if (st === 422 && (err?.body?.code === 'reparent_cycle' || /cycle/i.test(err?.message ?? ''))) return "You can't move a project into one of its own sub-projects."
     if (st === 422) return err?.message || 'That destination isn’t valid.'
     return err?.message || 'Move failed.'
   }
@@ -728,10 +728,13 @@ export default function ProjectDetail() {
       setEditing(false)
     } catch (err) {
       const msg = err.message ?? ''
+      // The codes first; the text tests answer a server that predates them.
+      const code = err.body?.code
       setSaveErr(
-        msg.includes('23505') || msg.toLowerCase().includes('already') || msg.toLowerCase().includes('duplicate')
+        (err.status === 409 && code === 'project_slug_conflict')
+          || msg.includes('23505') || msg.toLowerCase().includes('already') || msg.toLowerCase().includes('duplicate')
           ? `Slug "${form.slug}" is already taken.`
-          : msg.includes('cannot be its own parent')
+          : code === 'project_own_parent' || msg.includes('cannot be its own parent')
           ? 'A project cannot be its own parent.'
           : msg || 'Failed to save.'
       )

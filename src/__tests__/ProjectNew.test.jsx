@@ -126,3 +126,32 @@ describe('ProjectNew — V1.2a-4 S1 kind dropdown', () => {
     })
   })
 })
+
+// D2b: a duplicate slug is recognised by its code first, and by text from a server that predates the code.
+describe('ProjectNew — a duplicate slug', () => {
+  async function submitWith(postError) {
+    wireApiFetch({ postError })
+    await act(async () => { render(<ProjectNew />) })
+    const nameInput = screen.getByPlaceholderText(/Peppers 2026/)
+    await act(async () => { fireEvent.change(nameInput, { target: { value: 'Tomatoes 2026' } }) })
+    await act(async () => { fireEvent.submit(nameInput.closest('form')) })
+  }
+  const SLUG_COPY = /A project with slug ".*" already exists\. Try a different name or change the year\./
+
+  it('a 409 carrying project_slug_conflict shows the slug copy, whatever its text says', async () => {
+    await submitWith(Object.assign(new Error('Refused'), { status: 409, body: { error: 'Refused', code: 'project_slug_conflict' } }))
+    await waitFor(() => expect(screen.getByText(SLUG_COPY)).toBeDefined())
+    expect(screen.queryByText('Refused')).toBeNull()
+  })
+
+  it('an older server\'s duplicate-key text still shows the slug copy', async () => {
+    await submitWith(new Error('duplicate key value violates unique constraint'))
+    await waitFor(() => expect(screen.getByText(SLUG_COPY)).toBeDefined())
+  })
+
+  it('any other unique collision shows the server\'s text, not the slug copy', async () => {
+    await submitWith(Object.assign(new Error('Unique violation'), { status: 409, body: { error: 'Unique violation', code: 'unique_violation' } }))
+    await waitFor(() => expect(screen.getByText('Unique violation')).toBeDefined())
+    expect(screen.queryByText(SLUG_COPY)).toBeNull()
+  })
+})
