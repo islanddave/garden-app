@@ -1,5 +1,12 @@
 [
   {
+    "version": "5.3.25",
+    "date": "2026-10-31",
+    "highlights": [
+      "When the app refuses a change, its message no longer shows internal database names, and saving a project whose name and year are already taken now says so plainly instead of failing with a server error."
+    ]
+  },
+  {
     "version": "5.3.24",
     "date": "2026-10-31",
     "highlights": [
