@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { format } from 'node:util';
 import * as acorn from 'acorn';
 import { stubState, resetStubs } from './_test-stubs/state.js';
+import { lambdaFiles } from '../tests/lib/sqlCensus.mjs';
 import { DB_ERROR_REPLIES, dbErrorReply, logCaughtError } from './db-error.js';
 import { SEED_CONSTRAINT_MESSAGES } from './inventory-items/index.js';
 import { CONSTRAINT_MESSAGES as VARIETY_MESSAGES } from './varieties/validate.js';
@@ -294,5 +295,255 @@ describe.each(ADOPTERS)('%s: the catch, executed with canary errors', (dir) => {
     expect({ status: res.statusCode, body: JSON.parse(res.body) }).toEqual(GENERIC);
     expect(JSON.stringify(res)).not.toContain(CANARY.message);
     expect(lines.some((l) => l.startsWith(`${dir} lambda error`) && l.includes(CANARY.message))).toBe(true);
+  });
+});
+
+// ── The static row: no reply carries a caught error's text ─────────────────────────────────────────────────────
+// Every catch in every URL dir's non-test files. A name is tainted when its VALUE carries the caught error: the error
+// itself, a field other than code/name/status/statusCode, a template, concatenation, stringify or method call on
+// one, a spread, a destructured field, or a name initialised or assigned from any of those. A tainted value in an
+// object property, a spread or a resp() argument outside console.* is a hit. A field read only as a lookup key
+// (MAP[err.constraint]) or in a comparison carries no text; a call that receives the error is held separately
+// (CALL_BOUNDARY) because the scan cannot see what the callee returns.
+const SAFE_FIELDS = new Set(['code', 'name', 'status', 'statusCode']);
+const SINK_CALLS = new Set(['resp', 'respond', 'jsonResponse']);
+const STRINGIFY_GLOBALS = new Set(['String', 'inspect', 'format', 'structuredClone']);
+const STRINGIFY_OBJECTS = new Set(['JSON', 'Object', 'util', 'Array', 'Reflect']);
+const isConsoleCall = (n) => n.type === 'CallExpression' && n.callee.type === 'MemberExpression'
+  && n.callee.object.type === 'Identifier' && n.callee.object.name === 'console';
+const propName = (m) => (!m.computed && m.property.type === 'Identifier' ? m.property.name
+  : m.property.type === 'Literal' ? String(m.property.value) : null);
+
+function tainted(n, names, strict) {
+  if (!n) return false;
+  const t = (x) => tainted(x, names, strict);
+  switch (n.type) {
+    case 'Identifier': return names.has(n.name);
+    case 'ChainExpression': return t(n.expression);
+    case 'AwaitExpression': return t(n.argument);
+    case 'MemberExpression': {
+      const p = propName(n);
+      return !(p !== null && SAFE_FIELDS.has(p)) && t(n.object);
+    }
+    case 'TemplateLiteral': return n.expressions.some(t);
+    case 'BinaryExpression': return n.operator === '+' && (t(n.left) || t(n.right));
+    case 'LogicalExpression': return t(n.left) || t(n.right);
+    case 'ConditionalExpression': return t(n.consequent) || t(n.alternate);
+    case 'AssignmentExpression': return t(n.right);
+    case 'SequenceExpression': return t(n.expressions[n.expressions.length - 1]);
+    case 'ObjectExpression': return n.properties.some((p) => t(p.type === 'SpreadElement' ? p.argument : p.value));
+    case 'ArrayExpression': return n.elements.some((e) => e && t(e.type === 'SpreadElement' ? e.argument : e));
+    case 'SpreadElement': return t(n.argument);
+    case 'NewExpression': return n.arguments.some(t);
+    case 'CallExpression': {
+      const c = n.callee;
+      if (c.type === 'MemberExpression' && t(c.object)) return true;
+      const stringifier = (c.type === 'Identifier' && STRINGIFY_GLOBALS.has(c.name))
+        || (c.type === 'MemberExpression' && c.object.type === 'Identifier' && STRINGIFY_OBJECTS.has(c.object.name));
+      return (strict || stringifier) && n.arguments.some(t);
+    }
+    default: return false;
+  }
+}
+
+function bindPattern(p, names) {
+  let grew = false;
+  const add = (id) => { if (!names.has(id)) { names.add(id); grew = true; } };
+  if (!p) return false;
+  if (p.type === 'Identifier') add(p.name);
+  else if (p.type === 'ObjectPattern') {
+    for (const prop of p.properties) {
+      if (prop.type === 'RestElement') { grew = bindPattern(prop.argument, names) || grew; continue; }
+      const key = !prop.computed && prop.key.type === 'Identifier' ? prop.key.name : null;
+      if (key !== null && SAFE_FIELDS.has(key)) continue;
+      grew = bindPattern(prop.value, names) || grew;
+    }
+  } else if (p.type === 'ArrayPattern') { for (const e of p.elements) grew = bindPattern(e, names) || grew; }
+  else if (p.type === 'AssignmentPattern') grew = bindPattern(p.left, names) || grew;
+  else if (p.type === 'RestElement') grew = bindPattern(p.argument, names) || grew;
+  return grew;
+}
+
+const childrenOf = (n) => Object.entries(n)
+  .filter(([k]) => k !== 'loc')
+  .flatMap(([, v]) => (Array.isArray(v) ? v : [v]))
+  .filter((c) => c && typeof c.type === 'string');
+
+function fnName(stack) {
+  for (let i = stack.length - 1; i >= 0; i -= 1) {
+    const n = stack[i];
+    if (n.type === 'FunctionDeclaration' && n.id) return n.id.name;
+    if (n.type === 'FunctionExpression' || n.type === 'ArrowFunctionExpression') {
+      const parent = stack[i - 1];
+      if (n.id) return n.id.name;
+      if (parent?.type === 'VariableDeclarator' && parent.id.type === 'Identifier') return parent.id.name;
+      if ((parent?.type === 'Property' || parent?.type === 'MethodDefinition') && parent.key.type === 'Identifier') return parent.key.name;
+      return '<anon>';
+    }
+  }
+  return '<module>';
+}
+
+// [{ file, line, fn, expr, guard }]: guard is the innermost `if` test in the catch, else the try block's text.
+function catchLeaks(file, src, { strict = false } = {}) {
+  const hits = [];
+  const seen = new Set();
+  const text = (n) => src.slice(n.start, n.end);
+  const visit = (n, stack) => {
+    if (n.type === 'CatchClause' && n.param) {
+      const names = new Set();
+      bindPattern(n.param, names);
+      for (let grew = true; grew;) {
+        grew = false;
+        const walk = (m) => {
+          if (m.type === 'VariableDeclarator' && m.init && tainted(m.init, names, strict)) grew = bindPattern(m.id, names) || grew;
+          if (m.type === 'AssignmentExpression' && m.left.type === 'Identifier' && !names.has(m.left.name) && tainted(m.right, names, strict)) {
+            names.add(m.left.name);
+            grew = true;
+          }
+          childrenOf(m).forEach(walk);
+        };
+        walk(n.body);
+      }
+      const tryNode = stack[stack.length - 1];
+      const sinkWalk = (m, inner) => {
+        if (isConsoleCall(m)) return;
+        const record = (e) => {
+          const key = `${e.start}:${e.end}`;
+          if (seen.has(key)) return;
+          seen.add(key);
+          const ifs = inner.filter((a) => a.type === 'IfStatement');
+          const guard = ifs.length ? text(ifs[ifs.length - 1].test) : `try ${text(tryNode.block).replace(/\s+/g, ' ')}`;
+          hits.push({ file, line: e.loc.start.line, fn: fnName([...stack, ...inner]), expr: text(e), guard });
+        };
+        // A nested object is reported at its own leaf property, so one leak is one hit.
+        const leaf = (e) => {
+          if (!e || e.type === 'ObjectExpression' || !tainted(e, names, strict)) return;
+          if (e.type === 'ArrayExpression') e.elements.forEach(leaf);
+          else record(e);
+        };
+        if (m.type === 'ObjectExpression') for (const p of m.properties) leaf(p.type === 'SpreadElement' ? p : p.value);
+        if (m.type === 'CallExpression' && m.callee.type === 'Identifier' && SINK_CALLS.has(m.callee.name)) m.arguments.forEach(leaf);
+        for (const c of childrenOf(m)) sinkWalk(c, [...inner, m]);
+      };
+      sinkWalk(n.body, [n]);
+    }
+    for (const c of childrenOf(n)) visit(c, [...stack, n]);
+  };
+  visit(parse(src), []);
+  return hits;
+}
+
+// Non-DB texts a reply may carry, each pinned by its guard and its exact count (C5): a second copy reds.
+const ALLOWLIST = [
+  // Graph API text, under the GraphError branch.
+  { file: 'lambda/facebook-share/index.js', fn: 'handler', expr: 'err.graph.message', guard: 'err instanceof GraphError', count: 1 },
+  // The handler's own sentence on an error it marked userFacing.
+  { file: 'lambda/facebook-share/index.js', fn: 'handler', expr: 'err.message', guard: 'err?.userFacing', count: 1 },
+  // parseSections' validation sentence; nothing else runs in that try.
+  { file: 'lambda/harvests/season-stats.js', fn: 'handleSeasonStatsGet', expr: 'e.message', guard: 'try { sections = parseSections(query.sections); }', count: 1 },
+];
+
+// Calls whose arguments carry the caught error and whose result reaches a reply. The scan cannot see inside them,
+// so each is listed with its count and why it returns no error text; a new one reds until it is read.
+const CALL_BOUNDARY = [
+  // The kit hands the handler's onSecretsError key names only; photos and projects answer fixed text.
+  { files: /^lambda\/[a-z-]+\/request-context\.js$/, fn: 'requestContext', expr: 'onSecretsError(err, { missing: null, keys: null })', count: 23 },
+  // dbErrorReply: the table above, executed per adopter.
+  { files: /^lambda\/[a-z-]+\/index\.js$/, fn: 'handler', expr: 'db.body', count: 10 },
+  // Constant lookups by constraint name; executed in the preservation mapped rows.
+  { files: /^lambda\/preservation\/index\.js$/, fn: 'handler', expr: 'kitchenMsg', count: 1 },
+  { files: /^lambda\/preservation\/index\.js$/, fn: 'handler', expr: 'jarMsg', count: 1 },
+  { files: /^lambda\/preservation\/index\.js$/, fn: 'handler', expr: 'sourceMsg', count: 1 },
+  // Fixed sentences keyed on the unique index (blend.js RESTORE_CONFLICT_MESSAGES; blend-route.test.js).
+  { files: /^lambda\/varieties\/index\.js$/, fn: 'handler', expr: 'restoreConflictMessage(err)', count: 1 },
+  // settle(err) re-reads the row a concurrent create landed; the reply is that row.
+  { files: /^lambda\/varieties\/blend\.js$/, fn: 'blendRoute', expr: 'withRow(row, false)', count: 2 },
+];
+
+const URL_FILES = lambdaFiles(join(here, '..')).filter((f) => URL_DIRS.includes(f.split('/')[1]) && f.split('/').length > 2);
+const scanned = URL_FILES.map((f) => ({ f, src: readFileSync(join(here, '..', f), 'utf8') }));
+const tally = (hits, keyOf) => hits.reduce((m, h) => m.set(keyOf(h), (m.get(keyOf(h)) ?? 0) + 1), new Map());
+
+describe('SEC-20 static row: no reply in a URL dir carries a caught error\'s text', () => {
+  const hits = scanned.flatMap(({ f, src }) => catchLeaks(f, src));
+  const strictOnly = scanned.flatMap(({ f, src }) => {
+    const flow = new Set(catchLeaks(f, src).map((h) => `${h.line}:${h.expr}`));
+    return catchLeaks(f, src, { strict: true }).filter((h) => !flow.has(`${h.line}:${h.expr}`));
+  });
+
+  it('walks every URL dir, and every adopter has a catch', () => {
+    expect(new Set(URL_FILES.map((f) => f.split('/')[1])).size).toBe(URL_DIRS.length);
+    expect(URL_DIRS.length).toBeGreaterThanOrEqual(23);
+    const catches = (n) => (n.type === 'CatchClause' ? 1 : 0) + childrenOf(n).reduce((sum, c) => sum + catches(c), 0);
+    for (const dir of ADOPTERS) expect(catches(parse(read(`${dir}/index.js`))), dir).toBeGreaterThan(0);
+  });
+
+  it('every hit is an allowlisted non-DB text, at its guard and its exact count, and no entry is stale', () => {
+    const got = tally(hits, (h) => JSON.stringify([h.file, h.fn, h.expr, h.guard]));
+    const want = new Map(ALLOWLIST.map((a) => [JSON.stringify([a.file, a.fn, a.expr, a.guard]), a.count]));
+    const extra = hits.filter((h) => !want.has(JSON.stringify([h.file, h.fn, h.expr, h.guard])));
+    expect(extra.map((h) => `${h.file}:${h.line} [${h.fn}] ${h.expr}`), 'a reply carries a caught error').toEqual([]);
+    expect(Object.fromEntries(got)).toEqual(Object.fromEntries(want));
+  });
+
+  it('every call that hands the caught error to a reply is on the boundary list, at its exact count', () => {
+    const counts = CALL_BOUNDARY.map((b) => strictOnly.filter((h) => b.files.test(h.file) && h.fn === b.fn && h.expr === b.expr).length);
+    const unlisted = strictOnly.filter((h) => !CALL_BOUNDARY.some((b) => b.files.test(h.file) && h.fn === b.fn && h.expr === b.expr));
+    expect(unlisted.map((h) => `${h.file}:${h.line} [${h.fn}] ${h.expr}`), 'a new call carries the error into a reply').toEqual([]);
+    expect(counts).toEqual(CALL_BOUNDARY.map((b) => b.count));
+  });
+
+  it('every URL dir that answers a database error is an adopter', () => {
+    expect(ADOPTERS).toEqual(COPY_DIRS);
+  });
+});
+
+describe('the detector finds what it must, and nothing it must not', () => {
+  const wrap = (body) => `function f() {\n  try { x(); } catch (err) {\n    ${body}\n  }\n}\n`;
+  const found = (src) => catchLeaks('planted.js', src).length;
+  const FOUND = {
+    'a direct member': wrap('return resp(400, { error: err.message });'),
+    'a member alias': wrap('const m = err?.message; return resp(400, { detail: m });'),
+    'a push': wrap('failures.push({ id, error: err?.message });'),
+    'a derived alias (merge.js)': wrap("const msg = err?.message ?? String(err); if (/x/.test(msg)) return { status: 422, body: { error: 'x', detail: msg } };"),
+    'the bare error': wrap('return resp(500, { error: err });'),
+    'a spread error': wrap('return resp(500, { ...err });'),
+    'JSON.stringify': wrap('return resp(500, { error: JSON.stringify(err) });'),
+    'toString': wrap('return resp(500, { error: err.toString() });'),
+    'concatenation': wrap("return resp(500, { error: '' + err });"),
+    'a template': wrap('return resp(400, { error: `Constraint violation: ${err.constraint}` });'),
+    'a destructured field': wrap('const { message } = err; return resp(400, { error: message });'),
+    'a destructured catch param': 'function f() { try { x(); } catch ({ detail }) { return resp(400, { error: detail }); } }',
+    'stack': wrap('return resp(500, { trace: err.stack });'),
+    'internalQuery, sourceError, cause and dataType': wrap('return resp(500, { a: err.internalQuery, b: err.sourceError, c: err.cause, d: err.dataType });'),
+    'a resp argument': wrap('return resp(500, err.message);'),
+    'a nested body': wrap("return { status: 409, body: { error: 'x', detail: err.detail } };"),
+    'an array element': wrap('return resp(400, { errors: [err.message] });'),
+    'an alias of an alias': wrap('const a = err; const b = a.detail; return resp(400, { error: b });'),
+    'an assignment': `let m;\n${wrap('m = err.message; return resp(400, { error: m });')}`,
+  };
+  for (const [name, src] of Object.entries(FOUND)) {
+    it(`finds ${name}`, () => expect(found(src)).toBeGreaterThan(0));
+  }
+  it('counts the four fields of one reply as four hits', () => {
+    expect(found(FOUND['internalQuery, sourceError, cause and dataType'])).toBe(4);
+  });
+
+  const CLEAN = {
+    'a console line': wrap("console.error(JSON.stringify({ error: err.message })); return resp(500, { error: 'Internal server error' });"),
+    'a commented-out line': wrap("// return resp(400, { error: err.message });\n    return resp(500, { error: 'Internal server error' });"),
+    'the code': wrap("return resp(409, { error: 'Unique violation', code: err.code });"),
+    'a lookup keyed on the constraint': wrap('if (Object.hasOwn(MAP, err.constraint)) return resp(400, { error: MAP[err.constraint] });'),
+    'a comparison': wrap("return resp(400, { error: 'x', retry: err.code === '40P01' });"),
+  };
+  for (const [name, src] of Object.entries(CLEAN)) {
+    it(`passes ${name}`, () => expect(found(src)).toBe(0));
+  }
+
+  it('holds a helper that receives the error for the boundary list, not as a pass', () => {
+    const src = wrap('return resp(400, { error: describe(err) });');
+    expect(found(src)).toBe(0);
+    expect(catchLeaks('planted.js', src, { strict: true }).map((h) => h.expr)).toEqual(['describe(err)']);
   });
 });
