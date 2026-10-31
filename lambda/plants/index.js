@@ -10,6 +10,7 @@ import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { householdScope, loadOwnedLocation, loadOwnedInventoryItem, warnRejectedFk } from './household.js';
 import { requestContext } from './request-context.js';
+import { dbErrorReply, logCaughtError } from './db-error.js';
 import { withActor } from './audit-actor.js';
 import { mergeCore } from './merge.js';
 // BUG-PARENTOWN-001: body-supplied PARENT-id loaders. loadOwnedPlantingRef REPLACES household.js's
@@ -2394,13 +2395,13 @@ export const handler = async (event) => {
     return resp(405, { error: 'Method not allowed' });
 
   } catch (err) {
-    console.error('plants lambda error', err);
-    if (err.code === '23503') return resp(400, { error: `Foreign key violation: ${err.constraint ?? err.message}` });
-    if (err.code === '23514') {
-      // Named constraints first (V4-SOURCEREG-001), then the pre-existing generic arm unchanged.
-      const named = CONSTRAINT_MESSAGES[err.constraint];
-      return resp(400, { error: named ?? `Constraint violation: ${err.constraint ?? err.message}` });
+    logCaughtError('plants lambda error', err);
+    // Named constraints first (V4-SOURCEREG-001), then the table.
+    if (err.code === '23514' && Object.hasOwn(CONSTRAINT_MESSAGES, err.constraint)) {
+      return resp(400, { error: CONSTRAINT_MESSAGES[err.constraint] });
     }
+    const db = dbErrorReply(err, ['23503', '23514']);
+    if (db) return resp(db.status, db.body);
     return resp(500, { error: 'Internal server error' });
   }
 };

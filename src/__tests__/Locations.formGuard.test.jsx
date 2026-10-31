@@ -232,3 +232,30 @@ describe('Locations ↔ dirty guard — three forms, one union', () => {
     expect(isReloadBlocked()).toBe(false)
   })
 })
+
+// D2b: a duplicate slug is recognised by its code first, and by text from a server that predates the code.
+describe('Locations — a duplicate slug on add', () => {
+  async function submitAdd(rejection) {
+    apiFetchSpy.mockImplementation((path, options = {}) => {
+      if (options.method === 'POST' && path === '/api/locations') return Promise.reject(rejection)
+      if (path === '/api/locations') return Promise.resolve(locations.current)
+      if (path === '/api/locations/with-path') return Promise.resolve([])
+      return Promise.resolve({})
+    })
+    await renderPage()
+    fireEvent.click(screen.getByText('+ Add'))
+    fireEvent.change(byId('add-loc-name'), { target: { value: 'Stable' } })
+    fireEvent.submit(byId('add-loc-name').closest('form'))
+  }
+  const SLUG_COPY = 'Slug "stable" already exists. Try a different name.'
+
+  it('a 409 carrying location_slug_conflict shows the slug copy, whatever its text says', async () => {
+    await submitAdd(Object.assign(new Error('Refused'), { status: 409, body: { error: 'Refused', code: 'location_slug_conflict' } }))
+    await waitFor(() => expect(screen.getByText(SLUG_COPY)).toBeTruthy())
+  })
+
+  it('an older server\'s text-only "Slug already exists" still shows the slug copy', async () => {
+    await submitAdd(Object.assign(new Error('Slug already exists'), { status: 409, body: { error: 'Slug already exists' } }))
+    await waitFor(() => expect(screen.getByText(SLUG_COPY)).toBeTruthy())
+  })
+})

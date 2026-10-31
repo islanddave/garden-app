@@ -5,6 +5,7 @@ import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { householdScope, loadOwnedLocation, loadOwnedPhoto, warnRejectedFk } from './household.js';
 import { requestContext } from './request-context.js';
+import { dbErrorReply, logCaughtError } from './db-error.js';
 import { resolvePhotoViewUrl } from './photo-access.js';
 import {
   validateExtractRequest, buildAnthropicRequest, parseExtractResponse, MAX_IMAGE_B64_CHARS, EXTRACT_LIMIT,
@@ -2593,8 +2594,8 @@ export const handler = async (event) => {
     return resp(405, { error: 'Method not allowed' });
 
   } catch (err) {
-    console.error('inventory-items lambda error', err);
-    if (err.code === '23514') {
+    logCaughtError('inventory-items lambda error', err);
+    if (err.code === '23514' && Object.hasOwn(SEED_CONSTRAINT_MESSAGES, err.constraint)) {
       // BUG-INVUPDATESEEDGUARD-001 — the COMPLETE half of that fix. validateUpdate's new seeds-only
       // guards catch this before the query, but only when the body happens to carry the provenance
       // column: that validator is body-only by design, and the PUT body is whatever the client
@@ -2604,11 +2605,11 @@ export const handler = async (event) => {
       // does, so the two together are what actually close it.
       //
       // Keyed on the CONSTRAINT NAME, which is the only thing postgres gives us that identifies the
-      // rule rather than the row. The generic arm below is unchanged for every other constraint.
-      return resp(400, { error: SEED_CONSTRAINT_MESSAGES[err.constraint] ?? `Constraint violation: ${err.constraint ?? err.message}` });
+      // rule rather than the row. Every other constraint takes the table's reply below.
+      return resp(400, { error: SEED_CONSTRAINT_MESSAGES[err.constraint] });
     }
-    if (err.code === '23502') return resp(400, { error: `Required field missing: ${err.column ?? err.message}` });
-    if (err.code === '23503') return resp(400, { error: `Foreign key violation: ${err.constraint ?? err.message}` });
+    const db = dbErrorReply(err, ['23514', '23502', '23503']);
+    if (db) return resp(db.status, db.body);
     return resp(500, { error: 'Internal server error' });
   }
 };

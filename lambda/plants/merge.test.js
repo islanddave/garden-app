@@ -3,7 +3,7 @@
 // Two layers, per the repo's lambda convention (L-072): pure-logic tests run for real, and the
 // SQL wiring is pinned by static-source guards rather than a live DB. Runtime correctness against
 // real Postgres is proven separately on a Neon branch (see migrations/v4-plantmerge-001/gates.yml).
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -670,6 +670,29 @@ describe('mergeCore — op_id replay scope (BUG-MERGEREPLAYSCOPE-001)', () => {
   })
 })
 
+// ── a drop set that is not chores-only is refused, and the reply carries no database text ───────────
+// archive_events_subset RAISEs (P0001) when a dropped event is not a chore. The reply is fixed; the RAISE
+// text goes to the log only, where class P0 keeps its message (D2b, secreview C1 and C8).
+describe('mergeCore — a drop set that is not chores-only', () => {
+  const ok = { opId: 'op1', userId: 'user_a', householdIds: ['user_a'] }
+
+  it('answers 422 with the fixed refusal and logs the RAISE', async () => {
+    const sql = mockSql(baseResponses([plantRow(WINNER), plantRow(LOSER1)]))
+    sql.transaction = async () => {
+      throw Object.assign(new Error('archive_events_subset: event 7 is not a chore'), {
+        code: 'P0001', routine: 'exec_stmt_raise', where: 'PL/pgSQL function archive_events_subset(uuid[]) line 12 at RAISE',
+      })
+    }
+    const lines = []
+    vi.spyOn(console, 'error').mockImplementation((...a) => { lines.push(a.map(String).join(' ')) })
+    const r = await mergeCore(sql, { winnerId: WINNER, loserIds: [LOSER1], ...ok })
+    vi.restoreAllMocks()
+    expect(r).toEqual({ status: 422, body: { error: 'Refused: the drop set is not chores-only' } })
+    const logged = lines.map((l) => { try { return JSON.parse(l) } catch { return null } }).filter(Boolean)
+    expect(logged).toMatchObject([{ code: 'P0001', message: 'archive_events_subset: event 7 is not a chore' }])
+  })
+})
+
 // ── a deadlock is "run it again", not a broken merge ─────────────────────────────────────────
 // The cutover takes its seed lots first and the losers' photos later; a photo delete takes the photo
 // first and the lot that features it later. A loser's photo on a seed jar is in both, and on real
@@ -700,7 +723,7 @@ describe('mergeCore — a deadlocked cutover', () => {
     // wrote nothing, and the same request is safe to send again.
     expect(r.body.error).toMatch(/nothing was merged/)
     expect(r.body.error).toMatch(/run it again/)
-    expect(r.body.detail).toBe('deadlock detected')
+    expect(r.body).toEqual({ error: 'Merge was stopped by a concurrent change to the same rows — nothing was merged, run it again' })
     // Postgres's detail names backend pids and transaction ids. Not the caller's business.
     expect(JSON.stringify(r.body)).not.toMatch(/Process \d+|ShareLock/)
   })
@@ -1117,7 +1140,7 @@ describe('mergeCore — seed_lot_parent_planting', () => {
     const r = await mergeCore(sql, { winnerId: WINNER, loserIds: [LOSER1], ...ok })
     expect(r.status).toBe(409)
     expect(r.body.error).toMatch(/collided/)
-    expect(r.body.detail).toMatch(/uq_slpp_item_plant_role_live/)
+    expect(r.body).toEqual({ error: 'Merge collided with existing rows' })
   })
 })
 

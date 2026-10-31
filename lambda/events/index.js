@@ -30,6 +30,7 @@ import { computeStreak, STREAK_GRACE_DAYS } from './streak.js';
 import { householdScope, loadOwnedLocation, loadOwnedInventoryItem, warnRejectedFk } from './household.js';
 import { requestContext } from './request-context.js';
 import { auditActor, withActor } from './audit-actor.js';
+import { dbErrorReply, logCaughtError } from './db-error.js';
 import {
   FRUITING_SOURCE_STATUSES, FLOWERING_SOURCE_STATUSES,
   HARVESTED_EVENT_TYPES, HARVESTED_SOURCE_STATUSES,
@@ -4242,11 +4243,9 @@ export const handler = async (event) => {
     return resp(405, { error: 'Method not allowed' });
 
   } catch (err) {
-    console.error('events lambda error', err);
-    if (err.code === '23514') return resp(400, { error: `Constraint violation: ${err.constraint ?? err.message}` });
-    if (err.code === '23502') return resp(400, { error: `Required field missing: ${err.column ?? err.message}` });
-    if (err.code === '23503') return resp(400, { error: `Foreign key violation: ${err.constraint ?? err.message}` });
-    if (err.code === '23505') return resp(409, { error: `Unique violation: ${err.constraint ?? err.message}` });
+    logCaughtError('events lambda error', err);
+    const db = dbErrorReply(err, ['23514', '23502', '23503', '23505']);
+    if (db) return resp(db.status, db.body);
     return resp(500, { error: 'Internal server error' });
   }
 };

@@ -116,6 +116,7 @@ describe('POST /api/locations — validation + create', () => {
     })
     expect(dup.status).toBe(409) // handler: if (err.code === '23505') return resp(409, ...)
     expect(dup.body.error).toMatch(/slug already exists/i)
+    expect(dup.body.code).toBe('location_slug_conflict')
   })
 })
 

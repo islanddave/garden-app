@@ -169,7 +169,9 @@ export default function ProjectNew() {
       navigate(`/projects/${data.id}`)
     } catch (err) {
       const msg = err.message ?? ''
-      if (msg.toLowerCase().includes('already exists') || msg.toLowerCase().includes('duplicate') || msg.includes('23505'))
+      // The code first; the text tests answer a server that predates it.
+      if ((err.status === 409 && err.body?.code === 'project_slug_conflict')
+        || msg.toLowerCase().includes('already exists') || msg.toLowerCase().includes('duplicate') || msg.includes('23505'))
         setError(`A project with slug "${form.slug}" already exists. Try a different name or change the year.`)
       else setError(msg)
     } finally {

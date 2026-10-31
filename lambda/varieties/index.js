@@ -69,6 +69,7 @@ import { checkRateLimit, withRetryAfter } from './rate-limit.js';
 import { householdScope, loadOwnedPhoto, warnRejectedFk } from './household.js';
 import { requestContext } from './request-context.js';
 import { withActor } from './audit-actor.js';
+import { dbErrorReply, logCaughtError } from './db-error.js';
 import { loadOwnedProject } from './authz-parents.js';
 import { managedPrincipalPatterns, canEditSource, canEditVariety } from './authz.js';
 import { blendRoute, restoreConflictMessage } from './blend.js';
@@ -1311,16 +1312,14 @@ export const handler = async (event) => {
     return resp(405, { error: 'Method not allowed' });
 
   } catch (err) {
-    console.error('varieties lambda error', err);
-    if (err.code === '23514') {
-      // Named constraints first (V5-VARIETYFACTSEDIT-001: the PUT's breeding race path, see
-      // CONSTRAINT_MESSAGES in ./validate.js), then the pre-existing generic arm unchanged.
-      const named = CONSTRAINT_MESSAGES[err.constraint];
-      return resp(400, { error: named ?? `Constraint violation: ${err.constraint ?? err.message}` });
+    logCaughtError('varieties lambda error', err);
+    // Named constraints first (V5-VARIETYFACTSEDIT-001: the PUT's breeding race path, see
+    // CONSTRAINT_MESSAGES in ./validate.js), then the table.
+    if (err.code === '23514' && Object.hasOwn(CONSTRAINT_MESSAGES, err.constraint)) {
+      return resp(400, { error: CONSTRAINT_MESSAGES[err.constraint] });
     }
-    if (err.code === '23502') return resp(400, { error: `Required field missing: ${err.column ?? err.message}` });
-    if (err.code === '23503') return resp(400, { error: `Foreign key violation: ${err.constraint ?? err.message}` });
-    if (err.code === '23505') return resp(409, { error: `Unique violation: ${err.constraint ?? err.message}` });
+    const db = dbErrorReply(err, ['23514', '23502', '23503', '23505']);
+    if (db) return resp(db.status, db.body);
     return resp(500, { error: 'Internal server error' });
   }
 };

@@ -7,6 +7,7 @@ import { neon } from '@neondatabase/serverless';
 import { householdScope, loadOwnedPhoto } from './household.js';
 import { requestContext } from './request-context.js';
 import { withActor } from './audit-actor.js';
+import { dbErrorReply, logCaughtError } from './db-error.js';
 import { reconcilePlantAttribution, plantingLabel } from './attribution.js';
 import { VALID_SOURCE_KINDS, normalizeSourceLabel } from './provenance.js';
 import { classifyUseBy, dayMs, USE_SOON_FRACTION, etDay, ET_TZ } from './useBy.js';
@@ -768,7 +769,7 @@ export const handler = async (event) => {
     return resp(405, { error: 'Method not allowed' });
 
   } catch (err) {
-    console.error('preservation lambda error', err);
+    logCaughtError('preservation lambda error', err);
     // V5-INFLIGHTBATCH-001: the kitchen_* CHECKs, given words. Consulted FIRST and returns null for
     // anything it does not own, so every mapping below keeps its existing behaviour. The one overlap
     // is chk_preservation_log_one_provenance, which only the batch close-out route can violate.
@@ -782,12 +783,6 @@ export const handler = async (event) => {
     // its constraint names are all chk_ps_* and share no spelling with either set.
     const sourceMsg = sourceErrorMessage(err);
     if (sourceMsg) return resp(400, { error: sourceMsg });
-    // 42P01 = relation missing, the OTHER half of the 42703 case below and the expected failure in the
-    // window this feature's sequencing creates: old schema + new Lambda 500s on every batch route.
-    // Without this the operator gets a bare "Internal server error" during exactly that window.
-    if (err.code === '42P01') {
-      return resp(500, { error: `Schema out of date for this deploy — relation missing: ${err.message}` });
-    }
     // V4-PUTUPPROV-001: give the two provenance CHECKs human text. validateUpdate deliberately
     // skips provenance when a PUT omits source_kind (it cannot see the STORED kind without a read),
     // so these are genuinely reachable — and RecordRow.put() would otherwise swallow them into an
@@ -796,14 +791,13 @@ export const handler = async (event) => {
       return resp(400, { error: 'This put-up is linked to a planting, so its source must be your own garden. Clear the planting first.' });
     }
     if (err.code === '23514' && String(err.constraint ?? '').startsWith('chk_preservation_log_source')) {
-      return resp(400, { error: `Source is not valid: ${err.constraint}` });
+      return resp(400, { error: 'Source is not valid', code: 'check_violation' });
     }
-    if (err.code === '23514') return resp(400, { error: `Constraint violation: ${err.constraint ?? err.message}` });
-    // 42703 = the Lambda shipped ahead of this environment's DDL. Without this the operator gets a
-    // bare "Internal server error" during exactly the window the migration sequencing creates.
-    if (err.code === '42703') return resp(500, { error: `Schema out of date for this deploy — column missing: ${err.column ?? err.message}` });
-    if (err.code === '23502') return resp(400, { error: `Required field missing: ${err.column ?? err.message}` });
-    if (err.code === '23503') return resp(400, { error: `Foreign key violation: ${err.constraint ?? err.message}` });
+    // 42P01 / 42703 = the Lambda shipped ahead of this environment's DDL, the window the migration
+    // sequencing creates. The reply says which kind is missing instead of a bare 500; the relation or
+    // column name is in the log line (class 42 keeps its message).
+    const db = dbErrorReply(err, ['42P01', '23514', '42703', '23502', '23503']);
+    if (db) return resp(db.status, db.body);
     return resp(500, { error: 'Internal server error' });
   }
 };
