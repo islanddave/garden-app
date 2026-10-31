@@ -432,12 +432,16 @@ describe('applyDerive — a failed cultivar', () => {
       throw err;
     };
     const lines = [];
-    vi.spyOn(console, 'error').mockImplementation((...a) => { lines.push(format(...a)); });
+    // WARN, not ERROR: the derive fails open, and post-promote-check counts ERROR lines as faults.
+    vi.spyOn(console, 'warn').mockImplementation((...a) => { lines.push(format(...a)); });
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
     const totals = await applyDerive(sql, null);
+    const errorCalls = errors.mock.calls.length;
     vi.restoreAllMocks();
     expect(totals.failures).toEqual([{ cultivar_id: 'cv-1', code: '23505' }]);
     expect(JSON.stringify(totals)).not.toMatch(/MSG_CANARY|DETAIL_CANARY|uq_entity_tag_canary/);
     expect(lines.join('\n')).not.toMatch(/MSG_CANARY|DETAIL_CANARY/);
     expect(lines.map((l) => JSON.parse(l))).toMatchObject([{ code: '23505', constraint: 'uq_entity_tag_canary' }]);
+    expect(errorCalls).toBe(0);
   });
 });

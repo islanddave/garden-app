@@ -5,7 +5,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { householdScope, loadOwnedLocation, warnRejectedFk } from './household.js';
 import { requestContext } from './request-context.js';
 import { withActor } from './audit-actor.js';
-import { dbErrorReply, logCaughtError } from './db-error.js';
+import { dbErrorReply, logCaughtError, logCaughtWarning } from './db-error.js';
 import { loadOwnedProject } from './authz-parents.js';
 import { resolvePhotoViewUrl } from './photo-access.js';
 import { isStatusChange, formatStatusChangeNote, buildStatusChangeMetadata, STATUS_CHANGE_EVENT_TYPE } from './statusEvents.js';
@@ -1041,13 +1041,15 @@ export const handler = async (event) => {
     return resp(405, { error: 'Method not allowed' });
 
   } catch (err) {
-    logCaughtError('projects lambda error', err);
     // The slug is the one unique key a person types; its own code lets the form say so. Any other 23505 is
     // unique_violation. The slug is global until workspace-scoped slugs (5.3), so this can answer for a
-    // project in another household; the body names neither the slug nor the constraint.
-    if (err.code === '23505' && err.constraint === 'plant_projects_slug_key') {
+    // project in another household; the body names neither the slug nor the constraint. Logged at WARN: a
+    // person's own duplicate is expected, and post-promote-check counts ERROR lines as faults.
+    if (err?.code === '23505' && err?.constraint === 'plant_projects_slug_key') {
+      logCaughtWarning('projects lambda error', err);
       return resp(409, { error: 'Slug already exists', code: 'project_slug_conflict' });
     }
+    logCaughtError('projects lambda error', err);
     // BUG-PROJKINDCLEAR-001: a constraint the client can provoke ({kind: null} on
     // plant_projects_kind_not_null_unless_deleted) is a 400, not a bare 500.
     const db = dbErrorReply(err, ['23503', '23514', '23505']);

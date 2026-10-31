@@ -28,15 +28,25 @@ const MESSAGE_CLASSES = new Set(['42', 'P0']);
 // One log line per caught error. A database error is JSON with its object names and call frames as the locator;
 // anything else (TypeError, ECONNRESET) is logged whole with its stack, as `console.error(msg, err)` always was.
 export function logCaughtError(msg, err) {
+  logAt('error', msg, err);
+}
+
+// The same line at WARN, for an outcome the caller expected and answered (a 4xx refusal, a fail-open derive):
+// post-promote-check counts every ERROR line under `errors`, so an expected one would read as a fault.
+export function logCaughtWarning(msg, err) {
+  logAt('warn', msg, err);
+}
+
+function logAt(level, msg, err) {
   const code = err?.code;
   if (typeof code !== 'string' || !SQLSTATE.test(code)) {
-    console.error(msg, err);
+    console[level](msg, err);
     return;
   }
   const line = { msg, code, constraint: err.constraint ?? null, table: err.table ?? null, column: err.column ?? null, routine: err.routine ?? null };
   if (MESSAGE_CLASSES.has(code.slice(0, 2))) line.message = String(err.message ?? '');
   line.frames = framesOf(err);
-  console.error(JSON.stringify(line));
+  console[level](JSON.stringify(line));
 }
 
 // The stack after its message, call frames only: the first line repeats the message, which may span lines.

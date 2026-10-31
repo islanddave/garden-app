@@ -39,7 +39,7 @@
 // no-op'ing at runtime.
 
 import { buildPlantEventRepoint } from './plantMemoryRepoint.js'
-import { logCaughtError } from './db-error.js'
+import { logCaughtWarning } from './db-error.js'
 
 // Pinned so a shape change is detectable (merge_event DDL, migrations/v4-plantmerge-001/0a). A new
 // `table` value inside `repoints` is not one: six repoint surfaces were added at 1.
@@ -928,13 +928,14 @@ export async function mergeCore(sql, {
         return { status: 409, body: { error: 'opId already used — choose a new opId' } }
       }
     }
-    // No reply carries the database's words (SEC-20); each refusal logs the error instead.
+    // No reply carries the database's words (SEC-20); each refusal logs the error instead, at WARN: these are
+    // answered outcomes, and post-promote-check counts ERROR lines as faults.
     if (/archive_events_subset/i.test(msg)) {
-      logCaughtError('plants merge refused: drop set not chores-only', err)
+      logCaughtWarning('plants merge refused: drop set not chores-only', err)
       return { status: 422, body: { error: 'Refused: the drop set is not chores-only' } }
     }
     if (/unique constraint/i.test(msg)) {
-      logCaughtError('plants merge collided', err)
+      logCaughtWarning('plants merge collided', err)
       return { status: 409, body: { error: 'Merge collided with existing rows' } }
     }
     // 40P01 — Postgres picked this transaction as a deadlock victim and rolled it back WHOLE. Nothing
@@ -946,7 +947,7 @@ export async function mergeCore(sql, {
     // rather than chased: a 409 beside the other "try again", not a 500 that reads as a broken merge.
     // Keyed on the SQLSTATE and not the wording — the message is only "deadlock detected".
     if (err?.code === '40P01') {
-      logCaughtError('plants merge deadlocked', err)
+      logCaughtWarning('plants merge deadlocked', err)
       return { status: 409, body: {
         error: 'Merge was stopped by a concurrent change to the same rows — nothing was merged, run it again',
       } }

@@ -10,7 +10,7 @@ import { format } from 'node:util';
 import * as acorn from 'acorn';
 import { stubState, resetStubs } from './_test-stubs/state.js';
 import { lambdaFiles } from '../tests/lib/sqlCensus.mjs';
-import { DB_ERROR_REPLIES, dbErrorReply, logCaughtError } from './db-error.js';
+import { DB_ERROR_REPLIES, dbErrorReply, logCaughtError, logCaughtWarning } from './db-error.js';
 import { SEED_CONSTRAINT_MESSAGES } from './inventory-items/index.js';
 import { CONSTRAINT_MESSAGES as VARIETY_MESSAGES } from './varieties/validate.js';
 import { kitchenErrorMessage } from './preservation/kitchenBatch.js';
@@ -245,6 +245,25 @@ describe('logCaughtError', () => {
       expect(() => logCaughtError('x lambda error', err)).not.toThrow();
       expect(spy.mock.calls).toEqual([['x lambda error', err]]);
       vi.restoreAllMocks();
+    }
+  });
+
+  // post-promote-check counts every ERROR line under `errors`; an expected refusal must not read as a fault.
+  it('logCaughtWarning writes logCaughtError\'s exact line at WARN, and nothing at ERROR', () => {
+    const callsOf = (fn, err) => {
+      const calls = { error: [], warn: [] };
+      for (const k of ['error', 'warn']) vi.spyOn(console, k).mockImplementation((...a) => { calls[k].push(a); });
+      fn('x lambda error', err);
+      vi.restoreAllMocks();
+      return calls;
+    };
+    for (const err of [dbError('23505'), dbError('40P01'), dbError('P0001'), Object.assign(new TypeError('program error'), { code: 'EPIPE' }), null]) {
+      const asError = callsOf(logCaughtError, err);
+      const asWarn = callsOf(logCaughtWarning, err);
+      expect(asError.warn, String(err?.code)).toEqual([]);
+      expect(asWarn.error, String(err?.code)).toEqual([]);
+      expect(asWarn.warn, String(err?.code)).toHaveLength(1);
+      expect(asWarn.warn, String(err?.code)).toEqual(asError.error);
     }
   });
 });

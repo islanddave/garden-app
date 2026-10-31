@@ -112,7 +112,9 @@ describe('projects Lambda — D2b codes on the refusals the client reads', () =>
     resetStubs();
     stubState.verifyTokenResult = { sub: USER };
     vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
   });
+  const loggedAt = (level) => console[level].mock.calls.map((a) => { try { return JSON.parse(a[0]); } catch { return null; } }).filter(Boolean);
   afterEach(() => {
     vi.restoreAllMocks();
     delete process.env.ADMIN_CLERK_SUBS;
@@ -149,11 +151,16 @@ describe('projects Lambda — D2b codes on the refusals the client reads', () =>
     };
     expect(await call('POST', '/api/projects', { name: 'Tomatoes', slug: 'tomatoes-2026' }))
       .toEqual({ status: 409, body: { error: 'Slug already exists', code: 'project_slug_conflict' } });
+    // A person's own duplicate is expected: WARN, so post-promote-check's `errors` does not count it.
+    expect(loggedAt('warn')).toMatchObject([{ msg: 'projects lambda error', code: '23505', constraint: 'plant_projects_slug_key' }]);
+    expect(console.error).not.toHaveBeenCalled();
   });
 
   it('any other unique collision is 409 unique_violation, not the slug code', async () => {
     stubState.sqlHandler = () => { throw Object.assign(new Error('duplicate key value violates unique constraint "x_key"'), { code: '23505', constraint: 'x_key' }); };
     expect(await call('POST', '/api/projects', { name: 'Tomatoes', slug: 'tomatoes-2026' }))
       .toEqual({ status: 409, body: { error: 'Unique violation', code: 'unique_violation' } });
+    expect(loggedAt('error')).toMatchObject([{ msg: 'projects lambda error', code: '23505', constraint: 'x_key' }]);
+    expect(console.warn).not.toHaveBeenCalled();
   });
 });

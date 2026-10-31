@@ -684,12 +684,16 @@ describe('mergeCore — a drop set that is not chores-only', () => {
       })
     }
     const lines = []
-    vi.spyOn(console, 'error').mockImplementation((...a) => { lines.push(a.map(String).join(' ')) })
+    // WARN: an expected refusal; post-promote-check counts ERROR lines as faults.
+    vi.spyOn(console, 'warn').mockImplementation((...a) => { lines.push(a.map(String).join(' ')) })
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
     const r = await mergeCore(sql, { winnerId: WINNER, loserIds: [LOSER1], ...ok })
+    const errorCalls = errors.mock.calls.length
     vi.restoreAllMocks()
     expect(r).toEqual({ status: 422, body: { error: 'Refused: the drop set is not chores-only' } })
     const logged = lines.map((l) => { try { return JSON.parse(l) } catch { return null } }).filter(Boolean)
     expect(logged).toMatchObject([{ code: 'P0001', message: 'archive_events_subset: event 7 is not a chore' }])
+    expect(errorCalls).toBe(0)
   })
 })
 
