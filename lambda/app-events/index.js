@@ -7,13 +7,14 @@
 // Auth: Clerk JWT verified per request → user_clerk_sub = JWT.sub.
 // Rate limit: 1000/hour per actor via rate_limit_buckets bucket key 'app_events.write'.
 // Body: { event_name (required), event_source?, session_id?, metadata? }
-//   - event_name: 1-64 chars (DB CHECK enforces; Lambda echoes the constraint message)
+//   - event_name: 1-64 chars (DB CHECK enforces; the reply names the kind of refusal, never the constraint)
 //   - metadata: JSONB, Lambda-side rejects >8KB (no DB constraint to avoid retrofit pain — V002 §A5)
 // CORS: Lambda URL config owns CORS (empty handler CORS, mirrors prod Lambda pattern).
 
 import { neon } from '@neondatabase/serverless';
 import { checkRateLimit, withRetryAfter } from './rate-limit.js';
 import { requestContext } from './request-context.js';
+import { dbErrorReply, logCaughtError } from './db-error.js';
 
 const CORS = {}; // Lambda URL config is sole CORS source — handler must not duplicate
 
@@ -74,9 +75,9 @@ export const handler = async (event) => {
     return resp(201, rows[0]);
 
   } catch (err) {
-    console.error('app-events lambda error', err);
-    if (err.code === '23514') return resp(400, { error: `Constraint violation: ${err.constraint ?? err.message}` });
-    if (err.code === '23502') return resp(400, { error: `Required field missing: ${err.column ?? err.message}` });
+    logCaughtError('app-events lambda error', err);
+    const db = dbErrorReply(err, ['23514', '23502']);
+    if (db) return resp(db.status, db.body);
     return resp(500, { error: 'Internal server error' });
   }
 };

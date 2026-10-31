@@ -72,6 +72,18 @@
       "lambda/projects/audit-actor.js",
       "lambda/varieties/audit-actor.js"
     ],
+    "lambda/db-error.js": [
+      "lambda/app-events/db-error.js",
+      "lambda/events/db-error.js",
+      "lambda/inventory-items/db-error.js",
+      "lambda/locations/db-error.js",
+      "lambda/plants/db-error.js",
+      "lambda/preservation/db-error.js",
+      "lambda/projects/db-error.js",
+      "lambda/storage-location/db-error.js",
+      "lambda/tags/db-error.js",
+      "lambda/varieties/db-error.js"
+    ],
     "lambda/request-context.js": [
       "lambda/achievements/request-context.js",
       "lambda/app-events/request-context.js",
