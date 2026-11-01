@@ -1,22 +1,22 @@
 'use strict';
-// V4-WATERMATH-001 F2 — the per-planting Water Ledger fold (canon
-// watering-cadence-math-design-V100-20260812.md Part 2). Pure: no I/O, no env reads, no engine.js
-// require (engine requires THIS module; the shared rain-IA constants are mirrored in ledgerParams
-// and pinned equal by test). Every tuned number comes from ./ledgerParams.
+// The per-planting Water Ledger fold (V4-WATERMATH-001 F2; canon watering-cadence-math-design-V100-20260812.md
+// Part 2). Pure: no I/O, no env reads, and no engine.js require (engine requires THIS module; the shared
+// rain constants are mirrored in ledgerParams and pinned equal by test). Every tuned number comes from
+// ./ledgerParams.
 //
-// THE MODEL. Replace `dW >= wi` with a continuous depletion score D in CADENCE-DAYS, recomputed
-// STATELESSLY per run from the 30-day event window:
+// THE MODEL. Replace `dW >= wi` with a continuous depletion score D in CADENCE-DAYS, recomputed STATELESSLY
+// per run from the 30-day event window:
 //   demand(day) = NORM x clamp(ET0(day)/ET0_REF_PEAK, 0.5, 2.0) x vesselFactor(day) x stageFactor(day)
 //   due  <=>  D >= dueThreshold = wi_eff x (drought high ? 1.15 : 1.0)
-// Today's model is the DEGENERATE CASE (all factors 1.0, all amounts Normal) and every data gap
-// falls back to it — never to NaN (canon Decision 3; clamp(NaN) is unreachable by construction).
+// The legacy model is the DEGENERATE CASE (all factors 1.0, all amounts Normal) and every data gap falls
+// back to it, never to NaN (canon Decision 3; clamp(NaN) is unreachable by construction).
 //
-// FOLD DETERMINISM (canon Decision 15): ONE merged timeline — event_log rows at their timestamps,
-// gauge-rain day-credits positioned at 23:59 ET of their qualifying SETTLED day (today's, which is
-// still accumulating, sits at effNow instead — BUG-F2RAINBASIS-001), demand accruing continuously
-// between positions — ordered by (timestamp, type-priority: watering/rain ->
-// moisture_check -> rain-day-credit, id). All ages are FRACTIONAL days on the epoch-ms timeline
-// (ET civil days only bucket demand attribution); date-only backdated events sit at 12:00 ET.
+// FOLD DETERMINISM (canon Decision 15): ONE merged timeline of event_log rows at their timestamps,
+// gauge-rain day-credits positioned at 23:59 ET of their qualifying SETTLED day (today's, still
+// accumulating, sits at effNow instead; BUG-F2RAINBASIS-001), and demand accruing continuously between
+// positions, ordered by (timestamp, type-priority: watering/rain -> moisture_check -> rain-day-credit, id).
+// All ages are FRACTIONAL days on the epoch-ms timeline (ET civil days only bucket demand attribution);
+// date-only backdated events sit at 12:00 ET.
 
 const P = require('./ledgerParams');
 
@@ -24,8 +24,8 @@ const DAY = 86400000;
 const ET_TZ = 'America/New_York';
 
 // ── ET civil-time helpers ────────────────────────────────────────────────────────────────────────
-// Epoch-ms based, DST-correct via Intl (pinned by the DST fixtures in ledger.test.js). No fixed
-// UTC-offset arithmetic anywhere: ET is UTC-4 or UTC-5 depending on the date.
+// Epoch-ms based, DST-correct via Intl (pinned by the DST fixtures in ledger.test.js). No fixed UTC-offset
+// arithmetic anywhere.
 const _fmt = new Intl.DateTimeFormat('en-CA', {
   timeZone: ET_TZ, year: 'numeric', month: '2-digit', day: '2-digit',
   hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
@@ -36,14 +36,13 @@ function etParts(ms) {
   return { date: `${p.year}-${p.month}-${p.day}`, msOfDay: ((+p.hour) * 3600 + (+p.minute) * 60 + (+p.second)) * 1000 };
 }
 const _midCache = new Map();
-// Epoch ms of 00:00 ET on the given civil date. Midnight always exists in ET (transitions happen at
-// 02:00), and its UTC offset is one of exactly two values; probe both and keep the one that renders
-// back as 00:00 of the same date.
+// Epoch ms of 00:00 ET on the given civil date. Midnight always exists in ET (transitions happen at 02:00)
+// and its UTC offset is one of two values; probe both and keep the one that renders back as 00:00 that date.
 function etMidnightMs(dateStr) {
   let v = _midCache.get(dateStr);
   if (v != null) return v;
   const utcMid = Date.parse(dateStr + 'T00:00:00Z');
-  v = utcMid + 5 * 3600000; // EST fallback (unreachable in practice — one probe below always matches)
+  v = utcMid + 5 * 3600000; // EST fallback (unreachable: one probe below always matches)
   for (const offH of [4, 5]) {
     const cand = utcMid + offH * 3600000;
     const p = etParts(cand);
@@ -67,7 +66,7 @@ const r2 = (v) => Math.round((v + Number.EPSILON) * 100) / 100;
 
 // ── container_size parse table (canon Part 5) ────────────────────────────────────────────────────
 // gal as-is; qt/4; L/3.785; oz/128; inch-diameter -> nursery-pot volume lookup; ft-dims -> bed/large;
-// unparseable or ambiguous -> null (unsized bucket + LOW driver). "gall" (live typo) matches gal\w*.
+// unparseable or ambiguous -> null (unsized bucket + LOW driver). "gall" (a real typo) matches gal\w*.
 const INCH_GAL = [[4, 0.125], [5, 0.25], [6, 0.5], [7, 0.75], [8, 1], [10, 3], [12, 5], [14, 7], [16, 10], [18, 15]];
 function inchDiameterGal(d) {
   if (!Number.isFinite(d) || d <= 0) return null;
@@ -127,12 +126,12 @@ function vesselProfile(container_type, container_size) {
     sizeFactor: sb.factor, unsized: sb.unsized, classFactor, banks, smallVessel, known };
 }
 
-// ── Exposure (canon Decision 5: three-way split; engine doctrine: read ONLY resolved flags) ──────
-//   outdoor          ET0-scaled demand + rain day-credits
-//   covered(-outdoor) FULL ET0-scaled demand, rain-exempt (also the UNKNOWN case: erring toward
-//                     prompting is the safe direction for both halves of the split)
-//   indoor           flat 1.0 demand ("indoor demand modeling deferred"); the current cov tri-state's
-//                     TRUE set (Stable/House/shelf/rack/tray) is verified indoor, not covered-outdoor
+// ── Exposure (canon Decision 5: three-way split; read ONLY resolved flags) ───────────────────────
+//   outdoor           ET0-scaled demand + rain day-credits
+//   covered(-outdoor) FULL ET0-scaled demand, rain-exempt (also the UNKNOWN case: erring toward prompting
+//                     is the safe direction for both halves of the split)
+//   indoor            flat 1.0 demand ("indoor demand modeling deferred"); the cov tri-state's TRUE set
+//                     (Stable/House/shelf/rack/tray) is verified indoor, not covered-outdoor
 function exposureClass(p) {
   if (p && p.rain_exposed === true) return 'outdoor';   // explicit per-planting override, both directions
   if (p && p.rain_exposed === false) return 'covered';
@@ -165,10 +164,9 @@ function computeConfidence({ via, vesselKnown, weatherOk, snoozeCount, trayUnpro
 //   todayEt0, todayTmax,              live D0 forecast values (hydrology.today_et0_in / today_tmax_f)
 //   exposure,                         'outdoor' | 'covered' | 'indoor'
 //   vessel,                           vesselProfile() result
-//   rainTier,                         engine rainDepthTierFor(container_type, vessel.sizeGal) —
-//                                     RAIN_DEPTH key. NOT rainTierFor: unknown must resolve
-//                                     'unknown' (not 'small_fast'), and a >=3-gal fabric_bag must
-//                                     resolve 'fabric_ground' (not 'small_fast')
+//   rainTier,                         engine rainDepthTierFor(container_type, vessel.sizeGal), a RAIN_DEPTH
+//                                     key. NOT rainTierFor: unknown must resolve 'unknown' (not
+//                                     'small_fast'), and a >=3-gal fabric_bag 'fabric_ground'
 //   transplantAt,                     'YYYY-MM-DD' | null
 // }
 const PRIO = { watering: 0, rain: 0, moisture_check: 1, day_credit: 2 };
@@ -186,12 +184,11 @@ function rainDepthClass(tier, precipIn) {
   if (precipIn >= t.light) return 'light';
   return null;                                                     // trace: below the light floor
 }
-// One-class demotion (the bag-heat rule). 'light' demotes to null, not to a zero-value class —
-// which, on the live record, is the ONLY branch that has ever executed: all 7 hot (tmax>=85F)
-// crediting days in the 90-day prod window are Light, so 7 of 7 observed firings were total credit
-// denial. KEPT AS-IS by crucible verdict D2/C5; the flip-time replacement (P_eff = max(0, P - 0.08")
-// when tmax >= bagHeatSoftenF) and the reasoning for deferring it are recorded on RAIN_DAY in
-// ledgerParams.js. Do not change this function's behaviour without reading that block.
+// One-class demotion (the bag-heat rule). 'light' demotes to null, not to a zero-value class: on the
+// observed record that is the ONLY branch that has executed (every hot crediting day was Light), so the rule
+// acts as total credit denial. KEPT AS-IS by crucible verdict D2/C5; the deferred replacement and its
+// reasoning are recorded on RAIN_DAY in ledgerParams.js. Do not change this function's behaviour without
+// reading that block.
 function demoteDepth(depth) {
   const i = DEPTH_ORDER.indexOf(depth);
   return i <= 0 ? null : DEPTH_ORDER[i - 1];
@@ -205,8 +202,8 @@ function foldLedger(ctx) {
   let weatherMissDays = 0;
   const drv = { ratioToday: null, vesselToday: null, stageToday: null };
 
-  // demand for one ET civil day, in cadence-days per calendar day. Degenerate branches fail to
-  // TODAY'S MODEL (1.0), never NaN (canon Decision 3).
+  // demand for one ET civil day, in cadence-days per calendar day. Degenerate branches fail to the legacy
+  // model (1.0), never NaN (canon Decision 3).
   function demandFor(dayStr) {
     if (spaceDegenerate) return 1.0;               // <7 rows: new/backfill-less Space -> flat 1.0 + LOW driver
     if (exposure === 'indoor') return 1.0;         // indoor demand modeling deferred (canon Decision 5)
@@ -214,8 +211,8 @@ function foldLedger(ctx) {
     const isToday = dayStr === todayStr;
     const et0 = row ? row.et0_in : (isToday ? todayEt0 : null); // D0 has no settled row by design; live forecast covers it
     const tmax = row ? row.tmax_f : (isToday ? todayTmax : null);
-    // ONE site-wide denominator, never a per-period one (BUG-ETNOAMPLITUDE-001: a per-month
-    // reference is a self-reference and cancels the season — see the ledgerParams block).
+    // ONE site-wide denominator, never a per-period one (BUG-ETNOAMPLITUDE-001: a per-month reference
+    // cancels the season; see ledgerParams).
     let ratio;
     if (et0 == null) { ratio = 1.0; if (!row && !isToday) weatherMissDays++; }   // missing day -> degenerate ratio
     else ratio = clamp(et0 / P.ET0_REF_PEAK, P.DEMAND_CLAMP.min, P.DEMAND_CLAMP.max);
@@ -231,8 +228,8 @@ function foldLedger(ctx) {
   const windowStartStr = addDays(todayStr, -P.WINDOW_DAYS);
   const windowStartMs = etMidnightMs(windowStartStr);
 
-  // Timeline items. Events: reposition exact-ET-midnight timestamps to 12:00 ET (date-only backdated
-  // rows carry no real clock time); drop anything outside [windowStart, effNow].
+  // Timeline items. Events: reposition exact-ET-midnight timestamps to 12:00 ET (date-only backdated rows
+  // carry no real clock time); drop anything outside [windowStart, effNow].
   const items = [];
   let snoozeCount = 0;
   for (const e of events) {
@@ -244,15 +241,13 @@ function foldLedger(ctx) {
     items.push({ t, prio: PRIO[e.type] ?? 0, id: String(e.id), type: e.type, depth: e.depth || null,
       gaugeSourced: e.gaugeSourced === true });
   }
-  // Gauge/forecast rain day-credits: once per qualifying day, outdoor only, transplant carve-out
-  // honored per-day. DRG-RAINDEPTH-001: the day's MEASURED precip maps to a depth class (per
-  // substrate tier) and the credit is that class's watering arithmetic — not a tier-keyed number of
-  // days. bag>=85F demotes one class (a bag in heat does not hold the rain).
+  // Gauge/forecast rain day-credits: once per qualifying day, outdoor only, transplant carve-out honored
+  // per-day. DRG-RAINDEPTH-001: the day's MEASURED precip maps to a depth class (per substrate tier) and
+  // the credit is that class's watering arithmetic. A bag >=85F demotes one class.
   if (exposure === 'outdoor' && !spaceDegenerate) {
-    // ONE credit rule for every day, settled or current — same depth mapping, same carve-out, same
-    // bag-heat demotion, same window clip. Only the SOURCE of the inches and the credit's position
-    // on the timeline differ between the two callers, so those are the arguments and nothing else
-    // is: a settled day and today must never be able to drift apart (same discipline as applyDepth).
+    // ONE credit rule for every day, settled or current: same depth mapping, carve-out, bag-heat demotion
+    // and window clip. Only the SOURCE of the inches and the credit's timeline position differ between the
+    // two callers, so a settled day and today cannot drift apart (same discipline as applyDepth).
     const pushDayCredit = (d, precipIn, tmaxF, t) => {
       if (precipIn == null) return;
       let depth = rainDepthClass(rainTier, precipIn);
@@ -273,37 +268,32 @@ function foldLedger(ctx) {
       if (!row) continue;
       pushDayCredit(d, row.precip_in, row.tmax_f, etMidnightMs(d) + DAY - 60000);
     }
-    // BUG-F2RAINBASIS-001 — TODAY, from the GAUGE ONLY. The loop above cannot reach today and never
-    // will: weather_daily holds COMPLETED days by construction (handler.js writes settled_days and
-    // re-guards `d >= today`), so no D0 row exists to widen the bound onto. Rain that has physically
-    // fallen this morning therefore earned nothing until tomorrow — the ledger's credit was not
-    // smaller than legacy's, it was A DAY LATE, and on 2026-08-23 that one-day phase shift moved 29
-    // plantings one way and 74 back the next day.
+    // BUG-F2RAINBASIS-001: TODAY, from the GAUGE ONLY. The loop above cannot reach today: weather_daily
+    // holds COMPLETED days by construction (handler.js writes settled_days and re-guards `d >= today`).
+    // Without this, rain that fell this morning earned nothing until tomorrow: the credit was not smaller
+    // than legacy's, it was A DAY LATE, which moved plantings one way and back the next day.
     //
-    // The source is `hydrology.today_observed_in` and NOTHING else — the exact term legacy
-    // creditPrecip spends (engine.js `recent_precip_in + today_observed_in`), so the two engines now
-    // agree BY CONSTRUCTION on what counts and any remaining flag-on/flag-off diff measures the
-    // MODEL rather than the input. today_precip_in is deliberately not accepted here: it is
-    // observed + still-expected, and crediting the forecast half is BUG-RAINFORECASTCREDIT-001,
-    // which cost 32 plantings a watering on 2026-08-08 (0.97" predicted at 28% PoP, 0.04" fell).
-    // With no bound station the term is absent -> null -> no D0 credit, which is correct: nothing
-    // has been MEASURED, and legacy's basis degrades to `recent` on those runs too.
+    // The source is `hydrology.today_observed_in` and NOTHING else, the same term legacy creditPrecip spends
+    // (engine.js `recent_precip_in + today_observed_in`), so the two engines agree BY CONSTRUCTION on what
+    // counts and any flag-on/flag-off diff measures the MODEL, not the input. today_precip_in is
+    // deliberately not accepted: it is observed + still-expected, and crediting the forecast half is
+    // BUG-RAINFORECASTCREDIT-001 (a predicted 0.97" at 28% PoP; 0.04" fell). With no bound station the
+    // term is null -> no D0 credit, which is correct: nothing has been MEASURED.
     //
-    // POSITIONED AT effNow, not at 23:59 like a settled day, and that is load-bearing twice over.
-    // Agronomically: a partial day's rain has not finished falling, so the credit may not be dated
-    // later than the instant we observed it. Mechanically: 23:59 of today is in the future at every
-    // run (effNowMs clamps into the plan day), so the window clip would drop it and this whole
-    // branch would be dead code. Prio day_credit still sorts it AFTER any watering logged at the
-    // same instant, and applyDepth(0, ...) is a no-op, so a same-day manual log cannot be
-    // double-counted.
+    // POSITIONED AT effNow, not 23:59 like a settled day, and that is load-bearing twice over.
+    // Agronomically, a partial day's rain has not finished falling, so the credit may not be dated later
+    // than the instant it was observed. Mechanically, 23:59 of today is in the future at every run
+    // (effNowMs clamps into the plan day), so the window clip would drop it and this branch would be dead
+    // code. Prio day_credit sorts it AFTER any watering logged at the same instant, and applyDepth(0, ...)
+    // is a no-op, so a same-day manual log cannot be double-counted.
     pushDayCredit(todayStr, num(todayPrecip), todayTmax, effNowMs);
   }
   items.sort((a, b) => (a.t - b.t) || (a.prio - b.prio) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 
-  // Walk. D starts at wi at the window start (canon: "No anchor but waterings exist -> window-start
-  // D0 = wi"); any Normal/Deep/rain event inside the window re-bases D through its own op, so for an
-  // anchored history the start value only reaches the verdict through the partial-rewet hedges —
-  // which is exactly what the hedges are for (a long-dry profile at the latest watering).
+  // Walk. D starts at wi at the window start (canon: "No anchor but waterings exist -> window-start D0 =
+  // wi"); any Normal/Deep/rain event in the window re-bases D through its own op, so for an anchored
+  // history the start value only reaches the verdict through the partial-rewet hedges, which is what the
+  // hedges are for (a long-dry profile at the latest watering).
   let D = wiEff;
   let t = windowStartMs;
   const accrueTo = (tEnd) => {
@@ -314,12 +304,11 @@ function foldLedger(ctx) {
       t = segEnd;
     }
   };
-  // Depth arithmetic, shared by waterings and (DRG-RAINDEPTH-001) rain — one implementation so the
-  // two can never drift. allowBank is the ONE asymmetry: a manual Deep may bank below 0 on a
-  // banking vessel, rain may NOT. Rain banking would forfeit canon's resurfacing guarantee (the
-  // structural property that retired the maxdays ceiling), and a wet week must never be able to
-  // push a planting past its own cadence. Deep rain therefore still outranks Normal — it resets
-  // flat to 0 and clears the long-dry hedges — it just cannot go negative.
+  // Depth arithmetic, shared by waterings and (DRG-RAINDEPTH-001) rain: one implementation so the two
+  // cannot drift. allowBank is the ONE asymmetry: a manual Deep may bank below 0 on a banking vessel, rain
+  // may NOT. Rain banking would forfeit canon's resurfacing guarantee (the property that retired the
+  // maxdays ceiling), and a wet week must never push a planting past its own cadence. Deep rain still
+  // outranks Normal (it resets flat to 0 and clears the long-dry hedges); it just cannot go negative.
   const applyDepth = (Dcur, depth, allowBank) => {
     if (depth === 'deep') {
       return (allowBank && vessel.banks)
@@ -340,30 +329,25 @@ function foldLedger(ctx) {
       const depth = it.depth === 'deep' ? 'deep' : it.depth === 'light' ? 'light' : 'normal'; // absent/unknown = normal
       D = applyDepth(D, depth, true);
     } else if (it.type === 'rain') {
-      // A rain event with NO depth is a MANUAL log — Dave watching it pour and calling these
-      // watered — and keeps canon Decision 12 full-reset semantics. A depth-carrying rain event is
-      // gauge-written (metadata.water_depth_source='rain_gauge') and folds like a watering.
+      // A rain event with NO depth is a MANUAL log (the user watched it pour and calls these watered) and
+      // keeps canon Decision 12 full-reset semantics. A depth-carrying rain event is gauge-written
+      // (metadata.water_depth_source='rain_gauge') and folds like a watering.
       //
-      // BUG-RAINEVENTNEUTRALIZES-001 — THE THIRD CASE, and the one that erased this whole feature.
-      // The gauge writer (handler.js logRainEvents) emits NO water_depth, so a gauge rain event
-      // reaches here depth=null and was taking the manual branch: a FULL RESET, on every logged
-      // rain day, regardless of how much fell. The day_credit for that same day is timestamped
-      // 23:59 with PRIO 2, so it then applied onto an already-zeroed D where every depth class is a
-      // no-op. Measured by execution: an in_ground bed at 0.21" and at 2.84" folded to a
-      // byte-identical D — precisely the amount-blind cliff DRG-RAINDEPTH-001 exists to remove.
+      // BUG-RAINEVENTNEUTRALIZES-001: the gauge writer (handler.js logRainEvents) emits NO water_depth, so a
+      // gauge rain event arrives depth=null and used to take the manual branch: a FULL RESET on every
+      // logged rain day regardless of amount. The same day's day_credit (23:59, PRIO 2) then applied onto
+      // an already-zeroed D, a no-op at every class, which re-created the amount-blind cliff
+      // DRG-RAINDEPTH-001 exists to remove.
       //
-      // A gauge day therefore belongs to the day_credit path, which is the ONE place that knows the
-      // substrate tier, the bag-heat demotion and the transplant carve-out. Skipping the event here
-      // is not dropping the rain — it hands it to the only reader equipped to price it.
+      // So a gauge day belongs to the day_credit path, the ONE place that knows the substrate tier, the
+      // bag-heat demotion and the transplant carve-out; skipping the event here hands the rain to the only
+      // reader equipped to price it. Key on gaugeSourced (metadata.precip_source), NOT on depth==null: the
+      // two are different questions and conflating them caused this. A manual log has no precip_source and
+      // keeps full-reset semantics.
       //
-      // Deliberately keyed on gaugeSourced (metadata.precip_source) rather than on depth==null: the
-      // two are not the same question, and conflating them is what caused this. A manual log has no
-      // precip_source and keeps full-reset semantics untouched.
-      //
-      // Side effect, and it is a correction rather than a regression: a gauge event fans out to
-      // EVERY planting including covered/indoor ones, while day_credit is gated on
-      // exposure==='outdoor'. Under the old branch an indoor planting was full-reset by rain that
-      // never touched it. It now gets nothing, which is right.
+      // Side effect (a correction): a gauge event fans out to EVERY planting including covered/indoor ones,
+      // while day_credit is gated on exposure==='outdoor'. Indoor plantings used to be full-reset by rain
+      // that never touched them; they now get nothing, which is right.
       if (it.gaugeSourced) continue;                                 // day_credit owns this day
       D = it.depth ? applyDepth(D, it.depth, false) : 0;
     } else if (it.type === 'moisture_check') {
@@ -374,8 +358,8 @@ function foldLedger(ctx) {
   }
   accrueTo(effNowMs);
 
-  // Verdict + integer-calendar derivations (canon payload contract). demandToday > 0 always
-  // (clamp floor x min factors), so the divisions cannot blow up.
+  // Verdict + integer-calendar derivations (canon payload contract). demandToday > 0 always (clamp floor x
+  // min factors), so the divisions cannot blow up.
   const demandToday = demandFor(todayStr);
   const due = D >= thr;
   const overdueBy = due ? Math.max(0, Math.floor((D - thr) / demandToday)) : null;
@@ -399,9 +383,9 @@ function foldLedger(ctx) {
 }
 
 // ── Engine-facing option bag (one per generatePlan call/space) ───────────────────────────────────
-// Coerces weather_daily numerics (the neon driver returns numeric columns as STRINGS on real
-// Postgres; mock-sql fixtures pass numbers — both must fold identically) and clamps the run instant
-// into the plan day: a `--today <past>` replay pins to end-of-day, a live run keeps its real clock.
+// Coerces weather_daily numerics (the neon driver returns numeric columns as STRINGS on real Postgres;
+// mock-sql fixtures pass numbers; both must fold identically) and clamps the run instant into the plan day:
+// a `--today <past>` replay pins to end-of-day, a live run keeps its real clock.
 function buildLedgerOpts({ weatherDaily = null, eventsByPlant = null, today, nowMs = null }) {
   const weatherByDate = {};
   let n = 0;
