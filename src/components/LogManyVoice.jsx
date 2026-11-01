@@ -51,6 +51,7 @@ import { EVENT_TYPE_META } from '../lib/eventTypes.js'
 import { useDismissable } from '../context/DismissRegistry.jsx'
 import { LAYER } from '../lib/dismissLayers.js'
 import { setReloadBlocked } from '../lib/reloadGate.js'
+import { PICKER_PATH } from '../hooks/usePlantPicker.js'
 
 // Listening windows. NONE OF THESE IS MEASURED — the confirm window in particular is design-note
 // open question 3 (laneD2-voicecare-core.md §9.3) and needs a device number, not this guess. What
@@ -74,8 +75,9 @@ const MAX_REARMS = 12
 const MIC_LABEL = 'log-many-voice'
 
 // The household list the names resolve against (U). This file is a censused consumer of the picker
-// projection — lambda/plants/grid-view.test.js lists it with the fields it reads.
-const PICKER_PATH = '/api/plants?view=picker'
+// projection — lambda/plants/grid-view.test.js lists it with the fields it reads. It takes only the
+// path, not usePlantPicker: the list is loaded on the first mic tap and awaited inside
+// loadVocabulary, and a null body must read as unreadable (ok:false), which the hook would turn into [].
 
 const NOTHING = 'Nothing was logged.'
 const MIC_TEXT = {

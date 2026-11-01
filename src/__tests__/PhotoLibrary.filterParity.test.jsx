@@ -153,6 +153,20 @@ describe('V5-PHOTOFILTERPARITY-001 — the crop facet', () => {
     expect(paths.some((u) => u.startsWith('/api/varieties/crop-types'))).toBe(false)
   })
 
+  // OPS-CODEREVIEW-001 E2c: why this page reads the picker in a plain effect, not usePlantPicker.
+  // catches: routing the page's picker read through useCachedFetch (its unguarded .then throws).
+  it('survives a picker read that answers undefined', async () => {
+    wireApi(ALL)
+    const wired = fetchSpy.getMockImplementation()
+    fetchSpy.mockImplementation((path, opts) =>
+      (String(path).startsWith('/api/plants?view=picker') ? undefined : wired(path, opts)))
+    await act(async () => { render(<PhotoLibrary />) })
+    await waitFor(() => expect(fetchSpy.mock.calls.some(([u]) => String(u).startsWith('/api/plants?view=picker'))).toBe(true))
+    await act(async () => {})
+    expect(grid().length, 'the page went down with the undefined picker read').toBe(7)
+    expect(screen.queryByTestId('pl-crop-filter')).toBeNull()
+  })
+
   it('narrows to the chosen crop across projects, and drops the same-project other crop', async () => {
     await mount()
     await waitFor(() => expect(screen.queryByTestId('pl-crop-filter')).toBeTruthy())

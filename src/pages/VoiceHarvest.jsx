@@ -24,6 +24,7 @@ import { todayLocalISO } from '../lib/dateLocal.js'
 import { HARVEST_WRITE_TIMEOUT_MS } from '../lib/harvestWriteTimeout.js'
 import { looseKey, looseIncludes, splitCropAliases } from '../lib/comboboxInput.js'
 import { useCropTypes } from '../hooks/useCropTypes.js'
+import { usePlantPicker } from '../hooks/usePlantPicker.js'
 import { fetchAliases, indexAliases, teachAlias, recordAliasUse } from '../lib/voiceAliases.js'
 import {
   buildValue, classify, classifyPartial, segmentCandidates, splitTrailingCommand, parseValueSequence,
@@ -199,8 +200,8 @@ export default function VoiceHarvest({ embedded = false } = {}) {
   // Attaching the terms to the row means every layer (strict, learned, folded, fuzzy, one-breath, the
   // teach picker's own filter) sees them.
   //
-  // `crop_aliases` is attached here, not read from the payload: ?view=picker carries the crop-type SLUG
-  // and nothing else crop-shaped, and the alias text comes from the separate vocabulary fetch.
+  // `crop_aliases` is attached here, not read from the payload: the picker projection carries the
+  // crop-type SLUG and nothing else crop-shaped, and the alias text comes from the separate vocabulary fetch.
   //
   // The slug stays on the row as a term, so a planting whose crop type is missing from the vocabulary (or
   // a vocabulary that failed to load) matches as before. display_name is deliberately not added (see
@@ -314,14 +315,21 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     return true
   }, [cue, noteMiss])
 
+  // The picker projection through the shared hook; the census in lambda/plants/grid-view.test.js lists
+  // its consumers. Fields read here: id, name, archived_at, variety_ref.{name,crop_type_slug,default_unit}.
+  // `error` is set only on a cold failure: a failed background revalidate keeps the cached list.
+  const picker = usePlantPicker()
+  useEffect(() => {
+    if (picker.error) { setLoadError(picker.error?.message || 'Could not load your plantings'); return }
+    if (picker.data === undefined) return
+    const rows = picker.data?.plants ?? picker.data
+    if (!Array.isArray(rows)) { setLoadError('Could not load your plantings'); return }
+    setLoadError(null)
+    setRawPlantings(rows.filter((p) => !p.archived_at))
+  }, [picker.data, picker.error])
+
   useEffect(() => {
     let live = true
-    // ?view=picker is the narrow projection; the census in lambda/plants/grid-view.test.js lists its
-    // consumers. Fields read here: id, name, archived_at, variety_ref.{name,crop_type_slug,default_unit}.
-    apiFetch('/api/plants?view=picker')
-      .then((r) => { if (live) setRawPlantings((r?.plants ?? r ?? []).filter((p) => !p.archived_at)) })
-      .catch((e) => { if (live) setLoadError(e?.message || 'Could not load your plantings') })
-
     // Learned mishearings are fetched ALONGSIDE the plantings, not gating them, and this sets no
     // loadError: a chooser that refuses to start because a cache of corrections failed to load is worse
     // than one that forgot a few. fetchAliases answers null for "could not read" and aliasStateRef says
@@ -798,7 +806,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     const placeHeld = (value, fills = null, takenBy = null) => {
       const qtyOpen = qtyRef.current == null && !fills?.has('quantity')
       const weightOpen = weightRef.current == null && !fills?.has('weight')
-      // default_unit comes from crop_types via the ?view=picker projection and CAN BE NULL (there is
+      // default_unit comes from crop_types via the picker projection and CAN BE NULL (there is
       // no cultivar-level column; see lambda/plants/grid-view.test.js:333-337), hence the fallback.
       const unit = qtyOpen
         ? (selectedRef.current?.variety_ref?.default_unit || 'count')
