@@ -1,6 +1,6 @@
-// src/lib/tokens.js — DESIGNSYS Pass A canonical token surface (contract §1/§9).
+// src/lib/tokens.js — canonical token surface.
 // New code imports color/space/type/radius from HERE. P stays physically in
-// constants.js (76 importers must not break); T stays in components/forms/formStyles.js.
+// constants.js (many importers must not break); T stays in components/forms/formStyles.js.
 // This module is the single re-export index — it imports from constants + formStyles
 // ONLY (neither imports tokens.js), so there is no circular dependency.
 import { P } from './constants.js'
@@ -20,7 +20,7 @@ export const tokens = {
   },
 }
 
-// Facet color tokens (additive, unused until TAGSUB). Shaped per facet for direct
+// Facet color tokens. Shaped per facet for direct
 // {bg,text,border} consumption. The lifecycle facet is NOT here — it reuses
 // getStatusColors() (status.js), so no new token is minted for it.
 export const FACET_TOKENS = {
@@ -32,7 +32,7 @@ export const FACET_TOKENS = {
 
 // Lifecycle facet is value-colored (not a single facet token): each lifecycle slug maps to its own
 // {bg,text,border}. facetColors(facet, value) resolves through here when facet === 'lifecycle'.
-// Unknown lifecycle values fall back to the neutral freeform token (same as before).
+// Unknown lifecycle values fall back to the neutral freeform token.
 export const LIFECYCLE_TOKENS = {
   annual:            { bg: P.fLcAnnualBg,    text: P.fLcAnnualText,    border: P.fLcAnnualBorder },
   biennial:          { bg: P.fLcBiennialBg,  text: P.fLcBiennialText,  border: P.fLcBiennialBorder },
@@ -40,8 +40,8 @@ export const LIFECYCLE_TOKENS = {
   tender_perennial:  { bg: P.fLcTenderBg,    text: P.fLcTenderText,    border: P.fLcTenderBorder },
 }
 
-// ── V4-ICON-001 (DESIGNSYS Pass B V101) icon tokens — single source for the Icon
-// component (JS import) AND the generated CSS vars (main.jsx). §11. ──────────────
+// ── icon tokens — single source for the Icon
+// component (JS import) AND the generated CSS vars (main.jsx). ──────────────
 export const ICON = {
   stroke: 1.75, strokeSmall: 2.0, strokeInverse: 2.0, strokeHero: 2.25, minStroke: 1.6,
   tint: '#c8e6cd', keyline: 2, cornerRadius: 2, circleD: 18,
@@ -51,9 +51,9 @@ export function iconCssVars() {
   return `:root{--icon-stroke:${ICON.stroke}px;--icon-stroke-inverse:${ICON.strokeInverse}px;--icon-stroke-hero:${ICON.strokeHero}px;--icon-tint:${ICON.tint};--icon-keyline:${ICON.keyline};--icon-corner-radius:${ICON.cornerRadius};--icon-circle-d:${ICON.circleD};--icon-color:${ICON.defaultColor};}`
 }
 
-// ── V4-ICONCOLOR-001 icon region-color tokens — the ONLY place icon region hex lives.
-// Registry entries reference these by NAME via entry.colorFills:{region:tokenName};
-// Icon.jsx resolves name->hex at render (masters stay hex-free, per the §14 no-hex lint).
+// ── icon region-color tokens — the ONLY place icon region hex lives.
+// Registry entries reference these by NAME via entry.colorFills (region -> tokenName);
+// Icon.jsx resolves name->hex at render (masters stay hex-free, per the no-hex lint).
 // Values pull from P so they stay in palette lockstep; one minted value (lcSproutLeaf)
 // because P.greenLight #52b788 fails the 3:1 silhouette floor on cream.
 export const ICON_COLORS = {
@@ -68,15 +68,13 @@ export const ICON_COLORS = {
   lcBloomPetals: P.terra,     // #b7532a open petals — 4.51:1
   lcBloomCenter: P.gold,      // flower center
   lcFruit:       P.terra,     // ripe fruit body
-  bflyWingUpper: '#d97528',   // V4-ICON-001 nav.critters upper wing — bright Noto orange, ~3.05:1 on cream
+  bflyWingUpper: '#d97528',   // nav.critters upper wing — bright Noto orange, ~3.05:1 on cream
   bflyWingLower: P.terra,     // #b7532a lower wing — deeper burnt orange, ~4.65:1
   bflyBody:      '#4a3520',   // head+thorax+abdomen — deep brown, ~10.9:1
   bflyAntenna:   '#4a3520',   // antennae stroke — deep brown
-  // ── Bottom-bar `filled` variants (Dave 2026-08-28). The tab bar went all-mono on 0bddf91, which
-  // replaced the last two COLOUR tab glyphs — the 🧺 and 🫙 emoji — with mono line art for
-  // completeness. Dave read those two as the target the rest should rise to, so these level the bar
-  // UP rather than restoring two. Every value below is measured on cream and clears the 3:1
-  // silhouette floor; two candidates were rejected for failing it (P.sage 2.89:1 for the checklist
+  // ── Bottom-bar `filled` variants. The tab bar is all-mono except these colour glyphs, which level
+  // the bar UP rather than restoring two emoji. Every value below is measured on cream and clears the
+  // 3:1 silhouette floor; two candidates were rejected for failing it (P.sage 2.89:1 for the checklist
   // rows, a #cfe0ef pale-glass jar body at 1.24:1 — the jar is drawn full instead, see nav.putup).
   navTick:       P.green,     // #2d6a4f checklist tick — 5.88:1
   navRow:        '#6f8a78',   // minted — checklist row bar, 3.46:1 (P.sage #7c9885 fails at 2.89:1)
@@ -90,15 +88,14 @@ export const ICON_COLORS = {
   navJarBand:    P.gold,      // #8a6e2a screw band — 4.44:1
   navJarGlass:   P.blue,      // #4a7fb5 glass outline — 3.87:1
   navJarFill:    P.terra,     // #b7532a preserves — 4.51:1
-  // V5-NAVCUSTOM-001 — action.pin's `filled` (pinned) state on the More sheet's pin button. The
+  // action.pin's `filled` (pinned) state on the More sheet's pin button. The
   // classic red-headed push pin; both clear the 3:1 floor on the sheet's white and on cream.
   pinHead:       P.terra,     // #b7532a cap, barrel and collar — 4.51:1 on cream
   pinNeedle:     P.mid,       // #4a4a4a the metal point — 8.3:1 on cream
-  // V5-TODAYREDESIGN-001 — `filled` variants for the three glyphs the Today jump bar draws that were
-  // still mono (care.feed, event.observation, event.brought_inside), raised to colour per Dave's
-  // 2026-08-28 rule rather than flattening the colour ones. The bar draws them on WHITE chips over a
-  // cream bar, so each value is measured on both (cream / white); a white eye-sclera and a pale door
-  // were rejected for failing that floor — the eye is drawn solid and the door is a notch instead.
+  // `filled` variants for the three glyphs the Today jump bar draws (care.feed, event.observation,
+  // event.brought_inside). The bar draws them on WHITE chips over a cream bar, so each value is
+  // measured on both (cream / white); a white eye-sclera and a pale door were rejected for failing
+  // that floor — the eye is drawn solid and the door is a notch instead.
   feedLeaf:      '#349160',   // leaf blade — fresh-growth green (shares lcSproutLeaf's value) — 3.60 / 3.91
   feedVein:      P.green,     // #2d6a4f midrib, 24 master only — 5.88 / 6.39
   feedPlus:      P.gold,      // #8a6e2a the feed plus — 4.44 / 4.83

@@ -1,8 +1,7 @@
-// Service-worker registration + stale-PWA self-heal (V3-CACHE-001).
-// Inoculates against the stale-SW sign-in blip / zoomed-out stale-install class
-// (vigilant-trusting-hawking incident, L-106): a deploy lands while the app is open
-// or installed, and the client keeps running an old shell/chunks until manually cleared.
-//
+// Service-worker registration + stale-PWA self-heal.
+// Inoculates against the stale-SW sign-in blip / zoomed-out stale-install class: a deploy lands
+// while the app is open or installed, and the client keeps running an old shell/chunks until
+// manually cleared.
 // Self-heal = two parts:
 //   1. registration.update() on resume (visibilitychange→visible, pageshow/bfcache restore)
 //      forces the browser to re-check /sw.js so a new deploy's SW installs promptly.
@@ -13,18 +12,17 @@
 //
 // Deps are injectable for unit testing (no real SW support needed in jsdom).
 //
-// BUG-STALECLIENT-001 addition: a waiting (installed-but-not-active) SW is announced via a
+// A waiting (installed-but-not-active) SW is announced via a
 // window CustomEvent so the UI can offer an explicit "Refresh" instead of waiting on an
 // activation that may never come (in-flight respondWith work pins the old SW on slow devices,
 // parking updates in `waiting` — clients then silently run a stale bundle indefinitely).
 // event.detail.apply() posts SKIP_WAITING to the waiting worker; the existing guarded
 // controllerchange→reload-once completes the swap.
 //
-// OPS-SWRELOADGUARD-001 addition: the reload is GATED on src/lib/reloadGate.js. At ~4.4 deploys per
-// active day the reload lands mid-form regularly — and lands hardest off the visibility re-check
-// above, which fires the moment Dave pulls the phone out at a plant. A held gate DEFERS the reload
-// (it never cancels it, or we are back in BUG-STALECLIENT-001): it fires the instant the last hold
-// clears, or on the next resume with nothing held.
+// The reload is GATED on src/lib/reloadGate.js: deploys are frequent enough that the reload lands
+// mid-form regularly — and lands hardest off the visibility re-check above, which fires the moment
+// the phone is picked up. A held gate DEFERS the reload (it never cancels it, or updates park in
+// `waiting` again): it fires the instant the last hold clears, or on the next resume with nothing held.
 
 import { isReloadBlocked, onReloadUnblocked } from './reloadGate.js'
 

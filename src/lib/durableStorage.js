@@ -1,10 +1,10 @@
 /**
  * src/lib/durableStorage.js
  *
- * Bite 4 of Post-V2 UX overhaul Increment 2: durable storage prompt.
+ * Durable storage prompt.
  *
  * Wraps navigator.storage.persist() and navigator.storage.persisted(). Used
- * by FieldCapture on first-mount per Concept B spec: request persistence
+ * by FieldCapture on first-mount: request persistence
  * install-early (not on the first mic tap) so iOS Safari has the strongest
  * incentive to retain the IndexedDB store under quota pressure.
  *

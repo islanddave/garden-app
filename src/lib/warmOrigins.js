@@ -1,19 +1,17 @@
-// V4-PERFCLERK-001 Option A — retire Lambda cold-start INSIDE the Clerk dead window.
+// Retire Lambda cold-start INSIDE the Clerk dead window.
 //
-// MEASURED (2026-08-18, prod /api/plants Function URL, wired broadband):
-//   first tokenless GET → 401 in 1,706ms · three warm repeats → 302 / 410 / 320ms
-// The ~1.4s gap is Node init + the heavy module graph (@aws-sdk/*, @clerk/backend,
+// MEASURED on the prod /api/plants Function URL: first tokenless GET → 401 in ~1.7s, warm repeats
+// 0.3-0.4s. The ~1.4s gap is Node init + the heavy module graph (@aws-sdk/*, @clerk/backend,
 // @neondatabase/serverless, s3-request-presigner) + the Secrets Manager fetch. Every bit of it runs
-// BEFORE the auth check: lambda/plants/index.js:108 `await getSecrets()` precedes :114
-// `await verifyToken(...)`, which 401s at :124. So a request carrying no token still PAYS that
-// init — and therefore retires it — while being turned away with {error:'Unauthorized'}.
+// BEFORE the auth check: lambda/plants/index.js awaits getSecrets() before verifyToken(...), which
+// 401s. So a request carrying no token still PAYS that init — and therefore retires it — while being
+// turned away with {error:'Unauthorized'}.
 //
 // The window to spend it in is already free. bootSplash.js's measured trace puts isLoaded at
-// t=3376ms and this module's evaluation at t≈783ms: ~2.5s in which App.jsx:104 `Protected` returns
-// null for every route, no page component mounts, and not one API request has been issued. Today
-// the cold start is paid AFTER that window rather than inside it, purely because no code runs
+// t=3376ms and this module's evaluation at t≈783ms: ~2.5s in which App.jsx's `Protected` returns
+// null for every route, no page component mounts, and not one API request has been issued. Without
+// this the cold start is paid AFTER that window rather than inside it, purely because no code runs
 // before the gate opens. That ordering is an accident of structure, not a security property.
-//
 // ── WHY THIS CANNOT LEAK. Preserve all four on every future edit. ──
 //   1. No Authorization header is ever set, so the Lambda calls verifyToken('') — an empty token
 //      fails parse before any key lookup, making 401 structurally guaranteed. There is no input to
@@ -22,10 +20,10 @@
 //      sends nothing cross-origin, but stating it turns the invariant from relied-upon into
 //      enforced — and it is what warmOrigins.test.js asserts against.
 //   3. The response is never awaited, read, parsed or returned. Callers get URLs, never bodies.
-//   4. public/sw.js:296 caches only `response.ok`, so a 401 can never enter API_CACHE.
+//   4. public/sw.js caches only `response.ok`, so a 401 can never enter API_CACHE.
 //
 // ── GET, NEVER OPTIONS. ──
-// A CORS preflight returns at lambda/plants/index.js:98, BEFORE getSecrets(), and warms nothing.
+// A CORS preflight returns in lambda/plants/index.js BEFORE getSecrets(), and warms nothing.
 // Anything that promotes these to preflighted requests — a custom header, a non-simple
 // Content-Type — silently converts this whole file into a no-op that still looks like it works.
 // That is also why the ping does not carry an X-Warm-Ping marker: the CloudWatch attribution would
@@ -40,14 +38,13 @@
 // WARM_PATHS names the four origins Today (POST_LOGIN_ROUTE, and the '/' and '*' redirect target)
 // fetches above the fold: Needs care, Protect tonight and Heads-up → /api/plants (one shared read),
 // the Sow link row's lines → /api/inventory-items, the plan read behind the glance card → /api/daily-plan,
-// Needs care's and Protect's spots → /api/locations (named for the old page's CareNeeded and
-// StorageDeadlineAlert until V5-TODAYREDESIGN-001 S8c; the same four). Below-the-fold bands (harvests, preservation) and
+// Needs care's and Protect's spots → /api/locations. Below-the-fold bands (harvests, preservation) and
 // /api/members are deliberately out: each costs an invocation on every cold boot and the Clerk
 // window is not unbounded. Adding one means showing it is above the fold, not that it exists.
-// Distinct from useCacheLifecycle's BOOT_WARM_PATHS, which warms the DATA CACHE post-auth and is
-// empty since OPS-BOOTWARMSTALE-001. This warms containers pre-auth and caches nothing.
+// Distinct from useCacheLifecycle's BOOT_WARM_PATHS, which warms the DATA CACHE post-auth (currently
+// empty). This warms containers pre-auth and caches nothing.
 //
-// ── PRECONNECT (V4-PERFTHEMEA-001). index.html points here; this is the reasoning. ──
+// ── PRECONNECT. index.html points here; this is the reasoning. ──
 // MEASURED: 21 API origins, one hostname each, EVERY one negotiating http/1.1 only — no
 // multiplexing, so a connection is per-origin and cannot be shared. Per origin: DNS 37-256ms +
 // TCP 60-200ms + TLS 70-240ms. None of it starts until the 1.4MB entry chunk has downloaded and
@@ -66,7 +63,7 @@
 // Chrome keys its socket pool on credentials mode. Every request to these origins is either
 // credentials:'omit' (the ping below) or a cross-origin fetch with the default 'same-origin',
 // which sends nothing — both land in the privacy-mode pool. A plain credentialed preconnect here
-// would warm a socket no API call can use, which is precisely the no-op V4-PERFCLERK-001 found on
+// would warm a socket no API call can use, which is precisely the no-op found on
 // the Clerk side.
 //
 // DERIVED FROM VITE_API_*, NEVER HARDCODED, for the reason the Clerk block derives its host from
@@ -75,7 +72,7 @@
 // `new URL` throws on it and that one origin is skipped rather than emitted as a broken link.
 //
 // NOT AFFECTED BY THE SW-PIN HAZARD that argues against ADDING warm pings: a ping is intercepted by
-// public/sw.js and holds a respondWith open, pinning a waiting worker (BUG-STALECLIENT-001). A
+// public/sw.js and holds a respondWith open, pinning a waiting worker. A
 // preconnect opens a socket and never enters the service worker at all.
 import { FUNCTION_URLS, resolveUrl } from './api.js'
 

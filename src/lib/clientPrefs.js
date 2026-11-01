@@ -1,11 +1,10 @@
-// V4-RANKCLEAR-001 — the client-side preference keys that must NOT survive a sign-out.
+// The client-side preference keys that must NOT survive a sign-out.
 //
 // WHY THIS EXISTS. These keys are per-DEVICE, not per-IDENTITY: nothing in their names or values is
 // scoped to a user. On a shared device (this app has exactly two users) the second person to sign in
 // inherits the first person's crop-chip ordering and harvest-unit prefills. Presentation only — no
 // PII, no data access, nothing server-authoritative — but it is wrong, and "wrong but harmless"
-// silently accumulates: `croprank.v1` (V4-CROPLISTORDER-001) is the third key to land in this shape,
-// which is what turned a pre-existing convention into a thing worth fixing once, centrally.
+// silently accumulates, so the sign-out scrub is done once, centrally.
 //
 // EXPLICIT ENUMERATION, NEVER localStorage.clear(). A blanket clear would take drafts, mode, lens
 // state, dismissal memory and anything a future slice parks in localStorage — a much larger and
@@ -24,90 +23,86 @@ export const CLIENT_PREF_KEYS = [
   'croprank.v1',        // cropLogLedger.js — crop-chip band ordering
   'logone.lastPlant',   // EventNew.jsx — last single-log planting
   'lastHarvestUnit',    // EventNew.jsx — legacy global harvest-unit memory
-  // V4-USERPREFS-001 — these three are now CACHES of per-user server state
+  // These three are CACHES of per-user server state
   // (user_notification_prefs), not the source of truth. They are still per-DEVICE on disk, and
   // they are read SYNCHRONOUSLY to seed first render before the prefs GET lands — which is
   // precisely the window in which the second person to sign in would see the first person's
-  // answer. Scrubbing them at sign-out closes that window. Note the failure they cause is not
-  // merely cosmetic: quicklog.defaultAllSelected inverts Jen's Log-Many selection (her stated
-  // preference is the opposite of Dave's), so a stale cache pre-selects every planting for her.
+  // answer. Scrubbing them at sign-out closes that window. The failure is not merely cosmetic:
+  // the two users' Log-Many defaults (quicklog.defaultAllSelected) are opposites, so a stale cache
+  // pre-selects every planting for the wrong person.
   'quicklog.defaultAllSelected',  // ScopeChecklist.jsx — Log-Many default selection
   'garden.releasesSeenVersion',   // whatsNew.js — last-seen release version
-  // V4-HANDEDNESSCONTROLS-001 (BD-054) — handedness.js. The strongest case in this list for being
+  // handedness.js. The strongest case in this list for being
   // here: every other key leaks a PRESENTATION choice, this one leaks which side of a two-control
   // row the DESTRUCTIVE control sits on. Left behind, the second person to sign in on a shared
   // phone inherits the other's hand, and "Not yet" — a 10-20 day snooze — lands under their thumb
   // while the harmless control sits out of reach. That is the exact harm the setting exists to
   // remove, delivered to the wrong person.
   //
-  // ⚠️ INTERIM COST, ACCEPTED KNOWINGLY: user_notification_prefs.handedness is authored and NOT yet
-  // applied (migrations/v4-handednesscontrols-001), so until it lands there is no server copy to
+  // ⚠️ INTERIM COST, ACCEPTED KNOWINGLY: the critter Lambda does not yet accept
+  // user_notification_prefs.handedness (see saveHandedness), so there is no server copy to
   // re-adopt and a sign-out really does lose the choice. Re-picking it is one tap; inheriting the
   // wrong hand silently is not recoverable by the person it happens to, because nothing on screen
   // says the layout was decided by someone else.
   'ui.handedness',
-  // V5-NAVCUSTOM-001 — NavPrefsContext's launch caches of the per-person tab bar and More pins
+  // NavPrefsContext's launch caches of the per-person tab bar and More pins
   // (user_notification_prefs.bar_layout / more_pins). Read SYNCHRONOUSLY for the first paint, so
-  // left behind they would draw the previous person's bar and pins for the next one — and, since
-  // D4 made the bar personal, that is exactly the shift Jen was promised she would never see.
+  // left behind they would draw the previous person's bar and pins for the next one, which the
+  // personal bar exists to prevent.
   // Literal strings rather than an import: NavPrefsContext imports AuthContext, which imports this
   // file, so importing the constants here would close a cycle. clientPrefs.test.jsx pins that
   // NavPrefsContext's exported key names are all listed here.
   'nav.barLayout.v1',
   'nav.morePins.v1',
   'nav.morePins.pending.v1',
-  // V5-TODAYREDESIGN-001 S2 — the Debug & smoke "New Today on this phone" switch, REMOVED with the old Today page
-  // at S8c (L8): nothing reads or writes this key any more. It stays on this list so a sign-out still scrubs the
-  // value a phone stored while the switch existed — a stale key left behind is a stray per-person record on a
-  // shared phone (plan-v2 §6.10), and an older cached bundle would still read it.
+  // The old Debug & smoke "New Today on this phone" switch: nothing reads or writes this key any more. It
+  // stays on this list so a sign-out still scrubs the value a phone stored while the switch existed — a
+  // stale key left behind is a stray per-person record on a shared phone, and an older cached bundle
+  // would still read it.
   'garden.todayV2',
-  // V5-TODAYREDESIGN-001 (integration 2, 2026-09-29; the orchestrator's call on S6's decision 2) — the household view
-  // switch, SHOW_OTHERS_KEY (lib/householdView.js): per-DEVICE and never scrubbed before, so on a shared
-  // phone the next person to sign in inherited the last person's choice and could be shown the other's care — the
-  // Settings › Controls row sets it (the old Today's pill did, until S8c) and Today reads it (SF6). Cleared like
-  // garden.todayV2, consistent with SF11: after a sign-out the household view starts OFF. By import, not a literal:
-  // householdView.js is the one file that spells the key (householdView.test.js pins that) and imports only React,
-  // so there is no cycle.
+  // The household view switch, SHOW_OTHERS_KEY (lib/householdView.js): per-DEVICE, so on a shared
+  // phone the next person to sign in inherited the last person's choice and could be shown the other's
+  // care. The Settings › Controls row sets it and Today reads it. Cleared like garden.todayV2: after a
+  // sign-out the household view starts OFF. By import, not a literal: householdView.js is the one file
+  // that spells the key (householdView.test.js pins that) and imports only React, so there is no cycle.
   SHOW_OTHERS_KEY,
 ]
 
 export const CLIENT_PREF_KEY_PREFIXES = [
   'lastHarvestUnit:',   // EventNew.jsx — per-crop harvest-unit memory, one key per crop_type_slug
-  // V4-TODAYLOC-002 — CareNeeded suppress-for-today, one key per date ('today-skipped:YYYY-MM-DD').
+  // CareNeeded suppress-for-today, one key per date ('today-skipped:YYYY-MM-DD').
   // A prefix rather than an exact key because the date is in the name and old days accumulate.
   // Carrying one person's skips into the other's session would HIDE care rows from them, which is
   // the most consequential of the three — a plant goes unwatered and nothing on screen says why.
   'today-skipped:',
-  // BUG-TODAYSKIPNOUNDO-001 — the skip set's companion: keys this device UN-skipped today
+  // The skip set's companion: keys this device UN-skipped today
   // ('today-unskipped:YYYY-MM-DD'), which CareNeeded's mount merge refuses to re-add from the server.
   // Left behind, the next person to sign in has THEIR own server skips of those rows ignored, so the
   // rows show for them. It can only un-hide a row, never hide one — but it is one person's decision
   // applied to the other, which is the whole class this file exists to close. Same prefix shape, same
   // dated accumulation.
   'today-unskipped:',
-  // V5-TODAYREDESIGN-001 (plan-v2 §2.1, §3) — the redesigned Today's localStorage families, all keyed by
-  // user already, cleared anyway because sign-out ends one person's use of the device:
-  //   'today-sections:<user>' — the remembered open/closed mirror (useTodaySections.js, S2);
-  //   'today-seen:<user>'     — the chill first-seen memory (S5). Listed at S2 so the parallel slices that
-  //                             write the V2 families never contend over this list; the census in
-  //                             clientPrefs.test.jsx reds a V2 family written but not listed.
+  // The redesigned Today's localStorage families, all keyed by user already, cleared anyway because
+  // sign-out ends one person's use of the device:
+  //   'today-sections:<user>' — the remembered open/closed mirror (useTodaySections.js);
+  //   'today-seen:<user>'     — the chill first-seen memory.
+  // The census in clientPrefs.test.jsx reds a Today family that is written but not listed.
   'today-sections:',
   'today-seen:',
 ]
 
 // sessionStorage families, walked separately (the list above is localStorage's).
-// BUG-TODAYBACKRESORT-001 — the Today care list's visit layout ('today-visit:<user>:<plan_date>:<list>',
+// The Today care list's visit layout ('today-visit:<user>:<plan_date>:<list>',
 // components/today/visitLayout.js): the section order and open sections a list held, for Back. Keyed by
 // user already, so another person never READS it; cleared anyway, because sign-out ends the visit and a
 // tab outlives a sign-out. A literal, like the rest of this file; clientPrefsSession.test.jsx pins it
 // against visitLayout's own prefix.
 export const CLIENT_SESSION_KEY_PREFIXES = [
   'today-visit:',
-  // V5-TODAYREDESIGN-001 (plan-v2 §2.1 Layer 2, "this tab session") — the redesigned Today's day-scoped
-  // tab families: 'today-filters:<user>' (the task / spot chip selection, S4) and
-  // 'today-logged:<user>:<plan_date>' (rows logged today, the double-log guard under a seeded remount, S4).
-  // Listed at S2 for the same reason as the localStorage pair above; the slice that writes one in
-  // localStorage instead moves its entry across in the same commit.
+  // The redesigned Today's day-scoped tab families: 'today-filters:<user>' (the task / spot chip
+  // selection) and 'today-logged:<user>:<plan_date>' (rows logged today, the double-log guard under a
+  // seeded remount). A family written to localStorage instead must move its entry across here in the
+  // same commit.
   'today-filters:',
   'today-logged:',
 ]

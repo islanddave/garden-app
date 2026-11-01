@@ -1,16 +1,16 @@
 // src/lib/keyboardChrome.js
-// V4-KBCHROME-001 — app-wide bottom-chrome suppression while the soft keyboard is up.
+// App-wide bottom-chrome suppression while the soft keyboard is up.
 //
-// WHY. index.html ships interactive-widget=resizes-content (V4-KBVIEWPORT-001), so the keyboard
-// now SHRINKS the layout viewport instead of covering it. BottomNav (z100, fixed bottom) and
+// WHY. index.html ships interactive-widget=resizes-content, so the keyboard
+// SHRINKS the layout viewport instead of covering it. BottomNav (z100, fixed bottom) and
 // TodayBand (z80, fixed above it) therefore ride UP to sit directly on top of the keyboard,
-// eating ~112px of an already-halved viewport on every full-page text-entry route. The crucible
-// ruling: hide them while the keyboard is up. Scope note — the Sheet overlay is fixed/bottom:0
+// eating ~112px of an already-halved viewport on every full-page text-entry route. So they hide
+// while the keyboard is up. Scope note — the Sheet overlay is fixed/bottom:0
 // with an OPAQUE background at both peek and full, z200 over both chrome components, so
 // chrome-above-keyboard does not exist on ANY overlay surface; the real blast radius is
 // full-page text-entry routes, and suppression must be INERT when no keyboard is present.
 //
-// MECHANISM (pre-ruled — do not relitigate):
+// MECHANISM (settled design):
 //   - ONE predicate per chrome component. Each of BottomNav/TodayBand calls
 //     useKeyboardChromeSuppressed() and lets the single boolean drive BOTH its
 //     `visibility: hidden` AND its own CSS inset var (--bottom-nav-height /
@@ -25,8 +25,8 @@
 //     fields of one form, where focusout->focusin would otherwise flicker the chrome back for a
 //     frame or two).
 //   - The detector reads visualViewport for CHROME VISIBILITY only. It must never feed content
-//     positioning — that JS "fallback" was the root cause V4-KBVIEWPORT-001 removed, and
-//     noViewportInsetArithmetic.static.test.js enforces its absence.
+//     positioning — that JS "fallback" was the root cause of the keyboard-viewport bug the
+//     resizes-content viewport removed, and noViewportInsetArithmetic.static.test.js enforces its absence.
 //
 // BASELINE PROTOCOL (the part that earns "continuously recaptured"):
 //   - Seed on first reading, whatever it is (worst case: app loads keyboard-open -> suppression
@@ -43,7 +43,7 @@
 //
 // jsdom: no window.visualViewport -> the hook's effect bails -> `false` forever, and the pure
 // detector pieces are false/no-op on non-finite inputs. Every existing test renders exactly the
-// pre-change chrome. The real gate is the device pass (see the report's device-check list).
+// unsuppressed chrome. The real gate is a device pass.
 import { useState, useEffect } from 'react'
 
 export const KB_SHRINK_MIN_PX = 150

@@ -1,7 +1,6 @@
 // notificationPrefsClient — Settings page read/write for user_notification_prefs.
-// Spec: mvp-critter-pre-build-revision-V001 §2.1 (Lambda Routes 7+8).
-// Pattern mirrors src/lib/critterClient.js — same Lambda (VITE_API_CRITTERS),
-// fire-and-forget semantics where applicable, NEVER throws.
+// Same Lambda as src/lib/critterClient.js (VITE_API_CRITTERS); fire-and-forget semantics where
+// applicable, NEVER throws.
 //
 // Routes:
 //   GET   /api/notifications/prefs   → returns { critter_visit, quiet_hours_start, quiet_hours_end, ... }
@@ -24,8 +23,8 @@ const CRITTER_BASE = (import.meta.env.VITE_API_CRITTERS ?? '').replace(/\/$/, ''
 export const CRITTER_VISIT_VALUES = ['off', 'in_app_only', 'system']
 // Every value Garden's group-by control can offer (src/lib/gardenGroupBy.js); the Lambda's copy is
 // lambda/critter/validators.js, and lambda/critter/groupby.parity.test.js pins both to the control.
-// BUG-GARDENGROUPBYRESET-001: 'crop_type' — the Type option, Garden's default — was missing, so a Type
-// choice was never sent and every Garden mount re-adopted the server's older one.
+// 'crop_type' (the Type option, Garden's default) must stay in this list: a value missing here is never
+// sent, so every Garden mount would re-adopt the server's older one.
 export const GARDEN_GROUP_BY_VALUES = ['none', 'type', 'crop_type', 'lifecycle', 'heat', 'determinacy', 'day_length', 'allium_type', 'basil_use', 'bean_type', 'bean_habit', 'bean_use', 'location', 'group', 'freeform', 'status']
 export const GARDEN_SORT_ORDER_VALUES = ['alpha', 'recency']
 // Re-exported (not redeclared) from the layout module so the wire contract and the render contract
@@ -34,8 +33,6 @@ export const GARDEN_SORT_ORDER_VALUES = ['alpha', 'recency']
 // and saveHandedness below validates against it.
 export const HANDEDNESS_VALUES = HANDS
 export const GARDEN_EXPANDED_MAX = 2000
-
-// saveGardenGroupBy moved to the REPORTED savers below (BUG-GARDENGROUPBYRESET-001).
 
 // saveGardenSortOrder — fire-and-forget PATCH of the cross-device Garden sort-order preference
 // (user_notification_prefs.garden_sort_order). Mirrors patchNotificationPrefs: NEVER throws, silent
@@ -82,7 +79,7 @@ export async function saveGardenExpanded({ getToken, ids } = {}) {
 }
 
 // saveGardenBloomSeen — fire-and-forget PATCH of the cross-device critter first-reveal set
-// (user_notification_prefs.garden_bloom_seen, JSON array of critter-id strings). V4-BLOOM-001.
+// (user_notification_prefs.garden_bloom_seen, JSON array of critter-id strings).
 // Monotonic union semantics live in the caller; this just persists. NEVER throws.
 export async function saveGardenBloomSeen({ getToken, ids } = {}) {
   if (!CRITTER_BASE) return null
@@ -123,21 +120,18 @@ export async function saveGardenHelperRung1({ getToken } = {}) {
   }
 }
 
-// V5-ADMINCENTER-001 — SINGLE FLIGHT over the prefs GET.
+// SINGLE FLIGHT over the prefs GET.
 //
-// This route had NINE independent callers coming (SettingsNotifications, Collection, GardenHelper,
-// Garden, useWhatsNew, CareNeeded, useHandedness, ScopeChecklist, and the nav-config read this row
-// adds), each firing its own bare fetch on its own mount. On /today three of them mount in the same
-// frame, so the app was asking the same Lambda the same question three times inside the boot window
-// three consecutive perf rows were spent clearing — against a measured 1,706ms cold start
-// (warmOrigins.js:3-5). Adding a tenth uncoordinated call was not acceptable, so this collapses all
-// of them instead, in the one place every caller already goes through: no call site changes.
+// Many surfaces (SettingsNotifications, Collection, GardenHelper, Garden, useWhatsNew, useHandedness,
+// ScopeChecklist, the nav-config read) each fire their own fetch on mount, and on /today several mount
+// in the same frame. This collapses them in the one place every caller already goes through, so no
+// call site changes.
 //
 // DEDUP, NOT CACHE — and the distinction is the whole safety argument. `inFlight` is cleared the
 // moment the request settles, so a call made AFTER a response has landed still hits the network.
 // Callers that read prefs following their own PATCH (SettingsNotifications re-reads to confirm; the
-// admin centre refreshes after a save) therefore see fresh data exactly as before. A time-windowed
-// cache would have changed that, silently, for eight surfaces that never asked for it.
+// admin centre refreshes after a save) therefore see fresh data. A time-windowed cache would change
+// that silently for every surface that never asked for it.
 //
 // The latch is keyed on nothing because the token is per-signed-in-user and there is exactly one
 // signed-in user per document: two concurrent callers in one page are by construction asking for the
@@ -145,29 +139,31 @@ export async function saveGardenHelperRung1({ getToken } = {}) {
 // would serialise the callers on getToken() before they could join.
 let inFlight = null
 
-// BUG-GARDENGROUPBYRESET-001 (QA MINOR 4) — A READ THAT WAS ON THE WIRE WHEN A GARDEN GROUPING SAVE WAS CONFIRMED
-// IS MARKED, the way a cached body is. Its row can be the one from BEFORE that save: a later caller JOINS it
-// through the latch above (Garden, left and re-entered while its read was out), or it simply answers after the
-// save's own answer (a read sent while the save was still on the wire, handled first by another Lambda
-// instance). Either way Garden would read the older grouping as another device's choice and regroup the list.
-// Dropping the join on a confirmed save would reach only the first of those, and would change what the other
-// callers of the join get, so the join stays exactly as it is: instead each read notes the count of confirmed
-// grouping saves when it STARTS, and a body landing after the count moved carries
-// PREDATES_GROUP_BY_SAVE — a non-enumerable global-registry Symbol like FROM_CACHE, invisible to Object.keys,
-// spread and JSON. Garden (src/lib/gardenGroupBy.js) never adopts a marked body; no other caller reads the mark.
-// Scoped to garden_group_by on purpose: no other save can make that field of a body stale.
+// A READ THAT WAS ON THE WIRE WHEN A GARDEN GROUPING SAVE WAS CONFIRMED IS MARKED, the way a cached
+// body is. Its row can be the one from BEFORE that save: a later caller JOINS it through the latch
+// above (Garden, left and re-entered while its read was out), or it simply answers after the save's
+// own answer (a read sent while the save was still on the wire, handled first by another Lambda
+// instance). Either way Garden would read the older grouping as another device's choice and regroup
+// the list. Dropping the join on a confirmed save would reach only the first of those, and would change
+// what the other callers of the join get, so the join stays exactly as it is: instead each read notes
+// the count of confirmed grouping saves when it STARTS, and a body landing after the count moved carries
+// PREDATES_GROUP_BY_SAVE — a non-enumerable global-registry Symbol like FROM_CACHE, invisible to
+// Object.keys, spread and JSON. Garden (src/lib/gardenGroupBy.js) never adopts a marked body; no other
+// caller reads the mark. Scoped to garden_group_by on purpose: no other save can make that field of a
+// body stale.
 let groupBySavesConfirmed = 0
 export const PREDATES_GROUP_BY_SAVE = Symbol.for('garden-app.prefsPredatesGroupBySave')
 
-// V5-TODAYREDESIGN-001 S7 — the same problem for the redesigned Today's remembered sections, PER SECTION, and
-// for a body held since BEFORE the save as well as one landing after it. PrefsProvider reads prefs once, at boot,
-// and Today reads a section's server entry over its own clean mirror entry (plan-v2 §2.1). So once a tap's save
-// is confirmed, the held boot body is stale for that section: read as it stands, the next visit would bring the
-// pre-tap value back. Every body is therefore stamped with the count of confirmed sections saves when its read
-// STARTED (PREFS_SECTIONS_READ_AT, non-enumerable like FROM_CACHE), each confirmed section with the count its
-// save made, and sectionPredatesSave says which entries of a body are older than this device's own confirmed
-// tap. Today reads its mirror for those (useTodaySections). A body read after the save carries the server's
-// merge — this tap, or another device's newer one — and is read as the server's again.
+// The same problem for the redesigned Today's remembered sections, PER SECTION, and for a body held
+// since BEFORE the save as well as one landing after it. PrefsProvider reads prefs once, at boot, and
+// Today reads a section's server entry over its own clean mirror entry. So once a tap's save is
+// confirmed, the held boot body is stale for that section: read as it stands, the next visit would
+// bring the pre-tap value back. Every body is therefore stamped with the count of confirmed sections
+// saves when its read STARTED (PREFS_SECTIONS_READ_AT, non-enumerable like FROM_CACHE), each confirmed
+// section with the count its save made, and sectionPredatesSave says which entries of a body are older
+// than this device's own confirmed tap. Today reads its mirror for those (useTodaySections). A body
+// read after the save carries the server's merge — this tap, or another device's newer one — and is
+// read as the server's again.
 let sectionsSavesConfirmed = 0
 const sectionConfirmedAt = new Map()
 export const PREFS_SECTIONS_READ_AT = Symbol.for('garden-app.prefsSectionsReadAt')
@@ -182,14 +178,14 @@ export function sectionPredatesSave(prefs, key) {
 // fetchNotificationPrefs — GETs current prefs, joining any request already in flight.
 // Returns the prefs object on success, null on no-op or failure (NEVER throws).
 //
-// V5-NAVCUSTOM-001 — A BODY THE SERVICE WORKER SERVED FROM ITS CACHE IS MARKED, exactly as apiFetch
-// marks one (api.js, SW-STALEAPI-001): public/sw.js answers a GET whose network attempt failed
-// outright from its per-user API cache, still HTTP 200, stamped X-From-Cache. This client bypasses
-// apiFetch (the prefs route lives on the critter Lambda), so without this the stamp died here and a
-// days-old body read as fresh — it un-pinned pins this device had already confirmed and rewrote the
-// launch caches with an older bar. The marker is api.js's FROM_CACHE: a non-enumerable global-registry
-// Symbol, invisible to Object.keys, spread and JSON, so no existing caller sees a shape change.
-// NavPrefsContext reads it; every other caller is unaffected.
+// A BODY THE SERVICE WORKER SERVED FROM ITS CACHE IS MARKED, exactly as apiFetch marks one (api.js,
+// FROM_CACHE): public/sw.js answers a GET whose network attempt failed outright from its per-user API
+// cache, still HTTP 200, stamped X-From-Cache. This client bypasses apiFetch (the prefs route lives on
+// the critter Lambda), so without this the stamp dies here and a days-old body reads as fresh: it
+// un-pins pins this device had already confirmed and rewrites the launch caches with an older bar. The
+// marker is api.js's FROM_CACHE: a non-enumerable global-registry Symbol, invisible to Object.keys,
+// spread and JSON, so no existing caller sees a shape change. NavPrefsContext reads it; every other
+// caller is unaffected.
 export async function fetchNotificationPrefs({ getToken } = {}) {
   if (!CRITTER_BASE) return null
   if (inFlight) return inFlight
@@ -284,7 +280,7 @@ export async function patchNotificationPrefs({
 // keepalive:true survives unmount-on-route-change.
 
 // recordGardenViewOpened — Route 6 POST /api/notifications/garden-view-opened.
-// Spec: revision §3.7 (Phase B coachmark triggers on garden-view-enter, not critter-state-change).
+// Fires on garden-view-enter, not critter-state-change.
 // Server updates last_garden_view_at = now() (upserts user_notification_prefs row if absent).
 // Caller pattern: fire on Garden mount AND on document visibilitychange→visible (Garden re-entry).
 // Returns the updated last_garden_view_at ISO string on success, null otherwise.
@@ -307,7 +303,7 @@ export async function recordGardenViewOpened({ getToken } = {}) {
 }
 
 // recordCoachmarkDismissed — Route 9 POST /api/notifications/coachmark-dismissed.
-// Spec: revision §3.7 (1500ms min-visible-time before writing coachmark_seen_at).
+// The coachmark needs 1500ms min-visible-time before coachmark_seen_at is written.
 // Idempotent on server (COALESCE preserves existing coachmark_seen_at).
 // Caller pattern: fire on Garden unmount IFF coachmark was visible ≥1500ms.
 export async function recordCoachmarkDismissed({ getToken } = {}) {
@@ -329,7 +325,7 @@ export async function recordCoachmarkDismissed({ getToken } = {}) {
 }
 
 // recordOptInDismissed — Route 10 POST /api/notifications/opt-in-dismissed.
-// Spec: revision §3.8 (suppression-flag fix: opt_in_prompt_seen_at ONLY set after prompt ACTUALLY rendered).
+// opt_in_prompt_seen_at is set ONLY after the prompt ACTUALLY rendered.
 // Server is idempotent (COALESCE preserves existing).
 // Caller pattern: fire on Garden unmount IFF opt-in prompt was rendered.
 export async function recordOptInDismissed({ getToken } = {}) {
@@ -350,7 +346,7 @@ export async function recordOptInDismissed({ getToken } = {}) {
   }
 }
 
-// V4-USERPREFS-001 (V4-TODAYLOC-002) — the Care-Needed suppress-for-today set, cross-device.
+// The Care-Needed suppress-for-today set, cross-device.
 //
 // Wire shape is {date, keys}, with the date INSIDE the object so the pair can never be written
 // apart: a write that advanced the keys but not the date would suppress today's care rows using
@@ -390,15 +386,14 @@ export function readTodaySkipped(prefs, todayISO) {
   return Array.isArray(ts.keys) ? ts.keys.filter(k => typeof k === 'string') : []
 }
 
-// V4-USERPREFS-001 (V4-LOGMANY-001) — Log-Many default selection, per USER.
+// Log-Many default selection, per USER.
 //
-// This is the clearest case in the set for per-identity keying. ScopeChecklist's own comment reads
-// "true=start all selected [Dave], false=start none [Jen]": the two users want OPPOSITE defaults,
-// and the value was per-DEVICE, so whoever signed in second on a shared phone got the other
-// person's answer. Keyed on the Clerk sub, they can finally disagree.
+// The two users want OPPOSITE defaults (ScopeChecklist's own comment reads "true=start all selected,
+// false=start none"), and the value was per-DEVICE, so whoever signed in second on a shared phone got
+// the other person's answer. Keyed on the Clerk sub, they can disagree.
 //
 // `value` is passed through a strict boolean check rather than a truthiness coercion because FALSE
-// IS A REAL CHOICE here (it is Jen's), and `if (!value) return` would silently refuse to save it.
+// IS A REAL CHOICE here, and `if (!value) return` would silently refuse to save it.
 export async function saveLogManyAllSelected({ getToken, value } = {}) {
   if (!CRITTER_BASE) return null
   if (typeof value !== 'boolean') return null
@@ -418,20 +413,21 @@ export async function saveLogManyAllSelected({ getToken, value } = {}) {
   }
 }
 
-// V4-HANDEDNESSCONTROLS-001 (BD-054) — which hand works the phone, per USER.
+// Which hand works the phone, per USER.
 //
 // Per-identity for the same reason log_many_all_selected is: this app has exactly two users on
 // shared devices and they do not have the same hands. It is also the one preference here where
 // inheriting the other person's answer is a SAFETY regression rather than an annoyance — it moves
 // a destructive control under the wrong thumb (see src/lib/handedness.js).
 //
-// ⚠️ INERT UNTIL THE COLUMN LANDS. user_notification_prefs.handedness does not exist yet
-// (migrations/v4-handednesscontrols-001 — authored, NOT applied to staging or prod). Until it does,
-// this PATCH carries `handedness` as its ONLY key, so validateNotificationPrefsPatchBody's
-// HAS_UPDATABLE check (lambda/critter/validators.js:102) returns 400 "no updatable fields present"
-// and this function returns null. That is the correct pre-migration outcome and it is why the key
-// is sent alone rather than batched with another: batching it would carry a live preference into a
-// request the server is about to reject. Nothing else on the prefs surface is affected.
+// ⚠️ INERT UNTIL THE COLUMN LANDS. The critter Lambda's HAS_UPDATABLE list
+// (validateNotificationPrefsPatchBody in lambda/critter/validators.js) does not yet include
+// `handedness`, and user_notification_prefs.handedness is authored in migrations/v4-handednesscontrols-001
+// but not known to be applied. Until then this PATCH carries `handedness` as its ONLY key, the Lambda
+// returns 400 "no updatable fields present", and this function returns null. That is the correct
+// pre-migration outcome and it is why the key is sent alone rather than batched with another:
+// batching it would carry a live preference into a request the server is about to reject. Nothing
+// else on the prefs surface is affected.
 export async function saveHandedness({ getToken, value } = {}) {
   if (!CRITTER_BASE) return null
   if (!HANDEDNESS_VALUES.includes(value)) return null
@@ -451,13 +447,13 @@ export async function saveHandedness({ getToken, value } = {}) {
   }
 }
 
-// V5-NAVCUSTOM-001 — THE SAVERS BELOW REPORT THEIR OUTCOME, unlike every writer above them.
+// THE SAVERS BELOW REPORT THEIR OUTCOME, unlike every writer above them.
 //
 // The fire-and-forget writers above are right for what they save: the caller has already applied the
 // change locally and a lost sync costs nothing visible. These are the opposite. A pin that fails
 // silently reappears unpinned at the next launch, and the bar editor's Save is a page whose only job
 // is that write — a save that reports nothing is a save that lies. A Garden grouping that fails silently
-// is overwritten at the next Garden mount by the server's older one (BUG-GARDENGROUPBYRESET-001). So all return
+// is overwritten at the next Garden mount by the server's older one. So all return
 // { ok: true } | { ok: false, status }, where status 0 is the house convention for "never reached the
 // server" (offline, no token, timed out, env unset) and anything else is the server's own answer.
 // NavPrefsContext reads that split: 0 and 5xx keep the change and retry, a 4xx rolls it back. Garden keeps
@@ -471,15 +467,14 @@ export async function saveHandedness({ getToken, value } = {}) {
 //
 // NO keepalive by default, deliberately. A reported save needs its response. Durability across an app close is
 // the caller's pending flag, written BEFORE the request goes out (NavPrefsContext's for pins, projectTree.js's
-// for the Garden grouping). ONE caller asks for keepalive per call: the Garden grouping (rimpact #5). It was a
-// keepalive write before BUG-GARDENGROUPBYRESET-001, and without it a pick followed at once by closing the
-// app reaches the server only at this device's next Garden visit — another device shows the older grouping in
-// between. A keepalive fetch still resolves with its response while the page lives (Fetch spec), so the report
-// is unchanged; the pins and the bar keep the default.
+// for the Garden grouping). keepalive is opt-in per call: saveGardenGroupBy and saveTodaySections ask for it,
+// because a pick or tap followed at once by closing the app must still reach the server (otherwise another
+// device shows the older value until this device's next visit). A keepalive fetch still resolves with its
+// response while the page lives (Fetch spec), so the report is unchanged; the pins and the bar keep the default.
 //
-// NOT nav_tabs. The retired global order (public.app_config, V5-ADMINCENTER-001) never belonged on
-// this per-user table and still does not: bar_layout below is a different key with a different
-// shape, and it IS per-user — Dave ruled on 2026-09-24 (D4) that only his bar changes, never Jen's.
+// NOT nav_tabs. The retired global order (public.app_config) never belonged on this per-user table and
+// still does not: bar_layout below is a different key with a different shape, and it IS per-user — only
+// the caller's own bar changes, never another user's.
 //
 // A payload the contract refuses is reported as the 400 the server would return, with `local: true`,
 // without spending the round trip. The client check is not the boundary — the Lambda validator is.
@@ -530,16 +525,17 @@ export async function saveBarLayout({ getToken, layout } = {}) {
   return patchPrefsReported(getToken, { bar_layout: { order: r.order, hidden: r.hidden } })
 }
 
-// saveTodaySections — V5-TODAYREDESIGN-001 S7. The redesigned Today's remembered open/closed state: `sections`
-// is the whole wire value, { v:1, <section>: {open, at, ack?}, … } (src/lib/todayV2/sectionsWire.js builds it from
-// the device mirror's dirty entries). Written only from an explicit section-header tap, never from the visit layer
-// or a trigger — useTodaySections is the only caller and sends only what a tap marked dirty.
+// saveTodaySections — the redesigned Today's remembered open/closed state: `sections` is the whole wire
+// value, { v:1, <section>: {open, at, ack?}, … } (src/lib/todayV2/sectionsWire.js builds it from the
+// device mirror's dirty entries). Written only from an explicit section-header tap, never from the visit
+// layer or a trigger — useTodaySections is the only caller and sends only what a tap marked dirty.
 //
-// SENT ALONE (plan-v2 §2.1): a critter Lambda from before S7 answers 400 "no updatable fields present" for the
-// whole body, and the S7 Lambda answers 409 while its database lacks the column — anything batched beside it
-// would be lost with it. The caller keeps every non-ok entry dirty on the device and sends it again at the next
-// visit start. keepalive (rimpact #5): a tap followed at once by leaving Today must still reach the server.
-// A confirmed save moves the count every read is stamped with (sectionPredatesSave, above the read).
+// SENT ALONE: a critter Lambda from before this key answers 400 "no updatable fields present" for the
+// whole body, and a newer Lambda answers 409 while its database lacks the column — anything batched
+// beside it would be lost with it. The caller keeps every non-ok entry dirty on the device and sends it
+// again at the next visit start. keepalive: a tap followed at once by leaving Today must still reach
+// the server. A confirmed save moves the count every read is stamped with (sectionPredatesSave, above
+// the read).
 export async function saveTodaySections({ getToken, sections } = {}) {
   if (!todaySectionsWireOk(sections)) return LOCAL_REFUSAL
   const res = await patchPrefsReported(getToken, { today_sections: sections }, { keepalive: true })
@@ -551,12 +547,11 @@ export async function saveTodaySections({ getToken, sections } = {}) {
 }
 
 // saveGardenGroupBy — the cross-device Garden grouping (user_notification_prefs.garden_group_by).
-// BUG-GARDENGROUPBYRESET-001: was fire-and-forget, returning the row or null, so Garden could not tell a
-// save the server has from one a dead zone ate — and the first thing its next mount did was adopt the
-// server's older value. Garden now clears its pending marker only on { ok: true } (gardenGroupBy.js). The
-// body is not read: ok is the confirmation, and a 200 with an unreadable body is still a stored value.
-// A confirmed save moves the count every read compares against (PREDATES_GROUP_BY_SAVE, above the read).
-// keepalive: see the note above patchPrefsReported (rimpact #5).
+// Reported, not fire-and-forget: Garden must tell a save the server has from one a dead zone ate, or
+// its next mount adopts the server's older value. Garden clears its pending marker only on { ok: true }
+// (gardenGroupBy.js). The body is not read: ok is the confirmation, and a 200 with an unreadable body is
+// still a stored value. A confirmed save moves the count every read compares against
+// (PREDATES_GROUP_BY_SAVE, above the read). keepalive: see the note above patchPrefsReported.
 export async function saveGardenGroupBy({ getToken, value } = {}) {
   if (!GARDEN_GROUP_BY_VALUES.includes(value)) return LOCAL_REFUSAL
   const res = await patchPrefsReported(getToken, { garden_group_by: value }, { keepalive: true })
@@ -564,8 +559,7 @@ export async function saveGardenGroupBy({ getToken, value } = {}) {
   return res
 }
 
-// V4-USERPREFS-001 (V4-WHATSNEW-002) — last-seen release version, per user.
-// whatsNew.js's header said cross-device sync was "deferred to V4-WHATSNEW-002"; this is it.
+// Last-seen release version, per user.
 export async function saveWhatsNewSeen({ getToken, version } = {}) {
   if (!CRITTER_BASE) return null
   if (typeof version !== 'string' || version === '') return null

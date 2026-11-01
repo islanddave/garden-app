@@ -1,4 +1,4 @@
-// saveBandLayout.js — BUG-WEIGHPADSAVEBAND-001.
+// saveBandLayout.js
 // The one place that states how much room a control owes EventNew's sticky Save band, and the
 // only mechanism that enforces it.
 //
@@ -9,23 +9,18 @@
 // height is not a constant: 48px with the action row alone, 128px once one session ledger row
 // renders, 156px at two, 184px at the three-row cap. The band's TOP EDGE therefore moves by 136px
 // during an ordinary weigh-in session while the form underneath is laid out knowing none of it. A
-// static `marginBottom` cannot express that, which is exactly how the shipped clearance came to be
-// an accident rather than a decision.
+// static `marginBottom` cannot express that.
 //
-// MEASURED, real engine, tests/harness at a TRUE 390x500 (page inside a 390px iframe in a
-// normally-sized window — macOS Chrome floors an OS window at ~500px and CROPS the capture instead
-// of reflowing, so `--window-size=390` measures a 500px layout and lies). Weigh-in session,
-// full-page surface, harvest section anchored, self-evidenced `innerWidth 390 / scrollWidth 390 /
-// no h-scroll`:
-//   band y384-432 (h48)  ·  weight keypad bottom row y351-399
-//   → 15px of every bottom-row key covered; key centre 9px from the band's top edge, i.e. 9px from
-//     `elementFromPoint` returning `#save-sticky` instead of the key.
-// BUG-WEIGHPADSAVEBAND-001 measured the same collision at 1px on the pre-BD-063 build, where the
-// quantity pad still carried its `Next →` row and pushed the weight pad 56px lower. 1px and 9px are
-// the same accident at two different values; neither was ever chosen.
+// MEASURING: use tests/harness at a TRUE 390x500 (page inside a 390px iframe in a normally-sized
+// window). macOS Chrome floors an OS window at ~500px and CROPS the capture instead of reflowing, so
+// `--window-size=390` measures a 500px layout and lies. At that size, in a weigh-in session on the
+// full-page surface, the weight keypad's bottom row (y351-399) sits under the band (y384-432, h48):
+// 15px of every bottom-row key is covered, and the key centre is 9px from the band's top edge, i.e. 9px
+// from `elementFromPoint` returning `#save-sticky` instead of the key. No such clearance was ever a
+// chosen value; each was an accident.
 //
 // ⚠️ jsdom can falsify NONE of the geometry above — `getBoundingClientRect()` returns zeros there
-// and `elementFromPoint` is meaningless (tests/harness/README.md:14-16). The pure functions below
+// and `elementFromPoint` is meaningless (tests/harness/README.md). The pure functions below
 // are unit-testable because they take rects as ARGUMENTS; the layout claim they encode is not, and
 // is gated by `scripts/layout-gate/save-band-clearance.mjs` instead.
 import { BOTTOM_NAV_HEIGHT_PX } from './constants.js'
@@ -38,30 +33,26 @@ export const SAVE_BAND_BOTTOM_INSET_PX = BOTTOM_NAV_HEIGHT_PX + 12
 
 // THE STATED MINIMUM. Vertical gap every interactive control owes the band's rendered top edge.
 // 20px is not a fresh magic number: it is the clearance the band's own action zone already mandates
-// between two mis-tappable controls (Undo's bottom edge to Save's top edge, V4-HARVFEEDBACK-001
-// spec §2, EventNew.jsx). Reusing it keeps one number for "how far apart do two things a thumb can
-// confuse have to be" instead of minting a second. It is also >= the 8dp adjacent-target spacing
-// Material asks for, and it is 20x the clearance this bug was filed about.
+// between two mis-tappable controls (Undo's bottom edge to Save's top edge, EventNew.jsx).
+// Reusing it keeps one number for "how far apart do two things a thumb can confuse have to be"
+// instead of minting a second. It is also >= the 8dp adjacent-target spacing Material asks for.
 export const SAVE_BAND_MIN_CLEARANCE_PX = 20
 
-// ── V4-WEIGHFRAME-001 R1 — the same rule on the FRAME arm, which has no band ───────────────────
+// ── The same rule on the FRAME arm, which has no band ───────────────────────────────────────────
 // The frame's Save lives in `weigh-frame-track3`, a real grid track, so nothing can slide under
-// anything and the clearance rule above has no band to resolve against. The frame's first gate
-// therefore asserted only "the pad is not BENEATH the ledger" — a different question from the one
-// this file exists to answer, and it passed at the number below.
+// anything and the clearance rule above has no band to resolve against. A gate asserting only "the
+// pad is not BENEATH the ledger" is a different question from the one this file exists to answer.
 //
-// MEASURED, real engine, tests/harness at a true 390x500 (iframe, self-reported 390x500/scrollW 390),
-// WEIGH_IN_FRAME_ENABLED true, weigh-in session, weight field focused:
+// MEASURED at a true 390x500 (WEIGH_IN_FRAME_ENABLED true, weigh-in session, weight field focused):
 //   weight-pad bottom row y351-399  ·  track 3 top y399 (1px border)  ·  Save y400-448
 //   -> 1px between ⌫ and an irreversible commit, with three bottom-row keys inside Save's x-range
 //      (0 x199-252, . x260-313, ⌫ x321-374 against Save x224-374 at the default hand).
 // Every key hit-tests to itself, so this is not occlusion — it is the mis-tap that COMMITS, and it
-// is recovered only by Undo-then-redo. 1px is the same accident BUG-WEIGHPADSAVEBAND-001 was filed
-// about at a different value, on a surface whose whole point was to end that class.
+// is recovered only by Undo-then-redo.
 //
-// SAVE_BAND_MIN_CLEARANCE_PX is REUSED rather than a second number minted. Its own note says why:
-// one answer to "how far apart do two things a thumb can confuse have to be". The two arms ship
-// together, so a frame-only floor would be a second policy for one hazard.
+// SAVE_BAND_MIN_CLEARANCE_PX is REUSED rather than a second number minted: one answer to "how far
+// apart do two things a thumb can confuse have to be". The two arms ship together, so a frame-only
+// floor would be a second policy for one hazard.
 //
 // WHERE THE PIXELS COME FROM, because at 390x500 the frame had none spare (track 2 measured
 // 347/347, `overflowing: false`). Track 2 is `minmax(0,1fr) auto`: the harvest row is `auto` and the
@@ -128,7 +119,7 @@ function scrollParentOf(el) {
 //
 // Called at the two moments the user commits to the weigh-in — focusing the weight field, and
 // pressing any weight-pad key — NOT on quantity focus. That restraint is deliberate: quantity focus
-// already runs `anchorSectionToTop` (V4-HARVSCROLLANCHOR-001 / BD-016), and adding a second scroll
+// already runs `anchorSectionToTop`, and adding a second scroll
 // there would both fight the smooth anchor mid-animation and, once the session ledger has grown the
 // band, push the field being typed into off the top of the viewport to make room for a pad the user
 // has not reached yet. Clearing the pad the moment it is wanted costs nothing and breaks nothing.
@@ -144,7 +135,7 @@ export function clearWeightPadOfSaveBand(doc = typeof document === 'undefined' ?
     ...(opts.padSelector ? { controlSelector: opts.padSelector } : null) })
 }
 
-// BUG-LOGBANDOCCLUDE-001 — the same rule for ANY control, because the weight keypad was never
+// The same rule for ANY control, because the weight keypad was never
 // special. The band floats over whatever happens to sit at `bottom: 68px` in the viewport, so the
 // occluded control is a function of scroll position and viewport height, not of which control it
 // is. Extracted rather than copied so there is still exactly one implementation of "scroll the
@@ -158,7 +149,7 @@ export function clearControlOfSaveBand(doc = typeof document === 'undefined' ? n
   const pad = doc.querySelector(controlSelector)
   const band = doc.querySelector(bandSelector)
   if (!pad || !band) return 0
-  // A hidden band occludes nothing — the picker-open suppression (V4-PICKERUX-001) sets
+  // A hidden band occludes nothing — the picker-open suppression sets
   // `visibility: hidden`, which removes the whole subtree from hit testing. Scrolling for a band
   // that cannot take a tap would be a jump with no cause.
   const view = doc.defaultView

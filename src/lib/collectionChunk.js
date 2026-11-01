@@ -1,21 +1,18 @@
-// V4-LAZYRETRY-001 — lazy access to the /collection page chunk (~40KB gzip: Collection.jsx plus the
+// Lazy access to the /collection page chunk (~40KB gzip: Collection.jsx plus the
 // critters-roster.json and CritterOfDay.jsx subgraphs no other route reaches).
 //
-// WHY A DYNAMIC import() AND NOT React.lazy. This route WAS `React.lazy(() => import(…))` in
-// App.jsx, and that made a failed fetch UNRECOVERABLE. React.lazy caches a rejected payload
-// permanently: in the installed React 18.3.1 (react/cjs/react.development.js:1354-1409,
-// `lazyInitializer`) the ctor runs only under `if (payload._status === Uninitialized)`, a failed
-// load sets `_status = Rejected`, and every later render falls through to `throw payload._result`
-// without ever issuing another request. The route had no ErrorBoundary of its own, so the throw
-// reached the APP-level boundary and blanked the whole PWA — and its "Try again" button, which only
-// clears `hasError` and re-renders the same lazy object, could never recover it. One dead spot
-// mid-tap, or a STATIC_CACHE purged by a deploy, and /collection was gone for the session.
+// WHY A DYNAMIC import() AND NOT React.lazy. React.lazy caches a rejected payload permanently: in
+// React 18.3.1 `lazyInitializer` runs the ctor only while the payload is Uninitialized, a failed
+// load sets it Rejected, and every later render throws the cached rejection without issuing another
+// request. A failed chunk fetch (one dead spot mid-tap, or a STATIC_CACHE purged by a deploy) would
+// then reach the APP-level boundary and blank the whole PWA, and its "Try again" button, which only
+// clears `hasError` and re-renders the same lazy object, could never recover it.
 //
 // This module is the sanctioned alternative, and the same shape as its sibling
-// critterFactsLoader.js: a plain import() whose failure branch is a VALUE, not a throw. It is what
-// CropCard.jsx:17 forbids React.lazy at/above that card in favour of. Nothing unmounts, nothing
-// error-boundaries, and a retry is a genuinely NEW import() rather than a re-read of a cached
-// rejection — which is the whole point, since browsers no longer memoise module-map fetch errors.
+// critterFactsLoader.js: a plain import() whose failure branch is a VALUE, not a throw. CropCard.jsx
+// likewise forbids React.lazy at/above that card. Nothing unmounts, nothing error-boundaries, and a
+// retry is a genuinely NEW import() rather than a re-read of a cached rejection — which is the whole
+// point, since browsers no longer memoise module-map fetch errors.
 //
 // Module-scope cache, mirroring CropCard's hwModule and critterFactsLoader's: once the chunk lands,
 // later mounts resolve synchronously via peek() at first render, so navigating back to /collection

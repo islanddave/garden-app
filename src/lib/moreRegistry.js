@@ -1,6 +1,4 @@
-// moreRegistry — V5-NAVCUSTOM-001. The More sheet as DATA, so each row has an id a person can pin.
-// Design: project-state/design-navcustom-V100-20260924.md §8 (binding over §1–§3); ids and read-time
-// rules: _navcustom-panel-20260924/seat-state.md §2–§3; contract: _navcustom-build-20260924/CONTRACT.md.
+// moreRegistry — the More sheet as DATA, so each row has an id a person can pin.
 //
 // A LEAF: no React, no page import. BottomNav, NavPrefsContext and the tests all read it.
 //
@@ -23,7 +21,7 @@ import { SEEDS_PATH } from './seedsRoutes.js'
 import { TAB_REGISTRY, BAR_SLOT_ID_RE } from './navConfig.js'
 
 // Sections in sheet order. 'debug' carries no label: Debug & smoke sits directly under Help & account,
-// as it always has (OPS-DEBUGMENU-001 — the least-used row, last by design).
+// as it always has (the least-used row, last by design).
 export const MORE_SECTIONS = [
   { key: 'garden',  label: 'Your garden' },
   { key: 'rewards', label: 'Rewards' },
@@ -31,8 +29,8 @@ export const MORE_SECTIONS = [
   { key: 'debug',   label: null },
 ]
 
-// ADORNMENT_IN_MORE — V5-NAVSLOTADORN-001 (Dave 2026-10-01: "the dot follows the page … and the More
-// button stops showing a dot for a page that is no longer inside More"). A row names its ambient dot;
+// ADORNMENT_IN_MORE — the dot follows the page: the More button stops showing a dot for a page that
+// is no longer inside More. A row names its ambient dot;
 // this says where that dot is drawn while the row is INSIDE the sheet: 'row' = beside the row's label
 // (the What's-New dot, seen once the sheet is open), 'more' = on the More button (the critter
 // new-visitor dot, seen from the bar). With the row ON the bar the dot is on its own slot either way
@@ -45,34 +43,34 @@ export const ADORNMENT_IN_MORE = {
 
 // Fields: id, to, label, sub?, iconName, section, enabled? (a BUILD flag — a flag-off row is not
 // drawn and its pin sleeps), pinnable? (default true), adornment? (a key of ADORNMENT_IN_MORE),
-// testId?, barLabel? (V5-NAVANYSLOT-001 — the shorter name the row wears if a person puts it on the
+// testId?, barLabel? (the shorter name the row wears if a person puts it on the
 // tab bar, whose slots are ~53px wide at 320px; rows without one use `label`, which fits).
 export const MORE_ROWS = [
   { id: 'dashboard',  to: '/dashboard',  label: 'Dashboard', iconName: 'nav.dashboard',  section: 'garden' },
-  // V4-NAVHARVEST-001 — DrG demoted here from the tab bar. /findings keeps its route and its icon.
+  // DrG lives here, not on the tab bar. /findings keeps its route and its icon.
   { id: 'findings',   to: '/findings',   label: 'DrG',       iconName: 'nav.findings',   section: 'garden' },
   { id: 'photos',     to: '/photos',     label: 'Photos',    iconName: 'media.camera',   section: 'garden' },
-  // V4-SPACEPHOTO-001 — the property itself, ABOVE the zones beneath it. SPACE_PHOTOS_ENABLED is also
+  // The property itself, ABOVE the zones beneath it. SPACE_PHOTOS_ENABLED is also
   // the rollback lever: with it off the row is not drawn and a stored pin sleeps until it returns.
   { id: 'space',      to: '/space',      label: 'Space',     iconName: 'nav.space',      section: 'garden', enabled: SPACE_PHOTOS_ENABLED },
-  // V4-SPACECLIENTGAP-001 — "Zones", unconditionally; the id stays the route's.
+  // "Zones", unconditionally; the id stays the route's.
   { id: 'locations',  to: '/locations',  label: 'Zones',     iconName: 'facet.location', section: 'garden' },
   { id: 'inventory',  to: '/inventory',  label: 'Inventory', iconName: 'nav.inventory',  section: 'garden' },
-  // V5-SEEDSTAB-001 — ONE Seeds row where Sow now and Saved seeds used to sit (their ids alias here).
+  // ONE Seeds row where Sow now and Saved seeds used to sit (their ids alias here).
   // The subtitle keeps both old names in the menu; the testid is pinned by BottomNav.test.jsx.
   { id: 'seeds',      to: SEEDS_PATH,    label: 'Seeds',     iconName: 'lifecycle.sprout', section: 'garden',
     sub: 'My seeds · Saved seeds · Sow now', testId: 'more-seeds' },
   { id: 'achievements', to: '/achievements', label: 'Achievements', iconName: 'nav.achievements', section: 'garden',
     barLabel: 'Awards' },
-  // V5-PLANTSTARTDATES-001 — a plain link row now (it was a CatchUpBadge component row, so it was
-  // unpinnable). NO count: a count nudging you to fill data is a badge Reward UX V102 forbids here.
+  // A plain link row (not a CatchUpBadge component row, which would be unpinnable). NO count: a count
+  // nudging you to fill data is a badge Reward UX V102 forbids here.
   { id: 'catch-up',   to: '/plants/catch-up', label: 'Catch up', iconName: 'care.plantedOut', section: 'garden',
     sub: 'Add missing start dates' },
   // End of season — the ONLY door to /season-end. Last in Your garden so no existing row moves within
   // its section; the icon is the Ended status glyph, the status this page sets.
   { id: 'season-end', to: '/season-end', label: 'End of season', iconName: 'status.ended', section: 'garden',
     sub: 'Close out finished plantings', barLabel: 'Season' },
-  // Season stats (lane stats-l2-statspage-20260929) — right after End of season. The id is permanent:
+  // Season stats — right after End of season. The id is permanent:
   // a pin on it lives in the nav customizer.
   { id: 'season-stats', to: '/season-stats', label: 'Season stats', iconName: 'nav.harvests', section: 'garden',
     sub: 'How this season went', barLabel: 'Stats' },
@@ -80,31 +78,30 @@ export const MORE_ROWS = [
     sub: "Who's been visiting", adornment: 'critterVisitor' },
   { id: 'helper',     to: '/helper',     label: 'Garden Helper', iconName: 'nav.helper',  section: 'help', barLabel: 'Helper' },
   { id: 'settings',   to: '/settings',   label: 'Settings',  iconName: 'action.settings', section: 'help' },
-  // V4-HANDEDNESSCONTROLS-001 — its own row; /settings is still the notifications redirect.
+  // Its own row; /settings is still the notifications redirect.
   { id: 'settings-controls', to: '/settings/controls', label: 'Controls', iconName: 'action.settings', section: 'help' },
   { id: 'about',      to: '/about',      label: 'About',     iconName: 'action.info',    section: 'help' },
   { id: 'releases',   to: '/releases',   label: 'Release Notes', iconName: 'nav.notes',  section: 'help', adornment: 'whatsNew',
     barLabel: 'Releases' },
-  // OPS-DEBUGMENU-001 — the ONLY nav door to every /admin/* page (DebugMenu.reachability.test.jsx):
+  // The ONLY nav door to every /admin/* page (DebugMenu.reachability.test.jsx):
   // an installed PWA has no address bar. Last by design (least used). NOT client-gated — the app's
   // convention is server-side ADMIN_CLERK_SUBS with no client admin list; hiding a row is
-  // discoverability, not authorisation (Dave 2026-08-27: "this is still only me using it right now").
+  // discoverability, not authorisation.
   { id: 'admin',      to: '/admin',      label: 'Debug & smoke', iconName: 'mode.desk',  section: 'debug', barLabel: 'Debug' },
 ]
 
 // Removed rows. An id here is never reused; a stored pin carrying it is dropped at read time, and the
-// next save from that person writes the list without it. EMPTY ON PURPOSE: no id existed before this
-// release, so nothing has been retired yet.
+// next save from that person writes the list without it. Empty until the first row is removed.
 export const RETIRED_MORE_IDS = []
 
-// Merged rows: old id -> the live id that absorbed it. The precedent is V5-SEEDSTAB-001, which folded
-// the Sow now and Saved seeds rows into Seeds.
+// Merged rows: old id -> the live id that absorbed it (e.g. the Sow now and Saved seeds rows folded
+// into Seeds).
 export const MORE_ID_ALIASES = {
   sow: 'seeds',
   'saved-seeds': 'seeds',
 }
 
-// CONTRACT §4 — shared with the Lambda validator (parity-tested at integration). The SAME pattern as
+// Shared with the Lambda validator (CONTRACT §4, parity-tested). The SAME pattern as
 // a tab-bar slot (navConfig.BAR_SLOT_ID_RE): a page has one id whether it is pinned, moved or on the bar.
 export const MORE_PIN_ID_RE = BAR_SLOT_ID_RE
 export const MORE_PINS_MAX_STORED = 32
@@ -153,11 +150,11 @@ export function movedTabRow(key) {
   }
 }
 
-// barSlotRow — V5-NAVANYSLOT-001. One tab-bar slot id in, the row BottomNav draws out, or null when
+// barSlotRow — one tab-bar slot id in, the row BottomNav draws out, or null when
 // this build cannot draw it (unknown id, a flag-off row). A tab key reads TAB_REGISTRY; anything else
 // reads MORE_ROWS through MORE_ID_ALIASES, so a slot stored as 'sow' still draws Seeds. The bar slot
 // carries `key` = the resolved id (the React key and the dedupe key) and wears barLabel when it has one.
-// V5-NAVSLOTADORN-001 — and it keeps the row's `adornment`, so the page's dot is drawn on its slot.
+// It keeps the row's `adornment`, so the page's dot is drawn on its slot.
 export function barSlotRow(id, { rows = MORE_ROWS, aliases = MORE_ID_ALIASES } = {}) {
   if (typeof id !== 'string') return null
   if (Object.hasOwn(TAB_REGISTRY, id)) return { ...TAB_REGISTRY[id], key: id }
@@ -180,7 +177,7 @@ export function barSlotRows(ids, opts) {
 }
 
 // Every row the sheet can draw right now: moved tabs FIRST (in bar order), then the registry rows
-// whose build flag is on — minus any the person has put ON the bar (V5-NAVANYSLOT-001: one door per
+// whose build flag is on — minus any the person has put ON the bar (one door per
 // page, the same rule a moved tab already follows in the other direction). `onBar` is slot ids;
 // aliases are resolved so a bar slot stored as 'sow' still takes Seeds out of the sheet.
 export function drawableMoreRows({ moved = [], rows = MORE_ROWS, onBar = [] } = {}) {
@@ -188,7 +185,7 @@ export function drawableMoreRows({ moved = [], rows = MORE_ROWS, onBar = [] } = 
   return [...moved.map(movedTabRow), ...rows.filter(rowEnabled).filter(r => !barIds.includes(r.id))]
 }
 
-// moreButtonAdornments — V5-NAVSLOTADORN-001. The dots the More button wears: the 'more' adornments of
+// moreButtonAdornments — The dots the More button wears: the 'more' adornments of
 // the rows the sheet would draw right now, each once. Read through drawableMoreRows on purpose, so "is
 // this page inside More?" has ONE answer for the sheet and for the button: a row on the bar (under any
 // alias) or behind an off flag is in neither. Takes the same arguments as drawableMoreRows.

@@ -1,50 +1,20 @@
-// API prefix → Lambda routing table.
-// Owner: Dave. Change requires staging smoke of affected route.
+// API prefix → Lambda routing table. Owner: Dave. Change requires staging smoke of the affected route.
 //
-// Resolution is FIRST-MATCH on insertion order — Object.entries preserves
-// declaration order. Longer / more-specific prefixes MUST be declared BEFORE
-// their shorter parents (e.g., '/api/projects/inactive' precedes '/api/projects').
-//
-// Prefix → Lambda env var → purpose
-//   /api/projects/inactive  → VITE_API_DASHBOARD     dashboard footer / inactive surface (S3)
-//   /api/projects           → VITE_API_PROJECTS      projects CRUD
-//   /api/plants             → VITE_API_PLANTS        plants CRUD
-//   /api/locations          → VITE_API_LOCATIONS     locations CRUD
-//   /api/notifications      → VITE_API_EVENTS        web-push subscribe (Lambda 2.2.x)
-//   /api/events             → VITE_API_EVENTS        events CRUD
-//   /api/favorites          → VITE_API_FAVORITES     favorites toggle
-//   /api/photos             → VITE_API_PHOTOS        photo upload/list
-//   /api/dashboard          → VITE_API_DASHBOARD     dashboard composite
-//   /api/inventory-items    → VITE_API_INVENTORY     inventory CRUD
-//   /api/varieties          → VITE_API_VARIETIES     variety reference data
-//   /api/achievements       → VITE_API_ACHIEVEMENTS  achievements list
-//   /api/ux-events          → VITE_API_UX_EVENTS     UX success-metric sink (Inc 0; admin-read + telemetry write)
-//   /api/shared-state       → VITE_API_SHARED_STATE  shared-garden reward substrate (V3-REWARDSTATE-001)
-//   /api/findings           → VITE_API_FINDINGS      DRG care findings read model (DRG-TAB-001)
-//   /api/daily-plan         → VITE_API_DAILY_PLAN_READ  Daily Plan read model — Today surface (DRG-TODAY-002)
-//   /api/members            → VITE_API_MEMBERS       household roster for the caretaker picker (PLANT-ASSIGN-001)
-//   /api/tags               → VITE_API_TAGS         faceted tag substrate CRUD (V4-TAGSUB-001)
-//   /api/entity-tags        → VITE_API_TAGS         entity↔tag attach/detach + projected derived tags
-//   /api/search             → VITE_API_DASHBOARD    server-side universal search (V4-SEARCH-002)
-//   /api/storage-locations  → VITE_API_STORAGE_LOCATIONS  Put-Up storage vocab CRUD (V4-HARVESTCENTER-001)
-//   /api/preservation       → VITE_API_PRESERVATION  Put-Up log CRUD + whats-put-up/use-soon reads (V4-HARVESTCENTER-001)
-//   /api/kitchen-batches    → VITE_API_PRESERVATION  in-flight kitchen batches (V5-INFLIGHTBATCH-001)
-//   /api/pantry             → VITE_API_PRESERVATION  Mark used / Used up — POST /api/pantry/uses (Put-Up release F)
-//   /api/recipes            → VITE_API_PRESERVATION  the recipe library + types + Save as recipe (Put-Up release 4)
-//   /api/harvests           → VITE_API_HARVESTS     Harvests page read model — Log + Totals (V4-HARVESTVIEW-001)
-//   /api/share/facebook     → VITE_API_FACEBOOK_SHARE  post photos to the Gardens at Matthews FB Page (V4-FBSHARE-001)
+// Resolution is FIRST-MATCH on insertion order (Object.entries preserves declaration order), so a
+// longer, more specific prefix MUST be declared BEFORE its shorter parent ('/api/projects/inactive'
+// precedes '/api/projects').
+
 
 import { useAuth } from '@clerk/react'
 import { ClerkOfflineError } from '@clerk/shared/error'
 import { useCallback } from 'react'
 import { trackRequest } from './netActivity.js'
 
-// Exported for src/__tests__/clientRouteLambdaContract.test.js, which resolves every client-side
-// API path through THIS table (via resolveUrl, with probe base URLs) and asserts the Lambda it
-// lands on actually declares a matching route. Exporting it is what makes that guard read the one
-// real table instead of a second copy — a copy is precisely how BUG-HARVWATCHROUTE-001 stayed green.
-// Values are still the statically-replaced `import.meta.env.VITE_*` member expressions: Vite only
-// substitutes static property access, so this object must never be rebuilt by dynamic indexing.
+// Exported for src/__tests__/clientRouteLambdaContract.test.js, which resolves every client-side API
+// path through THIS table (via resolveUrl, with probe base URLs) and asserts the Lambda it lands on
+// declares a matching route. A second copy of the table would let that guard stay green while routes drift.
+// Values must stay static `import.meta.env.VITE_*` member expressions: Vite only substitutes static
+// property access, so never rebuild this object by dynamic indexing.
 export const FUNCTION_URLS = {
   '/api/projects/inactive': import.meta.env.VITE_API_DASHBOARD     ?? '',
   '/api/projects':          import.meta.env.VITE_API_PROJECTS      ?? '',
@@ -69,18 +39,16 @@ export const FUNCTION_URLS = {
   '/api/storage-locations': import.meta.env.VITE_API_STORAGE_LOCATIONS ?? '',
   '/api/preservation':      import.meta.env.VITE_API_PRESERVATION   ?? '',
   '/api/kitchen-batches':   import.meta.env.VITE_API_PRESERVATION   ?? '',
-  // Put-Up release F (06 §1.3 item 2): the use route lives on the preservation Lambda, which matches
-  // '/api/pantry/uses' as a literal on rawPath — so no new Function URL and no infra change.
+  // '/api/pantry/uses' is a literal on rawPath in the preservation Lambda, so it needs no new Function URL.
   '/api/pantry':            import.meta.env.VITE_API_PRESERVATION   ?? '',
-  // Put-Up release 4: /api/recipes/** rides the preservation Lambda too (recipeRoutes.js, matched on rawPath).
+  // '/api/recipes/**' also rides the preservation Lambda (recipeRoutes.js, matched on rawPath).
   '/api/recipes':           import.meta.env.VITE_API_PRESERVATION   ?? '',
   '/api/harvests':          import.meta.env.VITE_API_HARVESTS       ?? '',
   '/api/share/facebook':    import.meta.env.VITE_API_FACEBOOK_SHARE ?? '',
-  // Instagram is served by the SAME Lambda and the SAME Function URL as Facebook — the handler
-  // routes on rawPath — so it deliberately reuses VITE_API_FACEBOOK_SHARE rather than introducing a
-  // second repo variable that would have to hold an identical value and could drift from it.
-  // It also means Instagram inherits Facebook's reachability exactly: while VITE_API_FACEBOOK_SHARE
-  // does not exist, NEITHER target has an address to post to.
+  // Instagram is served by the SAME Lambda and Function URL as Facebook (the handler routes on rawPath),
+  // so it reuses VITE_API_FACEBOOK_SHARE rather than a second variable that could drift from it. It
+  // therefore inherits Facebook's reachability: while VITE_API_FACEBOOK_SHARE does not exist, NEITHER
+  // target has an address to post to.
   '/api/share/instagram':   import.meta.env.VITE_API_FACEBOOK_SHARE ?? '',
 }
 
@@ -91,9 +59,9 @@ export function resolveUrl(path, urls = FUNCTION_URLS) {
   throw new Error(`No Lambda URL configured for path: ${path}`)
 }
 
-// WS-A6: bound every API call so a hung Lambda/network can't spin forever. AbortController
-// (NOT AbortSignal.timeout — Safari 16 gap). 15s clears a cold Neon+Lambda start plus a heavy
-// txn; a caller can override via options.timeoutMs and still pass its own options.signal.
+// Bound every API call so a hung Lambda/network can't spin forever. AbortController, NOT
+// AbortSignal.timeout (Safari 16 gap). 15s clears a cold Neon+Lambda start plus a heavy txn; a caller
+// can override via options.timeoutMs and still pass its own options.signal.
 export const API_TIMEOUT_MS = 15000
 
 // SW-STALEAPI-001 — carry the service worker's offline-cache marker across the parse boundary.
@@ -119,9 +87,9 @@ export function isFromCache(value) {
   return !!value && typeof value === 'object' && value[FROM_CACHE] === true
 }
 
-// BUG-DETAILPAGESCARRYSCROLL-001 — every API call is counted while it is in flight (src/lib/netActivity.js):
-// the page-scroll manager's Back restore only gives up on a target the page cannot reach once no request
-// that could still grow the page is pending. Same arguments, same result, same errors.
+// Every API call is counted while it is in flight (src/lib/netActivity.js): the page-scroll manager's
+// Back restore only gives up on a target the page cannot reach once no request that could still grow
+// the page is pending.
 export function apiFetch(path, options, token) {
   return trackRequest(sendApiRequest(path, options, token))
 }
@@ -175,22 +143,19 @@ async function sendApiRequest(path, options = {}, token) {
   return data
 }
 
-// OFFLINE-AUTH — an offline token failure must degrade to "no token", not abort the request.
+// An offline token failure must degrade to "no token", not abort the request.
 //
 // getToken() caches with a 60s TTL over an IN-MEMORY singleton, so any tab idle for a minute is a
-// cache miss. Offline, a miss THROWS rather than returning null (@clerk/shared session.d.ts:246),
-// and this module used to await it bare: the throw escaped useApiFetch().fetch, apiFetch was never
-// called, no fetch() was ever issued, and so the service worker's fetch handler never ran. The SW
-// API cache was therefore unreachable for exactly the users it was built for.
+// cache miss. Offline, a miss THROWS rather than returning null (@clerk/shared session.d.ts). If the
+// throw escapes useApiFetch().fetch, apiFetch is never called, no fetch() is issued, and the service
+// worker's fetch handler (and its API cache) is never reached.
 //
-// TWO codes, not one. clerk-js 6.29.2 Session.getToken (dist/clerk.browser.js @132530) wraps the
-// retry ladder in `catch(e){ if(!k()) throw new ClerkOfflineError(...); throw e }`, k() reading
-// navigator.onLine. So the escape depends on the radio's state when the ladder gives up:
-//   still offline      -> ClerkOfflineError,  code 'clerk_offline'
+// TWO codes, not one. clerk-js Session.getToken wraps the retry ladder in
+// `catch(e){ if(!k()) throw new ClerkOfflineError(...); throw e }`, k() reading navigator.onLine.
+// So the escaping error depends on the radio's state when the ladder gives up:
+//   still offline       -> ClerkOfflineError, code 'clerk_offline'
 //   came back mid-retry -> the INNER error, ClerkRuntimeError, code 'network_error'
-//                         (_getToken @138781: `else throw new x("Browser is offline, skipping
-//                         token fetch", { code: "network_error" })`)
-// Guarding only clerk_offline would miss every connectivity FLAP — the normal condition in a rural
+// Guarding only clerk_offline would miss every connectivity FLAP, the normal condition in a rural
 // dead zone, not an edge case. 'network_error' has no exported constant the way
 // ClerkOfflineError.ERROR_CODE does, hence the literal; it is a structured discriminant field on
 // the error, not a message match.
@@ -219,26 +184,24 @@ export function isOfflineTokenError(e) {
 
 // How long to wait for a token when navigator.onLine is ALREADY false.
 //
-// Not a tuning knob — derived from Clerk's retry ladder, which has a hard floor. retry()
+// Not a tuning knob: derived from Clerk's retry ladder, which has a hard floor. retry()
 // (@clerk/shared/dist/retry.mjs) runs `return await callback()` FIRST with no preceding delay and
-// only sleeps BETWEEN retries; clerk-js passes initialDelay 3000 / factor 1.55 / jitter false and
-// caps offline at 4 attempts. That separates the two outcomes cleanly in time:
+// only sleeps BETWEEN retries; clerk-js uses initialDelay 3000 / factor 1.55 / no jitter and caps
+// offline at 4 attempts. That separates the two outcomes in time:
 //   warm-tab cache HIT -> resolves on attempt 1, no timer involved (~a microtask)
 //   offline cache MISS -> cannot produce anything for >=3000ms, then throws at ~14.9s
 // Any wait strictly between those bounds keeps the working path intact and truncates the dead one.
-// 1500ms is half the 3000ms floor: 2x headroom below the earliest answer Clerk could give, and ~3
-// orders of magnitude above an in-memory cache read, so main-thread jank cannot push a hit past it.
+// 1500ms is half the 3000ms floor: 2x headroom below the earliest answer Clerk could give, and far
+// above an in-memory cache read, so main-thread jank cannot push a hit past it.
 export const OFFLINE_TOKEN_WAIT_MS = 1500
 
-// WHY PRE-EMPT rather than simply catching the throw when it finally arrives: when navigator.onLine
-// is false, clerk-js consults the SAME signal on every attempt, so all four hit `else throw` and the
-// ladder is futile BY CONSTRUCTION — it can only succeed if the radio returns mid-window. Waiting
-// ~14.9s to learn something knowable at t=0 also blows the entire request budget, because the stall
-// happens BEFORE apiFetch starts its own API_TIMEOUT_MS timer: today's worst case is ~30s of spinner
-// for a request that was never going to be sent. The cost is bounded and already covered — if the
-// radio does return between 1.5s and 14.9s we abandon a token that might have arrived, but the
-// 'online' event then fires and useCacheLifecycle's onReconnect revalidate refetches
-// automatically, so recovery needs no user action.
+// WHY PRE-EMPT rather than catching the throw when it finally arrives: when navigator.onLine is
+// false, clerk-js consults the SAME signal on every attempt, so the ladder is futile BY CONSTRUCTION
+// unless the radio returns mid-window. Waiting ~14.9s to learn something knowable at t=0 also blows
+// the request budget, because the stall happens BEFORE apiFetch starts its own API_TIMEOUT_MS timer
+// (~30s of spinner for a request that was never going to be sent). If the radio returns between 1.5s
+// and 14.9s we abandon a token that might have arrived, but the 'online' event then fires and
+// useCacheLifecycle's onReconnect revalidate refetches, so recovery needs no user action.
 async function tokenWithOfflineWait(getToken) {
   let timer
   try {
@@ -255,10 +218,9 @@ async function tokenWithOfflineWait(getToken) {
 
 // The one seam every token acquisition goes through. Returns a token or null.
 //
-// null used to mean "issue the request with no Authorization header". IT NO LONGER DOES — see
-// BUG-TOKENLESS-401-001 below. It now means "no credential is available", and the hook turns that
-// into a typed, retryable error instead of an anonymous request. The offline pre-empt above is
-// unchanged and still earns its keep: it is what stops an API call stalling ~15s on Clerk's ladder.
+// null means "no credential is available": the hook turns it into a typed, retryable error, never an
+// anonymous request (see below). The offline pre-empt above still earns its keep: it stops an API
+// call stalling ~15s on Clerk's ladder.
 export async function tokenForRequest(getToken) {
   const offline = typeof navigator !== 'undefined' && navigator.onLine === false
   try {
@@ -269,30 +231,27 @@ export async function tokenForRequest(getToken) {
   }
 }
 
-// BUG-TOKENLESS-401-001 — why a null token must NOT become an anonymous request.
+// Why a null token must NOT become an anonymous request.
 //
-// The previous seam did `apiFetch(path, options, null)`, and apiFetch omits the Authorization
-// header entirely when the token is falsy. That was introduced (113de76, v4.39.0) so the request
-// would at least reach the service worker and be answered from its API cache. THAT PREMISE IS VOID,
-// and was already void when it shipped: sw.js derives its cache name from the JWT's `sub`, so a
-// headerless request produces a null cacheName, and a null cacheName means NO cache read at all
-// (the V4-SWCACHEID-001 fail-closed control, pinned by apiOfflineToken D1). So an anonymous request
-// has no success case anywhere:
+// apiFetch omits the Authorization header when the token is falsy, which would let a tokenless request
+// reach the service worker and be answered from its API cache. That never works: sw.js derives its
+// cache name from the JWT's `sub`, so a headerless request produces a null cacheName, and a null
+// cacheName means NO cache read at all (the V4-SWCACHEID-001 fail-closed control, pinned by
+// apiOfflineToken D1). So an anonymous request has no success case anywhere:
 //   offline -> the SW answers 503 Offline
 //   online  -> it reaches the Lambda, which calls verifyToken('') and returns 401 Unauthorized
-// It cost a Lambda invocation to produce a misleading error. MEASURED in prod 2026-08-26: 48 such
-// 401s in one morning across 7 Lambdas, every one logging `Invalid JWT form` (an EMPTY token, not
-// an expired one), surfacing to Dave as "Couldn't load your harvests — Unauthorized" while online.
+// It costs a Lambda invocation to produce a misleading error: an EMPTY token logs `Invalid JWT form`
+// and surfaces as "Unauthorized" while online.
 //
 // Do not reintroduce the tokenless call as an offline optimisation. Throwing is strictly safer than
 // a headerless request AND strictly more useful than a guaranteed 401.
 export const OFFLINE_MESSAGE = 'You appear to be offline.'
 export const NO_CREDENTIAL_MESSAGE = 'Couldn’t verify your sign-in. Tap Retry.'
 
-// Plain Errors with flags rather than subclasses, matching the timeout error above — callers
+// Plain Errors with flags rather than subclasses, matching the timeout error above: callers
 // discriminate on `e.offline` / `e.authPending`, and `e.message` is what error surfaces render
-// verbatim (e.g. Harvests' <ErrorState message={error} />). status 0 keeps them out of any
-// `e.status >= 400` HTTP branch.
+// verbatim (e.g. <ErrorState message={error} />). status 0 keeps them out of any `e.status >= 400`
+// HTTP branch.
 function noCredentialError() {
   const offline = typeof navigator !== 'undefined' && navigator.onLine === false
   const e = new Error(offline ? OFFLINE_MESSAGE : NO_CREDENTIAL_MESSAGE)
@@ -304,12 +263,11 @@ function noCredentialError() {
 
 // Acquire a token, forcing a fresh mint when the ordinary path yields nothing.
 //
-// A null from Clerk is NOT self-healing, which is the property that made this bug sticky enough to
-// need an app restart. Two states produce it and both persist:
+// A null from Clerk is NOT self-healing. Two states produce it and both persist:
 //   · the session object has gone away while `useUser()` still reports a signed-in user, so
 //     App.jsx's <Protected> keeps rendering the app and every request goes out anonymous;
-//   · the in-memory token cache was emptied (Android freezes the tab during the OS photo picker —
-//     the Snap flow does this on every capture) and the refresh that should refill it did not run.
+//   · the in-memory token cache was emptied (Android freezes the tab during the OS photo picker, which
+//     the Snap flow does on every capture) and the refresh that should refill it did not run.
 // Every later getToken() reads the same empty cache and returns null again. skipCache:true bypasses
 // it and forces a network mint, which re-establishes the session as a side effect.
 //
@@ -329,17 +287,17 @@ async function fetchWithToken(getToken, path, options = {}) {
   try {
     return await apiFetch(path, options, token)
   } catch (e) {
-    // A 401 with a token attached means the token was stale in a way the client could not see —
-    // a mint that raced an expiry, or a session rotated on another device. Re-mint and replay ONCE.
+    // A 401 with a token attached means the token was stale in a way the client could not see: a mint
+    // that raced an expiry, or a session rotated on another device. Re-mint and replay ONCE.
     //
-    // Safe for POST/PUT/DELETE, not just reads: every Lambda calls verifyToken BEFORE it touches
-    // the database (checked against lambda/harvests/index.js and lambda/photos/index.js — the two
-    // this bug was reported on), so a 401 is always a server-side no-op and the replay cannot
-    // double-write. Bodies are JSON strings at every call site, so `options` is replayable.
+    // Safe for POST/PUT/DELETE, not just reads: every Lambda calls verifyToken BEFORE it touches the
+    // database (checked for lambda/harvests/index.js and lambda/photos/index.js), so a 401 is always a
+    // server-side no-op and the replay cannot double-write. Bodies are JSON strings at every call
+    // site, so `options` is replayable.
     //
-    // Bounded at one attempt by construction — the retry calls apiFetch directly, never itself.
-    // The identity check is what stops a pointless second round trip when the mint returns the
-    // same cached string, which is also the shape an infinite loop would take.
+    // Bounded at one attempt by construction: the retry calls apiFetch directly, never itself. The
+    // identity check stops a pointless second round trip when the mint returns the same cached string,
+    // which is also the shape an infinite loop would take.
     if (e?.status !== 401) throw e
     const fresh = await tokenForRequest(() => getToken({ skipCache: true }))
     if (!fresh || fresh === token) throw e
@@ -349,10 +307,10 @@ async function fetchWithToken(getToken, path, options = {}) {
 
 export function useApiFetch() {
   const { getToken } = useAuth()
-  // BUG-DETAILPAGESCARRYSCROLL-001 (qa2-scrollmanager-confirm NEW-1): counted as in flight from the CALL, the
-  // wait for the Clerk token included — apiFetch's own count starts only once a token is in hand, and a cold
-  // token (a tab idle for a minute, a weak link) can take over a second, during which the page is still
-  // waiting on this request. The inner apiFetch counts again; the one reader only asks whether the count is 0.
+  // Counted as in flight from the CALL, the wait for the Clerk token included: apiFetch's own count
+  // starts only once a token is in hand, and a cold token (a tab idle for a minute, a weak link) can
+  // take over a second while the page is still waiting on this request. The inner apiFetch counts
+  // again; the one reader only asks whether the count is 0.
   const fetch = useCallback((path, options) => trackRequest(fetchWithToken(getToken, path, options)), [getToken])
   // getToken is also returned so fire-and-forget telemetry (uxEvents) can route token
   // acquisition through this same seam — component tests mock useApiFetch, which keeps
