@@ -1,34 +1,26 @@
-// src/components/forms/SourcePicker.jsx
-// V4-SOURCEREG-001 (+ V5-SOURCEKIND-001 for the kind mint) — THE shared provenance picker.
-//
-// It exists because no component in the app did both halves of what this field needs. Two were
-// joined rather than one copied:
-//   1. PlantingSelect.jsx — the app's WAI-ARIA 1.2 combobox REFERENCE MODEL (its own header, :22).
-//      Type-ahead, option identity, aria-activedescendant, measured flip placement, the registry
-//      dismissal, the ⌨/🎤/✕ cluster. It has NO create path.
-//   2. VarietyEditor's CropTypeField (:176, itself modelled on PutUp's StorageField) — the house
-//      pattern for an inline mint beside a Select. It has NO type-ahead.
+// THE shared provenance picker. It joins two halves no single component had:
+//   1. PlantingSelect.jsx, the app's WAI-ARIA 1.2 combobox REFERENCE MODEL: type-ahead, option
+//      identity, aria-activedescendant, measured flip placement, the registry dismissal, the
+//      ⌨/🎤/✕ cluster. It has NO create path.
+//   2. VarietyEditor's CropTypeField (itself modelled on PutUp's StorageField), the house pattern
+//      for an inline mint beside a Select. It has NO type-ahead.
 // The staged in-panel shape of the create path (footer row -> mint form -> steer-to-existing) comes
-// from VarietyPicker.jsx:624-808. What is deliberately NOT taken from VarietyPicker is its
-// `aria-selected`: it sets false on every row and uses it as a highlight flag. Here, as in
-// PlantingSelect, aria-selected means SELECTED (the committed value) and the active row is carried
-// by aria-activedescendant.
+// from VarietyPicker.jsx. What is deliberately NOT taken from it is its `aria-selected`: it sets
+// false on every row and uses it as a highlight flag. Here, as in PlantingSelect, aria-selected
+// means SELECTED (the committed value) and the active row is carried by aria-activedescendant.
 //
-// ONE PICKER, TWO AXES. `plants` and `inventory_items` each carry `source_id` (the ORIGINATOR — who
+// ONE PICKER, TWO AXES. `plants` and `inventory_items` each carry `source_id` (the ORIGINATOR: who
 // grew, bred, packed or gave it) and `acquired_from_source_id` (the SHOP or venue where it changed
 // hands, set only when it DIFFERS). Both are FKs to the same `public.source` table, so one
-// component serves both and the axis is carried by `label` — which is why `label` drives the
-// accessible NAME of the field and nothing else. NULL on the second column means "not recorded or
-// not distinct", never "same as the first".
+// component serves both and the axis is carried by `label`, which drives the accessible NAME of the
+// field and nothing else. NULL on the second column means "not recorded or not distinct", never
+// "same as the first".
 //
-// Nothing about keyboard mode, voice, or matching is re-rolled here: all of it comes from
-// lib/comboboxInput.js, the homogenization seam (Dave, prod smoke 2026-08-03: "It should act the
-// same on every place where I can pick a planting unless we've carved out an exception …
-// propagate that everywhere … where there is a type ahead or a type search in addition to a
-// chooser"). A new picker that re-derived any of it IS the drift that module exists to prevent.
+// Keyboard mode, voice and matching all come from lib/comboboxInput.js, the homogenization seam: a
+// picker that re-derived any of it IS the drift that module exists to prevent.
 //
-// Prop defaults follow the MAJORITY call site so a dropped prop is a visible diff — the stated
-// convention in PlantingSelect.jsx:12.
+// Prop defaults follow the MAJORITY call site so a dropped prop is a visible diff (the convention
+// stated in PlantingSelect.jsx).
 import React, { useState, useEffect, useMemo, useRef, useCallback, useId } from 'react'
 import { P } from '../../lib/constants.js'
 import { T, inputChrome } from './formStyles.js'
@@ -47,14 +39,13 @@ import {
   kbToggleBtnStyle, micToggleBtnStyle, closeToggleBtnStyle, toggleSlotsPaddingStyle,
 } from '../../lib/comboboxInput.js'
 // The geometry is IMPORTED, not re-derived. computePlacement is the one piece of picker layout that
-// can be verified without a layout engine, it is already exported for exactly that reason, and a
-// second copy of the flip arithmetic would be free to disagree with the reference model's after the
-// next viewport fix. Same for the chrome insets it subtracts.
+// can be verified without a layout engine, and a second copy of the flip arithmetic would be free to
+// disagree with the reference model's after the next viewport fix. Same for the chrome insets.
 import { computePlacement, readChromeInsets } from './PlantingSelect.jsx'
 import { normalizeWebsiteUrl, normalizeSocialUrl, isBadLinkError, BAD_LINK_MESSAGE } from '../../lib/sourceLinks.js'
 
-// VarietyPicker precedent: cap VISIBLY (footer row), never truncate silently. 54 live sources today,
-// so this is headroom rather than a limit anyone meets.
+// VarietyPicker precedent: cap VISIBLY (footer row), never truncate silently. The cap is headroom,
+// not a limit anyone meets.
 const MAX_RESULTS = 200
 const LIST_MAX_H = 280
 // Icon sizes for the ⌨/🎤/✕ slot cluster and the chip's clear control. The registry renders SVG at
@@ -65,19 +56,16 @@ const ICON_SM_PX = 16
 
 // The mint stage renders a header, three fields and an action row AROUND the scrollable body, so the
 // panel needs more room than the list does. That extra must be subtracted from the available space
-// at MEASURE time, not added to the answer afterwards — which is exactly what computePlacement's
-// `panelExtra` is for, and this component originally did not pass it.
-//
-// Measured on a real 390x500 viewport 2026-09-04: adding it afterwards made the panel 392px tall
-// inside 282px of measured room and, flipped up, put its top edge 11px ABOVE the viewport, clipping
-// the "New source" header. Every control stayed reachable and nothing errored — which is why no test
-// failed and why only a real browser at real geometry could see it. jsdom returns zero from
-// getBoundingClientRect, so the 19 unit tests behind this component cannot reach the question.
+// at MEASURE time (computePlacement's `panelExtra`), not added to the answer afterwards: adding it
+// afterwards made the panel 392px tall inside 282px of measured room at 390x500 and, flipped up,
+// put its top edge 11px ABOVE the viewport, clipping the "New source" header. Every control stayed
+// reachable and nothing errored, and jsdom returns zero from getBoundingClientRect, so only a real
+// browser at real geometry can see it.
 const MINT_PANEL_EXTRA = 120
-// V5-SOURCECONTACT-001's "More details" (website, Instagram, Facebook, address) is COLLAPSED by
-// default and adds nothing to this number: closed, the panel is exactly the height measured above;
-// open, the extra rows scroll inside mintBody (a scroll container, so it shrinks to the measured
-// room) rather than growing the panel past it.
+// The collapsed-by-default "More details" (website, Instagram, Facebook, address) adds nothing to
+// this number: closed, the panel is exactly the height measured above; open, the extra rows scroll
+// inside mintBody (a scroll container, so it shrinks to the measured room) rather than growing the
+// panel past it.
 
 // Same guard PlantingSelect's measurePlacement carries: jsdom has no layout engine and no
 // visualViewport, so this returns null there and the panel renders the unmeasured default (down,
@@ -126,9 +114,9 @@ export default function SourcePicker({
   // own disabledHint exists to prevent, and it is the same one here.
   disabledHint,
   id,
-  // Off only where minting is genuinely wrong (a read-only surface). Default ON: the whole point of
-  // the registry is that provenance can be recorded the moment it is known, and a picker that can
-  // only choose from 54 existing rows sends the user to an admin screen to record a new farm stand.
+  // Off only where minting is genuinely wrong (a read-only surface). Default ON: provenance should
+  // be recordable the moment it is known, and a picker that can only choose from existing rows
+  // sends the user to an admin screen to record a new farm stand.
   allowCreate = true,
   // onOpenChange(open) — OPTIONAL, no-op default. A host cannot otherwise know not to paint a
   // competing control (a sticky Save) over the open panel. Fired from ONE effect on `open` so no
@@ -176,9 +164,9 @@ export default function SourcePicker({
   } = useComboboxInput({
     open,
     inputRef,
-    // 'text' — the same default PlantingSelect adopted at V4-PICKERKBDEF-001. This is a field the
-    // user almost always arrives at with a name in mind, so the tap that opens it should raise the
-    // keyboard; the ⌨ toggle still swaps to browse mode.
+    // 'text': the same default PlantingSelect adopted. The user almost always arrives at this field
+    // with a name in mind, so the tap that opens it should raise the keyboard; the ⌨ toggle still
+    // swaps to browse mode.
     defaultMode: 'text',
     onVoiceText: (t) => { setQuery(t); setOpen(true) },
   })
@@ -262,7 +250,7 @@ export default function SourcePicker({
   // left believing a picker is open forever.
   useEffect(() => () => { onOpenChangeRef.current?.(false) }, [])
 
-  // ── Measured placement, with the direction LATCHED per open ────────────────
+  // Measured placement, with the direction LATCHED per open.
   // Same contract as PlantingSelect's: the first measurable flip of an open wins and is held until
   // the panel closes, because visualViewport `scroll` fires per compositor frame while the Android
   // keyboard animates and a panel that changes sides mid-gesture cannot be aimed at at all.
@@ -298,7 +286,7 @@ export default function SourcePicker({
     }
   }, [open, disabled, visible.length, stage, inOverlay])
 
-  // ── The mint stage ─────────────────────────────────────────────────────────
+  // The mint stage.
   const [mintName, setMintName] = useState('')
   const [mintKind, setMintKind] = useState('')
   const [mintLocality, setMintLocality] = useState('')
@@ -452,14 +440,14 @@ export default function SourcePicker({
     setTouched(true)
   }
 
-  // ── Chip mode: a selection is made and the picker is at rest ───────────────
+  // Chip mode: a selection is made and the picker is at rest.
   if (selected && !open) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
         <div style={chipStyle(disabled)} data-testid={dataTestId ? `${dataTestId}-chip` : 'sp-chip'}>
           {/* One line, ellipsised, with `title` keeping the full text reachable where there is a
               pointer. An unbounded chip grows VERTICALLY in a narrow column and takes that height
-              out of whatever track pays for it — the BUG-FRAMEPADOCCLUDE-001 shape. */}
+              out of whatever track pays for it. */}
           <span
             id={chipLabelId}
             title={selected.name}
@@ -635,11 +623,10 @@ export default function SourcePicker({
                 aria-selected={String(s.id) === String(value)}
                 // Namespaced by the host's own testid, exactly as the chip above is. TWO pickers
                 // sit on every provenance form and BOTH listboxes can be open at once (the blur
-                // close is deferred, so focusing the second opens it before the first shuts —
+                // close is deferred, so focusing the second opens it before the first shuts;
                 // SourcePicker.test.jsx pins getAllByRole('listbox') at 2). A bare `sp-opt-<id>`
-                // therefore matches in two panels, and a global query silently takes whichever
-                // came first. Falls back to the bare form when no testid is supplied, so a
-                // standalone render is unchanged.
+                // would match in two panels. Falls back to the bare form when no testid is
+                // supplied.
                 data-testid={dataTestId ? `${dataTestId}-opt-${s.id}` : `sp-opt-${s.id}`}
                 onClick={() => select(s)}
                 style={rowStyle(i === highlight)}
@@ -705,8 +692,8 @@ export default function SourcePicker({
               />
             </Field>
 
-            {/* CropTypeField's shape (VarietyEditor.jsx:176): a Select of the live vocabulary plus a
-                collapsed link that expands an inline mint. No local `minted` merge is needed here —
+            {/* CropTypeField's shape (VarietyEditor.jsx): a Select of the live vocabulary plus a
+                collapsed link that expands an inline mint. No local `minted` merge is needed here:
                 CropTypeField needs one because its vocabulary is a PROP that lags the mint by a
                 render; this hook is owned by this component, so its list is already current. */}
             <Field label="Kind" htmlFor={`${listboxId}-mint-kind`} optional style={{ marginBottom: T.space.xs }}>
@@ -795,9 +782,8 @@ export default function SourcePicker({
               />
             </Field>
 
-            {/* V5-SOURCECONTACT-001 — Dave: "a source add/edit should include optional fields for
-                website, IG, FB, physical address for me to enter". Behind a disclosure so the common
-                mint (a name, maybe a town) keeps its height; see MINT_PANEL_EXTRA. */}
+            {/* Behind a disclosure so the common mint (a name, maybe a town) keeps its height; see
+                MINT_PANEL_EXTRA. */}
             <button
               type="button"
               onClick={() => setMintMore(m => !m)}
@@ -902,7 +888,7 @@ export default function SourcePicker({
   )
 }
 
-// ── Chrome (composed from P/T per formStyles discipline — no raw hex) ────────
+// Chrome is composed from P/T per formStyles discipline (no raw hex).
 function chipStyle(disabled) {
   return {
     display: 'inline-flex',
@@ -920,10 +906,10 @@ function chipStyle(disabled) {
   }
 }
 
-// BUG-SEEDPAGETAPFLOORS-001 — the ✕ is a T.tapMinHeight target that keeps its 30px FOOTPRINT: the box
-// grows to 44 and a negative margin of the same 7px per side hands it back, so the chip (whose height is
-// the BUG-FRAMEPADOCCLUDE-001 concern noted on its label) lays out exactly as before and the extra reach
-// lands in the chip's own padding and gap. Same change, same numbers, as PlantingSelect's chipClearBtn.
+// The ✕ is a T.tapMinHeight target that keeps its 30px FOOTPRINT: the box grows to 44 and a negative
+// margin of 7px per side hands it back, so the chip (whose height matters, see the label note
+// above) lays out as if the button were 30px and the extra reach lands in the chip's own padding
+// and gap. Same numbers as PlantingSelect's chipClearBtn.
 const CLEAR_FOOTPRINT_PX = 30
 const chipClearBtn = {
   background: 'none', border: 'none', cursor: 'pointer', color: P.mid,

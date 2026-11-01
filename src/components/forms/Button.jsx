@@ -1,9 +1,6 @@
-// src/components/forms/Button.jsx
-// Lane D / Phase A — canonical button primitive.
-// Variants: primary (green) | secondary (outline) | danger (terra). minHeight
-// frozen at 48. ONE disabled convention everywhere: P.light fill + not-allowed
-// cursor + aria-disabled (set here so consumers can't re-invent it). `loading`
-// disables and swaps the label to `loadingLabel` while keeping width stable-ish.
+// Variants: primary (green) | secondary (outline) | danger (terra). minHeight frozen at 48.
+// ONE disabled convention: P.light fill + not-allowed cursor + aria-disabled, set here so consumers
+// can't re-invent it. `loading` disables and swaps the label to `loadingLabel`.
 import React from 'react'
 import { buttonChrome } from './formStyles.js'
 

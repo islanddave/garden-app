@@ -12,31 +12,31 @@ import SpotBody from './SpotBody.jsx'
 import PlantCareRow, { outlineBtn } from './PlantCareRow.jsx'
 import { removeLogged, readLogged, claimedKeys, runStart, runEnd, runGoing, runTake } from './needsCareStore.js'
 
-// NeedsCare — the body of the redesigned Today's Needs care section (V5-TODAYREDESIGN-001 S4). Dave's
-// D3 (a spot is logged whole, then its exceptions), D6 (spot Not today), D7 (Outside, Stable and House are
-// separate groups, each with its own Water all), D9 (spot chips as a
-// filter row; the task filter is the jump bar's since finish plan D17), D10 (a logged spot shrinks to a done line with Undo, held for the visit; the group version is
-// ONE line, one Undo), D11 (Skip / Moist on the few, then "Water the other N"; per-plant one-tap Water kept),
-// D12 (under the Feed filter, one row per product across the garden with "Feed all"), and the boss pass:
-// MF3 (the group Water all's result), SF2, SF7, SF8, SF12, Simplify 1.
+// The body of the redesigned Today's Needs care section. Design rules it implements: a spot is logged
+// whole, then its exceptions; a spot has its own Not today; Outside, Stable and House are separate
+// groups, each with its own Water all; spot chips are a filter row (the task filter is the jump
+// bar's); a logged spot shrinks to a done line with Undo, held for the visit (the group version is
+// ONE line, one Undo); Skip / Moist on the few, then "Water the other N", with per-plant one-tap
+// Water kept; under the Feed filter, one row per product across the garden with "Feed all".
 //
-// State: the care rows and write paths are the page's (useNeedsCare → useCareActions, V2 options); what this
-// body adds is the VISIT's — which spots and cohorts are open, the done lines, the failed rows, the runs'
-// created ids for Undo — kept in the visit record (useTodayVisit, record.care) so a Back from a planting
-// restores it exactly. Filters are the page's, per session (useNeedsCare over needsCareStore). Nothing here raises a toast (§11.1 C2):
-// results speak through the page's one status region (§5.6) and sit on the done lines.
+// State: the care rows and write paths are the page's (useNeedsCare → useCareActions, V2 options);
+// what this body adds is the VISIT's: which spots and cohorts are open, the done lines, the failed
+// rows, the runs' created ids for Undo, kept in the visit record (useTodayVisit, record.care) so a
+// Back from a planting restores it exactly. Filters are the page's, per session (useNeedsCare over
+// needsCareStore). Nothing here raises a toast: results speak through the page's one status region
+// and sit on the done lines.
 const RUN = { concurrency: 4, excludeInFlight: true }
 const KIND_OF = { watering: 'watered', fertilizing: 'fed', observation: 'checked', moisture_check: 'moist' }
 const GOING = { watered: 'watering', fed: 'feeding', checked: 'checking' }
-// Review 4162.1 IMPORTANT-A: a run outlives the body that started it. One still going when V2 unmounts (a planting
-// link, BottomNav, then Back) keeps posting (keepalive). Its keys stay claimed until each POST answers (care.claim,
-// useTodayLogged), so the remount leaves them out; its batch reached the visit record when it started, so the
-// remount can draw it; and needsCareStore's runs say whether it is still going and, once it ends with its body gone,
-// hold its result for the body then on screen to take.
+// A run outlives the body that started it. One still going when V2 unmounts (a planting link,
+// BottomNav, then Back) keeps posting (keepalive). Its keys stay claimed until each POST answers
+// (care.claim, useTodayLogged), so the remount leaves them out; its batch reached the visit record
+// when it started, so the remount can draw it; and needsCareStore's runs say whether it is still
+// going and, once it ends with its body gone, hold its result for the body then on screen to take.
 
 const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`
-// §5.6 "Redbor Kale, Beets and 1 more": two names, then the rest counted.
+// "Redbor Kale, Beets and 1 more": two names, then the rest counted.
 const nameList = (names) => (names.length <= 2 ? names.join(' and ') : `${names.slice(0, 2).join(', ')} and ${names.length - 2} more`)
 const css = (s) => String(s).replace(/"/g, '\\"')
 
@@ -45,10 +45,11 @@ export default function NeedsCare({ care, record, update, announce, onFilters, w
   const { actions } = care
   const setCare = useCallback((fn) => update((r) => ({ ...r, care: fn(r.care || {}) })), [update])
 
-  // ── filters (§2.6): the page's (useNeedsCare), per session; never re-sort. The TASK filter is the jump bar's Water /
-  // Feed / Check cells (finish plan §3.5, Dave's D17: one task or all) — this body only reads it; the SPOT chips
-  // stay here, OR within their row, empty = all. Every change goes through the page's `onFilters`, which says its
-  // result ONCE through the page's one status region (§2.6 / §5.6), from the change itself, never from a render.
+  // Filters: the page's (useNeedsCare), per session; never re-sort. The TASK filter is the jump
+  // bar's Water / Feed / Check cells (one task or all); this body only reads it. The SPOT chips stay
+  // here, OR within their row, empty = all. Every change goes through the page's `onFilters`, which
+  // says its result ONCE through the page's one status region, from the change itself, never from a
+  // render.
   const { filters } = care
   const tasks = useMemo(() => (care.task ? [care.task] : []), [care.task])
   const spotsPresent = useMemo(() => {
@@ -58,26 +59,27 @@ export default function NeedsCare({ care, record, update, announce, onFilters, w
   }, [care.rows, tasks])
   const spotSel = filters.spots.filter((k) => spotsPresent.some((s) => s.value === k))
 
-  // The visit's held group + spot order (taken at the ready point): every render — the model and the done
-  // lines alike — follows it, so a log never re-ranks the spots under Dave's thumb (BD-036).
+  // The visit's held group + spot order (taken at the ready point): every render (the model and the
+  // done lines alike) follows it, so a log never re-ranks the spots under the thumb.
   const heldOrder = c?.order
-  // A failed row is retried only by a Retry (MF3), never folded into a fresh Water all: out of every bulk count.
+  // A failed row is retried only by a Retry, never folded into a fresh Water all: out of every bulk count.
   const failedMap = c?.failed
   const failedKeys = useMemo(() => new Set(Object.keys(failedMap || {})), [failedMap])
   const model = useMemo(() => buildModel(care.rows, { held: heldOrder, tasks, spots: spotSel, exclude: failedKeys }), [care.rows, heldOrder, tasks, spotSel, failedKeys])
   const feedOnly = tasks.length === 1 && tasks[0] === 'feed'
 
-  // ── run bookkeeping ─────────────────────────────────────────────────────────────────────────────────────
+  // Run bookkeeping.
   const [busy, setBusy] = useState(null)       // { scope: 'spot'|'group'|'product', key, done, total }
   const [undoing, setUndoing] = useState(null) // batch id or row key
   const [focusId, setFocusId] = useState(null)
   const rootRef = useRef(null)
-  // A focus target by data-focus-id, or (§5.5) "first-retry:<group>" — the first spot Retry in that group after
-  // a run with failures — or "row-retry:<rowKey>" — the Retry a failed one-tap write leaves on its row in place
-  // of the control that had focus (a removed focused node must never drop focus to BODY).
-  // §5.5 (S4g): an action that EMPTIES Needs care sends focus to the section's header instead — it now reads
-  // "Needs care · all caught up" and what was logged. Only an action here moves focus: a refetch that empties the
-  // list sets no focusId, so it never pulls focus from wherever Dave is reading.
+  // A focus target by data-focus-id, or "first-retry:<group>" (the first spot Retry in that group
+  // after a run with failures) or "row-retry:<rowKey>" (the Retry a failed one-tap write leaves on
+  // its row in place of the control that had focus; a removed focused node must never drop focus to
+  // BODY). An action that EMPTIES Needs care sends focus to the section's header instead, which now
+  // reads "Needs care · all caught up" and what was logged. Only an action here moves focus: a
+  // refetch that empties the list sets no focusId, so it never pulls focus from where the user is
+  // reading.
   const emptied = care.rows.length === 0
   useEffect(() => {
     if (!focusId || !rootRef.current) return
@@ -91,40 +93,45 @@ export default function NeedsCare({ care, record, update, announce, onFilters, w
     setFocusId(null)
   }, [focusId, record, emptied])
 
-  // Every write claims its keys before it posts, and each is logged or released as its own POST answers (IMPORTANT-A;
-  // useTodayLogged — the claim is the page's, in memory, the log the tab's, in the store); an Undo un-writes what it
-  // deleted, as before. The page's hook is subscribed to all of it, so a run's end or a claim let go redraws this body.
+  // Every write claims its keys before it posts, and each is logged or released as its own POST
+  // answers (useTodayLogged: the claim is the page's, in memory, the log the tab's, in the store); an
+  // Undo un-writes what it deleted. The page's hook is subscribed to all of it, so a run's end or a
+  // claim let go redraws this body.
   const claim = care.claim
   const alive = useRef(false)
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
-  // A run of THIS body's, still going, speaks through its button ("Watering 2 of 5…"): its batch — on the record since
-  // it started — stays out of view until it settles. A running batch this body did not start is a run cut off by an
-  // unmount: while it goes it shows as its done line (doneText), with no Undo; its result is taken when it ends (below).
-  // The mark is not given back when a run lands (a settled batch is no longer running, so it is no longer read): the
-  // settle is a QUEUED state update, and a render of a higher priority comes before it (run, below).
+  // A run of THIS body's, still going, speaks through its button ("Watering 2 of 5…"): its batch (on
+  // the record since it started) stays out of view until it settles. A running batch this body did
+  // not start is a run cut off by an unmount: while it goes it shows as its done line (doneText),
+  // with no Undo; its result is taken when it ends (below). The mark is not given back when a run
+  // lands (a settled batch is no longer running, so it is no longer read): the settle is a QUEUED
+  // state update, and a render of a higher priority comes before it (run, below).
   const mine = useRef(new Set())
   const batches = Object.fromEntries(Object.entries(c?.batches || {}).filter(([bid, b]) => !(b.running && mine.current.has(bid))))
   const stored = Object.values(batches).some((b) => b.running) ? readLogged(care.logKey) : null
   const claimed = claimedKeys(care.logKey)
-  // What a cut-off run still holds ("watering 5…"): its keys claimed or logged — one a failure released is no longer
-  // its. Not going (ended, or a reload took it with the page): nothing, for the one render before it is settled or dropped.
+  // What a cut-off run still holds ("watering 5…"): its keys claimed or logged (one a failure
+  // released is no longer its). Not going (ended, or a reload took it with the page): nothing, for
+  // the one render before it is settled or dropped.
   const going = (bid, b, spotKey) => {
     if (!runGoing(bid)) return 0
     return Object.entries(b.spotOf || {}).filter(([k, s]) => (!spotKey || b.scope !== 'group' || s === spotKey) && (claimed.has(k) || stored.has(k))).length
   }
   const rowsDone = c?.rowsDone || {}
-  // A write that failed stays on the list as "Not logged" with a Retry (§6.6; MF3 "per spot"). Each failed key
-  // records WHAT failed — { bid, etype, body }: the run it belonged to (none for a one-tap row) and the types it
-  // posted — so a Retry re-runs exactly that. Truthy either way, so every `failed[k]` reader is unchanged.
+  // A write that failed stays on the list as "Not logged" with a Retry. Each failed key records WHAT
+  // failed ({ bid, etype, body }: the run it belonged to, none for a one-tap row, and the types it
+  // posted) so a Retry re-runs exactly that. Truthy either way, so every `failed[k]` reader is
+  // unchanged.
   const failed = c?.failed || {}
   const spotBatches = (key) => Object.entries(batches).filter(([, b]) => b.spots?.includes(key))
   const spotOfKey = useMemo(() => new Map(care.allEnriched.map((r) => [r.key, r.spotKey])), [care.allEnriched])
   // A key the rows no longer hold (another mount logged it) is placed by the spot its batch recorded at the claim.
   const spotsOfCreated = (created, b) => [...new Set(created.map((x) => spotOfKey.get(x.key) || b.spotOf?.[x.key]).filter(Boolean))]
 
-  // Lands a run on the visit record: its created ids in batch `bid` — a Retry ADDS to the batch it completes, so
-  // the run's done line counts them and its ONE Undo deletes them — each id that failed marked with what failed,
-  // and every id that landed cleared of an older failure. A batch's spots follow its created ids.
+  // Lands a run on the visit record: its created ids in batch `bid` (a Retry ADDS to the batch it
+  // completes, so the run's done line counts them and its ONE Undo deletes them), each id that
+  // failed marked with what failed, and every id that landed cleared of an older failure. A batch's
+  // spots follow its created ids.
   const settle = (bid, fresh, res, what) => setCare((cc) => {
     const prev = cc.batches?.[bid]
     const created = [...(prev ? prev.created : []), ...res.created]
@@ -139,16 +146,18 @@ export default function NeedsCare({ care, record, update, announce, onFilters, w
   const rowNames = (keys) => keys.map((k) => care.allEnriched.find((r) => r.key === k)?.name).filter(Boolean)
   const notLoggedText = (keys, name) => `${keys.length} not logged in ${name}: ${nameList(rowNames(keys))}. Retry is on each.`
 
-  // A run that ended with the body that started it gone — the section closed and reopened, or the page left mid-run
-  // and come Back to — parked its result (run, below). This body takes it and lands it as the run would have: the
-  // created ids, so the line has its Undo, and each failure as "Not logged" with its Retry, unless that row has been
-  // logged or taken again since. Said through this page's status region when the run's own page is gone; never focused.
-  // A running batch with NO run behind it is one a full reload cut off (or one that threw): the page that could have
-  // finished it is gone, and its ids with it. The batch is dropped — what landed is in the store (and the plan), what
-  // did not is due again, and no line is left to claim a count for it. Before paint, so neither state is ever drawn.
-  // The drop reads the record as it is when the drop is APPLIED, not as this render saw it: a batch a landing settled
-  // in between is no longer running, and is kept. (StrictMode runs this effect twice on a mount — src/main.jsx, the
-  // development build: the first pass takes the result and settles, the second finds nothing left to take.)
+  // A run that ended with the body that started it gone (the section closed and reopened, or the
+  // page left mid-run and come Back to) parked its result (run, below). This body takes it and lands
+  // it as the run would have: the created ids, so the line has its Undo, and each failure as "Not
+  // logged" with its Retry, unless that row has been logged or taken again since. Said through this
+  // page's status region when the run's own page is gone; never focused.
+  // A running batch with NO run behind it is one a full reload cut off (or one that threw): the page
+  // that could have finished it is gone, and its ids with it. The batch is dropped (what landed is
+  // in the store and the plan, what did not is due again), and no line is left to claim a count for
+  // it. Before paint, so neither state is ever drawn. The drop reads the record as it is when the
+  // drop is APPLIED, not as this render saw it: a batch a landing settled in between is no longer
+  // running, and is kept. (StrictMode runs this effect twice on a mount: the first pass takes the
+  // result and settles, the second finds nothing left to take.)
   useLayoutEffect(() => {
     for (const [bid, b] of Object.entries(c?.batches || {})) {
       if (!b.running || mine.current.has(bid) || runGoing(bid)) continue
@@ -161,9 +170,10 @@ export default function NeedsCare({ care, record, update, announce, onFilters, w
     }
   })
 
-  // Review 4160.2 IMPORTANT-2: while the page holds its writes (a seeded Back remount still revalidating, TodayV2
-  // writesHeld), every write path below returns before it posts or skips anything — the controls are aria-disabled too.
-  // `tag` names the control a run belongs to when its scope's own button is not it (a spot's per-product Feed all).
+  // While the page holds its writes (a seeded Back remount still revalidating, TodayV2 writesHeld),
+  // every write path below returns before it posts or skips anything; the controls are
+  // aria-disabled too. `tag` names the control a run belongs to when its scope's own button is not
+  // it (a spot's per-product Feed all).
   const run = async ({ scope, key, name, etype, keys, bodyEventType, tag }) => {
     if (writesHeld) return null
     const total = keys.size
@@ -179,8 +189,9 @@ export default function NeedsCare({ care, record, update, announce, onFilters, w
     try {
       res = await actions.runBulk(etype, keys, {
         ...RUN, bodyEventType, ...claim,
-        // IMPORTANT-A: the batch reaches the visit record as the run starts, with what it claimed and where (spotOf, the
-        // spot names) — a remount's rows no longer hold those keys, so the record is where its done lines read them.
+        // The batch reaches the visit record as the run starts, with what it claimed and where
+        // (spotOf, the spot names): a remount's rows no longer hold those keys, so the record is
+        // where its done lines read them.
         onClaim: (ks) => {
           claim.onClaim(ks)
           mine.current.add(bid); runStart(bid)
@@ -195,9 +206,9 @@ export default function NeedsCare({ care, record, update, announce, onFilters, w
         },
       })
     } finally {
-      // However the run ended, its button is free. One that threw has no result to land: the run is forgotten and no
-      // longer this body's, which leaves its batch one with no run behind it — dropped, above. (Its claims were logged
-      // or released by the hook, each as it answered.)
+      // However the run ended, its button is free. One that threw has no result to land: the run is
+      // forgotten and no longer this body's, which leaves its batch one with no run behind it,
+      // dropped above. (Its claims were logged or released by the hook, each as it answered.)
       setBusy(null)
       if (!res) { runEnd(bid); mine.current.delete(bid) }
     }
@@ -205,20 +216,22 @@ export default function NeedsCare({ care, record, update, announce, onFilters, w
     const said = `${kind === 'watered' ? 'Watered' : 'Logged'} ${res.created.length} in ${name}.` + (fails ? ' ' + notLoggedText(res.failed, name) : '')
     announce(said)
     if (!alive.current) {
-      // This body is gone (its section closed, or the page left): its setCare may reach no record at all. The result
-      // is parked for the body then on screen — this page's, reopened, or the Back remount's — to take (above).
+      // This body is gone (its section closed, or the page left): its setCare may reach no record at
+      // all. The result is parked for the body then on screen (this page's, reopened, or the Back
+      // remount's) to take (above).
       runEnd(bid, { res, what, said, by: claim })
       return res
     }
-    // Its own body is on screen: the result lands on the record here, in the one render the same answers' fades and the
-    // freed button reach. That render is not the next one. What a POST's answer sets is default priority; runEnd's
-    // signal re-renders this body at sync priority FIRST, with the batch still running on the record and its run
-    // already forgotten. The batch therefore stays this body's (mine): running, no run behind it and nobody's is
-    // exactly what the landing effect drops, and the settle queued here would then land on a batch about to be deleted
-    // (gate:today-shape:v2, 2026-10-06: every run lost its done line and its Undo that way, in a browser only).
+    // Its own body is on screen: the result lands on the record here, in the one render the same
+    // answers' fades and the freed button reach. That render is not the next one. What a POST's
+    // answer sets is default priority; runEnd's signal re-renders this body at sync priority FIRST,
+    // with the batch still running on the record and its run already forgotten. The batch therefore
+    // stays this body's (mine): running, no run behind it and nobody's is exactly what the landing
+    // effect drops, and the settle queued here would then land on a batch about to be deleted (every
+    // run would lose its done line and its Undo, in a browser only).
     runEnd(bid)
     settle(bid, fresh, res, what)
-    // §5.5: a partial failure puts focus on the first Retry (the spot's own, or the group's first failed spot's).
+    // A partial failure puts focus on the first Retry (the spot's own, or the group's first failed spot's).
     setFocusId(fails ? (scope === 'group' ? 'first-retry:' + key : scope === 'spot' ? 'retry:' + key : null) : (scope === 'group' ? 'group:' + key : 'spot:' + key))
     return res
   }
@@ -226,20 +239,21 @@ export default function NeedsCare({ care, record, update, announce, onFilters, w
   const waterSpot = (spot) => run({ scope: 'spot', key: spot.key, name: spot.name, etype: 'watering', keys: spot.candidates })
   const waterGroup = (group) => run({ scope: 'group', key: group.key, name: group.key.toLowerCase(), etype: 'watering', keys: group.candidates })
   const feedProduct = (pg) => run({ scope: 'product', key: pg.key, name: pg.product, etype: 'fertilizing', keys: new Set(pg.rows.map((r) => r.key)) })
-  // Finish plan §3.6 (L5): a product's Feed all inside an opened spot is the SPOT's run — its batch is the spot's, so
-  // the spot row says "Fed 43" and keeps its one Undo, a failure is the spot's Retry, and a spot it empties shrinks to
-  // its done line. The Feed all that had focus goes with its product's rows, so focus lands on the spot's own header
-  // when the spot still holds other rows (run() names the done line when it does not).
+  // A product's Feed all inside an opened spot is the SPOT's run: its batch is the spot's, so the
+  // spot row says "Fed 43" and keeps its one Undo, a failure is the spot's Retry, and a spot it
+  // empties shrinks to its done line. The Feed all that had focus goes with its product's rows, so
+  // focus lands on the spot's own header when the spot still holds other rows (run() names the done
+  // line when it does not).
   const feedSpot = async (spot, pg, keys) => {
     const res = await run({ scope: 'spot', key: spot.key, name: spot.name, etype: 'fertilizing', keys: new Set(keys), tag: 'feed:' + pg.key })
     if (res && alive.current && !res.failed.length && spot.rows.some((r) => !keys.includes(r.key))) setFocusId('spotrow:' + spot.key)
   }
 
-  // MF3: the spot row's Retry — every failed row of the spot in view, re-run as it failed. A run's failures
-  // complete THEIR run (same batch: the spot's, or the group's, whose one line and one Undo then cover them); a
-  // one-tap row's failure re-runs that row with its own type, leaving the done line the tap would have left.
-  // Focus lands once, after: on the Retry while anything still fails, else the done line the spot shrank to,
-  // else the spot row itself (other tasks' rows remain).
+  // The spot row's Retry: every failed row of the spot in view, re-run as it failed. A run's
+  // failures complete THEIR run (same batch: the spot's, or the group's, whose one line and one Undo
+  // then cover them); a one-tap row's failure re-runs that row with its own type, leaving the done
+  // line the tap would have left. Focus lands once, after: on the Retry while anything still fails,
+  // else the done line the spot shrank to, else the spot row itself (other tasks' rows remain).
   const retrySpot = async (spot) => {
     if (writesHeld) return
     const runs = new Map()
@@ -309,7 +323,7 @@ export default function NeedsCare({ care, record, update, announce, onFilters, w
     setUndoing(null)
   }
 
-  // ── per-plant actions (D11): the one-tap chip, Moist, Skip — each leaves a done line in place ──────────────
+  // Per-plant actions: the one-tap chip, Moist, Skip, each leaving a done line in place.
   // A failure stays on the row as "Not logged" + Retry, recording the type it posted; returns whether it landed.
   const plantRun = async (row, bodyEventType, { focus = true } = {}) => {
     if (writesHeld) return false
@@ -334,7 +348,7 @@ export default function NeedsCare({ care, record, update, announce, onFilters, w
   const rowProps = {
     onLog: (row) => plantRun(row, undefined),
     onMoist: (row) => plantRun(row, MOISTURE_CHECK_EVENT),
-    // The row's Retry re-posts what failed — a failed Moist retries as Moist, never as the row's watering.
+    // The row's Retry re-posts what failed: a failed Moist retries as Moist, never as the row's watering.
     onRetry: (row) => plantRun(row, failed[row.key]?.body || undefined),
     onSkip: (row) => {
       if (writesHeld) return
@@ -367,7 +381,7 @@ export default function NeedsCare({ care, record, update, announce, onFilters, w
     return { ...cc, [field]: [...cur] }
   })
 
-  // ── render ────────────────────────────────────────────────────────────────────────────────────────────
+  // Render.
   const spotAllByKey = useMemo(() => {
     const m = new Map()
     for (const r of care.allEnriched) { if (!m.has(r.spotKey)) m.set(r.spotKey, []); m.get(r.spotKey).push(r) }
@@ -375,8 +389,8 @@ export default function NeedsCare({ care, record, update, announce, onFilters, w
   }, [care.allEnriched])
   const groupBusy = busy && busy.scope === 'group' ? busy.key : null
 
-  // A spot's done text counts ITS share of a group run (MF3: each touched spot shrinks to its own done line —
-  // "Bag Area · watered 97", not the group's 154).
+  // A spot's done text counts ITS share of a group run: each touched spot shrinks to its own done
+  // line ("Bag Area · watered 97", not the group's 154).
   const doneText = (bs, spotKey) => {
     const counts = {}
     const still = {}
@@ -398,8 +412,8 @@ export default function NeedsCare({ care, record, update, announce, onFilters, w
     return [n.moist ? `${n.moist} moist` : null, n.skipped ? `${n.skipped} skipped` : null].filter(Boolean).join(' · ')
   }
 
-  // A batch an Undo can act on: a Not today, or a run that created something (a run whose every write failed
-  // leaves an empty batch for its Retry to complete — there is nothing in it to undo).
+  // A batch an Undo can act on: a Not today, or a run that created something (a run whose every
+  // write failed leaves an empty batch for its Retry to complete; there is nothing in it to undo).
   const undoable = ([, b]) => !b.running && (b.scope === 'spot' || b.scope === 'nottoday') && (b.kind === 'not-today' || b.created.length > 0)
 
   const renderSpot = (spot) => {
@@ -447,8 +461,8 @@ export default function NeedsCare({ care, record, update, announce, onFilters, w
     const stuck = last && last[1].undoFailed
     const text = doneText(bs, key)
     const note = [rowNotes(key), stuck ? `${stuck} could not be undone` : null].filter(Boolean).join(' · ')
-    // A cut-off run that holds nothing here any more (its writes for this spot failed, and the plan has since dropped
-    // their rows): nothing to say, so no line — never a bare "Drive-Shade · " beside a check.
+    // A cut-off run that holds nothing here any more (its writes for this spot failed, and the plan
+    // has since dropped their rows): nothing to say, so no line, never a bare "Drive-Shade · ".
     if (!text && !note) return null
     return (
       <SpotDoneLine key={key} spotKey={key} name={name} text={text} note={note}
@@ -492,8 +506,8 @@ export default function NeedsCare({ care, record, update, announce, onFilters, w
 
   return (
     <div ref={rootRef} data-testid="today-care" style={{ display: 'flex', flexDirection: 'column', gap: T.space.sm }}>
-      {/* The feeding note, whenever it asks for something (finish plan D-5: it showed only under the Feed filter),
-          as an advisory line — no fill, a sage rule — at the top of the body. */}
+      {/* The feeding note, whenever it asks for something, as an advisory line (no fill, a sage rule)
+          at the top of the body. */}
       {care.substrate && (
         <p data-testid="today-substrate-note" style={substrateNote}>{care.substrate}</p>
       )}
@@ -568,5 +582,5 @@ const cardLi = { listStyle: 'none', background: P.white, border: '1px solid ' + 
 const groupLabel = { margin: 0, paddingLeft: 2, fontSize: T.type.xs, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: P.mid }
 const productHit = { flex: 1, minWidth: 0, minHeight: 48, padding: `6px ${T.space.sm}px`, textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }
 const filledCommit = { display: 'block', width: 'calc(100% - 20px)', margin: '6px 10px', minHeight: T.buttonMinHeight, background: P.green, color: P.white, border: 'none', borderRadius: T.radiusButton, fontWeight: 700, fontSize: T.type.sm, cursor: 'pointer', fontFamily: 'inherit' }
-// Advisory line (design-visual-system §3 "Operational alert lines"): no fill, 3px P.sage left rule, normal weight.
+// Advisory line: no fill, 3px P.sage left rule, normal weight.
 const substrateNote = { margin: 0, fontSize: T.type.sm, color: P.dark, lineHeight: 1.45, borderLeft: `3px solid ${P.sage}`, paddingLeft: T.space.sm }

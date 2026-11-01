@@ -1,54 +1,39 @@
-// VarietyEditor — V4-EDITCOMPLETE-001 V3: the variety edit surface that did not exist.
+// VarietyEditor: the variety edit surface (`plant_varieties` is otherwise reachable only through
+// VarietyPicker's CREATE path, which sets name / species / crop_type_slug / lifecycle and never
+// offers them again).
 //
-// Before this, `plant_varieties` was reachable only through VarietyPicker's CREATE path, which
-// writes name / species / crop_type_slug / lifecycle and then never offers them again — so a
-// mistyped variety name, or a variety filed under the wrong crop type (and therefore missing from
-// every type-grouped view), was permanent across 408 live cultivars. `useVarieties.updateVariety`
-// had been complete and callerless since VARIETY-REF Session 2.
-//
-// Per Dave's global rule this exposes ALL 36 user-owned columns the PUT can write, not just the 4
-// the create path happens to set (31 until V5-VARIETYFACTSEDIT-001 added origin country/region,
-// breeding and the two "info from" sources). Deliberately absent: photo_id (needs the photo-picker
-// surface, a different lane) and dtm_basis (V4-MATURITYBASIS-001: the PUT does not write it. It IS
-// read — seedFacts.js words it after a seed's days to maturity, on My seeds and the seed's page).
+// It exposes EVERY user-owned column the PUT can write, not just the few the create path sets.
+// Deliberately absent: photo_id (needs the photo-picker surface) and dtm_basis (the PUT does not
+// write it; it IS read, seedFacts.js words it after a seed's days to maturity).
 // breeding_confidence and variety_rank are not PUT-writable, so there is no rank field here. The
-// server decides Open-pollinated against variety_rank (chk_plant_varieties_op_requires_cultivar):
-// on a variety whose rank was never recorded it saves and records the variety as a single named
-// cultivar (Dave, 2026-09-21); on a market class, blend, species or placeholder it comes back as a
-// plain-English save error in the banner below.
+// server decides Open-pollinated against variety_rank (chk_plant_varieties_op_requires_cultivar): on
+// a variety whose rank was never recorded it saves and records the variety as a single named
+// cultivar; on a market class, blend, species or placeholder it comes back as a plain-English save
+// error in the banner below.
 //
-// The PUT is household-scoped (V4-VARIETYHOUSEHOLD-001), not owner-only. `currentUserId` gates the
-// form into a read-only state rather than letting the user type a save that will 404.
+// The PUT is household-scoped, not owner-only. `currentUserId` gates the form into a read-only state
+// rather than letting the user type a save that will 404.
 //
-// BUG-VARIETYEDITSTRICTER-001 — that gate used to read `variety.created_by === currentUserId`,
-// which was STRICTER than the server it was predicting. The PUT and DELETE in
+// The gate must not be stricter than the server it predicts. The PUT and DELETE in
 // lambda/varieties/index.js accept `created_by = ANY(household) OR created_by LIKE
-// ANY(managedPatterns)`, so the component refused edits the API would have taken. Measured on live
-// prod 2026-09-08 (garden_ro): 490 live cultivars, 23 of them locked out for Dave. Re-measured
-// 2026-09-23 (read-only, server rule unchanged): 497 live cultivars, all 497 in the API's editable
-// set for either household member, and the old gate locked Dave out of 25 — 24 managed-principal
-// rows (rescue-intake 15 / data-audit 5 / system 3 / data-correction 1) plus 1 row the other
-// household member created.
-// `canEditVariety` below mirrors the managed-principal arm exactly. It CANNOT mirror the household
-// arm: GARDEN_HOUSEHOLD_IDS is Lambda-side config with no VITE_ counterpart, and an "any user_* sub
-// is fine" predicate would be a DIFFERENT rule from the server's that only coincides while the
-// household has two members. So a row the OTHER household member created stayed read-only here
-// although the server would save it — 1 row from Dave's side, 472 of 497 from the other member's
-// side (2026-09-23).
+// ANY(managedPatterns)`. `canEditVariety` below mirrors the managed-principal arm exactly. It CANNOT
+// mirror the household arm: GARDEN_HOUSEHOLD_IDS is Lambda-side config with no VITE_ counterpart,
+// and an "any user_* sub is fine" predicate would be a DIFFERENT rule from the server's that only
+// coincides while the household has two members.
 //
-// BUG-VARIETYEDITHOUSEHOLDMIRROR-001 — closed from the server's side: GET /api/varieties/:id now
-// answers `can_edit`, the PUT/DELETE row predicate evaluated by the Lambda for THIS caller
-// (canEditVariety in lambda/varieties/authz.js, over the same household the SQL binds). When the
-// row carries that boolean the form takes it as the answer and predicts nothing. It arrives on the
-// request that seeds the form, so there is no "roster still loading" state to design.
+// So the server answers instead: GET /api/varieties/:id returns `can_edit`, the PUT/DELETE row
+// predicate evaluated by the Lambda for THIS caller (canEditVariety in lambda/varieties/authz.js,
+// over the same household the SQL binds). When the row carries that boolean the form takes it as
+// the answer and predicts nothing. It arrives on the request that seeds the form, so there is no
+// "roster still loading" state.
 //
-// The client mirror stays as the FALLBACK for a row without the flag — a Lambda that predates it
-// (the client and the Lambda deploy separately), or a cached response from before it. On that path
-// only, the two old imprecisions remain: the other member's rows read-only (above), and LOOSER
-// than the server in one place — the server hands the managed arm only to a proven household
-// member (managedPrincipalPatterns in authz.js) and the client cannot tell a member from a
-// signed-in stranger, so a stranger sees a managed row as editable and gets the server's 404 in
-// the error banner. A refused save, never a bad row; with the flag, that row is read-only instead.
+// The client mirror stays as the FALLBACK for a row without the flag (a Lambda that predates it, or
+// a cached response; client and Lambda deploy separately). On that path only, two imprecisions
+// remain: a row the OTHER household member created reads read-only, and the client is LOOSER than
+// the server in one place: the server hands the managed arm only to a proven household member
+// (managedPrincipalPatterns in authz.js) and the client cannot tell a member from a signed-in
+// stranger, so a stranger sees a managed row as editable and gets the server's 404 in the error
+// banner. A refused save, never a bad row; with the flag, that row is read-only instead.
 
 import React, { useMemo, useState } from 'react'
 import { P } from '../../lib/constants.js'
@@ -56,15 +41,15 @@ import { Field, Input, Select, Textarea, Button, ErrorBanner } from './index.js'
 import { T } from './formStyles.js'
 import { SUN_OPTIONS } from '../../lib/varietySpec.js'
 
-// Mirrors the CHECK constraints on plant_varieties (verified against live Neon, not migrations).
-// Duplicated rather than imported because src/ must not reach into lambda/; the server re-validates,
-// so drift here is a 400, never a bad row — the same contract VarietyPicker's LIFECYCLE_OPTIONS uses.
+// Mirrors the CHECK constraints on plant_varieties. Duplicated rather than imported because src/
+// must not reach into lambda/; the server re-validates, so drift here is a 400, never a bad row
+// (the same contract VarietyPicker's LIFECYCLE_OPTIONS uses).
 const LIFECYCLE = [
   ['annual', 'Annual'], ['tender_perennial', 'Tender perennial'],
   ['perennial', 'Perennial'], ['biennial', 'Biennial'],
 ]
-// Sun is the one list kept in lib/varietySpec.js rather than here: the planting screens print the stored
-// code through the same words (sunLabel), so the word picked here is the word shown there.
+// Sun is the one list kept in lib/varietySpec.js rather than here: the planting screens print the
+// stored code through the same words (sunLabel), so the word picked here is the word shown there.
 const SUN = SUN_OPTIONS
 const DETERMINACY = [
   ['determinate', 'Determinate'], ['semi_determinate', 'Semi-determinate'],
@@ -79,7 +64,7 @@ const START_METHOD = [
   ['both', 'Both'], ['indoors_only', 'Indoors only'],
 ]
 const SOW_SEASON = [['cool', 'Cool'], ['warm', 'Warm'], ['cool_warm', 'Cool or warm']]
-// V5-VARIETYFACTSEDIT-001. Labels match the seed card's (seedFacts.js BREEDING_LABEL).
+// Labels match the seed card's (seedFacts.js BREEDING_LABEL).
 const BREEDING = [
   ['f1', 'F1 hybrid'], ['open_pollinated', 'Open-pollinated'],
   ['landrace', 'Landrace'], ['unknown', 'Unknown'],
@@ -95,11 +80,10 @@ const FACT_SOURCE = [
 const BREEDING_SOURCE = [...FACT_SOURCE, ['inference', 'Best guess']]
 const HEAT_SOURCE = [...FACT_SOURCE, ['inference', 'Best guess (shows est.)']]
 
-// Mirrors lambda/varieties/authz.js MANAGED_PRINCIPAL_PATTERNS verbatim — the SQL `LIKE ANY` arm of
-// the PUT/DELETE predicate. Duplicated rather than imported for the same reason LIFECYCLE above is:
-// src/ must not reach into lambda/, and the server re-validates, so drift here can never write a
-// bad row. It can still lock a row the server would save (a pattern the Lambda gained and this
-// copy lacks) — the exact bug this list closes — so VarietyEditor.test.jsx reads authz.js off disk
+// Mirrors lambda/varieties/authz.js MANAGED_PRINCIPAL_PATTERNS verbatim: the SQL `LIKE ANY` arm of
+// the PUT/DELETE predicate. Duplicated rather than imported for the same reason LIFECYCLE above is,
+// and drift here can never write a bad row. It can still lock a row the server would save (a
+// pattern the Lambda gained and this copy lacks), so VarietyEditor.test.jsx reads authz.js off disk
 // and fails when the two lists differ. Kept in the SQL spelling (a trailing `%`) so a reader can
 // diff it against the Lambda by eye; `system` is an exact match there and stays one here.
 export const MANAGED_PRINCIPAL_PATTERNS = [
@@ -109,7 +93,7 @@ export const MANAGED_PRINCIPAL_PATTERNS = [
   'data-correction-%',
 ]
 
-// Only a trailing `%` appears in the patterns above — no `_`, no leading or interior wildcard — so
+// Only a trailing `%` appears in the patterns above (no `_`, no leading or interior wildcard), so
 // prefix/equality is a faithful LIKE, not an approximation of one.
 function matchesManagedPrincipal(createdBy) {
   return MANAGED_PRINCIPAL_PATTERNS.some(p =>
@@ -119,10 +103,10 @@ function matchesManagedPrincipal(createdBy) {
 // What the server will accept. Exported so the guard test can drive the predicate directly against
 // real prod-shaped created_by values instead of only through a render.
 //
-// BUG-VARIETYEDITHOUSEHOLDMIRROR-001 — the server's own answer first. Only a real boolean counts:
-// absent, null or a mangled value means "the server did not say" (an older Lambda) and falls to
-// the prediction below, unchanged. `can_edit` is read here and nowhere else — buildVarietyPatch
-// builds the PUT body from FIELDS, so the flag cannot ride back.
+// The server's own answer comes first. Only a real boolean counts: absent, null or a mangled value
+// means "the server did not say" (an older Lambda) and falls to the prediction below. `can_edit` is
+// read here and nowhere else: buildVarietyPatch builds the PUT body from FIELDS, so the flag cannot
+// ride back.
 export function canEditVariety(variety, currentUserId) {
   if (typeof variety?.can_edit === 'boolean') return variety.can_edit
   const createdBy = variety?.created_by
@@ -131,7 +115,7 @@ export function canEditVariety(variety, currentUserId) {
 }
 
 // The field table IS the contract: it drives rendering, the form seed, and the payload build, so a
-// field cannot be displayed without also being saved (the failure mode called out in 5b430f4).
+// field cannot be displayed without also being saved.
 // kind: text | area | int | num | enum | bool | csv.  `name` is intentionally not clearable.
 export const FIELDS = [
   { key: 'species',                kind: 'text', label: 'Species',            section: 'identity', placeholder: 'e.g. Capsicum annuum' },
@@ -256,13 +240,10 @@ export function isEmptyPatch(patch) {
   return Object.keys(patch).length === 0
 }
 
-// V4-CROPTYPEREACH-001 — the crop-type field, now with an inline mint.
-//
-// Until this, `＋ New crop type` existed in exactly ONE place in the app: VarietyPicker's stage 2,
-// which only runs while creating a BRAND-NEW variety. So once a variety existed there was no path
-// to a new crop type anywhere — an untyped variety could be edited forever and still never get a
-// type, which is precisely how Kousa Dogwood sat untyped on 2026-08-17. This is the second surface,
-// and the one that closes the reachability gap for rows that already exist.
+// The crop-type field, with an inline mint. Without it, `＋ New crop type` existed only in
+// VarietyPicker's stage 2, which runs while creating a BRAND-NEW variety, so an untyped variety
+// could be edited forever and never get a type. This is the second surface, closing that gap for
+// rows that already exist.
 //
 // Modelled on PutUp's StorageField (the house pattern for inline-create beside a Select) rather
 // than on VarietyPicker's panel: this is a form, so it uses the form primitives.
@@ -273,9 +254,9 @@ function CropTypeField({ idPrefix, value, onChange, cropTypes, onCreateCropType,
   const [lifecycle, setLifecycle] = useState('')
   const [busy, setBusy] = useState(false)
   // Types minted in THIS session, merged into the options below. `cropTypes` is a prop owned by the
-  // page's useCropTypes hook, so it can lag the mint by a render — and a <select> whose value is not
-  // among its options renders BLANK. Without this the user mints "Dogwood", watches the field go
-  // empty, and concludes it failed: the same "my type didn't take" outcome this item exists to end.
+  // page's useCropTypes hook, so it can lag the mint by a render, and a <select> whose value is not
+  // among its options renders BLANK. Without this the user mints a type, watches the field go empty,
+  // and concludes it failed.
   const [minted, setMinted] = useState([])
   // null | { message, existing } — `existing` present means the server steered us to a type that
   // already covers this name (plural, or a synonym of a crop the derive engine special-cases).
@@ -307,8 +288,8 @@ function CropTypeField({ idPrefix, value, onChange, cropTypes, onCreateCropType,
     })
     setBusy(false)
     if (res?.error) { setErr({ message: res.error, existing: res.existing ?? null }); return }
-    // Select what was just minted — stopping at "type created" would leave the user to hunt for it
-    // in a 141-row select, which is the failure this item exists to remove.
+    // Select what was just minted: stopping at "type created" would leave the user to hunt for it
+    // in a long select.
     setMinted(m => [...m, res.cropType])
     onChange(res.cropType.slug)
     reset()
@@ -416,8 +397,8 @@ export default function VarietyEditor({
     e.preventDefault()
     if (saving || !canEdit) return
     if (!form.name.trim()) { setErr('Name is required.'); return }
-    // V5-VARIETYFACTSEDIT-001 — a breeding call may never stand unsourced
-    // (chk_plant_varieties_breeding_sourced). Stopped here, before the round trip.
+    // A breeding call may never stand unsourced (chk_plant_varieties_breeding_sourced). Stopped
+    // here, before the round trip.
     if (form.breeding_system && !form.breeding_source) {
       setErr('"Breeding info from" is required when Breeding is set.'); return
     }
@@ -523,8 +504,8 @@ const summaryStyle = {
   padding: '8px 0', minHeight: 44, display: 'flex', alignItems: 'center', color: P.dark,
 }
 
-// V4-CROPTYPEREACH-001 — inline mint affordance. Matches PutUp's StorageField "＋ New location"
-// link (PutUp.jsx:760-766) so the two inline-create surfaces read identically.
+// Inline mint affordance. Matches PutUp's StorageField "＋ New location" link so the two
+// inline-create surfaces read identically.
 const mintLinkStyle = {
   background: 'none', border: 'none', color: P.green, cursor: 'pointer', fontSize: '0.82rem',
   fontWeight: 600, padding: '8px 0 0', textDecoration: 'underline', minHeight: 44,
@@ -535,20 +516,17 @@ const mintPanelStyle = {
   padding: '12px 14px', backgroundColor: P.cream,
 }
 
-// BUG-VARIETYREADONLYINVISIBLE-001 — the notice was cream fill + P.border on a cream page, at the
-// same weight as the `help` text under every Field, so it read as a hint rather than as a blocker.
-// Now the house warning surface (P.warn + P.warnBorder + a bolded headline), the same one
-// ComposeHarvestBand.jsx:404 and StorageDeadlineAlert.jsx:141 use. No new primitive: this is a
-// styled div, exactly as it was.
+// The read-only notice is the house warning surface (P.warn + P.warnBorder + a bolded headline),
+// the same one ComposeHarvestBand.jsx and StorageDeadlineAlert.jsx use, so it reads as a blocker
+// rather than as a hint like the `help` text under every Field. No new primitive: a styled div.
 //
-// The copy states what THIS SCREEN will do and never predicts the server. The old sentence ("the
-// server only accepts edits from the row's owner") had been false since V4-VARIETYHOUSEHOLD-001, and
-// "the server will refuse any change" would be false too: after the widening, the one place a
-// household member still meets this notice is a row the OTHER member created — a row the server
-// would save. The client cannot tell that row from a stranger's, so it says only what it knows.
+// The copy states what THIS SCREEN will do and never predicts the server. After the household
+// widening, the one place a household member still meets this notice is a row the OTHER member
+// created, a row the server would save; the client cannot tell that row from a stranger's, so it
+// says only what it knows.
 //
-// overflowWrap: a Clerk sub is a 32-char unbroken token and this renders one inline — without it
-// the notice pushes the whole form wider than a 390px viewport.
+// overflowWrap: a Clerk sub is a 32-char unbroken token and this renders one inline; without it the
+// notice pushes the whole form wider than a 390px viewport.
 const readOnlyNotice = {
   backgroundColor: P.warn, border: `1px solid ${P.warnBorder}`, borderRadius: 8,
   padding: '10px 12px', marginBottom: 14, fontSize: '0.82rem', color: P.mid,
@@ -561,10 +539,9 @@ const readOnlyNoticeHeadline = {
   fontWeight: 700, color: P.gold, marginBottom: T.space.xs,
 }
 
-// The other half of BUG-VARIETYREADONLYINVISIBLE-001, and the half the notice alone could not fix:
-// inputChrome/selectChrome carry NO disabled treatment at all, so a `disabled` field rendered
-// P.dark ink on a P.white box — pixel-identical to an editable one. A user who scrolled past the
-// notice (four fields is enough on a 390px screen) saw a normal-looking box that silently ate
+// The other half of the read-only treatment: inputChrome/selectChrome carry NO disabled treatment,
+// so a `disabled` field would render P.dark ink on a P.white box, pixel-identical to an editable
+// one, and a user who scrolled past the notice would see a normal-looking box that silently eats
 // keystrokes. Merged through each primitive's `style` slot, so the frozen primitives are untouched.
 //
 // Four independent channels, not colour alone: recessed fill, muted ink, a DASHED border (shape,

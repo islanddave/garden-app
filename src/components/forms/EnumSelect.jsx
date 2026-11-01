@@ -1,9 +1,6 @@
-// src/components/forms/EnumSelect.jsx
-// Lane D / Phase B+C — enum-driven <select> on the Phase A Select primitive.
-// `enumValues` accepts [{value,label}] | [{v,label}] | string[]; options are
-// alphabetized by label (app-wide alpha rule, V3-SORT-001/V3-ORDER-001) and the
-// `label` is the SOLE humanizer (no per-surface casing transforms). Inherits all
-// Select escape hatches / ARIA / chrome.
+// Enum-driven <select> on the Select primitive. `enumValues` accepts [{value,label}] | [{v,label}] |
+// string[]; options are alphabetized by label (app-wide alpha rule) and the `label` is the SOLE
+// humanizer (no per-surface casing transforms). Inherits all Select escape hatches / ARIA / chrome.
 import React from 'react'
 import Select from './Select.jsx'
 

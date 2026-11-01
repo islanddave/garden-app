@@ -1,13 +1,8 @@
-// src/components/forms/Input.jsx
-// Lane D / Phase A — canonical text/number/date/url input primitive.
-//
-// Frozen contract: controlled (`value`/`onChange`); `error` (bool|string) drives
-// the terra error border AND is mirrored by aria-invalid; first-class native props
-// passed through (placeholder/type/min/max/step/inputMode/autoComplete/…); escape
-// hatches = `...rest` spread to the native <input> + a `style` merge slot.
-// Field can also drive the error state by cloning aria-invalid onto this control,
-// so `hasError` reads EITHER source. `error`/`errorId` are consumed here and never
-// leak to the DOM.
+// Canonical text/number/date/url input primitive. Controlled (`value`/`onChange`); `error`
+// (bool|string) drives the terra error border AND is mirrored by aria-invalid; native props pass
+// through, with `...rest` spread to the <input> and a `style` merge slot. Field can also drive the
+// error state by cloning aria-invalid onto this control, so `hasError` reads EITHER source.
+// `error`/`errorId` are consumed here and never leak to the DOM.
 import React from 'react'
 import { inputChrome } from './formStyles.js'
 

@@ -1,6 +1,4 @@
-// src/components/forms/Card.jsx
-// Lane D / Phase A — white bordered container (matches the shipped InventoryAdd
-// `card`). `title` renders an optional uppercase group label.
+// White bordered container. `title` renders an optional uppercase group label.
 import React from 'react'
 import { P } from '../../lib/constants.js'
 import { cardChrome } from './formStyles.js'

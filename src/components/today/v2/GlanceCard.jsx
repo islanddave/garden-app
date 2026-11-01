@@ -14,37 +14,38 @@ import { P } from '../../../lib/constants.js'
 import { ICON_COLORS } from '../../../lib/tokens.js'
 import { T } from '../../forms/formStyles.js'
 
-// GlanceCard — the redesigned Today's first screen (V5-TODAYREDESIGN-001 S3; plan-v2 §1.1 row 3, §4 "Glance
-// card", §5.1–5.2; §13 MF2, SF9 update; finish plan §3.2–3.3, Dave's D15, 2026-10-14). Dave D1: one compact card —
-// high/low, rain today + tomorrow on one line, a one-line verdict — with the rain detail, the update time, deep-soak
-// and leaf-wetness notes behind a tap.
+// The redesigned Today's first screen: one compact card (high/low, rain today + tomorrow on one
+// line, a one-line verdict), with the rain detail, the update time, deep-soak and leaf-wetness notes
+// behind a tap.
 //
-// CLOSED (the default; nothing ever opens it but a tap): one button, inside a visually quiet h2 "Weather",
-// holding rows A–C — A the condition, high and low (the ONE place on the page tonight's low is stated), the cold
-// range as "could reach 40°" and the "Details ▾" control (44 px tall); B the card's own rain sentences
-// (verdict.js glanceRain → rainSentences, the same text WeatherWidget prints); C the verdict in its short form
-// (verdict.js glanceHeadline) plus at most one urgent phrase. The verdict is ONE visible, wrapping text element —
-// no ellipsis, no sr-only twin (the old card's truncated headline is why) — with ONE line reserved (finish plan
-// D-8); an urgent phrase that needs a second line takes it. Under the button, still inside the card, only the
-// stale marker for a plan that is not today's.
+// CLOSED (the default; nothing ever opens it but a tap): one button, inside a visually quiet h2
+// "Weather", holding rows A–C. A: the condition, high and low (the ONE place on the page tonight's
+// low is stated), the cold range as "could reach 40°" and the "Details ▾" control (44 px tall).
+// B: the card's own rain sentences (verdict.js glanceRain → rainSentences, the same text
+// WeatherWidget prints). C: the verdict in its short form (verdict.js glanceHeadline) plus at most
+// one urgent phrase. The verdict is ONE visible, wrapping text element, no ellipsis and no sr-only
+// twin (a truncated headline is why), with ONE line reserved; an urgent phrase that needs a second
+// line takes it. Under the button, still inside the card, only the stale marker for a plan that is
+// not today's.
 //
-// UNDER THE CARD, the alert stack (finish plan §3.3, D15), only what is left to say: the weather cue, unless a
-// Protect tonight section takes it (a pick cue becomes Protect's pick link; lib/todayV2/alerts.js), and — only
-// with NO Protect section — one frost line, tonight's in its short form ("Frost watch tonight — clear and calm.":
-// row A states the low). Tonight's line carries the warning mark and the warn rule; nothing here is a banner,
-// a toast or a fill.
+// UNDER THE CARD, the alert stack, only what is left to say: the weather cue, unless a Protect
+// tonight section takes it (a pick cue becomes Protect's pick link; lib/todayV2/alerts.js), and,
+// only with NO Protect section, one frost line, tonight's in its short form ("Frost watch tonight
+// — clear and calm.": row A states the low). Tonight's line carries the warning mark and the warn
+// rule; nothing here is a banner, a toast or a fill.
 //
-// OPEN (MF2): rows A–C give way to WeatherWidget, rendered ONCE, its headline the closed card's verdict (finish
-// plan D-2) and its cold range in the same words — never beside rows A–C, which would be two weather cards stacked.
-// The toggle reads "Less ▴" in the place "Details ▾" held: the same button, laid over the widget's row A at the
-// card's inner right edge. Then one plain, normal-weight list, one line each (finish plan §3.2): the frost
-// line(s) in full, the deep-soak line with the dry plantings named in it, leaf wetness, the rain lines (RainHold:
-// what rain already watered, then the plantings waiting for rain, each with its Water chip — under the details,
-// never inside the toggle button; they need the page's care state, `care`, the visit `record` / `update`), and the
-// muted basis stamp. The open state drops the card's own chrome: WeatherWidget is the card.
+// OPEN: rows A–C give way to WeatherWidget, rendered ONCE, its headline the closed card's verdict
+// and its cold range in the same words, never beside rows A–C, which would be two weather cards
+// stacked. The toggle reads "Less ▴" in the place "Details ▾" held: the same button, laid over the
+// widget's row A at the card's inner right edge. Then one plain, normal-weight list, one line each:
+// the frost line(s) in full, the deep-soak line with the dry plantings named in it, leaf wetness,
+// the rain lines (RainHold: what rain already watered, then the plantings waiting for rain, each
+// with its Water chip; under the details, never inside the toggle button; they need the page's care
+// state, `care`, the visit `record` / `update`), and the muted basis stamp. The open state drops the
+// card's own chrome: WeatherWidget is the card.
 //
-// The cue keeps ONE place in the tree in both states, so a toggle never remounts it (its impression beacon would
-// fire again) — the state-only parts are `false` holes around it.
+// The cue keeps ONE place in the tree in both states, so a toggle never remounts it (its impression
+// beacon would fire again); the state-only parts are `false` holes around it.
 //
 // data-testid anchors (today-glance, today-verdict, [data-stale]) are gate:today-shape:v2's contract.
 const COLD_PHRASE = 'could reach'
@@ -62,8 +63,9 @@ export default function GlanceCard({
     () => glanceRain({ hydrology: plan.hydrology, liveHydrology, generatedAt, planDate }),
     [plan, liveHydrology, generatedAt, planDate],
   )
-  // The frost lines as FrostAlertLine builds them (the same four inputs: one low per night, the warmed line), with
-  // their halves so tonight's can be printed without the low; placed by whether Protect takes them.
+  // The frost lines as FrostAlertLine builds them (the same four inputs: one low per night, the
+  // warmed line), with their halves so tonight's can be printed without the low; placed by whether
+  // Protect takes them.
   const frost = useMemo(() => frostPlacement(
     buildFrostAlertLines(plan.alerts_sent, { lowShown: agreed?.lowF, planLow: weather.tonightLow, current, parts: true }),
     { protectShown },
@@ -91,7 +93,7 @@ export default function GlanceCard({
                 <span style={srOnly}>Weather: </span>
                 <span style={rowA}>
                   <ConditionIcon code={weather.code} />
-                  {/* A plan with no high or no night low prints nothing for it, never "null°" (the old page's rule). */}
+                  {/* A plan with no high or no night low prints nothing for it, never "null°". */}
                   {Number.isFinite(weather.highToday) && <span style={tempPair}>
                     <span style={hiStyle}>{`${weather.highToday}°`}</span>
                     <Icon name="care.sun" size={16} title="day high" style={{ marginTop: 3 }} />
@@ -101,10 +103,10 @@ export default function GlanceCard({
                     {/* WeatherWidget's crescent, copied: it has no registry twin (see its note there). */}
                     <svg width="11" height="11" viewBox="0 0 24 24" style={{ marginTop: 2 }} role="img" aria-label="night low"><path d="M20 14.5A8 8 0 1 1 10.5 4 6.3 6.3 0 0 0 20 14.5Z" fill={P.mid} /></svg>
                   </span>}
-                  {/* V5-WXCOLDBAND-001: the forecast's cold end, only when it is colder than this low. */}
+                  {/* The forecast's cold end, only when it is colder than this low. */}
                   <ColdRangeNote coldRange={coldRange} planDate={planDate} lowShown={low} phrase={COLD_PHRASE} />
-                  {/* The words and the arrow are siblings: the arrow is a glyph the Roboto pin lacks (font-census.mjs
-                      HOST_FONT_OK), so it must be an element of its own. */}
+                  {/* The words and the arrow are siblings: the arrow is a glyph the Roboto pin lacks
+                      (font-census.mjs HOST_FONT_OK), so it must be an element of its own. */}
                   <span style={detailsLabel}><span>Details</span><span aria-hidden="true" style={arrow}>▾</span></span>
                 </span>
                 <span data-testid="glance-rain" style={rowB}>
@@ -157,9 +159,10 @@ export default function GlanceCard({
   )
 }
 
-// One frost line (frostAlertLine.js, `parts`): tonight's watch / possible line with the warning mark and the warn
-// rule, without the low (short under the card: its first sentence); a warmed line or a later night's, as built, in
-// the advisory treatment. FrostAlertLine's test id and data attributes, so a frost line is found the same way.
+// One frost line (frostAlertLine.js, `parts`): tonight's watch / possible line with the warning mark
+// and the warn rule, without the low (short under the card: its first sentence); a warmed line or a
+// later night's, as built, in the advisory treatment. FrostAlertLine's test id and data attributes,
+// so a frost line is found the same way.
 function FrostLine({ line, short = false }) {
   const tonight = frostTonight(line)
   return (
@@ -173,11 +176,11 @@ function FrostLine({ line, short = false }) {
   )
 }
 
-// The deep-soak line with the dry list merged into it (finish plan §3.2): "No deep soak in 21 days — check soil at
-// root depth: Peach tree, Hydrangeas." From the structured fields only — the day count the garden line and the
-// list rows carry (droughtLine.js, careNeeded.js droughtRows, which already words "No deep soak … in N days"), never
-// "no rain" (Dave's ruling, droughtLine.js). Counts that differ, or a truncated window, read "at least" the least.
-// The names are the list's region (care-drought-list), inline. Shown only behind the tap (D1).
+// The deep-soak line with the dry list merged into it: "No deep soak in 21 days — check soil at root
+// depth: Peach tree, Hydrangeas." From the structured fields only (the day count the garden line and
+// the list rows carry: droughtLine.js, careNeeded.js droughtRows, which already words "No deep soak
+// … in N days"), never "no rain". Counts that differ, or a truncated window, read "at least" the
+// least. The names are the list's region (care-drought-list), inline. Shown only behind the tap.
 function DryLine({ plan }) {
   const line = useMemo(() => buildDroughtLine(plan), [plan])
   const rows = useMemo(() => droughtRows(plan), [plan])
@@ -195,17 +198,17 @@ function DryLine({ plan }) {
   )
 }
 
-// ── styles (plan-v2 §4; finish plan §3.2–3.3; design-visual-system §2–3; tokens P / T) ───────────────────────
-// The glance: the card, then the alert stack and (open) the details, 8 px apart — a line that renders nothing
-// leaves no gap behind.
+// Styles (tokens P / T). The glance: the card, then the alert stack and (open) the details, 8 px
+// apart; a line that renders nothing leaves no gap behind.
 const stack = { display: 'flex', flexDirection: 'column', gap: 8 }
 // Closed: the one card treatment WeatherWidget uses (white, 1px border, card radius, 16 padding).
 const card = {
   display: 'flex', flexDirection: 'column', gap: 8, boxSizing: 'border-box',
   background: P.white, border: `1px solid ${P.border}`, borderRadius: T.radiusCard, padding: T.space.md,
 }
-// Open: WeatherWidget is the card; the toggle sits over its row A, at its border + padding from the top right —
-// where "Details ▾" sits on the closed card (row A is the 44 px condition glyph's height in both).
+// Open: WeatherWidget is the card; the toggle sits over its row A, at its border + padding from the
+// top right, where "Details ▾" sits on the closed card (row A is the 44 px condition glyph's height
+// in both).
 const openFrame = { display: 'flex', flexDirection: 'column', gap: 8, position: 'relative' }
 const headingStyle = { margin: 0, fontSize: 'inherit', fontWeight: 'inherit' }
 const openHeading = { ...headingStyle, position: 'absolute', top: 1 + T.space.md, right: 1 + T.space.md, zIndex: 1 }
@@ -230,15 +233,15 @@ const rowB = {
 }
 const rainItem = { display: 'inline-flex', alignItems: 'center', gap: 4 }
 const hairline = { display: 'block', height: 1, background: P.border, margin: '5px 0' }
-// One line reserved (finish plan D-8); a verdict that wraps takes its second line.
+// One line reserved; a verdict that wraps takes its second line.
 const verdictStyle = {
   display: 'block', fontSize: T.type.base, fontWeight: 700, color: P.dark, lineHeight: 1.35,
   minHeight: '1.35em', overflowWrap: 'anywhere',
 }
 const staleStyle = { margin: 0, display: 'flex', alignItems: 'center', gap: 6, fontSize: T.type.xs, color: P.mid }
 const detailsStyle = { display: 'flex', flexDirection: 'column', gap: 8 }
-// The alert-line treatment (design-visual-system §3): no fill, a 3 px left rule — P.warnBorder for tonight, P.sage
-// for advice — T.type.sm at normal weight (finish plan §3.2 "one plain normal-weight list", §3.3).
+// The alert-line treatment: no fill, a 3 px left rule (P.warnBorder for tonight, P.sage for advice),
+// T.type.sm at normal weight (one plain normal-weight list).
 const lineBase = { margin: 0, paddingLeft: T.space.sm, fontSize: T.type.sm, lineHeight: 1.45, color: P.dark, fontWeight: 400 }
 const tonightLine = { ...lineBase, borderLeft: `3px solid ${P.warnBorder}`, display: 'flex', alignItems: 'flex-start', gap: 6 }
 const adviceLine = { ...lineBase, borderLeft: `3px solid ${P.sage}` }

@@ -1,10 +1,6 @@
-// src/components/forms/Badge.jsx
-// Lane D / Phase A — canonical Badge primitive. Operational/display-only label chip;
-// NOT a reward-UX surface. Built on the formStyles token layer (T) and palette (P)
-// so it stays visually consistent with the established status pills without duplicating
-// their chrome. API shape mirrors Button/Card: style-merge, rest-prop passthrough, and
-// custom props (tone) destructured before spread so they never reach the DOM. No role is
-// assigned (it is a visual label); title/aria-label pass through for the AT affordance.
+// Operational, display-only label chip; NOT a reward-UX surface. Custom props (tone) are
+// destructured before the spread so they never reach the DOM. No role is assigned (it is a visual
+// label); title/aria-label pass through.
 import React from 'react'
 import { P } from '../../lib/constants.js'
 import { T } from './formStyles.js'

@@ -5,29 +5,29 @@ import { useCultivationFeed } from '../CultivationLead.jsx'
 import { COULD_NOT_CHECK } from '../../AmbientBandNotice.jsx'
 import { toLines } from '../../../lib/harvestPost.js'
 
-// useTodayBands — the redesigned Today's PLAN-INDEPENDENT sections, fetched at the page (V5-TODAYREDESIGN-001 S6;
-// plan-v2 §1.0 rows 4, 5 and 8, §1.4, §4 "Harvest / Put-Up bodies", §8 S6).
+// The redesigned Today's PLAN-INDEPENDENT sections, fetched at the page.
 //
-// Harvest (the compose band + the watch band), From your Put-Up (the use-soon band) and the Sow link row each come
-// from their band's OWN data hook, called here — not inside the bands — because a section's presence and header
-// summary are read while its body is unmounted (closed means unmounted, §5.2). The page hands each band the result
-// as `data` and renders it `bare`, so a band's rows are exactly what V1 shows, from exactly one request.
+// Harvest (the compose band + the watch band), From your Put-Up (the use-soon band) and the Sow link
+// row each come from their band's OWN data hook, called here and not inside the bands, because a
+// section's presence and header summary are read while its body is unmounted (closed means
+// unmounted). The page hands each band the result as `data` and renders it `bare`, so a band's rows
+// are exactly what V1 shows, from exactly one request.
 //
-// Presence follows each band's own "do I render?" (a section with nothing in it renders nothing, R15):
-//   Harvest  — a composable batch of the viewer's (composeBatchState, the compose band's three gates), or a
-//              watch list with rows or snoozed rows, or a watch fetch that FAILED (the band's "Couldn't check
-//              just now" notice: "could not ask" is not "nothing is coming", BUG-READYBANDFETCH-001).
+// Presence follows each band's own "do I render?" (a section with nothing in it renders nothing):
+//   Harvest  — a composable batch of the viewer's (composeBatchState, the compose band's three
+//              gates), or a watch list with rows or snoozed rows, or a watch fetch that FAILED (the
+//              band's "Couldn't check just now" notice: "could not ask" is not "nothing is coming").
 //   Put-Up   — jars in the use-soon slice, or a failed fetch (same notice).
-// Header summaries NAME what the band lists — never a count (Reward UX; plan §10 item 4; finish plan D-6, which
-// dropped "20 picks · logged an hour ago"): "Ready to post · Worth checking: Radicchio, Beets, Red Acre Cabbage +2"
-// (the compose band's batch, named by crop — "Ready to post: Tomato, Okra" — when the watch band lists nothing;
-// then the watch band's own selection); "Summer Squash (past date) ·
-// Plum · Basil ×2" (the use-soon slice, a repeated jar named once, D-7). A failed band reads COULD_NOT_CHECK there
-// (the AmbientBandNotice voice).
+// Header summaries NAME what the band lists, never a count (Reward UX): "Ready to post · Worth
+// checking: Radicchio, Beets, Red Acre Cabbage +2" (the compose band's batch, named by crop —
+// "Ready to post: Tomato, Okra" — when the watch band lists nothing; then the watch band's own
+// selection); "Summer Squash (past date) · Plum · Basil ×2" (the use-soon slice, a repeated jar named
+// once). A failed band reads COULD_NOT_CHECK there (the AmbientBandNotice voice).
 //
-// `settled`: every band has answered once (ok or failed) — the page's ready point waits on it, capped by the same
-// 300 ms window as the prefs wait (TodayV2), so a remembered-open Harvest is open at the visit's start and nothing
-// below Needs care moves when the bands land. `sowLines` false (the 2027 sowing freeze) asks for no sow lines.
+// `settled`: every band has answered once (ok or failed). The page's ready point waits on it, capped
+// by the same 300 ms window as the prefs wait (TodayV2), so a remembered-open Harvest is open at the
+// visit's start and nothing below Needs care moves when the bands land. `sowLines` false (the 2027
+// sowing freeze) asks for no sow lines.
 export function useTodayBands({ viewerId, sowLines }) {
   const watch = useHarvestWatchFeed()
   const compose = useComposeHarvestFeed()
@@ -67,7 +67,7 @@ function postCrops(post) {
 
 export function harvestSummary(post, sel, watchFailed) {
   const parts = []
-  // The batch's crops only when the watch band has nothing to name — both lists on one band ran to three lines.
+  // The batch's crops only when the watch band has nothing to name: both lists on one band ran to three lines.
   const watchNames = !watchFailed && sel.all.length > 0
   if (post) {
     const crops = postCrops(post)

@@ -1,35 +1,22 @@
-// src/components/forms/Field.jsx
-// ────────────────────────────────────────────────────────────────────────────
-// Lane D / Phase A — canonical labelled-field wrapper.
-//
-// Frozen prop contract (forms-consolidation-plan-V002 §5 Phase A):
+// Canonical labelled-field wrapper. Prop contract:
 //   label        node    — visible label text/markup (required)
-//   htmlFor / id string  — explicit control id (PREFERRED — drift-resistant);
-//                          falls back to a useId() if omitted (ProjectNew pattern)
+//   htmlFor / id string  — explicit control id (PREFERRED, drift-resistant);
+//                          falls back to a useId() if omitted
 //   error        string  — error message; when truthy the wrapper renders an
 //                          id'd role="alert" node and wires the control to it
 //   errorId      string  — id for the error node; defaults to `${id}-error`
 //   required     bool    — shows the required asterisk + sets aria-required
-//   optional     bool    — shows an "optional" affordance (ADHD: never make the
-//                          user submit-to-discover which fields are optional)
+//   optional     bool    — shows an "optional" affordance (never make the user
+//                          submit-to-discover which fields are optional)
 //   help         node    — help text rendered under the control, id-associated
 //   children     node    — EXACTLY ONE element child (input/select/textarea or a
-//                          Phase A primitive). More than one → contract ERROR.
+//                          primitive). More than one → contract ERROR.
 //
-// The wrapper clones association + ARIA onto the single control child *unless the
-// child already set that prop* (so a primitive passing its own aria-describedby
-// wins). This is the InventoryAdd/ProjectNew cloneElement pattern, completed with
-// the ARIA wiring the originals were missing (aria-invalid / aria-describedby /
-// role="alert" error node) — see plan §0 condition 3.
+// The wrapper clones association + ARIA onto the single control child *unless the child already
+// set that prop* (so a primitive passing its own aria-describedby wins).
 //
-// BUG-FIELDCHILDDROP-001 (fixed here). Until now the render DISCARDED every element
-// child after the first: `{kids.slice(1).filter(k => !isValidElement(k))}` kept the
-// strings and threw the elements away. The contract warning that accompanied it said
-// "only the first gets the label id — wrap extras yourself", which reads as "the
-// extras still render, just unlabelled". They did not render at all. Two shipped call
-// sites (AddSeeds, InventoryAdd) lost a help <div> to this and nobody noticed, because
-// no test renders either one. Two changes: nothing is dropped now, and the violation
-// throws in dev/test instead of warning. See _contract.js §contractError.
+// Nothing is dropped: every element child after the first still renders, and a contract violation
+// throws in dev/test instead of warning (see _contract.js contractError).
 import React from 'react'
 import { labelChrome, requiredMarkChrome, optionalMarkChrome, helpChrome, errorChrome } from './formStyles.js'
 import { contractError } from './_contract.js'

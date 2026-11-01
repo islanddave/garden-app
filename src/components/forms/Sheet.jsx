@@ -1,33 +1,30 @@
-// src/components/forms/Sheet.jsx
-// V4-THEME-001 (V200 Pass B) — canonical bottom-sheet fly-up. ONE fly-up grammar for the
-// V200 "fly-ups over page shifts" principle (favorites, plant details, quick-log, LogMany,
-// "Why this"). Backdrop + slide-up panel rounded at the top, grab handle, safe-area inset.
-// a11y: role=dialog + aria-modal, accessible name (title|ariaLabel), Escape to close,
-// focus moved into the panel on open and RESTORED to the prior element on close, backdrop
-// tap-to-dismiss.
+// Canonical bottom-sheet fly-up: backdrop + slide-up panel rounded at the top, grab handle,
+// safe-area inset. a11y: role=dialog + aria-modal, accessible name (title|ariaLabel), Escape to
+// close, focus moved into the panel on open and RESTORED to the prior element on close, backdrop
+// tap-to-dismiss. Reduced-motion: the panel still appears; no required motion to operate.
 //
-// V4-OVERLAY-001 Slice 1 (§5) additions — additive, defaults preserve every existing consumer:
-//   size='peek'|'full'   peek = the historical 85vh; full = near-fullscreen for long forms (§5.1).
+// Props with non-obvious contracts (defaults preserve every consumer that omits them):
+//   size='peek'|'full'   peek = 85vh; full = near-fullscreen for long forms.
 //   dirty=false          when true, a backdrop tap NO-OPS (a stray tap must not discard a dirty
-//                        form — §5.2). Escape + the Close button stay live regardless.
-//   closeLabel='Close'   a11y label for the mandatory visible Close control (§5.3): the 36x4 grab
-//                        handle has no drag handler (a false affordance) and an invisible backdrop
-//                        is not a discoverable exit — so a real >=44px labelled Close is required.
-// Also: refcounted body scroll-lock (§5.4, overflow:hidden + overscroll-behavior:contain, restores
-// the prior values on the LAST close — unconditional, so a stacked sheet cannot strand the lock and
-// brick the app); Escape TOPMOST-arbitration (§5.5, only the top sheet responds so one Escape does
-// not fire two onCloses); focus-selector hardening (§5.6, :not([disabled]) + hidden/aria-hidden
-// filter). Reduced-motion: the panel still appears; no required motion to operate.
-// V4-BACKNAV-001 Slice 1: Escape arbitration and aria-modal ownership move to the shared
-// DismissRegistry when one is present (see context/DismissRegistry.jsx). openStack STAYS — it still
-// owns the refcounted body scroll-lock, which is a Sheet-visual concern the other eight modal
-// surfaces deliberately do not share. When `registered` is false (an isolated test or legacy path
-// rendered with no provider) every behaviour below is byte-identical to before that slice.
-// New prop: busy — a write is in flight. RECORDED for the arbiter, not yet acted on; `dirty` keeps
-// its existing meaning (unsaved user input) and its existing backdrop-only effect.
-// BUG-DIRTYDISMISSGAP-001 UPDATE: `dirty` is no longer backdrop-only ON A SITE THAT PASSES
-// `confirmOnDirty`. There it also makes Escape, Android Back and the labelled Close raise the
-// registry's ConfirmSheet instead of discarding. Sites that do not pass it are unchanged.
+//                        form). Escape + the Close button stay live regardless.
+//   busy                 a write is in flight. Also blocks the backdrop tap; `dirty` keeps its
+//                        meaning (unsaved user input).
+//   closeLabel='Close'   a11y label for the mandatory visible Close control: the 36x4 grab handle
+//                        has no drag handler (a false affordance) and an invisible backdrop is not a
+//                        discoverable exit, so a real >=44px labelled Close is required.
+// Also: refcounted body scroll-lock (overflow:hidden + overscroll-behavior:contain, restored on the
+// LAST close, unconditionally, so a stacked sheet cannot strand the lock and brick the app); Escape
+// TOPMOST-arbitration (only the top sheet responds, so one Escape does not fire two onCloses);
+// focus-selector hardening (:not([disabled]) + hidden/aria-hidden filter).
+//
+// Escape arbitration and aria-modal ownership belong to the shared DismissRegistry when one is
+// present (context/DismissRegistry.jsx). openStack STAYS: it owns the refcounted body scroll-lock,
+// a Sheet-visual concern the other modal surfaces do not share. When `registered` is false (an
+// isolated test or legacy path with no provider) the module's own openStack arbitrates alone.
+//
+// `dirty` is no longer backdrop-only ON A SITE THAT PASSES `confirmOnDirty`: there it also makes
+// Escape, Android Back and the labelled Close raise the registry's ConfirmSheet instead of
+// discarding. Sites that do not pass it are unchanged.
 import React, { useEffect, useRef } from 'react'
 import { P } from '../../lib/constants.js'
 import { useDismissable } from '../../context/DismissRegistry.jsx'
@@ -56,8 +53,8 @@ function unlockBodyScroll() {
   savedOverflow = savedOverscroll = null
 }
 
-// :not([disabled]) hardening (§5.6) + a jsdom-safe visibility filter (offsetParent is unreliable
-// without a layout engine, so we exclude only declaratively-hidden nodes, never layout-derived).
+// :not([disabled]) hardening + a jsdom-safe visibility filter (offsetParent is unreliable without a
+// layout engine, so only declaratively-hidden nodes are excluded, never layout-derived ones).
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 function focusablesIn(panel) {
   if (!panel) return []
@@ -70,33 +67,32 @@ function focusablesIn(panel) {
   )
 }
 
-// V4-BACKNAV-001 Slice 3a — `kind` and `armsBack` are EXPLICIT props, not inherited.
+// `kind` and `armsBack` are EXPLICIT props, not inherited.
 //
-// Sheet calls useDismissable ONCE on behalf of all 9 <Sheet> render sites, so if Back membership
-// were implied by registration it would silently enrol BottomNav's +LOG and More sheets — whose
+// Sheet calls useDismissable ONCE on behalf of every <Sheet> render site, so if Back membership
+// were implied by registration it would silently enrol BottomNav's +LOG and More sheets, whose
 // every row closes the sheet AND navigates, orphaning the pushed entry and costing a permanent
-// extra Back on the app's most frequent path. That is exactly the regression the original hook
-// refused to ship. So the arming decision is made at each render site and defaults to OFF.
-//   armsBack — the 6 close-in-place Sheets that carried useBackDismiss before this slice.
-//   kind='route' — App.jsx's OverlayHost only: the router already owns a real entry for it.
-// BUG-DIRTYDISMISSGAP-001 — `confirmOnDirty` (+ its copy) is a per-render-site opt-in, defaulting
-// OFF for the same reason armsBack does: one hook call serves 18 sites, and `dirty` does not mean
-// the same thing at all of them. Only the three PlantingEditor hosts opt in today. See the deciders
-// in lib/dismissLayers.js and lib/backNav.js for why the per-entry term exists at all.
-// V5-NAVCUSTOM-001 — `headerStart` fills the header row's EMPTY LEFT SLOT on a sheet with no
-// title (BottomNav's More sheet puts its "Edit tab bar" door there). Additive: absent, the spacer
-// renders exactly as before, so every other render site is byte-identical. Ignored when `title` is
-// set — the title owns that slot. Whatever goes here is the caller's: in an armsBack sheet, a
-// control that NAVIGATES must be a SheetRowLink, or it strands the armed Back entry.
-// V5-SEEDLOTADDITION-001 — `confirmCopy` is the discard question's words for the state the sheet is in
-// right now ({ title, body, confirmLabel, cancelLabel }, any of them), passed straight to the registry,
-// which reads it only when the question is raised. Additive: absent, the question is the registered
-// confirmTitle / confirmBody with the registry's own buttons, as at every other render site.
-// OPS-SOWSHEETPROJECTSLAZY-001 — `refocusKey` is for a sheet that can open BEFORE its form is in (the Sow
-// sheet's "Loading places…"): focus is placed once, at open, so it lands on Close and would stay there.
-// When the key changes WHILE the sheet is open, the open-time choice is made again — only if focus is
-// still where that choice left it (or nowhere), so focus the user has moved is never taken back.
-// Additive: absent, or unchanged since the open, nothing happens.
+// extra Back on the app's most frequent path. So the arming decision is made at each render site and
+// defaults to OFF.
+//   armsBack: the close-in-place Sheets.
+//   kind='route': App.jsx's OverlayHost only; the router already owns a real entry for it.
+// `confirmOnDirty` (+ its copy) is a per-render-site opt-in, defaulting OFF for the same reason:
+// `dirty` does not mean the same thing at every site. Only the three PlantingEditor hosts opt in
+// today. See the deciders in lib/dismissLayers.js and lib/backNav.js for why the per-entry term
+// exists at all.
+// `headerStart` fills the header row's EMPTY LEFT SLOT on a sheet with no title (BottomNav's More
+// sheet puts its "Edit tab bar" door there). Ignored when `title` is set, since the title owns that
+// slot. Whatever goes here is the caller's: in an armsBack sheet, a control that NAVIGATES must be a
+// SheetRowLink, or it strands the armed Back entry.
+// `confirmCopy` is the discard question's words for the state the sheet is in right now ({ title,
+// body, confirmLabel, cancelLabel }, any of them), passed straight to the registry, which reads it
+// only when the question is raised. Absent, the question is the registered confirmTitle /
+// confirmBody with the registry's own buttons.
+// `refocusKey` is for a sheet that can open BEFORE its form is in (the Sow sheet's "Loading
+// places…"): focus is placed once, at open, so it lands on Close and would stay there. When the key
+// changes WHILE the sheet is open, the open-time choice is made again, only if focus is still where
+// that choice left it (or nowhere), so focus the user has moved is never taken back. Absent, or
+// unchanged since the open, nothing happens.
 export default function Sheet({ open, onClose, title, ariaLabel, children, size = 'peek', dirty = false, busy = false, closeLabel = 'Close', kind = 'modal', armsBack = false, backIntercept = null, confirmOnDirty = false, confirmTitle = null, confirmBody = null, confirmCopy = null, headerStart = null, refocusKey }) {
   const panelRef = useRef(null)
   const restoreRef = useRef(null)
@@ -143,10 +139,10 @@ export default function Sheet({ open, onClose, title, ariaLabel, children, size 
     function onKey(e) {
       // Topmost gate. When registered, the REGISTRY is the authority (it can see Lightbox and the
       // other non-Sheet dialogs that openStack cannot); otherwise fall back to openStack, which
-      // arbitrates correctly among Sheets and is what shipped before Slice 1.
+      // arbitrates correctly among Sheets.
       const top = registeredRef.current ? isTopmostRef.current : openStack[openStack.length - 1] === token
       if (!top) return
-      // Escape (§5.5, SC 2.1.1). When registered, the registry's single listener owns Escape — this
+      // Escape (SC 2.1.1). When registered, the registry's single listener owns Escape; this
       // handler must NOT also fire it, or one press would close the sheet twice over.
       if (e.key === 'Escape') {
         if (registeredRef.current) return
@@ -166,24 +162,21 @@ export default function Sheet({ open, onClose, title, ariaLabel, children, size 
       const i = openStack.indexOf(token)
       if (i !== -1) openStack.splice(i, 1)
       unlockBodyScroll()
-      // Focus restore, with the DETACHED-NODE guard (V4-BACKNAV-001 Slice 1, SC 2.4.3). The old
-      // check — "holds something with a .focus method" — is satisfied by a node already removed from
-      // the document. A Back-driven close pops history, the router commits, and the trigger unmounts
-      // in the SAME commit as this cleanup, so that case becomes routine once Back is wired.
+      // Focus restore, with a DETACHED-NODE guard (SC 2.4.3): a node already removed from the
+      // document still has a .focus method. A Back-driven close pops history, the router commits,
+      // and the trigger unmounts in the SAME commit as this cleanup, so that case is routine.
       //
-      // SCOPE, STATED HONESTLY: this guard makes the detached case EXPLICIT, it does not repair it.
-      // focus() on a detached node is already a silent no-op, so behaviour is unchanged — focus
-      // still lands on <body>, where TalkBack's reading cursor resets to the top of the page with no
-      // announcement. The real fix needs a stable focus destination, and THE APP HAS NONE: there is
-      // no <main>, no role="main", and no tabIndex={-1} landmark anywhere in the tree. Introducing
-      // one is a real change to the app shell with its own blast radius, so it is deliberately NOT
-      // smuggled into this slice. Do not "fix" this by focusing the panel — the panel is unmounting
-      // too. Follow-up owns adding the landmark and then focusing it here.
+      // The guard makes the detached case EXPLICIT, it does not repair it: focus() on a detached
+      // node is a silent no-op, so focus still lands on <body>, where TalkBack's reading cursor
+      // resets to the top of the page with no announcement. The real fix needs a stable focus
+      // destination, and THE APP HAS NONE: no <main>, no role="main", no tabIndex={-1} landmark in
+      // the tree. Adding one is a change to the app shell with its own blast radius. Do not "fix"
+      // this by focusing the panel; the panel is unmounting too.
       const el = restoreRef.current
       if (el && typeof el.focus === 'function' && el.isConnected) el.focus()
     }
     // Deps = [open] ONLY (onClose/dirty read via ref): fire on open transitions, never on incidental
-    // parent re-renders — the fix for the "keystroke steals focus back to Name" bug.
+    // parent re-renders, or a keystroke steals focus back to the first field.
   }, [open])
 
   // Declared AFTER the open effect on purpose: on the commit that opens the sheet the key was just
@@ -202,35 +195,31 @@ export default function Sheet({ open, onClose, title, ariaLabel, children, size 
 
   if (!open) return null
 
-  // Backdrop tap: dirty guard (§5.2). When dirty a stray backdrop tap no-ops; Escape/Close stay live.
-  // ALSO guarded on `busy` (V4-BACKNAV-001 Slice 2): moving TransplantDatePrompt from dirty={saving}
-  // to busy={saving} was right semantically — saving is an in-flight write, not unsaved input — but
-  // it silently dropped that surface's backdrop protection, and on mobile a stray backdrop tap is
-  // far likelier than an Escape press. A write in flight must not be dismissable by a stray tap.
+  // Backdrop tap: dirty guard. When dirty a stray backdrop tap no-ops; Escape/Close stay live.
+  // ALSO guarded on `busy`: a write in flight is not unsaved input (so it is not `dirty`), but it
+  // must not be dismissable by a stray tap either, and on mobile a stray backdrop tap is far
+  // likelier than an Escape press.
   const onBackdrop = () => { if (!dirty && !busy) onClose?.() }
 
   const maxHeight = size === 'full' ? 'calc(100dvh - env(safe-area-inset-top) - 8px)' : '85vh'
 
-  // BUG-SHEETOVERSHOOT-001 — the cap must govern the PAINTED box, and by default it does not.
-  // The panel is content-box (no reset in this app), so paddingTop 8 + paddingBottom 12 are added
-  // OUTSIDE maxHeight: at 390x500 with a full batch staged the cap resolved to 492px, the panel
-  // painted 512px, and since it is bottom:0 the extra 20px went out of the TOP of the screen — the
-  // grab handle at y=-4, the panel at y=-12. Measured, not reasoned: tests/harness/sheetcensus.jsx.
+  // The cap must govern the PAINTED box, and by default it does not. The panel is content-box (no
+  // reset in this app), so paddingTop 8 + paddingBottom 12 are added OUTSIDE maxHeight: at 390x500
+  // with a full batch staged the cap resolved to 492px, the panel painted 512px, and since it is
+  // bottom:0 the extra 20px went out of the TOP of the screen (grab handle at y=-4, panel at y=-12).
+  // Measured in tests/harness/sheetcensus.jsx.
   //
-  // SCOPED TO `full`, DELIBERATELY, and this is the whole reason this is a one-line change rather
-  // than a sizing-model change. 21 render sites use this component: 4 pass size='full', 16 pass
-  // peek, and App.jsx's OverlayHost forwards a per-route size (3 full routes, 1 peek) — 7 full
-  // surfaces against 17 peek. Peek has the same 20px arithmetic but CANNOT overshoot: its cap is
-  // 85vh, so the panel tops out at 15vh-20px from the top edge — positive on any viewport over
-  // ~133px, and measured at +55 on the worst case (390x500). Applying border-box there would fix
-  // nothing and would cost every peek sheet 20px of visible content; PhotoDeleteConfirm at 390x500
-  // (the keyboard-open geometry) measures 417px of content against a 425px cap, so it would flip
-  // from "fits whole" to "scrolls" for no defect. Peek's 85vh is 20px optimistic; it is inaccurate,
-  // not broken, and correcting it is a separate call with its own blast radius.
+  // SCOPED TO `full`, DELIBERATELY: that keeps this a one-line change rather than a sizing-model
+  // change. Peek has the same 20px arithmetic but CANNOT overshoot: its cap is 85vh, so the panel
+  // tops out at 15vh-20px from the top edge, positive on any viewport over ~133px (+55 at worst, at
+  // 390x500). Border-box there would fix nothing and would cost every peek sheet 20px of visible
+  // content (PhotoDeleteConfirm at 390x500 measures 417px of content against a 425px cap, so it
+  // would flip from "fits whole" to "scrolls"). Peek's 85vh is 20px optimistic, not broken;
+  // correcting it is a separate call.
   //
-  // Costs 20px of visible content on a `full` sheet that was ALREADY at its cap (492 -> 472 at
-  // vh=500) — unavoidable: 492px of content plus 20px of padding cannot paint inside a 492px
-  // budget. Those surfaces already scroll, so this lengthens a scroll rather than clipping anything.
+  // Costs 20px of visible content on a `full` sheet already at its cap (492 -> 472 at vh=500),
+  // unavoidable: 492px of content plus 20px of padding cannot paint inside a 492px budget. Those
+  // surfaces already scroll, so this lengthens a scroll rather than clipping anything.
   const boxSizing = size === 'full' ? 'border-box' : 'content-box'
 
   return (
@@ -242,11 +231,10 @@ export default function Sheet({ open, onClose, title, ariaLabel, children, size 
       <div
         ref={panelRef}
         role="dialog"
-        // SINGLE-MODALITY INVARIANT (V4-BACKNAV-001 Slice 1). Two simultaneously-rendered elements
-        // with aria-modal="true" is invalid ARIA — modality is undefined and screen readers resolve
-        // it inconsistently. That state already occurs today: PlantingDetail renders its Details
-        // Sheet and a Lightbox from independent state. Only the topmost claims modality; unregistered
-        // (no provider) keeps the old unconditional "true".
+        // SINGLE-MODALITY INVARIANT. Two simultaneously-rendered elements with aria-modal="true" is
+        // invalid ARIA (modality is undefined and screen readers resolve it inconsistently), and it
+        // occurs: PlantingDetail renders its Details Sheet and a Lightbox from independent state.
+        // Only the topmost claims modality; unregistered (no provider) keeps the unconditional "true".
         aria-modal={isTopmost ? 'true' : undefined}
         aria-label={title || ariaLabel}
         tabIndex={-1}
@@ -266,7 +254,7 @@ export default function Sheet({ open, onClose, title, ariaLabel, children, size 
         }}
       >
         <div style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: P.border, margin: '0 auto 8px' }} />
-        {/* Header row: title (if any) + the mandatory visible, labelled Close (>=44px). §5.3 */}
+        {/* Header row: title (if any) + the mandatory visible, labelled Close (>=44px). */}
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '0 8px 4px' }}>
           {title ? (
             <div style={{ flex: 1, padding: '4px 16px 4px', fontSize: '1rem', fontWeight: 700, color: P.dark }}>
@@ -277,13 +265,11 @@ export default function Sheet({ open, onClose, title, ariaLabel, children, size 
           ) : (
             <div style={{ flex: 1 }} />
           )}
-          {/* ROUTED THROUGH THE ARBITER, not straight to onClose (BUG-DIRTYDISMISSGAP-001). Escape
-              and Back both ask before discarding on an opted-in surface; a Close button that called
-              onClose directly would be the one exit that still discarded silently — and it is the
-              MOST discoverable exit, so that hole would swallow more work than the two it fixed.
+          {/* ROUTED THROUGH THE ARBITER, not straight to onClose. Escape and Back both ask before
+              discarding on an opted-in surface; a Close button that called onClose directly would
+              be the one exit that still discarded silently, and the MOST discoverable one.
               requestDismiss falls back to onClose whenever the provider declines ownership (not
-              opted in, not dirty, or no provider), so every other render site is
-              unchanged. */}
+              opted in, not dirty, or no provider), so every other render site is unchanged. */}
           <button
             type="button"
             data-sheet-close="true"

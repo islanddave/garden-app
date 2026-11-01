@@ -8,25 +8,25 @@ import PhotoView from '../../photo/PhotoView.jsx'
 import Icon from '../../Icon.jsx'
 import { T } from '../../forms/formStyles.js'
 
-// PlantCareRow — one plant inside an opened spot of the redesigned Needs care (V5-TODAYREDESIGN-001 S4; plan-v2 §4
-// "Exception / plant row"), drawn in THE per-plant row anatomy (PlantRow, below) that Protect tonight's tender rows
-// share — finish plan §3.6, Dave's D18 "Rounded buttons + picture" (2026-10-14). Body = link to the planting with
-// its 40px picture box; then Skip (quiet text, 48 wide + 8 px dead) → Moist (outline, water_due only) → the soft-
-// green main action at the thumb edge, which IS the log button: accessible name exactly "Log Water for X" (BD-036b).
-// The name wraps (never an ellipsis); the meta line is the caller's (a group line above it may already say what
-// every row shares — then the caller hands '' and the row is its name alone); an overdue row says so in its meta
-// with a warning mark ("2d overdue"), the red and yellow cells are gone. A handled row becomes its done line in
-// place, with Undo, for the visit (§2.5); a write that failed says "Not logged" with Retry on the row, never a toast
-// (§6.6). Skip and Moist render only where the caller hands them a handler: a planting waiting for rain
-// (RainHold.jsx) passes neither — it is not on today's list to skip, and "still moist" changes nothing about a hold.
+// One plant inside an opened spot of the redesigned Needs care, drawn in THE per-plant row anatomy
+// (PlantRow, below) that Protect tonight's tender rows share. Body = link to the planting with its
+// 40px picture box; then Skip (quiet text, 48 wide + 8 px dead) → Moist (outline, water_due only) →
+// the soft-green main action at the thumb edge, which IS the log button: accessible name exactly
+// "Log Water for X". The name wraps (never an ellipsis); the meta line is the caller's (a group line
+// above it may already say what every row shares, then the caller hands '' and the row is its name
+// alone); an overdue row says so in its meta with a warning mark ("2d overdue"). A handled row
+// becomes its done line in place, with Undo, for the visit; a write that failed says "Not logged"
+// with Retry on the row, never a toast. Skip and Moist render only where the caller hands them a
+// handler: a planting waiting for rain (RainHold.jsx) passes neither, since it is not on today's
+// list to skip and "still moist" changes nothing about a hold.
 const ROW_TAP_MIN = 48
 const SR_ONLY = { position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap' }
 const CHECK_NEEDS = new Set(['pest', 'overwintering'])
 
-// The app's row picture box (My seeds / Garden: 40×40, radius 8, always drawn): the photo on the photo-tile fill, or
-// the sprout on green when the planting has none — the two must not look alike, or a slow load reads as "none". A
-// photo that can never load (PhotoImg's terminal: deleted, forbidden) is no photo, so it falls back to the sprout,
-// as My seeds' thumb does.
+// The app's row picture box (My seeds / Garden: 40×40, radius 8, always drawn): the photo on the
+// photo-tile fill, or the sprout on green when the planting has none; the two must not look alike,
+// or a slow load reads as "none". A photo that can never load (PhotoImg's terminal: deleted,
+// forbidden) is no photo, so it falls back to the sprout, as My seeds' thumb does.
 export function PlantThumb({ photo }) {
   const key = photo ? (photo.id ?? photo.featured_photo_view_url ?? null) : null
   const [deadKey, setDeadKey] = useState(null)
@@ -40,14 +40,15 @@ export function PlantThumb({ photo }) {
   )
 }
 
-// PlantRow — the ONE per-plant row anatomy (finish plan §3.6; design-visual-system §3 "Per-plant row"): Needs care's
-// water / feed / check rows and Protect's tender rows. Up to three rounded buttons in one grammar, 8 px apart, at
-// the thumb edge: quiet `skip` text (48 wide, then 8 px of dead space — SF1), an `outline` (Covered / Moist), the
-// soft-green `main` action (Brought in / Water / Feed / Checked). No cell dividers, no fills. `failed` swaps the
-// meta for "Not logged" and the buttons for one outline `retry`. `held` (review 4160.2 IMPORTANT-2: the page is
-// holding its writes) leaves every control inert — aria-disabled, no handler; `pending` disables the posting ones.
-// Each button is { text, label, onClick, testid?, icon? }; `meta` is the line under the name (a node), `urgent`
-// puts the warning mark in front of it. `rowStyle` replaces the hairline row's box (Protect's row card).
+// PlantRow: the ONE per-plant row anatomy: Needs care's water / feed / check rows and Protect's
+// tender rows. Up to three rounded buttons in one grammar, 8 px apart, at the thumb edge: quiet
+// `skip` text (48 wide, then 8 px of dead space), an `outline` (Covered / Moist), the soft-green
+// `main` action (Brought in / Water / Feed / Checked). No cell dividers, no fills. `failed` swaps
+// the meta for "Not logged" and the buttons for one outline `retry`. `held` (the page is holding its
+// writes) leaves every control inert (aria-disabled, no handler); `pending` disables the posting
+// ones. Each button is { text, label, onClick, testid?, icon? }; `meta` is the line under the name
+// (a node), `urgent` puts the warning mark in front of it. `rowStyle` replaces the hairline row's
+// box (Protect's row card).
 export function PlantRow({ as: Tag = 'div', testid, rowKey, rowStyle, href, focusId, photo, name, owner, meta, urgent, srMeta, failed, held, pending, skip, outline, main, retry, controlsTestid }) {
   const fire = (b) => (held ? undefined : b.onClick)
   return (
@@ -94,11 +95,11 @@ export function PlantRow({ as: Tag = 'div', testid, rowKey, rowStyle, href, focu
 
 const DONE_WORD = { watered: 'watered', moist: 'moist', fed: 'fed', checked: 'checked', skipped: 'skipped', 'not-today': 'not today' }
 
-// writesHeld (review 4160.2 IMPORTANT-2): the page holds its writes — Skip, Moist, the main action and Retry are inert
+// writesHeld: the page holds its writes, so Skip, Moist, the main action and Retry are inert
 // (aria-disabled, no handler) until it lets go; Undo stays live.
-// `reason`: the meta line. Absent (null) = the row's own reason unless it only restates its tier (BD-036b
-// reasonRedundant); '' = the name alone (a group line says the rest). `urgent`: absent = the row's own overdue
-// state; false = the group line carries it.
+// `reason`: the meta line. Absent (null) = the row's own reason unless it only restates its tier
+// (reasonRedundant); '' = the name alone (a group line says the rest). `urgent`: absent = the row's
+// own overdue state; false = the group line carries it.
 export default function PlantCareRow({ row, testid = 'care-row', reason, urgent, pending, failed, done, onLog, onMoist, onSkip, onUndo, onRetry, undoBusy, writesHeld = false }) {
   if (done) {
     return (
@@ -116,13 +117,13 @@ export default function PlantCareRow({ row, testid = 'care-row', reason, urgent,
   }
   const detailHref = row.plantingId ? '/plantings/' + row.plantingId : '/garden'
   const line = reason != null ? reason : (!row.reasonRedundant ? row.reason : null)
-  // The overdue words lead the meta (once — a redundant reason IS those words), after the warning mark.
+  // The overdue words lead the meta (once; a redundant reason IS those words), after the warning mark.
   const late = urgent === false ? null : overdueWords(row)
   const meta = late ? [late, line && line !== late ? line : null].filter(Boolean).join(' · ') : line
   // srMeta: a reason dropped as a restatement still reaches a screen reader; one a group line already said ('') does not.
   const check = CHECK_NEEDS.has(row.need)
   const main = check
-    // A check's main action states what was done, as Protect's do ("Covered: X"); its name starts with its label (2.5.3).
+    // A check's main action states what was done, as Protect's do ("Covered: X"); its name starts with its label (WCAG 2.5.3).
     ? { text: 'Checked', label: 'Checked: ' + row.name, icon: 'event.' + row.eventType, onClick: () => onLog(row) }
     : { text: NEED_LABEL[row.need], label: 'Log ' + NEED_LABEL[row.need] + ' for ' + row.name, icon: 'event.' + row.eventType, onClick: () => onLog(row) }
   return (
@@ -135,13 +136,13 @@ export default function PlantCareRow({ row, testid = 'care-row', reason, urgent,
   )
 }
 
-// ── styles (tokens P / T; design-visual-system §3 "Per-plant row") ──────────────────────────────────────────────
-// A hairline row inside a card (Protect's own rows restyle it into a row card): 48 tall, padding 4/6/4/10. The main
-// action keeps the 48px tap height of the cell it replaced — gate:today-shape:v2's rain-wait-floors reads
-// "each row's Water ≥ 48" — but paints the mockup's 44px pill, level with the outline beside
-// it: a 2px transparent rule above and below is part of the target and not of the fill (background-clip). The outline
-// and Retry are the 44 floor (T.tapMinHeight). Button padding is 8 (not outlineBtn's 12) so three buttons leave the
-// name its ≈106 px at 426 (finish plan §3.1).
+// Styles (tokens P / T). A hairline row inside a card (Protect's own rows restyle it into a row
+// card): 48 tall, padding 4/6/4/10. The main action keeps the 48px tap height of the cell it
+// replaced (gate:today-shape:v2's rain-wait-floors reads "each row's Water ≥ 48") but paints a 44px
+// pill, level with the outline beside it: a 2px transparent rule above and below is part of the
+// target and not of the fill (background-clip). The outline and Retry are the 44 floor
+// (T.tapMinHeight). Button padding is 8 (not outlineBtn's 12) so three buttons leave the name its
+// ≈106 px at 426.
 const row = { display: 'flex', alignItems: 'stretch', borderTop: '1px solid ' + P.border, minHeight: ROW_TAP_MIN }
 const bodyLink = { flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: T.space.row, padding: '4px 8px 4px 10px', textDecoration: 'none', color: P.dark, minHeight: ROW_TAP_MIN }
 const thumbBase = {

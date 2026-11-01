@@ -1,25 +1,27 @@
-// needsCareStore — the two tab-scoped stores the redesigned Needs care keeps (V5-TODAYREDESIGN-001 S4;
-// plan-v2 §2.1 Layer 2 "day-scoped, visit-independent"). sessionStorage, like the visit record: they belong
-// to this tab, never outlive it, and sign-out scrubs both families (clientPrefs.js CLIENT_SESSION_KEY_PREFIXES).
+// The two tab-scoped stores the redesigned Needs care keeps, "day-scoped, visit-independent".
+// sessionStorage, like the visit record: they belong to this tab, never outlive it, and sign-out
+// scrubs both families (clientPrefs.js CLIENT_SESSION_KEY_PREFIXES).
 //
-//   'today-logged:<user>:<plan_date>'  row keys logged today and not undone. A Back remount paints from the
-//        last good plan (useDailyPlan's seed) before the refetch lands, and that plan still calls those rows
-//        due: without this the done work reappears live under Dave's thumb and a second tap logs it twice
-//        (§6.3). Written as each write lands, un-written on Undo; other days are pruned on write.
-//        CONFIRMED logs only: a key goes in when its POST has answered, never before.
-//   'today-filters:<user>'  the task and spot chip selection {plan_date, tasks, spots}, per session (§2.6).
+//   'today-logged:<user>:<plan_date>'  row keys logged today and not undone. A Back remount paints
+//        from the last good plan (useDailyPlan's seed) before the refetch lands, and that plan still
+//        calls those rows due: without this the done work reappears live under the thumb and a
+//        second tap logs it twice. Written as each write lands, un-written on Undo; other days are
+//        pruned on write. CONFIRMED logs only: a key goes in when its POST has answered, never before.
+//   'today-filters:<user>'  the task and spot chip selection {plan_date, tasks, spots}, per session.
 //        A new plan day starts with no filter; spots no longer on the list are dropped on read.
 //
-// And two IN MEMORY, at module scope (review 4162.1 IMPORTANT-A, re-cut after its pre-promote pass):
-//   claims  per today-logged key, the row keys a write has taken and whose POST has not answered. A claim is a
-//        promise only this page's JavaScript can keep, so it lives exactly as long as that JavaScript: a Back
-//        remount shares the module and leaves the claimed rows out (a run still posting is never offered again);
-//        a full reload drops the module, and what was never sent is due again. In sessionStorage a claim outlived
-//        the only code that could send or release it, and hid a plant nobody logged for the rest of the plan day.
-//   runs    per run id: still going, or ended with a result no mounted list has taken yet. A run outlives the
-//        page that started it (keepalive); its result is parked here until the list now on screen takes it.
-// Every change to the store, the claims or the runs raises one signal (subscribeLogged / loggedVersion), so a
-// release reaches whatever list is mounted — not only the next one to mount.
+// And two IN MEMORY, at module scope:
+//   claims  per today-logged key, the row keys a write has taken and whose POST has not answered. A
+//        claim is a promise only this page's JavaScript can keep, so it lives exactly as long as
+//        that JavaScript: a Back remount shares the module and leaves the claimed rows out (a run
+//        still posting is never offered again); a full reload drops the module, and what was never
+//        sent is due again. In sessionStorage a claim would outlive the only code that could send or
+//        release it, and hide a plant nobody logged for the rest of the plan day.
+//   runs    per run id: still going, or ended with a result no mounted list has taken yet. A run
+//        outlives the page that started it (keepalive); its result is parked here until the list now
+//        on screen takes it.
+// Every change to the store, the claims or the runs raises one signal (subscribeLogged /
+// loggedVersion), so a release reaches whatever list is mounted, not only the next one to mount.
 const LOGGED = 'today-logged:'
 const FILTERS = 'today-filters:'
 const enc = (s) => encodeURIComponent(String(s))
@@ -64,7 +66,7 @@ export function removeLogged(key, keys) {
   if (removed) { writeLogged(key, s); changed() }
 }
 
-// ── claims: taken, not yet answered ───────────────────────────────────────────────────────────────────────
+// Claims: taken, not yet answered.
 export const claimedKeys = (key) => claims.get(key) || NONE
 
 export function claimKeys(key, keys) {
@@ -89,9 +91,9 @@ function unclaim(key, keys) {
 // The POST failed (or was never sent): the row is due again, on whatever list is mounted.
 export function releaseKeys(key, keys) { if (unclaim(key, keys)) changed() }
 
-// The POST answered: the claim becomes a log, stored before the claim goes — no reader sees the key in neither.
-// No signal: a list that left the key out as a claim leaves it out as a log, so nothing it draws moves (a run is
-// one landing after another, and its own list already redraws on each).
+// The POST answered: the claim becomes a log, stored before the claim goes, so no reader sees the
+// key in neither. No signal: a list that left the key out as a claim leaves it out as a log, so
+// nothing it draws moves (a run is one landing after another, and its own list already redraws on each).
 export function confirmKeys(key, keys) {
   if (!key || !keys.length) return
   const s = readLogged(key)
@@ -101,7 +103,7 @@ export function confirmKeys(key, keys) {
   unclaim(key, keys)
 }
 
-// ── runs: going, or ended and waiting for a mounted list ──────────────────────────────────────────────────
+// Runs: going, or ended and waiting for a mounted list.
 export function runStart(id) { runs.set(id, { going: true }); changed() }
 // `result` is kept for a list to take (a run that ended with its own list unmounted); none = forget the run.
 export function runEnd(id, result) {

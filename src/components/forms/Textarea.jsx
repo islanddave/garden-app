@@ -1,5 +1,4 @@
-// src/components/forms/Textarea.jsx
-// Lane D / Phase A — canonical <textarea> primitive (rows + vertical resize).
+// Canonical <textarea> primitive (rows + vertical resize).
 import React from 'react'
 import { textareaChrome } from './formStyles.js'
 

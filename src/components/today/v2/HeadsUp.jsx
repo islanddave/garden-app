@@ -5,16 +5,17 @@ import Badge from '../../forms/Badge.jsx'
 import Icon from '../../Icon.jsx'
 import { splitCopy, plateText, deadlineSoon } from './useHeadsUp.js'
 
-// HeadsUp — the body of the redesigned Today's Heads-up (V5-TODAYREDESIGN-001 S5; plan-v2 §1.5, §4 "Heads-up
-// row", §7 #18 — Dave's D2/D5 moved V1's StorageDeadlineAlert here, second on the page, above Needs care).
+// The body of the redesigned Today's Heads-up (storage deadlines; moved here from V1's
+// StorageDeadlineAlert, second on the page, above Needs care).
 //
-// One row card per crop group. The row is a disclosure (<h3><button>): line 1 is the dataset's copy up to its first
-// " — " (a VERBATIM prefix, never reworded: storageDeadlines.json owns the words and its provenance rule) with the
-// date plate beside it — "by Oct 10", warn tone and the severity icon on the last two days (§5.9: 4.56:1 plus the
-// icon, never colour alone); line 2 names the plantings. Opened, the panel carries the rest of the sentence, from
-// the dash on, so line 1 and the panel together are the dataset's sentence character for character. The date is
-// on the plate only, never repeated in copy. Operational, not a reward surface: no interrupt, no count badge, no
-// notification permission (V1's posture, StorageDeadlineAlert.jsx).
+// One row card per crop group. The row is a disclosure (<h3><button>): line 1 is the dataset's copy
+// up to its first " — " (a VERBATIM prefix, never reworded: storageDeadlines.json owns the words and
+// its provenance rule) with the date plate beside it ("by Oct 10"; warn tone and the severity icon on
+// the last two days, with the icon so it is never colour alone); line 2 names the plantings. Opened,
+// the panel carries the rest of the sentence, from the dash on, so line 1 and the panel together are
+// the dataset's sentence character for character. The date is on the plate only, never repeated in
+// copy. Operational, not a reward surface: no interrupt, no count badge, no notification permission
+// (V1's posture, StorageDeadlineAlert.jsx).
 export default function HeadsUp({ headsup, record, update }) {
   const open = record?.headsup?.open || []
   const toggle = useCallback((slug) => update((r) => {
@@ -36,8 +37,9 @@ function HeadsUpRow({ g, open, onToggle }) {
   const head = (
     <>
       <span style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-        {/* The chevron is its own element, never inside the text-bearing span: ▸ / ▾ are not in the pinned Roboto,
-            and the font census allows a host glyph only on an element whose whole text is that glyph. */}
+        {/* The chevron is its own element, never inside the text-bearing span: ▸ / ▾ are not in the
+            pinned Roboto, and the font census allows a host glyph only on an element whose whole
+            text is that glyph. */}
         <span style={titleStyle}>
           <span>{line1}</span>
           {rest && <span aria-hidden="true" style={{ fontSize: T.type.xs, fontWeight: 400, color: P.light }}>{open ? ' ▾' : ' ▸'}</span>}

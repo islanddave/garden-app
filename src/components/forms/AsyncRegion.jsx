@@ -1,19 +1,11 @@
-// src/components/forms/AsyncRegion.jsx
-// Lane D / Phase A — async-state content region that freezes the three states every page was
-// hand-rolling: loading / error / empty. Precedence: error → loading → empty → children.
-// NOT a titled section. Renamed from `Section` (HG-1, 2026-07): the old name wrongly implied a
-// titled grouping — FROZEN.md documented it as one and TreatmentDetails misused it that way, so
-// its `label` was silently dropped and the heading vanished. For a titled grouping, compose a
-// local titled <section> with a heading; this primitive only owns the three async states.
+// Async-state content region: loading / error / empty, precedence error → loading → empty → children.
+// NOT a titled section; for a titled grouping compose a local <section> with a heading.
 //
 // The error branch has TWO shapes, selected by whether the caller can offer a retry:
-//   no `onRetry`   → inline <ErrorBanner> (the original contract, byte-identical)
+//   no `onRetry`   → inline <ErrorBanner>
 //   with `onRetry` → the recoverable-error CARD (glyph + optional title + message + Button)
-// Before this the primitive had no retry affordance at all, so four surfaces hand-rolled the card
-// instead and drifted apart. The card below is the UNION of those four, not a copy of one: the
-// tap-target floor comes from PhotosWall (the only site that had one), `aria-hidden` on the glyph
-// comes from Harvests (the only site that had it — elsewhere a screen reader announced the warning
-// emoji inside role="alert"), and the retry control routes through the frozen Button primitive.
+// The glyph is aria-hidden so a screen reader does not announce the warning emoji inside role="alert";
+// the retry control routes through the frozen Button primitive.
 import React from 'react'
 import { P } from '../../lib/constants.js'
 import { T } from './formStyles.js'

@@ -1,49 +1,32 @@
-// src/components/today/CultivationLead.jsx
-// PANEL Q1 (harvest-panel-decisions-20260812.md): the cultivation region of Today, DEMOTED to an
-// unlabelled lead line. One or two imperative lines — NO heading, NO count, capped at 2. A heading
-// plus denominator costs ~64px at 390px and evicts a row; scanning cost scales with orient
-// decisions, and a third heading is a third orient decision. It shows no tail control either, and
-// by rule rather than exception: a region shows a tail iff rows are hidden, and nothing here is
-// hidden — the full story lives one tap away on /sow.
+// The cultivation region of Today: an unlabelled lead line of one or two imperative lines, NO
+// heading, NO count, capped at 2. A heading plus denominator costs ~64px at 390px and evicts a row,
+// and a third heading is a third orient decision. It shows no tail control, by rule rather than
+// exception: a region shows a tail iff rows are hidden, and nothing here is hidden; the full story
+// lives one tap away on /sow.
 //
 // CONTENT IS A READ OF AN EXISTING ENGINE, NEVER AN INVENTION. The lines come from the same
 // sow-candidates payload and the same pure `bucketize` the /sow page runs; only entries the engine
 // itself marks `window_closing` (its own fall-sow latest-safe math, latestSafeMs) qualify. No other
-// cue is computable from existing data without fabrication (phenology capture has lapsed —
-// panel-verified), so no other cue ships.
+// cue is computable from existing data without fabrication, so no other cue ships.
 //
-// V4-SEEDZEROVIEW-001 — THIS FILE HAS NO QUANTITY PREDICATE OF ITS OWN, ON PURPOSE. A depleted
-// packet (quantity_on_hand <= 0) is diverted to `sowed_previously` inside bucketize itself, so it
-// can never reach `window_closing` and can never become a line here. This surface was the second,
-// unfiled half of that defect — the ledger row named only /sow, and both surfaces read the same
-// payload through the same bucketizer — and it is fixed by the engine rather than by a filter
-// duplicated here, because two copies of one predicate is how the two surfaces disagree later.
+// THIS FILE HAS NO QUANTITY PREDICATE OF ITS OWN, ON PURPOSE. A depleted packet
+// (quantity_on_hand <= 0) is diverted to `sowed_previously` inside bucketize itself, so it can never
+// reach `window_closing` and can never become a line here. Both surfaces read the same payload
+// through the same bucketizer; a predicate duplicated here is how the two would disagree later.
 //
-// V4-SOWMOREMENU-001 (BD-067) — TWO PANEL Q1 DECISIONS ARE DELIBERATELY REVERSED HERE, both on
-// Dave's own report that he could not find Sow Now AT ALL ("I don't remember even where it used to
-// be"). Say what changed and why, because both were reasoned calls, not defaults:
+// Two deliberate choices, both about discoverability of Sow Now:
+//   1. PLACEMENT. The region renders down with the ambient bands, not at the very top of Today: it
+//      does not earn the FIRST screen.
+//   2. The link row is UNCONDITIONAL (no "renders nothing when empty"). Otherwise, on every day the
+//      engine had no closing window (most of the year), Today would offer no route to /sow at all.
+//      The empty state is one compact link, not a blank strip with a heading over silence.
 //
-//   1. PLACEMENT. This region no longer sits at the very top of Today. Dave: "making the top of the
-//      today show the sow now should disappear, that doesn't need to be up there." It now renders
-//      down with the ambient bands. The panel's ~64px argument was about what earns the FIRST
-//      screen; it never argued this content was worthless, and moving it costs none of the value.
+// The urgency lines are present only when the engine marks a window closing, capped at 2, most
+// urgent first. Only the door below them is unconditional.
 //
-//   2. "RENDERS NOTHING WHEN EMPTY" IS GONE — the link row is now UNCONDITIONAL. This is the real
-//      reversal and it is a discoverability fix, not a layout preference. The old contract meant
-//      that on every day the engine had no closing window (most of the year) Today offered no route
-//      to /sow whatsoever, and the panel's own "the full story lives one tap away on /sow" was
-//      false on those days — the lines were plain <p> text with no tap target at all, so it was
-//      never one tap away from here on ANY day. A durable, findable door is the thing Dave asked
-//      for; an intermittent one does not fix "I can't find it anywhere". The empty state is one
-//      compact link, not a blank strip with a heading over silence, so the panel's actual objection
-//      (an empty labelled container) still holds — it just is not what this renders.
-//
-// The urgency lines keep their old conditional behaviour: present only when the engine marks a
-// window closing, capped at 2, most urgent first. Only the door below them is unconditional.
-//
-// Ambient posture otherwise unchanged: self-fetching, error swallowed (a failed fetch degrades to
-// the bare link, never an error onto Today). Reward-UX: imperative + a date is information; no
-// urgency copy, no countdown, no exclamation.
+// Ambient posture otherwise: self-fetching, error swallowed (a failed fetch degrades to the bare
+// link, never an error onto Today). Reward-UX: imperative + a date is information; no urgency copy,
+// no countdown, no exclamation.
 import React, { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { useApiFetch } from '../../lib/api.js'
@@ -85,11 +68,11 @@ export function cultivationLines(items, todayISO, cap = CULTIVATION_LEAD_CAP) {
   })
 }
 
-// V5-TODAYREDESIGN-001 S6 — THE DATA HOOK, split out of the band so the redesigned Today can run it at the page
-// and hand the result in as `data`. `enabled: false` asks nothing: while the 2027 sowing freeze holds the
+// THE DATA HOOK, split out of the band so the redesigned Today can run it at the page and hand the
+// result in as `data`. `enabled: false` asks nothing: while the 2027 sowing freeze holds the
 // redesigned Today shows no dated line, so it does not fetch the candidates at all (featureFlags
-// SOW_DATED_LINES_FROZEN). `settled` = the first request answered or failed (or nothing was asked); nothing here
-// renders it — the V2 ready point waits on it (§6.4).
+// SOW_DATED_LINES_FROZEN). `settled` = the first request answered or failed (or nothing was asked);
+// nothing here renders it; the V2 ready point waits on it.
 export function useCultivationFeed({ enabled = true } = {}) {
   const { fetch } = useApiFetch()
   const [items, setItems] = useState(null)
@@ -108,8 +91,8 @@ export function useCultivationFeed({ enabled = true } = {}) {
   return { items, settled }
 }
 
-// `data` = useCultivationFeed()'s result, fetched by the caller; `bare` = the redesigned Today's Sow link row
-// (plan-v2 §4 "Sow link row": sprout + "All sow windows ›", a link, not a section, no card) — the dated lines,
+// `data` = useCultivationFeed()'s result, fetched by the caller; `bare` = the redesigned Today's Sow
+// link row (sprout + "All sow windows ›", a link, not a section, no card), with the dated lines,
 // when there are any, above that door. With neither prop, the band as it always was.
 export default function CultivationLead({ todayISO = null, data, bare = false }) {
   return data
@@ -140,23 +123,21 @@ function Lead({ feed, todayISO, bare }) {
     )
   }
 
-  // The whole region is the tap target, lines included — tapping an urgency line goes to the packet
-  // it is about (well, to the page listing it), which is what a line saying "Sow X by Aug 18" makes
-  // you want to do. A separate link underneath would read as a second, unrelated control.
+  // The whole region is the tap target, lines included: tapping an urgency line goes to the page
+  // listing the packet it is about, which is what a line saying "Sow X by Aug 18" makes you want to
+  // do. A separate link underneath would read as a second, unrelated control.
   return (
-    // V5-SEEDSTAB-001 — Seeds › Sow now, the same list /sow used to be. The band itself is left as
-    // it is until Dave's Today redesign settles (design-seedshome-V102 §13, D3).
+    // Seeds › Sow now: the same list as /sow.
     <Link
       to={seedsHref('sow')}
       data-testid="cultivation-lead"
       style={{
         display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none',
-        // BUG-LINKICONBLUE-001 — an explicit ink is REQUIRED on any <Link> containing an <Icon>, and
-        // this shipped wrong in v4.58.0. Icon renders `<svg stroke="currentColor">` and substitutes a
-        // palette hex only on elements carrying data-region, so inside an <a> with no color of its
-        // own every unregioned stroke inherits the browser's default link blue (#0000EE, measured).
-        // A mono icon comes out ENTIRELY blue. textDecoration:'none' does not cover this — it kills
-        // the underline and leaves the colour, which is why it read as fixed.
+        // An explicit ink is REQUIRED on any <Link> containing an <Icon>. Icon renders
+        // `<svg stroke="currentColor">` and substitutes a palette hex only on elements carrying
+        // data-region, so inside an <a> with no color of its own every unregioned stroke inherits
+        // the browser's default link blue (#0000EE, measured) and a mono icon comes out ENTIRELY
+        // blue. textDecoration:'none' does not cover this: it kills the underline, not the colour.
         color: P.dark,
         padding: '10px 12px', marginBottom: 12,
         background: P.white, border: `1px solid ${P.border}`, borderRadius: 10,
@@ -172,8 +153,8 @@ function Lead({ feed, todayISO, bare }) {
         ))}
         {/* The label carries the destination's NAME whenever it is the only thing here, so the row
             is self-explanatory on a cold open. When urgency lines are present they already say what
-            this is about, and repeating "Sow now" under them is the redundant second heading PANEL
-            Q1 was right to refuse — so it drops to a quiet subtitle instead. */}
+            this is about, and repeating "Sow now" under them would be a redundant second heading,
+            so it drops to a quiet subtitle instead. */}
         <span style={{
           display: 'block',
           fontSize: lines.length ? '0.76rem' : '0.92rem',
@@ -189,8 +170,8 @@ function Lead({ feed, todayISO, bare }) {
   )
 }
 
-// The bare row (plan-v2 §4): a text-link row, minHeight T.tapMinHeight, P.green 600 T.type.sm — an explicit ink,
-// which BUG-LINKICONBLUE-001 (above) requires on any <Link> holding an <Icon>.
+// The bare row: a text-link row, minHeight T.tapMinHeight, P.green 600 T.type.sm, with the explicit
+// ink that any <Link> holding an <Icon> requires (see above).
 const bareRow = {
   display: 'flex', alignItems: 'center', gap: T.space.sm, minHeight: T.tapMinHeight, textDecoration: 'none',
   color: P.green, fontWeight: 600, fontSize: T.type.sm,

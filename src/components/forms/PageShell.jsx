@@ -1,7 +1,5 @@
-// src/components/forms/PageShell.jsx
-// Lane D / Phase A — page frame (full-viewport cream bg + centered max-width
-// column) with optional breadcrumb + title and the same loading/error/empty
-// states as AsyncRegion. Mirrors the InventoryAdd page outer chrome.
+// Page frame (full-viewport cream bg + centered max-width column) with optional breadcrumb + title
+// and the same loading/error/empty states as AsyncRegion.
 import React from 'react'
 import { P } from '../../lib/constants.js'
 import AsyncRegion from './AsyncRegion.jsx'
