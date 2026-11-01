@@ -1,59 +1,35 @@
-// Pure handlers for /api/dashboard Lambda (V1.2a-2 Session 2).
-// Extracted from index.js so unit tests can import without dragging in
-// @neondatabase/serverless / @clerk/backend / @aws-sdk/* (which aren't installed
-// at the app-level package and would break vitest resolution at CI load time).
-//
-// Mirrors the lambda/events/validators.js extraction pattern — the test file
-// imports ONLY this module, never index.js. index.js remains the Lambda entry
-// point and wires neon + Clerk + SecretsManager to these pure builders.
-//
-// Each builder is a function that accepts `sql` (a neon tagged-template) plus
-// pure inputs, calls `sql\`...\`` to assemble the parameterized query, and
-// returns the Promise. Under test, `sql` is a mock that records the template
-// strings + bound values — enabling SQL-shape assertions without a real DB.
+// Pure handlers for /api/dashboard. Split out of index.js so unit tests import only this module
+// (index.js wires neon + Clerk + SecretsManager; those deps are not installed at the app level).
+// Each builder takes `sql` (a neon tagged template; under test, a mock that records the template
+// strings and bound values) plus pure inputs.
 
-// F9 UUID regex — applied before any SQL fires so Postgres never sees a malformed UUID.
+// Applied before any SQL fires, so Postgres never sees a malformed UUID.
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-// ---- Pure validators ------------------------------------------------------
 
 import { householdScope } from './household.js';
 import { computeStreak, STREAK_GRACE_DAYS } from './streak.js';
 import { NON_REWARD_EVENT_TYPES } from './eventTypes.rewards.js';
 
-// DRG-WATERRECON-002: pinned to lambda/daily-plan/engine.js PLAN_SCHEMA_VERSION (kept in lockstep by the
-// anti-drift source test). The alert bar trusts a daily_plan ONLY when its stored items.schema_version
-// matches; a present-but-mismatched plan (a field rename / shape drift) is REJECTED -> legacy fallback +
-// a LOUD error log (water_due_source='schema_mismatch'), never a silently-empty/garbage verdict.
+// Pinned to lambda/daily-plan/engine.js PLAN_SCHEMA_VERSION (anti-drift source test). The alert bar
+// trusts a daily_plan ONLY when its stored items.schema_version matches; a mismatch is REJECTED
+// (legacy fallback + loud error log, water_due_source='schema_mismatch'), never a silent empty verdict.
 export const PLAN_SCHEMA_VERSION = 1;
 
-// V4-SOFTDEL-001 F3 — POLICY SWITCH for events whose PLANTING is soft-deleted but whose
-// CONTAINER is still live. Two defensible products, and this constant is the whole choice:
-//   false (SHIPPED — preserves the pre-fix observable behavior): the event SURVIVES. The
-//     watering/harvest really happened in that container; the user deleted a planting record,
-//     not the history. The feed keeps rendering the deleted planting's name beside it.
-//   true  (the alternative): the event is HIDDEN, symmetric with the container rule below.
-// Deliberately NOT decided by this fix — flipping this one literal switches every event read
-// surface at once (dashboard feed here + the 5 events-Lambda queries carrying the same
-// predicate; softdel-feed.test.js asserts the two files' copies stay equal).
-// Measured on prod 2026-08-06: 56 live events sit under a soft-deleted planting (Dave, of
-// 12,356 live events) and 0 (Jen, of 13); 0 of them carry a harvest_log row.
-// The CONTAINER rule is NOT a switch — a soft-deleted container always hides its events.
+// POLICY SWITCH for events whose PLANTING is soft-deleted but whose CONTAINER is still live.
+//   false (SHIPPED): the event SURVIVES. The watering/harvest happened; the user deleted a planting
+//     record, not the history. The feed keeps rendering the deleted planting's name.
+//   true: the event is HIDDEN, symmetric with the container rule.
+// Flipping this one literal switches every event read surface at once (this feed + the 5 events-Lambda
+// queries carrying the same predicate; softdel-feed.test.js asserts the two files' copies stay equal).
+// The CONTAINER rule is NOT a switch: a soft-deleted container always hides its events.
 export const HIDE_EVENTS_UNDER_DELETED_PLANTING = false;
 
 export function isValidUuid(s) {
   return typeof s === 'string' && UUID_RE.test(s);
 }
 
-// Route classification — pure routing decision based on method + rawPath.
-// Returns one of:
-//   { kind: 'options' }
-//   { kind: 'dashboard' }
-//   { kind: 'inactive-list' }
-//   { kind: 'inactive-dismiss', projectId }
-//   { kind: 'method-not-allowed' }
-//   { kind: 'not-found' }
-//   { kind: 'uuid-not-found' }  — UUID parse failure on dismiss
+// Pure routing on method + rawPath. kind is one of options, dashboard, search, inactive-list,
+// inactive-dismiss (with projectId), method-not-allowed, not-found, uuid-not-found (bad dismiss UUID).
 export function classifyRoute(method, rawPath) {
   if (method === 'OPTIONS') return { kind: 'options' };
 
@@ -84,8 +60,6 @@ export function classifyRoute(method, rawPath) {
   return { kind: 'dashboard' };
 }
 
-// ---- Response shape -------------------------------------------------------
-
 const CORS = {}; // Lambda URL config is sole CORS source — handler must not duplicate
 
 export function resp(statusCode, body) {
@@ -100,21 +74,14 @@ export function optionsResp() {
   return { statusCode: 204, headers: CORS, body: '' };
 }
 
-// ---- SQL query builders ---------------------------------------------------
-// Each builder takes `sql` (neon tagged-template or test mock) + pure inputs
-// and returns the awaitable result. The SQL string + bind params are visible
-// to the test mock via the tagged-template signature.
-
-// V3-FEED-001: collapsed feed cap — recent_events returns at most FEED_CAP entries AFTER
-// collapseBatches() folds each Log Many batch into one entry.
+// recent_events returns at most FEED_CAP entries AFTER collapseBatches() folds each Log Many batch into one.
 export const FEED_CAP = 20;
 
 export function queryRecentEvents(sql, userId) {
   // HOUSEHOLD-MODE: widened at V3-ROLES teardown
-  // V3-FEED-001: raw window (LIMIT 200, pre-collapse) + batch linkage. batch_id comes from
-  // event_log.metadata->>'batch_id' (written by POST /api/events/batch); event_batches.item_count
-  // gives the exact batch size even when the 200-row window truncates a batch. 200 must
-  // comfortably exceed FEED_CAP + the largest realistic batch (~113 plantings today; hard cap 500).
+  // Raw window (LIMIT 200, pre-collapse) + batch linkage: batch_id is event_log.metadata->>'batch_id';
+  // event_batches.item_count gives the exact batch size even when the window truncates a batch.
+  // 200 must comfortably exceed FEED_CAP + the largest realistic batch (hard cap 500).
   const householdIds = householdScope(userId);
   return sql`
       SELECT
@@ -154,11 +121,9 @@ export function queryRecentEvents(sql, userId) {
     `;
 }
 
-// V3-FEED-001 pure collapse: one Log Many batch -> ONE feed entry. Rows arrive created_at DESC;
-// a batch anchors at its newest row (order otherwise preserved). batch_count prefers
-// event_batches.item_count (exact, window-truncation-proof); falls back to occurrences seen in
-// the raw window. Undone batches never appear (their events are soft-deleted upstream).
-// Cap applies AFTER collapsing.
+// Pure collapse: one Log Many batch -> ONE feed entry. Rows arrive created_at DESC; a batch anchors at
+// its newest row. batch_count prefers event_batches.item_count (exact, window-truncation-proof), else
+// occurrences seen in the raw window. Undone batches are soft-deleted upstream. Cap applies AFTER collapsing.
 export function collapseBatches(rows, cap = FEED_CAP) {
   const out = [];
   const byBatch = new Map();
@@ -209,84 +174,45 @@ export function queryFavoriteCount(sql, userId) {
     `;
 }
 
-// ── Care re-key Step D (care-rekey-001 / V4-CAREKEY-001) — the container care rollup ────────────
+// Care re-key: the container care rollup.
 //
-// entity_memory is now keyed on the PLANTING (plant_id). Every project-level display in this file
-// used to read a single `entity_memory` row keyed on the container, which is exactly the coarse
-// cache the re-key retires. Repointing those reads at plant_id alone would be wrong in both
-// directions, so each one is rewritten to the same rollup:
+// entity_memory is keyed on the PLANTING (plant_id), so every project-level display here reads the rollup:
+// the container's care recency = the newest of { its plantings' rows } UNION { its own row }.
+// Both arms are load-bearing. The plant arm is the real per-planting history. The project arm covers
+// project-LEVEL events that carry no plant_id, and containers with a project row but no plant rows;
+// dropping either silently blanks containers on the dashboard. GREATEST/MAX ignore NULLs, so a container
+// with one arm populated still reports it. The OR in the rollup predicate may skip an index; at 344 rows
+// that is deliberate.
 //
-//     the container's care recency = the newest of { its plantings' rows } ∪ { its own row }
+// The rollup is written out at each call site because a `sql` fragment cannot be interpolated into
+// another neon template without becoming a bound parameter. care-rekey-reads.test.js pins the shape.
 //
-// Both arms are load-bearing, measured on live prod at cutover:
-//   * plant arm  — 262 rows. The real per-planting care history. Without it the tiles go blank.
-//   * project arm — 76 rows. Project-LEVEL events (55 live events carry no plant_id: 11 waterings,
-//     14 observations, 13 photos, all status_changes) never attribute to any planting, and 7
-//     containers have a project row with NO plant rows under them at all. Dropping this arm would
-//     silently erase those containers from the dashboard. The 3-way exactly-one-parent CHECK keeps
-//     this arm alive on purpose (design §2), so the rollup keeps reading it.
+// Lifecycle filter (BUG-ROLLUPLIFECYCLE-001), NOT uniform on purpose: a rollup that crosses a threshold,
+// decides eligibility or ranks a list must range over the SAME population as the eligibility guard next
+// to it; a rollup only displayed as history may range wider.
+//   - ACTIONABLE queries carry the full predicate (deleted_at IS NULL AND archived_at IS NULL AND status
+//     NOT IN (...)): queryWaterDue (legacy MIN), queryWaterDueFromPlan (plan_rows display join and
+//     legacy_rows MIN), queryHarvestReady, queryHeadsUp stale. `archived_at IS NULL` alone would not close
+//     it: a `failed` planting is dead tissue with a frozen date, and `dormant` is suppressed by the
+//     daily-plan engine. Without it the bar says "water due" with an empty due list, and the error only
+//     grows, because an archived planting's dates never advance.
+//   - HISTORY queries keep archived plantings (archiving does not un-happen events): queryActiveProjects
+//     (recent activity), queryInactiveList. lambda/projects/index.js's four last_activity_at copies too.
+// Harm differs by aggregate: the water-due MIN going DOWN gives a false POSITIVE; the observation MAXes
+// going UP suppress a genuine stale/harvest alert. Soft-deleted plantings are excluded everywhere.
 //
-// GREATEST/MAX ignore NULLs in Postgres, so a container with only one arm populated still reports
-// that arm. entity_memory is 344 rows total; the OR in the rollup predicate may not use either
-// index, and at this size that is deliberate — clarity over a plan that saves microseconds.
-//
-// The rollup is written out at each call site rather than shared, because these are neon tagged
-// templates: a `sql` fragment cannot be interpolated into another `sql` template without becoming a
-// bound parameter. The shape is identical everywhere and care-rekey-reads.test.js pins it.
-//
-// ── BUG-ROLLUPLIFECYCLE-001 — the plant arm's lifecycle filter is NOT uniform, on purpose ────────
-//
-// The rule: **a rollup whose value crosses a threshold, decides eligibility, or ranks a list must
-// range over the SAME population as the eligibility guard standing next to it. A rollup whose value
-// is only displayed as history may range wider.**
-//
-// Every ACTIONABLE query here already builds its `plantings` array and/or its EXISTS guard with
-// `deleted_at IS NULL AND archived_at IS NULL AND status NOT IN (...)`, while its rollup used
-// `deleted_at IS NULL` alone. That is not a stylistic drift — it makes the row assert a claim and
-// then name no planting that could be its subject: "water due", with an empty due list. Measured on
-// prod 2026-08-10: the Peppers container was legacy-water-due SOLELY on an archived planting's
-// frozen `last_watered_at`, honest verdict 2026-08-13. And because an archived planting's dates
-// never advance again, that error is monotonic — it recedes further into the past every day rather
-// than aging out.
-//
-// So the ACTIONABLE five carry the full actionability predicate:
-//   :queryWaterDue (legacy MIN) · :queryWaterDueFromPlan plan_rows display join · its legacy_rows
-//   MIN · :queryHarvestReady · :queryHeadsUp stale
-// `archived_at IS NULL` alone would NOT close it: a `failed` planting is dead tissue with a frozen
-// date, and `dormant` is the class the daily-plan engine already suppresses because interval-
-// watering a dormant succulent rots the crown.
-//
-// The HISTORY two keep archived plantings, and must:
-//   :queryActiveProjects (recent activity) · :queryInactiveList
-// Archiving a planting does not un-happen its events. A bed that produced a full spring crop and had
-// it pulled DID have activity, and the turnover date is the input to the succession decision.
-// `lambda/projects/index.js`'s four `last_activity_at` copies are history for the same reason.
-//
-// Direction of harm differs by aggregate and is why both halves matter: the water-due MIN goes DOWN,
-// producing a false POSITIVE; the observation MAXes go UP, SUPPRESSING a genuine stale/harvest alert.
-// Soft-deleted plantings belong to neither class and are already excluded everywhere — a soft-delete
-// is a retraction of the record, an archive is a completion of it.
-//
-// ── BUG-WATERBARARCHIVED-001 — the same predicate exists up to FOUR times per query ──────────────
-// Each actionable query repeats the lifecycle predicate at: (1) the entity_memory rollup arm,
-// (2) the EXISTS eligibility guard, (3) the displayed `plantings` json_agg, and in queryHeadsUp
-// (4) a per-event `gn.id = el.plant_id` filter. rollup-lifecycle.test.js compares (1) against (2)
-// only; copy (3) — the array this row DISPLAYS, and so the one that makes the contradiction visible
-// to the grower — was unpinned, and a mutation dropping archived_at + 'rooting' from it left all 170
-// dashboard tests green. waterbar-archived.test.js now pins ALL sites to one population, by mutual
-// agreement rather than by literal, and alias/count-agnostically so a 5th copy is covered on sight.
-// Edit any one of these and you must edit them together, or that file goes red naming the outlier.
+// BUG-WATERBARARCHIVED-001: the lifecycle predicate repeats up to FOUR times per actionable query: the
+// rollup arm, the EXISTS guard, the displayed `plantings` json_agg and, in queryHeadsUp, a per-event
+// `gn.id = el.plant_id` filter. rollup-lifecycle.test.js compares rollup against guard;
+// waterbar-archived.test.js pins ALL sites to one population by mutual agreement. Edit them together
+// or that file goes red naming the outlier.
 export function queryActiveProjects(sql, userId) {
   // HOUSEHOLD-MODE: widened at V3-ROLES teardown
   const householdIds = householdScope(userId);
-  // DRG-WXWATER-002b: this tile feeds project COUNT + harvest-status gate + zero-state ONLY — it renders
-  // NO water/care verdict (the dashboard's only water cue is the water_due tile, already reconciled to the
-  // daily-plan verdict via queryWaterDueFromPlan / DRG-WATERRECON-001). The naive entity_memory water fields
-  // (next_water_at / location_type / watering_interval_days) that used to be selected here were dead weight
-  // AND a latent divergence trap — a future surface wiring the raw next_water_at would reintroduce exactly the
-  // rain-blind "false Overdue" class WXWATER-002 closes. Dropped. If a per-project water cue is ever wanted,
-  // source it from the plan verdict (queryWaterDueFromPlan), never from raw entity_memory. Guarded by
-  // index.test.js "queryActiveProjects carries no naive water verdict". Activity last_* timestamps stay.
+  // This tile feeds project COUNT, the harvest-status gate and zero-state ONLY; it renders no
+  // water/care verdict. Never wire raw entity_memory next_water_at here (the rain-blind "false
+  // Overdue" class); source any per-project water cue from queryWaterDueFromPlan. Guarded by
+  // index.test.js "queryActiveProjects carries no naive water verdict".
   return sql`
       SELECT
         pp.id, pp.display_name AS name, pp.status, pp.variety, pp.start_date,
@@ -312,15 +238,10 @@ export function queryActiveProjects(sql, userId) {
     `;
 }
 
-// BUG-XPPROGRESSION-001 — `level` and `xp_to_next_level` added. Before this, the column was not
-// selected at all, so even a correct level would have been invisible to every client: the app's
-// only XP pixel is a bare number two taps deep in the streak modal, while /achievements has been
-// printing "Reach level 5" as a locked hint the whole time.
-// The two derived fields are computed by public.xp_level_floor() rather than in JS on purpose —
-// one definition of the curve, server-side, shared with the trigger that maintains user_stats.level
-// (migrations/v4-xpprogression-001/0a). The client renders a bar; it does not own the maths.
-// xp_into_level / xp_to_next_level are both relative to the CURRENT band, so a progress bar is
-// xp_into_level / (xp_into_level + xp_to_next_level) with no client-side threshold table.
+// `level`, `xp_into_level` and `xp_to_next_level` come from public.xp_level_floor() rather than JS: one
+// definition of the curve, server-side, shared with the trigger that maintains user_stats.level
+// (migrations/v4-xpprogression-001/0a). Both derived fields are relative to the CURRENT band, so a
+// progress bar is xp_into_level / (xp_into_level + xp_to_next_level) with no client-side threshold table.
 export function queryUserStats(sql, userId) {
   return sql`
       SELECT current_streak, longest_streak, last_active_date, total_events, xp,
@@ -339,22 +260,13 @@ export function queryUserStats(sql, userId) {
     `;
 }
 
-// V1.2-streak-fix (2026-05-25): DISTINCT activity days (by event_date in the user's TZ) + today,
-// for live streak recompute via the pure helper. Per-USER (created_by) — a streak is the user's
-// own activity, not household-scoped. Recomputing here means the displayed streak is never stale.
+// DISTINCT activity days (by event_date in the user's TZ) + today, for the live streak recompute via
+// the pure helper. Per-USER (created_by): a streak is the user's own activity, not household-scoped.
 //
-// V4-WATERMATH-001 F0 (2026-08-12) — NON_REWARD_EVENT_TYPES filter. This recompute is AUTHORITATIVE
-// for what the user sees: handleDashboard overwrites storedStats.current_streak with
-// computeStreak(activityDays, …), so whatever this query returns IS the displayed streak, no matter
-// what the write path stored. The events Lambda filters the reward partition out of its grant path,
-// both of its recomputes and its achievement counts — but this is a THIRD, independent reader, and
-// until now it counted every event type. Left unfiltered, tapping "I checked the soil" every morning
-// would sustain a streak indefinitely: a rewarded farmable loop, which is the exact thing the
-// partition exists to prevent.
-//
-// Scoped to the activity-DAY subquery only. The `today` term is a clock reading, not an event
-// aggregate, so it takes no predicate — filtering there would be meaningless, and a blanket WHERE
-// would be the easy mistake.
+// This recompute is AUTHORITATIVE for what the user sees: handleDashboard overwrites
+// storedStats.current_streak with computeStreak(activityDays, ...). So it must filter
+// NON_REWARD_EVENT_TYPES, or tapping "I checked the soil" daily would sustain a streak (a farmable
+// loop). The filter is on the activity-DAY subquery only; `today` is a clock reading, not an event aggregate.
 export function queryActivityDays(sql, userId) {
   return sql`
       WITH z AS (
@@ -377,19 +289,13 @@ export function queryActivityDays(sql, userId) {
 }
 
 export function queryWaterDue(sql, userId) {
-  // V3-SCOPE-002: caretaker scope — surface a project if assigned to this user, OR unassigned and
-  //   created by this user. A planting assigned to another household member must NOT show on this
-  //   user's bar (V3-SCOPE-001 scoped by created_by only, which missed reassigned-but-Dave-created rows).
-  // V3-ATTN-002: suppress projects with no actionable planting — only alert when the container holds at
-  //   least one planting NOT in dormant/ended/failed/rooting (NULL status counts as actionable, fail-open
-  //   toward alerting). Empty/all-inactive containers never alert (alerts are planting-driven, not project-driven).
-  // Care re-key Step D: driven off `container` + the rollup instead of `FROM entity_memory` keyed
-  // on the container. next_water_at is NULL on every plant-keyed row (design §8.1), so the rollup
-  // reconstitutes it at READ time with the same interval ladder the project row used to bake in —
-  // and takes the MIN, not the MAX: this bar answers "does anything in here need water", so the
-  // most-overdue planting decides, and the ORDER BY then sorts the worst first. That is a real
-  // behaviour change, and the intended one: one overdue planting in a 66-planting container used to
-  // be invisible behind a single container-wide verdict.
+  // Caretaker scope: surface a project if assigned to this user, OR unassigned and created by this
+  // user; a planting assigned to another household member must NOT show on this user's bar.
+  // Suppress projects with no actionable planting: alert only when the container holds at least one
+  // planting NOT in dormant/ended/failed/rooting (NULL status counts as actionable, fail-open toward alerting).
+  // next_water_at is NULL on every plant-keyed row (design §8.1), so the rollup reconstitutes it at READ
+  // time with the old interval ladder and takes the MIN: the most-overdue planting decides, and ORDER BY
+  // sorts the worst first.
   return sql`
       SELECT
         pp.id AS project_id, pp.display_name AS project_name,
@@ -433,25 +339,19 @@ export function queryWaterDue(sql, userId) {
     `;
 }
 
-// DRG-WATERRECON-001 (2026-06-24): the alert bar's "needs water" now derives from the SAME nightly DrG/care engine
-// verdict the Today page reads (daily_plan), instead of the naive entity_memory cadence — they were computing
-// "needs water" independently and disagreed on ~100% of containers (e.g. Dracaena: engine 10d not-due vs the bar's
-// 4d location-default; established 5-gal-bag peppers nagging daily). Single source of truth: the engine decides WHICH
-// plantings are due; this query (a) reads today's per-user daily_plan water_due, (b) drops plantings already satisfied
-// today via a watering/rain/moisture_check event_log row in ET, (c) groups by container into the band's existing row
-// shape, and (d) LEFT JOINs entity_memory + container for the display fields the UI reads (last_watered_at,
-// location_type). When no plan row exists for today (rare engine-skip), it FALLS BACK to the legacy entity_memory
-// query so the bar never blanks — flagged via water_due_source so the silent-divergence case is observable. ONE sql
-// call (drop-in for queryWaterDue in the handleDashboard Promise.all; preserves the FIFO contract its tests assert).
+// The alert bar's "needs water" derives from the SAME nightly DrG/care engine verdict the Today page
+// reads (daily_plan), not the naive entity_memory cadence (DRG-WATERRECON-001: the two disagreed on
+// ~100% of containers). This query (a) reads today's per-user daily_plan water_due, (b) drops plantings
+// already satisfied today by a watering/rain/moisture_check event_log row in ET, (c) groups by container
+// into the band's row shape, (d) LEFT JOINs entity_memory + container for display fields. With no plan
+// row for today it FALLS BACK to the legacy entity_memory query so the bar never blanks, flagged via
+// water_due_source. ONE sql call (drop-in for queryWaterDue in handleDashboard's Promise.all; preserves
+// the FIFO contract its tests assert).
 //
-// (b) is NOT the same code as daily-plan-read.annotateDone — this comment used to say it was, and that was
-// imprecise. The satisfied-set is an independent SQL re-implementation of the ET-day rule, in the `fresh` CTE
-// below, and it carries NONE of annotateDone's feed-cadence widening (doneEvents.fedWithinInterval, the
-// BUG-BACKDATEDFEED-001 arm that lets a feeding logged today but DATED earlier retire a feed card). Harmless
-// while this bar reads water_due and nothing else: for watering the ET calendar day IS the whole rule, so the
-// two agree by coincidence of scope, not by shared code. It is a trap for the next person — extend this query
-// to feed tiles without porting the cadence arm and BUG-BACKDATEDFEED-001 reappears on the dashboard alone,
-// with Today checked off and the bar still nagging.
+// TRAP: (b) is NOT daily-plan-read.annotateDone. The `fresh` CTE below is an independent ET-day rule
+// without annotateDone's feed-cadence widening (doneEvents.fedWithinInterval, BUG-BACKDATEDFEED-001).
+// Harmless for watering, where the ET day IS the whole rule; extend this query to feed tiles without
+// porting the cadence arm and the bar nags with Today checked off.
 export function queryWaterDueFromPlan(sql, userId) {
   return sql`
       WITH params AS (SELECT (now() AT TIME ZONE 'America/New_York')::date AS et_today),
@@ -600,8 +500,7 @@ export function queryWaterDueFromPlan(sql, userId) {
     `;
 }
 
-// §A Tile 3 — harvest_ready (status='harvesting', sort oldest last_observed_at).
-// F1: days_since_obs computed via calendar-day arithmetic. May be NULL.
+// harvest_ready tile: status='harvesting', oldest last_observed_at first. days_since_obs may be NULL.
 export function queryHarvestReady(sql, userId) {
   // HOUSEHOLD-MODE: widened at V3-ROLES teardown
   const householdIds = householdScope(userId);
@@ -628,11 +527,9 @@ export function queryHarvestReady(sql, userId) {
     `;
 }
 
-// §B Tile 4 — heads_up Hybrid A+C union.
-// F1: days_stale via calendar-day arithmetic.
-// F7: stale predicate tightened — handles NULL last_observed_at with last_event_at/created_at fallback.
-// SQL-layer NOT EXISTS dedup ensures a project surfaces ONCE (as 'flagged' if it has both).
-// ORDER BY severity DESC NULLS LAST → severity=3 sorts before severity=1; stale (NULL severity) last.
+// heads_up tile: flagged-unresolved union active-growth stale. The NOT EXISTS dedup surfaces a project
+// ONCE (as 'flagged' if it has both). Stale falls back to last_event_at/created_at when
+// last_observed_at is NULL. Severity sorts DESC NULLS LAST, so stale (NULL severity) is last.
 export function queryHeadsUp(sql, userId) {
   return sql`
       WITH flagged AS (
@@ -723,13 +620,10 @@ export function queryHeadsUp(sql, userId) {
     `;
 }
 
-// §C inactive_projects_count — harvested/ended status, NOT dismissed by this user.
-// NOTE (E3, 2026-06-04): 'harvested' is now a LOGGABLE project status — harvesting is
-// repeatable (see LOGGABLE_PROJECT_STATUSES in src/lib/constants.js). This count still
-// groups 'harvested' WITH 'ended' as "inactive", which is semantically loose now.
-// DEPRIORITIZED per Dave: the dashboard projects-list UI is currently hidden, so this
-// count is not user-visible. Revisit (split 'harvested' out of "inactive") only if that
-// list is re-surfaced.
+// inactive_projects_count: harvested/ended status, NOT dismissed by this user. 'harvested' is a
+// LOGGABLE project status (harvesting is repeatable, LOGGABLE_PROJECT_STATUSES in src/lib/constants.js),
+// so grouping it with 'ended' as "inactive" is semantically loose. Deprioritized: the dashboard
+// projects-list UI is hidden, so the count is not user-visible. Revisit only if that list returns.
 export function queryInactiveCount(sql, userId) {
   // HOUSEHOLD-MODE: widened at V3-ROLES teardown
   const householdIds = householdScope(userId);
@@ -747,10 +641,8 @@ export function queryInactiveCount(sql, userId) {
     `;
 }
 
-// §F GET /api/projects/inactive
-// Per V002 §7 (canonical) — schema doc §5.4 superseded (no `ended_at` column).
-// Sort: undismissed first (d.dismissed_at IS NULL DESC), then by last_event_at DESC.
-// No pagination — acceptable at <100 inactive projects/user; revisit at V2 multi-user.
+// GET /api/projects/inactive. Undismissed first, then last_event_at DESC. No pagination
+// (fine at <100 inactive projects per user).
 export function queryInactiveList(sql, userId) {
   // HOUSEHOLD-MODE: widened at V3-ROLES teardown
   const householdIds = householdScope(userId);
@@ -780,11 +672,10 @@ export function queryInactiveList(sql, userId) {
   `;
 }
 
-// §G POST /api/projects/inactive/:projectId/dismiss
-// Single-CTE ownership-check + idempotent dismiss. F9 UUID validation done upstream.
-// COALESCE handles idempotent case where ON CONFLICT DO NOTHING returns empty but row already exists.
-// status='not_found' (no owned row) → 404 — matches existence-oblivious cross-tenant pattern.
-// status='dismissed' → 200 with { dismissed: true, dismissed_at }.
+// POST /api/projects/inactive/:projectId/dismiss. Single-CTE ownership check + idempotent dismiss;
+// UUID validated upstream. COALESCE covers the case where ON CONFLICT DO NOTHING returns empty but
+// the row exists. status='not_found' (no owned row) -> 404, the existence-oblivious cross-tenant
+// pattern; status='dismissed' -> 200 with { dismissed: true, dismissed_at }.
 export function queryDismissInactive(sql, userId, projectId) {
   // HOUSEHOLD-MODE: widened at V3-ROLES teardown
   const householdIds = householdScope(userId);
@@ -816,13 +707,10 @@ export function queryDismissInactive(sql, userId, projectId) {
 }
 
 export function queryGiveAttention(sql, userId) {
-  // V3-ATTNFILTER-001 (2026-06-22) — "Give attention to" is a PLANTING-level surface, not project-level.
-  // A project being "stale" is meaningless (Dave: the tile showed "Herb Plants — 8 days ago", a container).
-  // Rank individual plantings by last activity (a planting-specific event OR a project-wide event with no
-  // plant_id), and surface the single oldest one still inside the 24h-30d "engaged-but-going-stale" window.
-  // Caretaker-scoped (assignee, created_by fallback) like water_due/heads_up; excludes planning/harvested/
-  // ended projects and dormant/ended/failed/rooting plantings (same actionable-planting filter as water_due).
-  // >30d defers to the inactive surface, matching the prior project-level threshold.
+  // "Give attention to" is a PLANTING-level surface: rank plantings by last activity (a planting-specific
+  // event OR a project-wide event with no plant_id) and surface the single oldest one inside the 24h-30d
+  // "engaged-but-going-stale" window. Caretaker-scoped like water_due/heads_up; excludes
+  // planning/harvested/ended projects and dormant/ended/failed/rooting plantings. >30d defers to the inactive surface.
   return sql`
       WITH planting_activity AS (
         SELECT gn.id AS plant_id, gn.display_name AS plant_name,
@@ -851,17 +739,11 @@ export function queryGiveAttention(sql, userId) {
     `;
 }
 
-// ---- Composite handler bodies --------------------------------------------
-// These compose the per-query builders. Pure in the sense that they don't
-// import neon/Clerk — they accept `sql` from the caller.
-
 export async function handleDashboard(sql, userId) {
-  // §D Promise.all parallelization — all aggregation queries fire concurrently.
-  // V1.2-streak-fix: + queryActivityDays (appended LAST) feeds the live streak recompute.
-  // DRG-WATERRECON-002 per-tile isolation: allSettled (not all) so ONE failing tile query degrades that
-  // tile to a safe fallback + a LOUD error log, instead of rejecting the whole dashboard (a single bad
-  // tile used to 500 the entire page). Order is the same FIFO the tile tests assert; fallbacks preserve the
-  // exact row shapes the assembly below indexes into (counts[0], favCount[0], inactiveCountRows[0]).
+  // All aggregation queries fire concurrently; queryActivityDays is LAST and feeds the live streak recompute.
+  // Per-tile isolation: allSettled so ONE failing tile degrades to a safe fallback + a LOUD error log instead
+  // of 500ing the whole dashboard (DRG-WATERRECON-002). Order is the FIFO the tile tests assert; fallbacks
+  // preserve the row shapes the assembly below indexes into (counts[0], favCount[0], inactiveCountRows[0]).
   const TILE_NAMES = ['recent_events','counts','favorites','active_projects','user_stats','water_due',
     'harvest_ready','heads_up','inactive_count','activity_days','give_attention'];
   const TILE_FALLBACKS = [
@@ -890,9 +772,9 @@ export async function handleDashboard(sql, userId) {
     queryActivityDays(sql, userId),
     queryGiveAttention(sql, userId),
   ]);
-  // I33 (BUG-LAMBDAERRPATHS-001): the fallbacks were silent to the client — a failed tile rendered as a
-  // real zero. `degraded` names them (top level, only when non-empty); every tile failing is an outage,
-  // not a dashboard, so it 503s with a sentence the client's error state can show (api.js reads .error).
+  // I33 (BUG-LAMBDAERRPATHS-001): `degraded` names fallback tiles (top level, only when non-empty) so a failed
+  // tile is not a silent real zero; every tile failing is an outage, so it 503s with a sentence the client
+  // shows (api.js reads .error).
   const degraded = [];
   const [
     recentEvents,
@@ -924,9 +806,8 @@ export async function handleDashboard(sql, userId) {
     total_events: 0,
     xp: 0,
   };
-  // V1.2-streak-fix (2026-05-25): recompute the streak live from activity days so a stale streak
-  // never lingers (the old value only changed on POST). longest never regresses below the stored
-  // value; xp / total_events still come from the stored row. See streak.js for the model.
+  // Recompute the streak live from activity days so a stale streak never lingers. longest never regresses
+  // below the stored value; xp / total_events come from the stored row. See streak.js.
   const act = activityDaysRows?.[0] ?? { today: null, days: [] };
   const activityDays = (act.days ?? []).map((d) => String(d).slice(0, 10));
   const computedStreak = computeStreak(activityDays, act.today, STREAK_GRACE_DAYS);
@@ -939,11 +820,10 @@ export async function handleDashboard(sql, userId) {
     last_active_date: activityDays.length ? activityDays[0] : storedStats.last_active_date,
   };
 
-  // OBSERVABILITY (DRG-WATERRECON-001): the bar fell back to the legacy entity_memory verdict because no
-  // daily_plan row exists for today (engine-skip) — surfaces the otherwise-silent bar/Today divergence on skip days.
+  // Observability: both fallbacks are logged so the bar/Today divergence is never silent.
   if (Array.isArray(waterDue) && waterDue.some((r) => r && r.water_due_source === 'schema_mismatch')) {
-    // DRG-WATERRECON-002: a daily_plan row exists today but its items.schema_version != PLAN_SCHEMA_VERSION
-    // — a field rename / shape drift. Reject-and-fall-back is LOUD here so it never silently empties the bar.
+    // A daily_plan row exists today but its items.schema_version != PLAN_SCHEMA_VERSION (shape drift):
+    // reject-and-fall-back is LOUD so it never silently empties the bar.
     console.error('[water_due] daily_plan schema_version MISMATCH — rejected plan, served legacy fallback '
       + '(bump the bar + Today readers in lockstep with the engine)', { userId, expected: PLAN_SCHEMA_VERSION });
   } else if (Array.isArray(waterDue) && waterDue.some((r) => r && r.water_due_source === 'legacy')) {
@@ -982,18 +862,14 @@ export async function handleDismissInactive(sql, userId, projectId) {
   return resp(200, { dismissed: true, dismissed_at: row.dismissed_at });
 }
 
-// ---- V4-SEARCH-002: server-side universal search ---------------------------
-// GET /api/search?q=... — seven per-entity parameterized ILIKE queries run via
-// Promise.allSettled (one failing section degrades to [] instead of 500ing the
-// whole endpoint). Scoping predicates copied VERBATIM from each entity's
-// canonical read handler (never re-derived): plantings/events scope via parent
-// container.created_by; projects/locations/inventory/photos via own created_by;
-// varieties (cultivar) are globally readable. All queries filter
-// deleted_at IS NULL (+ archived_at where the source handler does).
-// private_notes (container, event_log) excluded from BOTH predicate and
-// projection by design. LIKE metacharacters escaped (wildcard-injection guard);
-// every pattern binds with explicit ESCAPE '\'. No S3/presign here — photo rows
-// return caption + parent ids only (dashboard Lambda has no S3 env; L-072 class).
+// GET /api/search?q=...: seven per-entity parameterized ILIKE queries via Promise.allSettled (one failing
+// section degrades to [] instead of 500ing the endpoint). Scoping predicates are copied VERBATIM from each
+// entity's canonical read handler, never re-derived: plantings/events via parent container.created_by;
+// projects/locations/inventory/photos via own created_by; varieties (cultivar) are globally readable. All
+// filter deleted_at IS NULL (+ archived_at where the source handler does). private_notes (container,
+// event_log) is excluded from BOTH predicate and projection. LIKE metacharacters are escaped and every
+// pattern binds with explicit ESCAPE '\'. No S3/presign: photo rows return caption + parent ids only (the
+// dashboard Lambda has no S3 env, L-072 class).
 
 export const SEARCH_LIMIT = 20;
 export const SEARCH_MIN_LEN = 2;
@@ -1010,19 +886,10 @@ export function likeEscape(q) {
   return q.replace(/[\\%_]/g, (m) => '\\' + m);
 }
 
-// V4-SEARCHCROPTYPE-001 (BD-072) — a planting is now findable by WHAT IT IS, not only by what it was
-// named. Three terms added over two LEFT JOINs: the cultivar's name, the crop-type slug, and the
-// crop type's display name.
-//
-// THE CULTIVAR-NAME TERM IS A JUDGMENT CALL and is called out rather than buried. The ticket says
-// "match on crop type, NOT JUST cultivar name", which presumes cultivar name is already matched —
-// for plantings it only ever was by coincidence, via display_name. Measured on prod: of 231 live
-// plantings carrying a cultivar, 140 are named exactly after it and 199 contain it, so 32 are
-// findable by their variety today only if you know the name someone typed into the planting.
-//
-// LEFT JOINs throughout: a planting with no cultivar_id (a bare container, a rescue with no ID yet)
-// must keep appearing for the four terms it already matched on. Neither join can fan out —
-// cultivar.id is a key and crop_types has 150 rows with 150 distinct slugs.
+// A planting is findable by WHAT IT IS (cultivar name, crop-type slug and display name via two LEFT JOINs),
+// not only by what it was named. The cultivar-name term is a judgment call: it only ever matched by
+// coincidence via display_name. LEFT JOINs throughout: a planting with no cultivar_id must keep matching the
+// four terms it already had. Neither join can fan out (cultivar.id is a key; crop_types slugs are unique).
 export function searchPlantings(sql, userId, pat, prefixPat) {
   const householdIds = householdScope(userId);
   return sql`
@@ -1091,22 +958,13 @@ export function searchLocations(sql, userId, pat, prefixPat) {
     `;
 }
 
-// Varieties are globally readable — no created_by filter (verbatim from
-// lambda/varieties GET list: "Globally readable — no created_by filter.").
-// V4-SEARCHCROPTYPE-001 (BD-072, Dave 2026-08-28) — CROP TYPE IS A MATCH AXIS, not just a column we
-// happen to select. Dave: "I don't always remember spelling — is it charentais? charantais?
-// chantareis? but I know it is a cantaloupe." The cultivar name is the unreliable handle; the crop
-// type is the reliable one, so crop-type matching is the fallback that makes search work at all for
-// heirloom and imported names, not a nicety layered on top.
-//
-// BOTH the slug AND crop_types.display_name are matched, and the display name is the load-bearing
-// half: 'bunching_onion' displays as "Onion (bunching / scallion)" and 'mache' as "Mache (Corn
-// Salad)", so slug-only matching would miss every search for "scallion" or "corn salad". Measured on
-// prod: Suyo Long matches NONE of the five columns this query used before for q='cucumber' — not
-// display_name, species, genus, care_notes or soil_notes — so Dave's stated case genuinely failed.
-//
-// LEFT JOIN, not JOIN: a cultivar with a null or dangling crop_type_slug must not vanish from search
-// results it already appeared in. Cannot fan out — crop_types is 150 rows with 150 distinct slugs.
+// Varieties are globally readable: no created_by filter (verbatim from the lambda/varieties GET list).
+// CROP TYPE IS A MATCH AXIS (V4-SEARCHCROPTYPE-001): the cultivar name is the unreliable handle (users
+// misspell heirloom and imported names), the crop type is the reliable one. Both the slug AND
+// crop_types.display_name are matched, and the display name is load-bearing: 'bunching_onion' displays
+// as "Onion (bunching / scallion)", so slug-only matching misses "scallion". LEFT JOIN, not JOIN: a
+// cultivar with a null or dangling crop_type_slug must not vanish from results. It cannot fan out
+// (crop_types slugs are unique).
 export function searchVarieties(sql, pat, prefixPat) {
   return sql`
       SELECT c.id, c.display_name AS name, c.species, c.crop_type_slug, c.lifecycle,
@@ -1160,26 +1018,19 @@ export function searchEvents(sql, userId, pat) {
     `;
 }
 
-// BUG-SEARCHSEEDCAP20-001 — seed rows are not capped at 20. Header search files seed packets and saved
-// lots under their own "Seeds" group, split client-side on `category` (src/pages/Search.jsx,
-// V5-SEEDSTAB-001 slice 2), but this query ended in ONE LIMIT 20 across every inventory category, so the
-// Seeds group stopped at 20 and said nothing: on prod 2026-09-24 q=pepper matched 94 live seed rows and
-// showed 20. Dave's decision (2026-09-24): show every match. Seed rows now take their own ceiling;
-// every other category keeps LIMIT 20, like every other search group — and no longer loses its slots to
-// seed rows that happen to sort first.
+// Seed rows are not capped at 20 (BUG-SEARCHSEEDCAP20-001). Header search shows seed packets and saved
+// lots under their own "Seeds" group, split client-side on `category` (src/pages/Search.jsx), so one LIMIT
+// 20 across every inventory category silently truncated Seeds. Seed rows take their own ceiling; every
+// other category keeps LIMIT 20 and no longer loses slots to seed rows that sort first.
 //
-// ONE predicate, two caps. Scope, soft-delete filter and matched columns are written once, in `hits`,
-// so the two groups cannot drift apart on who sees what; each branch only picks its side and its cap.
-// The sides are the client's own split — exactly 'seeds', and IS DISTINCT FROM 'seeds' for everything
-// else, so even a NULL category would land with the other inventory rather than vanish. The ordering
-// is the one this query always had (name-prefix matches first, then name), in each branch and on the
-// joined list, and the client's filter keeps it within each group.
+// ONE predicate, two caps: scope, soft-delete filter and matched columns are written once, in `hits`, so
+// the groups cannot drift on who sees what. The sides are the client's own split: exactly 'seeds', and
+// IS DISTINCT FROM 'seeds' for everything else, so a NULL category lands with the other inventory rather
+// than vanishing. Ordering is name-prefix matches first, then name.
 //
-// SEARCH_SEED_CAP is a safety ceiling, not a page size: prod held 351 live seed rows on 2026-09-24, and
-// q=seed matches every one of them through the category column. 2000 follows VARIETY_LIST_CAP
-// (lambda/varieties/index.js, BUG-VARIETIESLIMIT500-001 — a LIMIT 500 over 495 cultivars): years of
-// headroom, and a full list of these six short fields stays far under Lambda's 6 MB response limit.
-// Reaching it logs to CloudWatch rather than truncating in silence.
+// SEARCH_SEED_CAP is a safety ceiling, not a page size. 2000 follows VARIETY_LIST_CAP
+// (lambda/varieties/index.js); a full list of these six short fields stays far under Lambda's 6 MB
+// response limit. Reaching it logs to CloudWatch rather than truncating in silence.
 export const SEARCH_SEED_CAP = 2000;
 
 export async function searchInventory(sql, userId, pat, prefixPat) {
@@ -1215,12 +1066,12 @@ export async function searchInventory(sql, userId, pat, prefixPat) {
   return rows;
 }
 
-// V5-SEEDVENDORPHOTOFILTER-001 — supplier packet images are left out of photo search, as they are out of
-// the unscoped Photo Library (lambda/photos/index.js, same literal; supplier-image-marker-sync.test.js).
-// Every one carries a caption ("Seed packet · <supplier> (supplier image)"), so without this a search for
-// a supplier or "packet" answers with catalog pictures; the seed lot itself still matches under inventory.
-// COALESCE: original_filename is NULL on most rows, and NOT LIKE on NULL would drop them. The pattern is
-// SQL text, not a bound value: S12 in search.test.js holds every BOUND pattern to the escaped form.
+// Supplier packet images are left out of photo search, as they are out of the unscoped Photo Library
+// (lambda/photos/index.js, same literal; supplier-image-marker-sync.test.js). Every one carries a
+// caption ("Seed packet · <supplier> (supplier image)"), so a search for a supplier or "packet" would
+// answer with catalog pictures; the seed lot itself still matches under inventory. COALESCE:
+// original_filename is NULL on most rows, and NOT LIKE on NULL would drop them. The pattern is SQL text,
+// not a bound value: S12 in search.test.js holds every BOUND pattern to the escaped form.
 export function searchPhotos(sql, userId, pat) {
   const householdIds = householdScope(userId);
   return sql`

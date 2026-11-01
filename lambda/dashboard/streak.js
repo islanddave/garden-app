@@ -1,36 +1,22 @@
-// Streak computation — pure, DB-free, unit-testable (V1.2-streak-fix, 2026-05-25).
+// Streak computation: pure, DB-free, unit-testable.
 //
-// KEEP IN SYNC with lambda/events/streak.js — it is a byte-identical copy. The deploy
-// packages each Lambda by zipping ONLY its own directory (`cd lambda/<fn> && zip -r ../<fn>.zip .`),
-// so a shared `../shared/streak.js` import is excluded from the bundle and 502s at module load
-// (L-089). Two in-dir copies is the intentional workaround, not accidental duplication.
+// KEEP IN SYNC with lambda/events/streak.js (an in-dir copy; the deploy zips only each Lambda's
+// own directory, so a shared import would 502 at module load, L-089).
 //
-// WHY THIS EXISTS (the bug it replaces):
-//   The previous streak math keyed off NOW() — the calendar day the event was *logged* — and
-//   incremented current_streak by +1 per logging day. Two real failures:
-//     1. Bulk/backfilled logging of multiple consecutive activity days in ONE sitting counted as a
-//        single day (Dave logged May 18 + May 19 activity on May 19 -> streak saw one day, showed 1).
-//     2. It only ran on POST, so a stale streak was never decayed — the dashboard kept showing the
-//        last-written value until the next log.
-//
-// THE MODEL (this file):
-//   - A streak counts DISTINCT calendar days on which the user has garden ACTIVITY, keyed on the
-//     event's `event_date` in the user's timezone — NOT the moment it was logged. Backfill counts.
-//   - Break-recovery (required by CLAUDE.md Streaks rule): a run tolerates up to `graceDays` missed
-//     days between activity days. In calendar terms, two activity days stay in the same run when the
-//     gap between them is <= graceDays + 1. Default graceDays = 0 (STRICT — any missed day breaks
-//     the streak; recovery is by back-dating a log for the missed day, not auto-grace — Dave 2026-05-25).
-//   - `current` = length of the run ending at the most-recent activity day, reported only if that day
-//     is within the grace window of `today` (today - latest <= graceDays + 1). Otherwise 0. This is
-//     what makes a stale streak read 0 with NO write/cron needed — callers recompute live.
-//   - `longest` = the longest such run across all of history.
+// Model:
+//   - A streak counts DISTINCT calendar days with garden ACTIVITY, keyed on the event's
+//     `event_date` in the user's timezone, not the moment it was logged. Backfill counts.
+//   - A run tolerates up to `graceDays` missed days: two activity days stay in one run when the
+//     gap between them is <= graceDays + 1.
+//   - `current` = length of the run ending at the most-recent activity day, reported only if that
+//     day is within the grace window of `today`, else 0. A stale streak therefore reads 0 with no
+//     write or cron; callers recompute live.
+//   - `longest` = the longest such run across all history.
 //   - Future-dated activity days (> today) are ignored.
 //
-// GRACE KNOB: STREAK_GRACE_DAYS = 0 (Dave decision 2026-05-25) — STRICT consecutive days; any missed
-// day breaks the streak. No automatic grace, because the user can already "catch up" by logging an
-// event for a PAST date: the streak is event_date-based, so a back-dated entry fills the gap and
-// reconnects the run. Set to 1+ to auto-forgive that many missed days (1 lets every-other-day sustain,
-// which is why it is NOT the default).
+// STREAK_GRACE_DAYS = 0 (Dave decision): STRICT consecutive days. Recovery is by back-dating a
+// log for the missed day, not auto-grace. 1 would let every-other-day sustain a streak, which is
+// why it is not the default.
 
 export const STREAK_GRACE_DAYS = 0;
 
