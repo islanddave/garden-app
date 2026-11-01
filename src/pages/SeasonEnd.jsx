@@ -168,7 +168,7 @@ export default function SeasonEnd() {
   const [batch, setBatch] = useState(null)             // { items: [{ ...item, prevStatus }] } — the undo
   const [result, setResult] = useState(null)           // { line, sub, retry } — the bar's result line
   // Refs, not state, for the in-flight guard: a disabled button is applied by a render that has not
-  // flushed, so two taps in one batch would both start a run (BUG-RUNBULKPARTIALUNDO-001).
+  // flushed, so two taps in one batch would both start a run.
   const inFlightRef = useRef(false)
   const batchRef = useRef(null)
   const toastIdRef = useRef(null)
@@ -317,7 +317,7 @@ export default function SeasonEnd() {
 
   const retryFailed = () => endItems(selectedItems.filter((it) => failedIds.has(it.id)))
 
-  // Photos are windowed, rows are not (the My seeds pattern, BUG-PHOTOTHUMB-001): a thumbnail mounts
+  // Photos are windowed, rows are not (the My seeds pattern): a thumbnail mounts
   // for the first IMAGE_WINDOW_PAGE open rows, or once its row comes within reach of the viewport.
   const listRef = useRef(null)
   const openRows = useMemo(() => [

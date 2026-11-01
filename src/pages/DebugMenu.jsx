@@ -1,35 +1,28 @@
-// src/pages/DebugMenu.jsx — OPS-DEBUGMENU-001. The index for every diagnostic surface in the app.
+// DebugMenu: the index for every diagnostic surface in the app.
 //
-// WHY THIS EXISTS, stated plainly because the gap it closes was mine: three admin routes
-// (/admin/classify, /admin/garden-activity, /admin/voice-debug) were built unlinked by convention —
-// "Jen-invisible, reachable by URL" — which is a perfectly good rule on a desktop and a DEAD END in
-// an installed PWA. There is no address bar. Dave runs this app from the home screen on Android, so
-// "unlinked" has meant "unreachable" for every one of them, and a session shipped him a voice probe
-// on /admin/voice-debug and then twice told him to navigate to a URL he had no way to type.
-// Dave 2026-08-27: "stop telling me to go to urls - if the voice probe has no way to navigate to it
-// in the pwa, add a Debug / Smoke menu with quick links we can build in."
+// WHY THIS EXISTS: the /admin/* diagnostic routes were once unlinked by convention ("Jen-invisible,
+// reachable by URL"). That is a fine rule on a desktop and a DEAD END in an installed PWA, which has
+// no address bar. Dave runs this app from the home screen on Android, so "unlinked" meant
+// "unreachable".
 //
-// SO THE RULE CHANGES, and it is worth being precise about how: a diagnostic page may still be
-// UNLINKED FROM ORDINARY NAVIGATION, but it must be reachable from HERE. "Unlinked" is now a
-// statement about the main nav, not about existence. A new /admin/* route that does not get a row on
-// this page is a page only a desktop browser can open, which on this app's actual platform means a
-// page nobody can open.
+// THE RULE: a diagnostic page may still be UNLINKED FROM ORDINARY NAVIGATION, but it must be
+// reachable from HERE. "Unlinked" is a statement about the main nav, not about existence. A new
+// /admin/* route that does not get a row on this page is a page only a desktop browser can open,
+// which on this app's actual platform means a page nobody can open.
 //
-// GATING — deliberately NONE on the client, and that is a followed convention rather than an
-// oversight. GardenActivity.jsx and useShareToFacebook.js both record the same decision: the real
-// gate is the Lambda's server-side ADMIN_CLERK_SUBS allowlist (fail-closed), and there is NO client
-// admin list. Inventing one here to hide a menu row would contradict a documented call and buy
-// nothing — the row is discoverability, not authorisation. What each destination shows is already
-// gated at its own level: voice-debug reads only this browser's own localStorage, garden-activity
-// and crop-types render a 403 placard for a non-admin, classify writes through an admin-gated route.
-// Dave 2026-08-27: "this is still only me using it right now." If Jen ever finds the row noisy the
-// clean fix is a server-gated owner signal, NOT a hardcoded client list.
+// GATING: deliberately NONE on the client. GardenActivity.jsx and useShareToFacebook.js record the
+// same decision: the real gate is the Lambda's server-side ADMIN_CLERK_SUBS allowlist (fail-closed),
+// and there is NO client admin list. Inventing one here to hide a menu row would contradict that and
+// buy nothing, since the row is discoverability, not authorisation. What each destination shows is
+// already gated at its own level: voice-debug reads only this browser's own localStorage,
+// garden-activity and crop-types render a 403 placard for a non-admin, classify writes through an
+// admin-gated route. If the row is ever too noisy for other users, the clean fix is a server-gated
+// owner signal, NOT a hardcoded client list.
 //
-// SMOKE, not just links. Dave asked for "Debug / Smoke", and on a phone the smoke half is the part
-// he genuinely cannot get any other way: version, service-worker state, and whether the API is
-// answering are all things a session checks with curl from a laptop and he has no equivalent for.
-// Every value here is read live at render, never cached, so a stale panel cannot report a healthy
-// app that is not.
+// SMOKE, not just links. On a phone the smoke half is what Dave cannot get any other way: version,
+// service-worker state, and whether the API is answering are all things a session checks with curl
+// from a laptop. Every value here is read live at render, never cached, so a stale panel cannot
+// report a healthy app that is not.
 import React, { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { P } from '../lib/constants.js'
@@ -38,12 +31,12 @@ import { useApiFetch } from '../lib/api.js'
 
 const APP_VERSION = (typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : null) || '0.0.0'
 
-// Every diagnostic surface in the app. ADD A ROW HERE when you add an /admin/* route — see the
+// Every diagnostic surface in the app. ADD A ROW HERE when you add an /admin/* route; see the
 // header note on why a missing row means an unreachable page.
 const LINKS = [
-  // V5-ADMINCENTER-001. FIRST because it is the only row here that is not a diagnostic — it is a
-  // surface Dave uses on purpose rather than one he opens when something is wrong. It is also the
-  // row that makes the admin centre exist at all: /admin/config with no line in this array fails
+  // FIRST because it is the only row here that is not a diagnostic: it is a surface Dave uses on
+  // purpose rather than one he opens when something is wrong. It is also the row that makes the
+  // admin centre exist at all: /admin/config with no line in this array fails
   // DebugMenu.reachability.test.jsx, and would ship a page an installed PWA cannot open.
   {
     to: '/admin/config',
@@ -69,7 +62,6 @@ const LINKS = [
     label: 'Project classify',
     blurb: 'Bulk crop-type classification for projects',
   },
-  // V4-CROPTYPERETIRE-001 — same commit as the route, per the header note.
   {
     to: '/admin/crop-types',
     icon: 'action.archive',
@@ -109,15 +101,12 @@ export default function DebugMenu() {
   const [online, setOnline] = useState(typeof navigator === 'undefined' ? true : navigator.onLine)
   const [storage, setStorage] = useState('—')
   const [ping, setPing] = useState(null)   // null | 'running' | {ok, ms, detail}
-  // V5-TODAYSHAPE-001 — the CSS viewport, which is a number only THIS DEVICE can report.
-  // The Today layout gate emulates a fixed width in headless Chrome, and picking that width wrong
-  // invalidates every measurement it takes: a defect measured at one width can simply not exist at
-  // another (the four bulk pills wrap to four lines at 358px of content and sit on two at 380px).
-  // A spec sheet is not good enough to settle it, because Android's system "Display size" setting
-  // changes the effective CSS width on the same hardware — so the phone in hand is the only
-  // authority. Held in state with a listener rather than read once at render because this panel's
-  // stated contract is that every value is live, and a width that silently survives a rotation
-  // would be the kind of quietly-stale readout the rest of this file exists to avoid.
+  // The CSS viewport, a number only THIS DEVICE can report. The Today layout gate emulates a fixed
+  // width in headless Chrome, and picking that width wrong invalidates every measurement it takes.
+  // A spec sheet cannot settle it, because Android's system "Display size" setting changes the
+  // effective CSS width on the same hardware, so the phone in hand is the only authority. Held in
+  // state with a listener rather than read once at render, because every value here is live and a
+  // width that survived a rotation would be a quietly stale readout.
   const [vp, setVp] = useState(() => (typeof window === 'undefined' ? null : {
     w: window.innerWidth, h: window.innerHeight, dpr: window.devicePixelRatio,
   }))
@@ -238,9 +227,8 @@ export default function DebugMenu() {
           to={l.to}
           style={{
             display: 'flex', alignItems: 'flex-start', gap: 12, textDecoration: 'none',
-            // BUG-LINKICONBLUE-001 — see CultivationLead.jsx for the full note. Every icon on this
-            // page is a mono glyph, so without an explicit ink the whole column renders in browser
-            // link blue. This is the row that made the bug visible.
+            // See CultivationLead.jsx for the full note. Every icon on this page is a mono glyph,
+            // so without an explicit ink the whole column renders in browser link blue.
             color: P.dark,
             ...card, minHeight: 44,
           }}

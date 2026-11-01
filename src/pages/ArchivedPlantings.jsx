@@ -1,25 +1,23 @@
-// V4-ARCHIVEBROWSE-001 — the browse surface for archived plantings.
+// Browse surface for archived plantings.
 //
 // WHY THIS PAGE EXISTS. Archiving is hidden-but-alive: the row keeps every relation, it just stops
-// appearing in lists. All four active reads carry a literal `archived_at IS NULL`, and the ONLY
-// discoverable way back was the 6-second Undo strip that appears on Garden immediately after you
-// archive something. Once that closed, the planting was unreachable unless you already held its URL.
-// 30 live rows on prod sat in that state at authoring time. The same shape as Recently deleted's
-// founding defect — a control that hides things, shipped without the place they go.
+// appearing in lists. All four active reads carry a literal `archived_at IS NULL`, and the ONLY other
+// way back is the short Undo strip on Garden right after you archive something. Once that closes, the
+// planting is unreachable unless you already hold its URL.
 //
 // NOT BOLTED ONTO RECENTLY DELETED, which states its own boundary in source: "it is a recovery
-// surface, not an archive browser." Archived and deleted are different states with different
-// verbs, and the two prod rows that are BOTH archived and deleted belong to that page, not this one
-// — the archive PATCH refuses a deleted row, so an Unarchive button on one would 404 with nothing
-// useful to say. The server excludes them; this page never sees them.
+// surface, not an archive browser." Archived and deleted are different states with different verbs.
+// Rows that are BOTH archived and deleted belong to that page, not this one: the archive PATCH refuses
+// a deleted row, so an Unarchive button on one would 404 with nothing useful to say. The server
+// excludes them; this page never sees them.
 //
-// NOT AN INLINE FILTER ON GARDEN. Dave's call, and the structural reason is that Garden has no
-// filter axis to extend — GroupBySlugSelect is a group-by and the SegmentedControl is a caretaker
-// lens, both the wrong axis — so an archived mode would be a third interacting state on the app's
-// busiest page, layered over a cached ?view=grid fetch and scroll restore.
+// NOT AN INLINE FILTER ON GARDEN. Garden has no filter axis to extend (GroupBySlugSelect is a
+// group-by and the SegmentedControl is a caretaker lens, both the wrong axis), so an archived mode
+// would be a third interacting state on the app's busiest page, layered over a cached ?view=grid
+// fetch and scroll restore.
 //
-// REWARD-UX: unarchiving is operational. No celebration, no badge, no count-up — an ambient toast
-// confirming the thing the user just asked for, which is the Toast primitive's operational carve-out.
+// REWARD-UX: unarchiving is operational. No celebration, no badge, no count-up; an ambient toast
+// confirms the thing the user just asked for, which is the Toast primitive's operational carve-out.
 //
 // MOBILE IS THE GATE (Android Chrome, ~390px). Row is text + a 44px-minimum Unarchive control that
 // wraps to its own line rather than shrinking below the tap floor. Nothing here is destructive, so
@@ -40,12 +38,10 @@ import PlantStatusBadge from '../components/PlantStatusBadge.jsx'
 export const ARCHIVED_PLANTINGS_PATH = '/api/plants/archived'
 export const unarchivePath = (id) => `/api/plants/${id}/archive`
 
-// Slug → label, locally. MEASURED on the 30 archived rows live on prod 2026-08-27: all 9 crop types
-// present (asparagus, cilantro, culantro, lettuce, lithops, luffa, pepper, spinach, tomato) have a
-// crop_types.display_name that is exactly the title-cased slug, so fetching /api/varieties/crop-types
-// to render this would add a second network dependency — and a second failure mode — to a recovery
-// surface, in exchange for nothing on any row that exists. An irregular slug arriving later costs a
-// slightly-off label, not a broken page, which is the cheaper way to be wrong.
+// Slug → label, locally. Every archived crop type measured had a crop_types.display_name that is
+// exactly the title-cased slug, so fetching /api/varieties/crop-types to render this would add a
+// second network dependency, and a second failure mode, to a recovery surface for nothing. An
+// irregular slug arriving later costs a slightly-off label, not a broken page.
 export function cropLabelFromSlug(slug) {
   if (!slug) return null
   return String(slug).split(/[-_]/).filter(Boolean)
@@ -58,13 +54,11 @@ export function cropLabelFromSlug(slug) {
 // NO CONTAINER NAME, unlike Recently deleted's planting rows which use project_name as their
 // subtitle. Containers are not a user-facing noun in this app; the server does not even send it.
 //
-// NEITHER NAME REPEATS THE TITLE, and both suppressions were earned by looking at the real rows
-// rather than by reasoning about the shape. Measured on the 30 live archived plantings, 2026-08-27:
-//   * display_name IS the variety name in 21 of them — printing both would render
-//     "Emerald Green · Emerald Green" on the majority of rows;
-//   * display_name IS the crop in 4 of them ("Culantro", "Asparagus", "Lettuce", "Spinach") —
-//     which a browser render caught and the unit tests had not, because the fixture they were
-//     written around was a pepper called "Emerald Green", i.e. the case where nothing repeats.
+// NEITHER NAME REPEATS THE TITLE, and both suppressions were measured on real rows:
+//   * display_name is often the variety name itself, so printing both would render
+//     "Emerald Green · Emerald Green";
+//   * display_name is sometimes the crop ("Culantro", "Asparagus", "Lettuce", "Spinach"), a case a
+//     fixture built around a pepper called "Emerald Green" never exercised.
 // When both are suppressed the line is just "Archived {date}", which is the whole of what is left
 // to say about a planting whose name already told you what it is.
 export function rowSubtitle(row) {
@@ -80,9 +74,9 @@ export function rowSubtitle(row) {
   return parts.join(' · ')
 }
 
-// V4-EMPTYSTATE-001: chrome from the shared primitive. Body-only, and it gains the card this
-// page never had — the surrounding AsyncRegion renders emptyLabel bare, so before this the copy
-// floated on the page background with nothing marking it as a state rather than a load failure.
+// Chrome from the shared primitive. Body-only, and it gains the card this page never had: the
+// surrounding AsyncRegion renders emptyLabel bare, so the copy would float on the page background
+// with nothing marking it as a state rather than a load failure.
 function EmptyState() {
   return (
     <SharedEmptyState body="Nothing is archived. Archiving hides a planting from your garden without deleting it — anything you archive shows up here, and you can bring it back any time." />

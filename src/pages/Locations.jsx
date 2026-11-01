@@ -61,12 +61,12 @@ export default function Locations() {
 
   useEffect(() => { load() }, [load])
 
-  // V4-DIRTYGUARDSWEEP-001 — this page carries THREE independent forms that can all be open at once,
-  // so the guard is their union. Each asks a different question, because each is seeded differently.
+  // This page carries THREE independent forms that can all be open at once, so the dirty guard is
+  // their union. Each asks a different question, because each is seeded differently.
   //
   // The inline EDIT form is seeded from its row (LocationCard's onEdit below), so every field is
   // non-empty the instant it opens and truthiness is meaningless here. The only honest test is
-  // "does it still match the row" — which also gives the right behaviour on a reverted edit: type,
+  // "does it still match the row", which also gives the right behaviour on a reverted edit: type,
   // undo, and the hold releases. Seed shape MUST mirror the setEditForm call that fills it; drift
   // between the two would read as permanently dirty.
   const editingLoc = editingId ? locations.find(l => l.id === editingId) : null
@@ -75,13 +75,12 @@ export default function Locations() {
     editForm.type_label  !== (editingLoc.type_label || '') ||
     editForm.sort_order  !== String(editingLoc.sort_order ?? 0) ||
     editForm.description !== (editingLoc.description || '') ||
-    // V4-COVEREDNOTMODELLED-001. Same `== null ? '' : String(...)` shape as the seed below, per this
-    // block's own rule: drift between the two reads as permanently dirty. `== null` catches both
-    // null and undefined, which matters because the GET omitted this column until this row shipped
-    // and a cached client can still be holding a row that has no `covered` key at all.
+    // Same `== null ? '' : String(...)` shape as the seed below, per this block's own rule: drift
+    // between the two reads as permanently dirty. `== null` catches both null and undefined, which
+    // matters because a cached client can still be holding a row that has no `covered` key at all.
     editForm.covered     !== (editingLoc.covered == null ? '' : String(editingLoc.covered)) ||
-    // V5-LOCHEATEDUI-001. Same rule, same reason: mirrors the `loc.heated === true` seed below, so a
-    // row with no heated key (a response cached before the column joined the GET) reads clean.
+    // Same rule, same reason: mirrors the `loc.heated === true` seed below, so a row with no heated
+    // key (a response cached before the column joined the GET) reads clean.
     editForm.heated      !== (editingLoc.heated === true)
   )
 
@@ -98,7 +97,7 @@ export default function Locations() {
   useReportOverlayDirty(hasUnsavedInput)
 
   // /locations is not an overlayable route today, so the hook above is a strict no-op and the gate
-  // below is what protects this page. Per-instance key + BOOLEAN dep per EventNew.jsx:985-991.
+  // below is what protects this page. Per-instance key + BOOLEAN dep, as EventNew.jsx does.
   const reloadGateKey = `locations:${useId()}`
   useEffect(() => {
     setReloadBlocked(reloadGateKey, hasUnsavedInput)
@@ -154,21 +153,21 @@ export default function Locations() {
           is_active:   loc.is_active,
           sort_order:  parseInt(editForm.sort_order) || 0,
           description: editForm.description.trim() || null,
-          // V4-COVEREDNOTMODELLED-001. Tri-state carried through the form as a STRING, because a
+          // Tri-state carried through the form as a STRING, because a
           // <select> value is a string and '' is the only honest rendering of "not stated". Mapped
           // back to a real boolean here; '' sends null, which the server's COALESCE treats as absent
           // — so a location nobody has classified stays unclassified rather than being asserted
           // open-to-the-sky by the act of editing its name.
           covered:     editForm.covered === '' ? null : editForm.covered === 'true',
-          // V5-LOCHEATEDUI-001. Sent when the row told us its value, or when the box is ticked. A row
+          // Sent when the row told us its value, or when the box is ticked. A row
           // from a response cached before heated joined the GET has no key and seeds unticked;
           // sending that false would un-heat the House on an unrelated rename. An absent key is
           // left alone by the server's COALESCE.
           ...(typeof loc.heated === 'boolean' || editForm.heated === true
             ? { heated: editForm.heated === true } : {}),
-          // BUG-COALESCECLEAR-001. `|| null` above is the bug: the server binds these through
-          // COALESCE, where null and absent are one token, so emptying the description box
-          // returned 200 and kept the old text. `clear` is the only way to say NULL.
+          // `|| null` above cannot clear a column: the server binds these through COALESCE, where
+          // null and absent are one token, so emptying the description box would return 200 and keep
+          // the old text. `clear` is the only way to say NULL.
           //
           // ONLY `description` is on the server's allowlist, and `type_label` is deliberately NOT —
           // it is a care-engine input (the coverage derivation reads it), so clearing it would opt
@@ -193,12 +192,10 @@ export default function Locations() {
     try {
       await fetch('/api/locations/' + loc.id, { method: 'DELETE' })
     } catch (err) {
-      // BUG-DELCLIENT-001 — a DELETE that matched no row is SUCCESS from the user's seat.
-      // BUG-DELNOOPOK-001 changed this route from an unconditional {ok:true} to 404-when-nothing-
-      // matched. apiFetch (src/lib/api.js:134-141) throws on every non-2xx and hangs the status on
-      // e.status, so without this the "already gone" case — double-submit, retry after a network
-      // blip, a second device, a stale list — would raise a red banner over an outcome the user
-      // already has. The tolerance is DELIBERATE and scoped to 404 on this one DELETE; do not
+      // A DELETE that matched no row is SUCCESS from the user's seat. The route answers 404 when
+      // nothing matched, and apiFetch throws on every non-2xx and hangs the status on e.status, so
+      // without this the "already gone" case (double-submit, retry after a network blip, a second
+      // device, a stale list) would raise a red banner over an outcome the user already has. The tolerance is DELIBERATE and scoped to 404 on this one DELETE; do not
       // widen it into apiFetch, which would mask genuine not-founds on GET/PUT app-wide.
       // Anything else (403, 500, timeout status 0, network) still surfaces exactly as before.
       if (err?.status !== 404) { setOpError(err.message); return }
@@ -265,7 +262,6 @@ export default function Locations() {
 
   return (
     <Shell>
-      {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
         <div>
           <h1 style={{ margin: 0, color: P.green, fontSize: '1.25rem', fontWeight: 700 }}>Locations</h1>
@@ -284,7 +280,6 @@ export default function Locations() {
         </button>
       </div>
 
-      {/* Add location form */}
       {showAddForm && (
         <AddLocationForm
           form={form} setForm={setForm}
@@ -295,12 +290,10 @@ export default function Locations() {
         />
       )}
 
-      {/* Global op error */}
       {opError && (
         <ErrorBanner style={{ marginBottom: 14 }}>{opError}</ErrorBanner>
       )}
 
-      {/* Tree */}
       {roots.length === 0 ? (
         <EmptyState />
       ) : (
@@ -314,7 +307,6 @@ export default function Locations() {
   )
 }
 
-// ---- Recursive tree ----
 function LocationTree({ loc, depth, ...shared }) {
   const children = shared.locations.filter(l => l.parent_id === loc.id)
   return (
@@ -331,7 +323,6 @@ function LocationTree({ loc, depth, ...shared }) {
   )
 }
 
-// ---- Location card ----
 function LocationCard({ loc, depth, hasChildren,
   locations, withPaths,
   menuOpenId, setMenuOpenId,
@@ -349,7 +340,6 @@ function LocationCard({ loc, depth, hasChildren,
 
   return (
     <div style={{ marginTop: depth > 0 ? 6 : 0 }}>
-      {/* Card */}
       <div style={{
         background:   bgColor,
         border:       `1px solid ${P.border}`,
@@ -359,11 +349,9 @@ function LocationCard({ loc, depth, hasChildren,
         opacity:      loc.is_active ? 1 : 0.65,
         position:     'relative',
       }}>
-        {/* Top row: name + badges + menu */}
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
-            {/* Name + type badge + inactive badge */}
-            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 5 }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 5 }}>
               <Link to={`/locations/${loc.id}`} style={{
                 fontWeight: loc.level === 0 ? 700 : 500,
                 fontSize:   loc.level === 0 ? '0.96rem' : '0.89rem',
@@ -384,13 +372,11 @@ function LocationCard({ loc, depth, hasChildren,
                 </span>
               )}
             </div>
-            {/* Level + slug */}
             <div style={{ fontSize: '0.71rem', color: P.light, fontFamily: 'monospace', marginTop: 3 }}>
               {levelLabel} · /{loc.slug}
             </div>
           </div>
 
-          {/* ••• menu */}
           <div style={{ position: 'relative', flexShrink: 0 }} onClick={e => e.stopPropagation()}>
             <button
               onClick={() => setMenuOpenId(isMenuOpen ? null : loc.id)}
@@ -424,7 +410,6 @@ function LocationCard({ loc, depth, hasChildren,
           </div>
         </div>
 
-        {/* Inline edit form */}
         {isEditing && (
           <InlineEditForm
             form={editForm}
@@ -435,7 +420,6 @@ function LocationCard({ loc, depth, hasChildren,
         )}
       </div>
 
-      {/* Add child form */}
       {isAddingChild && (
         <div style={{ marginLeft: 18, marginTop: 5 }}>
           <AddChildForm
@@ -451,7 +435,6 @@ function LocationCard({ loc, depth, hasChildren,
   )
 }
 
-// ---- Action menu ----
 function ActionMenu({ loc, canAddChild, onEdit, onAddChild, onToggleActive, onDelete }) {
   return (
     <div style={{
@@ -475,7 +458,7 @@ function ActionMenu({ loc, canAddChild, onEdit, onAddChild, onToggleActive, onDe
   )
 }
 
-// V4-ICON-001: `label` is now plain text and the glyph arrives as a registry key. The icon is
+// `label` is plain text and the glyph arrives as a registry key. The icon is
 // decorative — the label is the accessible name of the menu item, and `danger` still tints BOTH
 // (Icon draws in currentColor), so the destructive row is never signalled by hue alone.
 function MenuBtn({ iconName, label, onClick, danger }) {
@@ -497,7 +480,6 @@ function MenuBtn({ iconName, label, onClick, danger }) {
   )
 }
 
-// ---- Inline edit form ----
 function InlineEditForm({ form, setForm, onSave, onCancel }) {
   const [saving, setSaving] = useState(false)
   return (
@@ -542,23 +524,22 @@ function InlineEditForm({ form, setForm, onSave, onCancel }) {
           />
         </Field>
       </div>
-      {/* V4-COVEREDNOTMODELLED-001 — the rain-shelter flag the care engine reads.
+      {/* The rain-shelter flag the care engine reads.
           A SELECT and not a checkbox, because the value is a TRI-state: a checkbox can only render
           two of the three, and it would render "not stated" as unchecked — a positive claim that the
           bed is open to the sky, which is exactly the wrong thing to assert on a bed nobody has
           classified. Deliberately plain and unadorned: this is an operational property of a bed,
           not a reward surface.
-          Edit-only, not on either ADD form. A location's cover is something Dave knows after he has
-          built the bed, and adding a third decision to the create path to save one later tap is a bad
-          trade — a new location's NULL resolves through the type_label heuristic exactly as it did
-          before this row. */}
+          Edit-only, not on either ADD form. A location's cover is something known after the bed is
+          built, and adding a third decision to the create path to save one later tap is a bad trade;
+          a new location's NULL resolves through the type_label heuristic. */}
       <div style={{ marginBottom: 12 }}>
         <Field label="Rain shelter" htmlFor="inline-edit-covered">
           <Select
             id="inline-edit-covered"
             value={form.covered}
             onChange={e => {
-              // V5-LOCHEATEDUI-001: leaving "Under cover" unticks Heated in the same gesture — the
+              // Leaving "Under cover" unticks Heated in the same gesture — the
               // server refuses a heated location that is not under cover.
               const v = e.target.value
               setForm(f => ({ ...f, covered: v, heated: v === 'true' ? f.heated : false }))
@@ -573,7 +554,7 @@ function InlineEditForm({ form, setForm, onSave, onCancel }) {
         <div style={{ fontSize: '0.71rem', color: P.light, marginTop: 4 }}>
           Under cover means watering never counts rainfall here — a low tunnel, a cold frame, a shelf indoors.
         </div>
-        {/* V5-LOCHEATEDUI-001 — locations.heated, the only warmth fact the care engine has. A heated
+        {/* locations.heated, the only warmth fact the care engine has. A heated
             location gets NO cold cards (daily-plan coldFor), and being under cover it is already out
             of the frost alert, so a wrong tick silences every cold warning for the plants in it.
             A CHECKBOX, unlike Rain shelter above: heated is NOT NULL, so there is no "not stated" for
@@ -623,7 +604,6 @@ function InlineEditForm({ form, setForm, onSave, onCancel }) {
   )
 }
 
-// ---- Add child form ----
 function AddChildForm({ parentLoc, form, setForm, onSave, onCancel }) {
   const [saving, setSaving] = useState(false)
   const childLevel = Math.min(parentLoc.level + 1, 3)
@@ -676,7 +656,6 @@ function AddChildForm({ parentLoc, form, setForm, onSave, onCancel }) {
   )
 }
 
-// ---- Top-level add form ----
 function AddLocationForm({ form, setForm, withPaths, levelLabel, saving, formError, onSubmit }) {
   return (
     <form onSubmit={onSubmit} style={{ background: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: '18px 16px', marginBottom: 18 }}>
@@ -731,7 +710,6 @@ function AddLocationForm({ form, setForm, withPaths, levelLabel, saving, formErr
   )
 }
 
-// ---- Shared UI ----
 function Shell({ children }) {
   return (
     <div style={{ minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream }}>
@@ -742,7 +720,7 @@ function Shell({ children }) {
   )
 }
 
-// V4-EMPTYSTATE-001: chrome from the shared primitive. Body-only — this page has no glyph and
+// Chrome from the shared primitive. Body-only: this page has no glyph and
 // its one instruction ("use the form above") is not a title/body pair.
 function EmptyState() {
   return (

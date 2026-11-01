@@ -1,16 +1,13 @@
-// Season stats — how this grow-year went, as eight cards. Reached from the More row "Season stats"
-// (src/lib/moreRegistry.js); the route itself is added in App.jsx by the stitch commit.
+// Season stats: how this grow-year went, as eight cards. Reached from the More row "Season stats"
+// (src/lib/moreRegistry.js).
 //
 // WHAT IS SHOWN is decided by the server: GET /api/harvests/season-stats?season=YYYY returns a v1
-// envelope keyed by section id (plan D4). This page only draws it: it walks the stats-kit registry's
+// envelope keyed by section id. This page only draws it: it walks the stats-kit registry's
 // order, draws each section it has a renderer for, and skips any section that is missing or unknown.
 // Verdict sentences and Limits lines are written client-side from each section's meta
 // (src/lib/stats-kit/verdicts.js). A section whose series is empty is skipped like a missing one, and
 // when the current season has no picks the hook falls back to the last season that does; the line
 // under the title says so.
-//
-// Structure copied from SeasonEnd.jsx: page shell, title + lede, skeleton while cold, AsyncRegion for
-// error (with Try again) / empty / content.
 //
 // REWARD UX: a look-back surface. No celebration, no scores, no badges; nothing animates.
 import React, { useMemo } from 'react'

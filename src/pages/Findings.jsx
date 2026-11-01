@@ -10,32 +10,32 @@ import { useAuthOptional } from '../context/AuthContext.jsx'
 import { buildProjectsById, effectiveAssignee, lensOptions, buildCaretakerMap } from '../lib/caretakers.js'
 import SegmentedControl from '../components/forms/SegmentedControl.jsx'
 
-// Doctor Gardener — the DrG nav tab (/findings). Slice 8 (V4-THEME-001) "real but sparse":
-// (1) honest sketch line, (2) Today's reasoning (read-only WHY from the daily plan — explains, does
-// not duplicate Today's action list), (3) Health watch (findings from logged events), (4) ambient
-// Garden visitors. Care plans CUT (no data source, would duplicate Today); Scan DEFERRED (no real
-// entry point — anti-fabrication). Reward-UX V101: ambient only, no streak/badge/interrupt.
+// Doctor Gardener: the DrG nav tab (/findings). Real but sparse: (1) an honest sketch line,
+// (2) Today's reasoning (read-only WHY from the daily plan; it explains, and does not duplicate
+// Today's action list), (3) Health watch (findings from logged events), (4) ambient Garden visitors.
+// There are no care plans (no data source, they would duplicate Today) and no Scan (no real entry
+// point; anti-fabrication). Reward UX: ambient only, no streak/badge/interrupt.
 //
-// DRG-RESOLVE-001: resolved findings are pulled OUT of the active Health watch (they were noise —
-// lingered for ISSUE_WINDOW_DAYS with no owner control) and moved into a collapsed "Recently
-// resolved" disclosure. The owner can also clear a live issue on their own timeline via the card's
-// "Mark resolved" control (operational, not a reward), which PATCHes the source event.
+// Resolved findings stay OUT of the active Health watch (they lingered for ISSUE_WINDOW_DAYS with no
+// owner control) and sit in a collapsed "Recently resolved" disclosure. The owner can also clear a
+// live issue on their own timeline via the card's "Mark resolved" control (operational, not a
+// reward), which PATCHes the source event.
 export default function Findings() {
   const { data, loading, error, reload } = useFindings()
   const { fetch } = useApiFetch()
   const { profile } = useAuthOptional()
   const { members } = useMembers()
-  // V4-ASSIGNLENS-001 — DrG caretaker lens. Default 'all'; narrowing filters findings by the
+  // DrG caretaker lens. Default 'all'; narrowing filters findings by the
   // effective caretaker of each finding's planting (client cross-map from /api/plants+projects).
   const [lens, setLens] = useState(() => { try { return localStorage.getItem('garden.drgLens') || 'all' } catch { return 'all' } })
   const onLens = useCallback((v) => { setLens(v); try { localStorage.setItem('garden.drgLens', v) } catch { /* ignore */ } }, [])
   const careLensOptions = useMemo(() => lensOptions(members, profile?.id), [members, profile])
   const effectiveLens = careLensOptions.some(o => o.value === lens) ? lens : 'all'
-  // V4-ASSIGNLENS-002 — same caretaker map the Garden tiles use, for the per-card badge.
+  // The same caretaker map the Garden tiles use, for the per-card badge.
   const caretakerMap = useMemo(() => buildCaretakerMap(members, profile?.id), [members, profile])
   const [assigneeByPlant, setAssigneeByPlant] = useState(null)
   useEffect(() => {
-    // Load the plant->caretaker map whenever there is >1 caretaker — it now feeds BOTH the lens
+    // Load the plant->caretaker map whenever there is >1 caretaker. It feeds BOTH the lens
     // filter (any non-'all' lens) AND the per-card badges (shown on the 'all'/Everyone view). A
     // single-caretaker household never loads it: no lens narrowing exists and badges add no signal.
     if (caretakerMap.size <= 1 || assigneeByPlant) return
@@ -68,7 +68,7 @@ export default function Findings() {
   const activeShown = useMemo(() => lensFilter(active), [active, lensFilter])
   const resolvedShown = useMemo(() => lensFilter(resolved), [resolved, lensFilter])
 
-  // V4-ASSIGNLENS-002 — per-card caretaker badges (mirrors Garden's showBadges gate). Only when a
+  // Per-card caretaker badges (mirrors Garden's showBadges gate). Only when a
   // multi-caretaker household is viewing a set that actually SPANS >1 caretaker do badges add signal;
   // a single-caretaker set suppresses them as noise. Mixed-ness is computed over the union of what we
   // render badges on (active + resolved), so both FindingsList instances agree.
@@ -85,15 +85,14 @@ export default function Findings() {
     showBadges ? (caretakerMap.get(assigneeByPlant?.get(fd.plant_id) ?? null) || null) : null
   ), [showBadges, caretakerMap, assigneeByPlant])
 
-  // BUG-SILENTFAILSWEEP-001 — the rejection is PROPAGATED on purpose: FindingCard awaits this and is
-  // the surface for it (it stays put, un-busies and names the failure beside the button that was
-  // tapped), and a second message here would report one tap twice. reload() stays inside the chain
-  // so a resolve that never landed cannot refresh the list and make the card look handled.
+  // The rejection is PROPAGATED on purpose: FindingCard awaits this and is the surface for it (it
+  // stays put, un-busies and names the failure beside the button that was tapped), and a second
+  // message here would report one tap twice. reload() stays inside the chain so a resolve that never
+  // landed cannot refresh the list and make the card look handled.
   //
-  // The terminal handler below is the part that was missing: with no catch anywhere on this side,
-  // the card's catch was the ONLY thing between a failed resolve and an unhandled rejection, which
-  // is a guarantee this page cannot make on a child's behalf. `done` still rejects for the awaiting
-  // caller — the no-op only claims the branch nobody is holding.
+  // The terminal handler below claims the branch nobody is holding: without it the card's catch is
+  // the ONLY thing between a failed resolve and an unhandled rejection, a guarantee this page cannot
+  // make on a child's behalf. `done` still rejects for the awaiting caller.
   const handleResolve = useCallback((eventId) => {
     if (!eventId) return Promise.resolve()
     const done = fetch(`/api/events/${eventId}`, { method: 'PATCH', body: JSON.stringify({ resolved: true }) })

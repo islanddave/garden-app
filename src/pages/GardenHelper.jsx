@@ -1,4 +1,4 @@
-// GardenHelper — /helper route. Bite 1 of Post-V2 UX overhaul Increment 2.
+// GardenHelper: the /helper route.
 //
 // Text-path Rung-1 advisory helper-prompt. The user types a note, taps "Send to
 // Claude," and the assembled prompt is shared (mobile share-sheet → Claude) or
@@ -8,8 +8,7 @@
 // NON-RECORDING SCAFFOLD: no DB writes, no Lambda calls. Pure client-side prompt
 // assembly + system clipboard/share APIs.
 //
-// Dave-call #5 (postv2-ux-overhaul-phase2-build-roadmap §5 #5): one-time "Rung-1
-// needs the Claude app" explainer for new users. Dismissable; persisted in
+// A one-time "Rung-1 needs the Claude app" explainer for new users. Dismissable; persisted in
 // localStorage so the same device doesn't see it twice.
 
 import React, { useState, useEffect } from 'react'
@@ -48,8 +47,9 @@ export default function GardenHelper() {
   const [showExplainer, setShowExplainer] = useState(() => !readDismissed())
   const { getToken } = useApiFetch()
 
-  // V4 cross-device: the rung-1 explainer dismissal is now per-user server state. localStorage is
-  // the instant cache; on mount we check the server and hide (+ cache locally) if dismissed there.
+  // The explainer dismissal is per-user server state, so it follows the user across devices.
+  // localStorage is the instant cache; on mount we check the server and hide (+ cache locally) if
+  // dismissed there.
   useEffect(() => {
     let on = true
     ;(async () => {

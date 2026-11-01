@@ -1,57 +1,50 @@
-// AdminConfig — "Your tab bar". V5-ADMINCENTER-001 made the bar's order editable; V5-NAVCUSTOM-001
-// made it PERSONAL and let Garden, Harvests and Put-Up move into More.
-// Design: project-state/design-navcustom-V100-20260924.md §8 (binding over §1–§3).
+// AdminConfig: "Your tab bar". The bar's order is editable and PERSONAL, and Garden, Harvests and
+// Put-Up can move into More.
 //
-// WHOSE BAR (D4, Dave 2026-09-24: "only my bar changes"). The Save writes the CALLER's own
-// user_notification_prefs.bar_layout and nobody else's, so Jen's bar never shifts because of it. The
-// copy below says so. This reverses V5-ADMINCENTER-001's global app_config order, whose "tell Jen"
-// copy and admin-gated write are gone with it.
+// WHOSE BAR. The Save writes the CALLER's own user_notification_prefs.bar_layout and nobody else's, so
+// another person's bar never shifts because of it. The copy below says so.
 //
-// WHO SEES IT (D3). The server computes can_edit_bar per request (isAdmin over ADMIN_CLERK_SUBS,
-// fail-closed) and sends it with the prefs read; today that is Dave only. Anyone else — including a
-// person who follows the Debug & smoke row here — gets the same neutral placard GardenActivity shows.
+// WHO SEES IT. The server computes can_edit_bar per request (isAdmin over ADMIN_CLERK_SUBS,
+// fail-closed) and sends it with the prefs read; today that is Dave only. Anyone else, including a
+// person who follows the Debug & smoke row here, gets the same neutral placard GardenActivity shows.
 // There is STILL NO CLIENT ADMIN LIST: the flag is the server's answer, and the write itself is
 // self-scoped and not admin-gated (a person can only ever change their own bar), so hiding the page is
 // discoverability, not authorisation. Do not add a client-side list to "hide it earlier".
 //
 // WHERE IT IS. /admin/config, because DebugMenu.reachability.test.jsx fails the build if an /admin/*
-// route has no row in DebugMenu's LINKS — Dave runs an installed PWA with no address bar. The More
-// sheet's "Edit tab bar" header button is the everyday door; Debug & smoke → App configuration stays
-// as the second one.
+// route has no row in DebugMenu's LINKS (an installed PWA has no address bar). The More sheet's
+// "Edit tab bar" header button is the everyday door; Debug & smoke → App configuration is the second.
 //
 // A TAB THAT LEAVES THE BAR LANDS IN MORE. Today and ＋ always stay (Today is where the app opens, ＋ is
 // the only door to the create sheet and, in field mode, to Field capture). The enforcement is
 // resolveBarLayout and the Lambda validator, not this UI.
 //
-// ANY PAGE CAN TAKE A SLOT (V5-NAVANYSLOT-001, Dave 2026-09-30: "Make every More menu item + existing
-// 5 options available to add there"). The editor is two lists: "In your bar" (left to right, reorder
-// or remove) and "Add to your bar" — the three movable tabs plus every More row this build draws. The
-// bar holds at most BAR_MAX_SLOTS, so Add is refused in words once it is full. A page on the bar
-// leaves More; a movable tab taken off it goes back to the top of "Your garden". Saving writes
-// {order: <the bar>, hidden: []} — `hidden` is only read now, for layouts saved before this change.
+// ANY PAGE CAN TAKE A SLOT: every More row this build draws, plus the three movable tabs. The editor
+// is two lists: "In your bar" (left to right, reorder or remove) and "Add to your bar". The bar holds
+// at most BAR_MAX_SLOTS, so Add is refused in words once it is full. A page on the bar leaves More; a
+// movable tab taken off it goes back to the top of "Your garden". Saving writes
+// {order: <the bar>, hidden: []}; `hidden` is only read, for layouts saved in the older shape.
 //
 // A STORED SLOT THIS BUILD CANNOT DRAW IS DROPPED BY THE NEXT SAVE FROM THIS BUILD. "The bar" above is
 // the DRAWN bar (drawnIds below), and that is what the editor opens on. An id this build does not know
-// — a newer bundle's row, a row whose build flag is off — sleeps on the tab bar itself (navConfig.js),
+// (a newer bundle's row, a row whose build flag is off) sleeps on the tab bar itself (navConfig.js),
 // but here it is not listed, does not count toward the five and does not make the editor dirty; the
 // first Save after any edit writes the bar without it, for good. A slot stored under an alias ('sow')
 // is written back as its live id ('seeds'). This is NOT what more_pins does: there an unknown id rides
 // through every save. Reachable only after a rollback or from a second device on another build, and
-// nothing is stranded — the page is still in More. Left as it is and stated here (QA M2, 2026-10-01);
-// AdminConfig.test.jsx pins it, so carrying unknown ids through the draft is a decision, not a drift.
+// nothing is stranded, since the page is still in More. AdminConfig.test.jsx pins it, so carrying
+// unknown ids through the draft is a decision, not a drift.
 //
-// THE STALE-SEED BUG, FIXED. V5-ADMINCENTER-001 seeded the editor once, from whatever config was on
-// hand — the shipped default when the read was slow — so a Save could wipe the stored layout with a
-// value nobody chose. Now the editor follows the SERVER's value until the person edits, and Save stays
-// disabled until that value has been read. If the read failed, Save stays disabled and one line says
-// the current bar could not be read.
+// THE EDITOR FOLLOWS THE SERVER. It follows the SERVER's value until the person edits, and Save stays
+// disabled until that value has been read (seeding once from whatever was on hand could wipe the stored
+// layout with a value nobody chose). If the read failed, Save stays disabled and one line says the
+// current bar could not be read.
 //
-// A BODY THE SERVICE WORKER SERVED FROM ITS CACHE IS NOT THE SERVER'S VALUE (QA RE-3). It is shown —
-// it is this phone's last copy and the best picture on hand — and labelled as exactly that, but Save
-// stays off: saving on top of it would be the stale-seed bug again by another route. And because
-// prefs are otherwise read once per launch, the editor re-reads ONCE when it opens on a body it cannot
-// save from (served from cache, or missing) — so it is not stuck until the next cold start, the same
-// lesson the pin list taught (QA RE-1).
+// A BODY THE SERVICE WORKER SERVED FROM ITS CACHE IS NOT THE SERVER'S VALUE. It is shown, since it is
+// this phone's last copy and the best picture on hand, and labelled as exactly that, but Save stays
+// off: saving on top of it would seed from a stale value by another route. And because prefs are
+// otherwise read once per launch, the editor re-reads ONCE when it opens on a body it cannot save from
+// (served from cache, or missing), so it is not stuck until the next cold start.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { P } from '../lib/constants.js'
@@ -173,8 +166,8 @@ export default function AdminConfig() {
   // A 200 on this visit's own Save IS the server's value — the PATCH stored exactly that layout — so it
   // stays the editor's server value for the rest of the visit, whatever the re-read after it returns.
   // A failed re-read (null) must not turn a saved bar into "could not be read" and disable Save for
-  // good (QA MINOR-1), and a re-read that joined a GET issued BEFORE the Save must not roll the editor
-  // back to the old bar (regression M5; the bar cache has the same guard in NavPrefsContext).
+  // good, and a re-read that joined a GET issued BEFORE the Save must not roll the editor back to the
+  // old bar (the bar cache has the same guard in NavPrefsContext).
   const [savedLayout, setSavedLayout] = useState(null)
   // The body on hand, and whether it is only this phone's last copy (served from the SW's cache).
   const bodyLayout = useMemo(
@@ -182,7 +175,7 @@ export default function AdminConfig() {
     [prefs, prefsLoaded],
   )
   const lastCopy = !savedLayout && !!bodyLayout && servedFromCache(prefs)
-  // What the server holds — the only value Save may build on. A last copy is not it (QA RE-3).
+  // What the server holds, the only value Save may build on. A last copy is not it.
   const serverLayout = savedLayout ?? (lastCopy ? null : bodyLayout)
   // What the editor SHOWS: the server's value, else the last copy, else the bar this device draws.
   const base = savedLayout ?? bodyLayout ?? current
@@ -200,7 +193,7 @@ export default function AdminConfig() {
     setStatus(null)
   }, [baseBar.join(',')]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // FOCUS FOLLOWS THE PAGE (QA M6). Add and Remove each unmount the button that was just pressed, and
+  // FOCUS FOLLOWS THE PAGE. Add and Remove each unmount the button that was just pressed, and
   // focus then falls to the document: a keyboard user starts again from the top and TalkBack loses its
   // place. So once the lists have re-rendered, focus goes to the control that undoes what was just
   // done — that page's Remove after an Add, its Add after a Remove — which also says where the page

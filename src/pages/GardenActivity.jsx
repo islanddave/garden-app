@@ -1,14 +1,13 @@
-// Garden Activity — admin-only success-metric diagnostic (Post-V2 UX Overhaul — Increment 0).
-// Spec: success-metric-instrumentation-spec-V001-20260522.1620.md §3.
+// Garden Activity: admin-only success-metric diagnostic.
 //
-// Jen-invisible (Reward UX V100 §8): NO nav link anywhere, not surfaced in settings/help/onboarding.
+// Jen-invisible (Reward UX): NO nav link anywhere, not surfaced in settings/help/onboarding.
 // The real security is the Lambda's ADMIN_CLERK_SUBS allowlist (fail-closed); this page just shows a
 // neutral placard to non-admins. Diagnostic ONLY — numbers, no celebration, no badges, no streaks.
 //
 // Three panels:
 //   M1 — tap-count to completion per flow (target: <=2 to start, <=3 to complete a simple log).
 //   M2 — capture-events/week (flat-or-up is healthy; a drop is a regression signal).
-//   M3 — agent-proposal accept-rate, with the 40% canary line. Not available until the Inc-3 tasks table.
+//   M3 — agent-proposal accept-rate, with the 40% canary line. Not available until the tasks table exists.
 
 import React, { useState, useEffect, useCallback } from 'react'
 import { useApiFetch } from '../lib/api.js'
@@ -148,11 +147,9 @@ function M3Panel({ m3 }) {
         {available && (
           <div style={{ height: '100%', width: `${pct}%`, background: rate >= canary ? '#4a7c59' : '#b94a3a', transition: 'width 200ms ease' }} />
         )}
-        {/* 40% canary line always drawn. V4-A11YGATE-001: this carried a bare aria-label, which on a
-            role-less (role=generic) div is discarded — and the div has no text, so it announced
-            NOTHING (axe: violation; the WATERWHY shape exactly). Marked decorative rather than
-            re-roled to img, because the <p> below unconditionally prints "· canary at N%": the fact
-            is already in text, and a second announcement of it is noise, not access. */}
+        {/* 40% canary line always drawn. Decorative, not re-roled to img: a bare aria-label on a
+            role-less div is discarded and the div has no text, so it would announce nothing, and the
+            <p> below unconditionally prints "· canary at N%", so a second announcement is noise. */}
         <div aria-hidden="true"
              style={{ position: 'absolute', top: 0, bottom: 0, left: `${Math.round(canary * 100)}%`, width: 2, background: '#c0392b' }} />
       </div>

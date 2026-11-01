@@ -1,27 +1,21 @@
-// src/pages/MySeeds.jsx — V5-SEEDSTAB-001 §5.1, redesigned by V5-SEEDCARDS-001. The My seeds view
-// of the Seeds page: "What seed do I have?" over every packet and saved lot, one card each.
+// MySeeds: the My seeds view of the Seeds page: "What seed do I have?" over every packet and saved
+// lot, one card each.
 //
-// Not a route — the Seeds shell mounts it, owns the fetch (useSeedItems) and hands the store down, so a
+// Not a route. The Seeds shell mounts it, owns the fetch (useSeedItems) and hands the store down, so a
 // stage moved in Saved seeds or a packet archived in Sow now shows here without a reload.
 //
-// WHY THIS VIEW EXISTS. Dave's seed lived in three places: the Seeds section of the Inventory list (327
-// of 521 rows, no variety, stage, year or vendor on the row), Saved seeds (tracked lots only) and Sow
-// now (a timing list, not an inventory). He asked for "inventory seeds" to have a proper home with the
-// "standard robust filtering/sorting … appropriate to the entity type" (09-03); this is it.
+// WHY THIS VIEW EXISTS. Seed lived in three places: the Inventory list (no variety, stage, year or
+// vendor on the row), Saved seeds (tracked lots only) and Sow now (a timing list, not an inventory).
+// This is the proper home, with filtering and sorting appropriate to the entity.
 //
-// V5-SEEDCARDS-001 (Dave, 2026-09-19): "make each type collapsible and collapsed by default. Make the
-// brand/supplier … a featured callout / chip / improved color of each card … each seed to include a
-// seed packet img … The 'on hand' item in the details of each seed is not needed … add the ability to
-// filter by supplier, and for peppers, to sort them by expected SHU". Design: the UX spec and the
-// architecture plan in Projects/Gardening/_seedpacket_20260919/design/ (ux-spec.md, arch-plan.md).
-//   • Crop groups FOLD and start folded. A filter opens every group that still has rows; the Hottest
+//   * Crop groups FOLD and start folded. A filter opens every group that still has rows; the Hottest
 //     sort opens Pepper; a write opens the group it landed in (a write never lands out of sight).
-//   • Each card leads with its supplier: a 4px stripe and a pill in the supplier's designated colours
+//   * Each card leads with its supplier: a 4px stripe and a pill in the supplier's designated colours
 //     (src/lib/supplierPalette.js), and a 40px packet thumbnail (the app's row-thumb shape).
-//   • Supplier chips filter; Hottest orders peppers by expected Scoville inside the Pepper group.
-//   • The expanded card lost its "On hand − N +" stepper and gained the seed's facts (heat, country of
-//     origin, species, days to maturity) and a link to the packet's page. A packet's count is still
-//     edited on its detail page ("Qty on hand"); the Inventory page keeps its own stepper.
+//   * Supplier chips filter; Hottest orders peppers by expected Scoville inside the Pepper group.
+//   * The expanded card shows the seed's facts (heat, country of origin, species, days to maturity)
+//     and a link to the packet's page. A packet's count is edited on its detail page ("Qty on hand");
+//     the Inventory page keeps its own stepper.
 import React, { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { P, BOTTOM_NAV_HEIGHT_PX } from '../lib/constants.js'
@@ -68,7 +62,7 @@ const STICKY_TOP = 52
 // the whole 54-58px row is what scrolled the tapped header out from under the thumb.
 const OPEN_PEEK_PX = 24
 
-// ── The view's shape survives the visit, not the history entry ───────────────────────────────────────
+// The view's shape survives the visit, not the history entry.
 // sessionStorage per PAGE, never the URL: any post-mount replace write re-keys useScrollRestore's
 // entry and deletes an armed sheet's Back marker (DismissRegistry.jsx:232-236). Search, crop and
 // supplier chips and sort are always visible in the controls, so a remembered filter is never a hidden
@@ -118,7 +112,7 @@ export default function MySeeds({ store, highlight = null, onGoToLot }) {
     writeFilters({ q, crops: [...crops], suppliers: [...suppliers], sort, openGroups: [...openGroups] })
   }, [q, crops, suppliers, sort, openGroups])
 
-  // stateAtTop (V5-SEEDSPOLISH-001): the expanded card and the folds are set without scrolling, and
+  // stateAtTop: the expanded card and the folds are set without scrolling, and
   // Back to an unscrolled page used to drop all three.
   const { restoredState, saveState } = useScrollRestore({ id: 'seeds-mine', ready: items != null, stateAtTop: true })
   const poppedIn = usePageScrollReturnAtMount()
@@ -190,7 +184,7 @@ export default function MySeeds({ store, highlight = null, onGoToLot }) {
   const sowed = useMemo(() => sortRows(filtered.filter(isSowedPreviously), 'name'), [filtered])
   const filterActive = isFilterActive({ q, crops, suppliers })
   // Sowed previously opens for a search/chip that finds something there, and when EVERY packet is used
-  // up (§5.1: "everything sowed previously (section opened)"). A choice made with its toggle wins.
+  // up. A choice made with its toggle wins.
   const sowedOpen = sowedOpenByUser ?? ((filterActive || main.length === 0) && sowed.length > 0)
 
   const groups = useMemo(() => (grouped
@@ -201,7 +195,7 @@ export default function MySeeds({ store, highlight = null, onGoToLot }) {
     [openGroups, closedByUser, filterActive, effectiveSort],
   )
 
-  // ── A write never lands out of sight (§4.3) ─────────────────────────────────────────────────────────
+  // A write never lands out of sight.
   // The shell names a row it just wrote (a save, an add). Only the filters that EXCLUDE it are cleared,
   // and the page says which; its crop group is opened (or Sowed previously, where it is filed there).
   const [notice, setNotice] = useState(null)
@@ -238,11 +232,11 @@ export default function MySeeds({ store, highlight = null, onGoToLot }) {
   const targetRendered = !!target && filtered.some((i) => i.id === target.id) && (
     isSowedPreviously(target) ? sowedOpen : (!grouped || isOpen(target.crop_slug || NO_CROP))
   )
-  // A return skips the `?lot=` arrival hint: the hook restoring this view, or (BUG-DETAILPAGESCARRYSCROLL-
-  // 001) the app-level page-scroll manager restoring the page — a POP arrival the hook had no value for.
+  // A return skips the `?lot=` arrival hint: the hook restoring this view, or the app-level page-scroll
+  // manager restoring the page (a POP arrival the hook had no value for).
   const outlined = useLotOutline(highlight, { ready: targetRendered, skipArrival: restoredState !== undefined || poppedIn })
 
-  // ── What is on screen, in order: the rows that render, for uniqueness and the image window ──────────
+  // What is on screen, in order: the rows that render, for uniqueness and the image window.
   const onScreen = useMemo(() => {
     const out = []
     if (grouped) {
@@ -256,7 +250,7 @@ export default function MySeeds({ store, highlight = null, onGoToLot }) {
 
   // Images are windowed, rows are not: search, counts, the outline and Back-restore all need every row
   // in the DOM, but 103 peppers mounting 103 thumbnails at once is the eager-image freeze
-  // (BUG-PHOTOTHUMB-001). A row's thumbnail mounts when it is one of the first IMAGE_WINDOW_PAGE rows on
+  // A row's thumbnail mounts when it is one of the first IMAGE_WINDOW_PAGE rows on
   // screen, or once the row comes within reach of the viewport, and then stays (useNearViewport). Not
   // useImageWindow: its growth waits for the DOCUMENT's bottom, and this page never grows — every row is
   // a fixed box — so rows 25+ of an open group stayed grey while scrolled through, then all mounted at
@@ -272,7 +266,7 @@ export default function MySeeds({ store, highlight = null, onGoToLot }) {
     return m
   }, [onScreen])
 
-  // ── Uniqueness over what is actually on screen ────────────────────────────────────────────────────
+  // Uniqueness over what is actually on screen.
   // Two rows that read alike would let a thumb open the wrong lot's details; the ordinal ("1 of 2
   // identical") is computed over the rendered title + line 2. Identical rows share a variety and so a
   // crop group, so they are shown or folded together.
@@ -293,13 +287,13 @@ export default function MySeeds({ store, highlight = null, onGoToLot }) {
   const toggleSupplier = useCallback((v) => setSuppliers((prev) => (prev.has(v) ? withRemoved(prev, v) : withAdded(prev, v))), [])
   const clearFilters = useCallback(() => { setQ(''); setCrops(new Set()); setSuppliers(new Set()) }, [])
 
-  // ── Folding ────────────────────────────────────────────────────────────────────────────────────────
+  // Folding.
   // Folding a group from its STUCK header re-anchors, so the header the thumb just tapped stays at the
   // top instead of the page stranding thousands of pixels down in unrelated groups. Opening one keeps
-  // the header still (UX spec §3.3): the page scrolls only when the group's first row would be cut by
+  // the header still: the page scrolls only when the group's first row would be cut by
   // the bottom nav or less than OPEN_PEEK_PX of its second row would show, and then by the least
-  // distance that shows both. The old rule wanted row 2 WHOLE, 8px clear of the nav — on a 360x640
-  // first screen that moved the header a thumb had just tapped by 24px (gate:seeds-page (e2)).
+  // distance that shows both. Wanting row 2 WHOLE, 8px clear of the nav, would move the header a thumb
+  // had just tapped by 24px on a 360x640 first screen (gate:seeds-page (e2)).
   const anchorRef = useRef(null)
   const toggleGroup = useCallback((slug) => {
     const open = isOpen(slug)
@@ -447,8 +441,8 @@ export default function MySeeds({ store, highlight = null, onGoToLot }) {
 
   return (
     <div data-testid="my-seeds-view" ref={viewRef}>
-      {/* The view's question, with Expand all / Collapse all on the same line (UX spec §3.4) — the
-          Garden pattern Dave approved for collapsed-by-default sections, at a 44px tap floor. */}
+      {/* The view's question, with Expand all / Collapse all on the same line: the Garden pattern
+          for collapsed-by-default sections, at a 44px tap floor. */}
       <div style={questionRow}>
         <p data-testid="seeds-question" style={questionStyle}>What seed do I have?</p>
         {showExpandAll && (
@@ -600,7 +594,7 @@ function SeedRow({ item, title, ordinal, vendor, withPhoto, expanded, outlined, 
   // the styles below (lineStyle, WrapLine), not by this order. The FIRST chip is a lot's live state when
   // its tone says so (fermenting, drying) and never gives way; every later chip is neutral bookkeeping —
   // which of them give way is mySeedsModel.lineLayout's call (an F2 row's chip never does). The line
-  // WRAPS rather than drop the heat (BUG-MYSEEDSF2HIDESSHU-001): see WrapLine.
+  // WRAPS rather than drop the heat: see WrapLine.
   const { live, f2, giveWayChips } = lineLayout(item)
   const amount = howMuch(item)
   const heat = rowHeat(item)
@@ -609,8 +603,8 @@ function SeedRow({ item, title, ordinal, vendor, withPhoto, expanded, outlined, 
   const hasLine = !!(vendor || live || f2 || giveWayChips.length > 0 || amount || heat || tail)
   const inProcess = isInProcess(item)
   const colors = vendor ? supplierColors(vendor) : null
-  // The list row carries the photo's id and no URL (BUG-SEEDLISTSIGNING-001). A row that draws its
-  // thumb first asks the phone's own photo cache for it by key (BUG-SEEDTHUMBSOFFLINE-001): a hit is a
+  // The list row carries the photo's id and no URL. A row that draws its
+  // thumb first asks the phone's own photo cache for it by key: a hit is a
   // URL the service worker answers with no network, offline included. Only a miss mints a link by id
   // (resolveById below). While the lookup runs (`undefined`) the row draws nothing but its box, so no
   // mint starts for a picture the phone already has.
@@ -622,7 +616,7 @@ function SeedRow({ item, title, ordinal, vendor, withPhoto, expanded, outlined, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [item.id, item.hero_photo_id, item.featured_photo_view_url, item.featured_photo_thumb_url, deviceThumb],
   )
-  // V5-SEEDSPOLISH-001: a packet photo that cannot be shown ends as the no-photo row's sprout box, not as
+  // A packet photo that cannot be shown ends as the no-photo row's sprout box, not as
   // PhotoImg's plain green placeholder (the sprout box with the sprout missing). PhotoImg says when it
   // has given up (onTerminal); until then the row draws exactly what it drew before, stone box and all.
   // The flag names the photo it failed for — its id, or its URL for a photo that came with none — so a
@@ -694,7 +688,7 @@ function SeedRow({ item, title, ordinal, vendor, withPhoto, expanded, outlined, 
   )
 }
 
-// Line 2 (BUG-MYSEEDSF2HIDESSHU-001): every piece is an item of ONE WRAPPING line (lineStyle), in
+// Line 2: every piece is an item of ONE WRAPPING line (lineStyle), in
 // lineText's order — so nothing the row must show is ever dropped to make room, and nothing is cut. The
 // supplier, live and F2 chips, the amount and the heat are rigid and whole; when the line has no room
 // left for one of them it moves to the next line, whole — in practice only the heat ever does, and a row
@@ -798,7 +792,7 @@ const SR_ONLY = {
   clip: 'rect(0, 0, 0, 0)', whiteSpace: 'nowrap', border: 0,
 }
 
-// ── Styles — from T tokens, matching the Saved seeds card (48px buttons, 44px taps) ──────────────────
+// Styles from T tokens, matching the Saved seeds card (48px buttons, 44px taps).
 const listStyle = { display: 'flex', flexDirection: 'column', gap: 8 }
 const rowCard = {
   backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: T.radiusCard, overflow: 'hidden',
@@ -824,15 +818,14 @@ const titleStyle = {
 }
 const ordinalStyle = { flex: '0 0 auto', whiteSpace: 'nowrap', fontSize: T.type.xs2, color: P.mid }
 const chevronStyle = { flex: '0 0 auto', color: P.light, fontSize: T.type.xs2 }
-// LINE 2 (UX spec §1.3, as amended 2026-09-24 by BUG-MYSEEDSF2HIDESSHU-001) is ONE flex line that WRAPS
+// LINE 2 is ONE flex line that WRAPS
 // rather than drop anything the row must show. From never cut to cut first:
 //   1. never cut: the supplier chip, the amount, the first state chip when it is a lot's LIVE state
 //      (tone info, warn or danger: fermenting, drying), an F2 lot's "F2 — won’t come true" chip — and
 //      the ordinal, on line 1;
 //   2. the heat, never cut and never dropped: when the line cannot hold it, it moves to the next line,
-//      whole — a cut Scoville number is a wrong number, and a missing one is a fact Dave decides with
-//      (Dave: "I want the shu shown" — "I still prefer seeing heat … it is info for decisions/guidance
-//      for me"). It only moves once the chips that give way have given all they can;
+//      whole: a cut Scoville number is a wrong number, and a missing one is a fact the owner decides
+//      with. It only moves once the chips that give way have given all they can;
 //   3. the chips that give way ("Archived for this season", a status, "Not started"), ellipsised;
 //   4. cut first: the tail (where from · how old), which follows the heat onto whichever line it is on.
 // Items 1 and 2 are rigid flex items; when one does not fit, the line breaks before it, so it lands on
@@ -843,8 +836,7 @@ const chevronStyle = { flex: '0 0 auto', color: P.light, fontSize: T.type.xs2 }
 // `hidden`, so nothing (find-in-page, a focus) can scroll the line; what it clips is wrapSep's dot when
 // the heat starts a line. No flex gap: the chips carry their own margin, the heat's " · " sits in its own
 // gap (SEP_W), and the tail opens with a NON-BREAKING space so "12.5 g · Saved from my plant" stays a
-// phrase. (Until 2026-09-24 the facts rode an absolutely positioned flow that hid whatever did not fit,
-// the heat included; F2 rows came off it first, the same day.)
+// phrase.
 const lineStyle = {
   display: 'flex', flexWrap: 'wrap', alignItems: 'center', rowGap: 3, minWidth: 0, fontSize: T.type.xs2,
   color: P.mid, whiteSpace: 'nowrap', overflow: 'clip',
@@ -890,7 +882,7 @@ const sortLabel = {
 }
 // selectChrome's own 1rem field font, not a smaller one: iOS zooms the page on focus under 16px.
 const sortSelect = { ...selectChrome(), width: 'auto', paddingLeft: 10, paddingRight: 30, backgroundPosition: 'right 8px center' }
-// Headers are interactive now (they fold), so the 44px tap floor V102 §16 dropped comes back.
+// Headers are interactive (they fold), so they keep the 44px tap floor.
 const groupHeaderStyle = { minHeight: T.tapMinHeight, padding: '0 12px', boxSizing: 'border-box' }
 const groupHeaderSticky = {
   position: 'sticky', top: STICKY_TOP, zIndex: 1, backgroundColor: P.cream, paddingBottom: 2,

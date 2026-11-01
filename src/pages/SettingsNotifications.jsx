@@ -1,16 +1,11 @@
-// SettingsNotifications — Settings → Notifications page, MVP-Critter Session 4 Phase A.
-// Spec: mvp-critter-pre-build-revision-V001 §3.17 (disclosure-button + radio-group ARIA),
-// §3.23 (route parent + ErrorBoundary), §3.24 (iOS PWA-installed gate on SYSTEM),
-// §6 deferred note (SYSTEM_NOTIFICATIONS_ENABLED literal bi-state).
+// SettingsNotifications: Settings → Notifications page. A tri-state toggle (off / in-app only /
+// system) that reads and writes user_notification_prefs, with the iOS PWA-installed gate on SYSTEM.
+// Disclosure button plus radio group, with the ARIA contract below.
 //
-// Phase A scope (no Jen-walkthrough required): tri-state toggle infrastructure +
-// read/write user_notification_prefs via Lambda Routes 7+8 + iOS PWA gate + flag.
-// NO critter user-facing copy (announcement variants, coachmark, opt-in) — Phase B.
-//
-// V100 conformance: this surface is NOT a reward delivery surface (it's a config
-// page). No ambient/interrupt rules apply directly; standard a11y discipline only.
-// Does NOT call Notification.requestPermission() — that opt-in is exclusively via
-// explicit user navigation per project CLAUDE.md notification-permission rule.
+// This surface is NOT a reward delivery surface (it's a config page). No ambient/interrupt rules
+// apply directly; standard a11y discipline only.
+// Does NOT call Notification.requestPermission(): that opt-in is exclusively via explicit user
+// navigation, per the project's notification-permission rule.
 
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import { P } from '../lib/constants.js'
@@ -34,7 +29,7 @@ const OPTION_DESCRIPTIONS = {
   system:      'System notifications when critters arrive (requires Add to Home Screen).',
 }
 
-// Detect iOS/Safari PWA-installed state per spec §3.24.
+// Detect iOS/Safari PWA-installed state.
 // Returns true when the app is launched from the home screen ("standalone" PWA),
 // false otherwise. Used to gate the SYSTEM radio option (push delivery requires
 // the PWA install on iOS Safari).
@@ -61,20 +56,19 @@ export default function SettingsNotifications() {
   const buttonRef = useRef(null)
   const radioRefs = useRef({})
 
-  // Visible options — when SYSTEM_NOTIFICATIONS_ENABLED is false, SYSTEM is hidden
-  // entirely (bi-state collapse to OFF / IN-APP ONLY per §6 deferred note).
+  // Visible options: when SYSTEM_NOTIFICATIONS_ENABLED is false, SYSTEM is hidden
+  // entirely (bi-state collapse to OFF / IN-APP ONLY).
   const VISIBLE_OPTIONS = SYSTEM_NOTIFICATIONS_ENABLED
     ? CRITTER_VISIT_VALUES
     : CRITTER_VISIT_VALUES.filter(v => v !== 'system')
 
-  // Initial fetch
   useEffect(() => {
     let on = true
     fetchNotificationPrefs({ getToken }).then(prefs => {
       if (!on) return
       if (prefs && typeof prefs.critter_visit === 'string') {
         const v = prefs.critter_visit
-        // Defensive — if SYSTEM flag is off but DB has 'system', collapse to in_app_only
+        // Defensive: if SYSTEM flag is off but DB has 'system', collapse to in_app_only
         if (v === 'system' && !SYSTEM_NOTIFICATIONS_ENABLED) {
           setValue('in_app_only')
         } else if (CRITTER_VISIT_VALUES.includes(v)) {
@@ -106,7 +100,7 @@ export default function SettingsNotifications() {
     }
   }, [busy, value, getToken])
 
-  // Keyboard nav per §3.17:
+  // Keyboard nav:
   //   Space/Enter on disclosure button → toggle expanded
   //   Esc inside radiogroup → collapse
   //   ArrowUp/ArrowDown between radios
@@ -166,7 +160,7 @@ export default function SettingsNotifications() {
       </p>
 
       <div style={{ borderTop: `1px solid ${P.border}`, paddingTop: 16 }}>
-        {/* Disclosure button — §3.17 ARIA contract */}
+        {/* Disclosure button */}
         <button
           ref={buttonRef}
           type="button"
@@ -230,7 +224,7 @@ export default function SettingsNotifications() {
                   borderTop: idx === 0 ? 'none' : `1px solid ${P.border}`,
                 }}>
                   {systemBlocked ? (
-                    // §3.24 affordance: PWA install required instead of radio
+                    // PWA install required instead of a radio
                     <div data-testid={`critter-notif-option-${opt}-blocked`}>
                       <button
                         type="button"
@@ -332,7 +326,7 @@ export default function SettingsNotifications() {
         )}
       </div>
 
-      {/* Live region for post-selection announcements per §3.17 */}
+      {/* Live region for post-selection announcements */}
       <div
         aria-live="polite"
         aria-atomic="true"
@@ -346,7 +340,7 @@ export default function SettingsNotifications() {
         {announcement}
       </div>
 
-      {/* Focus-visible 3px solid accent ring per §3.17 */}
+      {/* Focus-visible 3px solid accent ring */}
       <style>{`
         [data-testid="critter-notif-disclosure"]:focus-visible,
         [data-testid="critter-notif-radiogroup"] [role="radio"]:focus-visible {

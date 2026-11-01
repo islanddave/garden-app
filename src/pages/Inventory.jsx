@@ -17,30 +17,23 @@ import {
 } from '../lib/inventoryEnums.js'
 import { seedsHref } from '../lib/seedsRoutes.js'
 
-// HG-4.2 Inventory-list redesign (V4-DESIGNSYS / Tranche 0). The list was the last "raw"
-// surface — a database-table of text rows. Same data + logic (useInventory), re-executed
-// visually: a category-tinted coin per row, qty + low-stock at a glance, collapsible
-// category sections, token-native filter chrome, and a stat-row cost bar. Composes existing
-// primitives (Icon / Badge / SegmentedControl / selectChrome) + P tokens only — no schema,
-// no freeze surface, no new raw hex. Category→coin identity is a page-local presentational
-// map (like other page-local CTAs); 8 of 11 categories resolve to a real registry glyph,
-// the 3 without (amendment/shelving/climate_control) use a monogram in the same coin frame
-// (interim per Dave 2026-07; mint 5 category anchors as a fast-follow).
+// Inventory list: a category-tinted coin per row, qty + low-stock at a glance, collapsible category
+// sections, token-native filter chrome, and a stat-row cost bar. Composes existing primitives
+// (Icon / Badge / SegmentedControl / selectChrome) + P tokens only. Category→coin identity is a
+// page-local presentational map; 8 of 11 categories resolve to a real registry glyph, the 3 without
+// (amendment/shelving/climate_control) use a monogram in the same coin frame.
 
-// V5-SEEDSTAB-001 — SEED LEFT THIS LIST. Seed packets and saved lots live on the Seeds page
-// (My seeds · Saved seeds · Sow now), which Dave approved by name as part of consolidating seed into
-// one home (design-seedshome-V102 §7, D2): the Seeds section here becomes ONE pointer row, "Seeds"
-// leaves the Category filter, and the cost totals cover non-seed items only. The packet − / + moved
-// with the rows to My seeds and was then removed there (V5-SEEDCARDS-001, Dave: "the 'on hand' item …
-// is not needed"); a packet's count is edited on its detail page.
+// SEED LEFT THIS LIST. Seed packets and saved lots live on the Seeds page (My seeds · Saved seeds ·
+// Sow now): the Seeds section here is ONE pointer row, "Seeds" is not in the Category filter, and the
+// cost totals cover non-seed items only. A packet's count is edited on its detail page.
 const SEED_CATEGORY = 'seeds'
 const CATEGORY_OPTIONS = INVENTORY_CATEGORY_OPTIONS.filter(([v]) => v !== SEED_CATEGORY)
 const CATEGORY_ORDER = INVENTORY_CATEGORIES.map(c => c.v).filter(v => v !== SEED_CATEGORY)
 const SEEDS_MINE = seedsHref('mine')
 
-// Translucent white rules/ink for the DARK toast surface. Named here rather than left as
-// anonymous inline rgba() per the constants.js scrim convention: the palette token holds the
-// base color, translucency is composed at the point of use. P.onPhotoFg is the same #ffffff.
+// Translucent white rules/ink for the DARK toast surface. Named here rather than left as anonymous
+// inline rgba() per the constants.js scrim convention: the palette token holds the base color,
+// translucency is composed at the point of use. P.onPhotoFg is the same #ffffff.
 const TOAST_RULE = 'rgba(255,255,255,0.4)'      // Undo button hairline
 const TOAST_MUTED_INK = 'rgba(255,255,255,0.6)' // dismiss glyph, de-emphasised vs the message
 const TOAST_SHADOW = '0 4px 16px rgba(0,0,0,0.22)'
@@ -71,7 +64,6 @@ export function seedPointerCopy(count, total) {
   return total > 0 ? 'None with this status' : 'None yet'
 }
 
-// ── Main page ─────────────────────────────────────────────────────────────────
 export default function Inventory() {
   const { items: allItems, loading, error, toast, dismissToast, adjustQuantity } = useInventory()
   // Seed rows are counted for the pointer row and otherwise kept out of everything on this page —
@@ -97,7 +89,6 @@ export default function Inventory() {
     return next
   })
 
-  // ── Filter ──
   const filtered = items.filter(item => {
     if (filterType     !== 'all' && item.type     !== filterType)     return false
     if (filterCategory !== 'all' && item.category !== filterCategory) return false
@@ -105,22 +96,14 @@ export default function Inventory() {
     return true
   })
 
-  // ── Sort (applied WITHIN each category section) ──
+  // Sort, applied WITHIN each category section.
   //
-  // BUG-INVSORTNULLDATE-001 — NULLS LAST, IN EVERY DIRECTION, ALWAYS. A missing value is "nobody
-  // recorded this": it is not a small number, not a large one, and not an old date, so it belongs at
-  // the bottom of every ordering rather than at whichever end its sentinel happens to fall.
-  //
-  // What this replaces was a live defect, not an inconsistency. `date_desc` coerced a missing date to
-  // '' and '' sorts FIRST under a descending compare — so on the page holding the whole seed
-  // collection, "Newest first" led with the packets that have no date at all. Measured when it was
-  // found: 97 of 263 seed rows. The control's own label made a false claim about the data.
-  //
-  // One line away, `qty_asc` used `?? Infinity` and got the same question RIGHT — but only because
-  // ascending was its only direction. The two idioms were opposite in POLARITY and identical in
-  // outcome, which is why nothing caught it: add a `date_asc` reusing the `?? ''` idiom and nulls
-  // silently flip to first on that axis too. Hence a single shared helper rather than a fix to the
-  // one arm that was visibly wrong.
+  // NULLS LAST, IN EVERY DIRECTION, ALWAYS. A missing value is "nobody recorded this": it is not a
+  // small number, not a large one, and not an old date, so it belongs at the bottom of every ordering
+  // rather than at whichever end its sentinel happens to fall. Coercing a missing date to '' sorts it
+  // FIRST under a descending compare, so "Newest first" would lead with the packets that have no date.
+  // A `?? Infinity` idiom is right only for ascending. Hence one shared helper, so a new sort axis
+  // cannot silently flip nulls to first.
   const nullsLast = (a, b, cmp) => {
     const aM = a == null || a === '', bM = b == null || b === ''
     if (aM && bM) return 0
@@ -139,7 +122,7 @@ export default function Inventory() {
     }
   })
 
-  // ── Group by category (canonical order; unknown categories bucket last) ──
+  // Group by category in canonical order; unknown categories bucket last.
   const known = new Set(CATEGORY_ORDER)
   const groups = CATEGORY_ORDER
     .map(cat => ({ cat, items: sortItems(filtered.filter(i => i.category === cat)) }))
@@ -147,7 +130,6 @@ export default function Inventory() {
   const leftover = sortItems(filtered.filter(i => !known.has(i.category)))
   if (leftover.length) groups.push({ cat: 'other', items: leftover })
 
-  // ── Cost summary ──
   const withCost   = items.filter(i => i.unit_cost != null && i.quantity_purchased != null)
   const totalCost  = withCost.reduce((sum, i) => sum + i.unit_cost * i.quantity_purchased, 0)
   const consCost   = withCost.filter(i => i.type === 'consumable').reduce((sum, i) => sum + i.unit_cost * i.quantity_purchased, 0)
@@ -169,7 +151,6 @@ export default function Inventory() {
       {/* Bottom padding clears the sticky cost-bar + nav. */}
       <div style={{ maxWidth: 720, margin: '0 auto', padding: '28px 20px 180px' }}>
 
-        {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, gap: 10 }}>
           <h1 style={{ margin: 0, color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>
             Inventory
@@ -181,7 +162,6 @@ export default function Inventory() {
           </div>
         </div>
 
-        {/* ── Filters ── */}
         <div style={{
           display: 'flex', flexDirection: 'column', gap: 11, marginBottom: 20,
           padding: 12,
@@ -217,7 +197,7 @@ export default function Inventory() {
           </div>
         </div>
 
-        {/* ── Seeds pointer (V5-SEEDSTAB-001) ── one row where the Seeds section was, FIRST as that
+        {/* Seeds pointer: one row where the Seeds section was, FIRST as that
             section was. Shown when the list could have held seed at all: Type All or Consumable, no
             specific category chosen. Counts the seed rows passing the Status filter, the same rule
             the section's rows followed. */}
@@ -233,7 +213,6 @@ export default function Inventory() {
           </Link>
         )}
 
-        {/* ── Grouped item list ── */}
         {groups.length === 0 ? (
           items.length === 0 ? (seedRows.length ? null : <EmptyState />) : (
             <div style={{
@@ -273,7 +252,7 @@ export default function Inventory() {
 
       </div>
 
-      {/* ── Cost summary bar (sticky, above BottomNav) ── */}
+      {/* Cost summary bar (sticky, above BottomNav) */}
       <div style={{
         position: 'fixed',
         bottom: 'calc(var(--bottom-nav-height) + env(safe-area-inset-bottom))',
@@ -316,7 +295,6 @@ export default function Inventory() {
         </div>
       </div>
 
-      {/* ── Undo / error toast ── */}
       {toast && (
         <div role="status" aria-live="polite" style={{
           position: 'fixed',
@@ -361,7 +339,6 @@ export default function Inventory() {
   )
 }
 
-// ── Category coin ─────────────────────────────────────────────────────────────
 function CategoryCoin({ cat }) {
   const s = catStyle(cat)
   return (
@@ -377,7 +354,7 @@ function CategoryCoin({ cat }) {
   )
 }
 
-// ── Category section header (collapsible; tinted to the category) ───────────────
+// Category section header (collapsible; tinted to the category)
 function SectionHeader({ cat, label, count, collapsed, onToggle }) {
   const s = catStyle(cat)
   return (
@@ -404,7 +381,6 @@ function SectionHeader({ cat, label, count, collapsed, onToggle }) {
   )
 }
 
-// ── Inventory row ─────────────────────────────────────────────────────────────
 function InventoryRow({ item, onAdjust }) {
   const [expanded, setExpanded] = useState(false)
 
@@ -423,7 +399,6 @@ function InventoryRow({ item, onAdjust }) {
       borderRadius: 12,
       overflow: 'hidden',
     }}>
-      {/* Main row */}
       <button
         onClick={() => setExpanded(e => !e)}
         aria-expanded={expanded}
@@ -454,7 +429,6 @@ function InventoryRow({ item, onAdjust }) {
         </span>
       </button>
 
-      {/* Expanded detail */}
       {expanded && (
         <div style={{
           padding: '0 14px 16px',
@@ -462,7 +436,6 @@ function InventoryRow({ item, onAdjust }) {
           display: 'flex', flexDirection: 'column', gap: 12,
         }}>
 
-          {/* Qty adjust — consumable */}
           {item.type === 'consumable' && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, paddingTop: 14 }}>
               <span style={{ fontSize: '0.82rem', color: P.mid, flexShrink: 0 }}>Qty on hand:</span>
@@ -482,7 +455,6 @@ function InventoryRow({ item, onAdjust }) {
             </div>
           )}
 
-          {/* Qty adjust + condition — durable */}
           {item.type === 'durable' && (
             <div style={{ paddingTop: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -501,7 +473,6 @@ function InventoryRow({ item, onAdjust }) {
             </div>
           )}
 
-          {/* Detail cells */}
           <div style={{
             display: 'grid', gridTemplateColumns: '1fr 1fr',
             gap: '6px 20px', paddingTop: 4,
@@ -541,7 +512,6 @@ function InventoryRow({ item, onAdjust }) {
   )
 }
 
-// ── Sub-components ────────────────────────────────────────────────────────────
 
 // At-a-glance meta line: quantity (prominent) then muted secondary (cost / condition),
 // separated by a middot. Cost is omitted cleanly when absent — no placeholder.
@@ -632,8 +602,8 @@ function DetailCell({ label, value }) {
   )
 }
 
-// V4-EMPTYSTATE-001: this page's tinted medallion is what the shared primitive generalised, so
-// the chrome moved wholesale — only the glyph, the copy and the CTA stay here.
+// This page's tinted medallion is what the shared primitive generalised, so the chrome lives there
+// and only the glyph, the copy and the CTA stay here.
 function EmptyState() {
   return (
     <SharedEmptyState
@@ -645,7 +615,7 @@ function EmptyState() {
   )
 }
 
-// Skeleton placeholder rows (Dave 2026-07: skeleton over bare spinner). Pure P-token
+// Skeleton placeholder rows (skeleton over bare spinner). Pure P-token
 // shimmer; honors prefers-reduced-motion via the media query in the injected keyframes.
 function SkeletonList() {
   return (
@@ -681,7 +651,6 @@ function ErrMsg({ msg }) {
   return <div style={{ padding: 48, textAlign: 'center', color: P.terra }}>{msg}</div>
 }
 
-// ── Styles ────────────────────────────────────────────────────────────────────
 const addBtnStyle = {
   display: 'inline-flex', alignItems: 'center',
   backgroundColor: P.terra, color: P.white,
