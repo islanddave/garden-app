@@ -1,6 +1,4 @@
-// src/components/recipes/recipes.js
-// Put-Up release 4 (V4 §2.6, §3.1–§3.2, "pH"; F §1.5; recipe types and the final container per Dave
-// 2026-09-30) — the PURE half of the recipe library: the words a recipe surface says, the one request body
+// The PURE half of the recipe library: the words a recipe surface says, the one request body
 // the sheet sends, what "Make this" / "Made it as written" / "I made this" write, and the recipe rung of the
 // Put it up preview. The .jsx siblings paint these; they decide nothing a test cannot pin here.
 //
@@ -8,11 +6,11 @@
 // here, the way putItUp.js imports shelfLife.js), so a body the server would refuse is caught here with the
 // same words and there is no second copy to drift.
 //
-// ⚠ pH (V4 "pH"). His target pH lives in `notes`, which only recipe detail renders, verbatim. Nothing here
+// ⚠ pH. The cook's target pH lives in `notes`, which only recipe detail renders, verbatim. Nothing here
 // reads, parses, labels or compares a number out of the notes, and no surface but recipe detail is handed
 // them (the batch-facing read carries no notes at all).
 //
-// ⚠ Banned words (V4 §3.2, swept on the Put-Up surfaces): the keeps line is worded by place and length
+// ⚠ Banned words (swept on the Put-Up surfaces): the keeps line is worded by place and length
 // ("Fridge · 7 days"), never by the column's own name.
 import * as engine from '../../../lambda/preservation/shelfLife.js'
 import {
@@ -31,7 +29,7 @@ export { RECIPE_STORAGE_KINDS, RECIPE_NAME_MAX, RECIPE_TYPE_LABEL_MAX, KITCHEN_U
 // ── words ────────────────────────────────────────────────────────────────────────────────────────
 export const NEW_RECIPE_CTA = 'New recipe'
 export const MAKE_THIS_CTA = 'Make this'
-// Put-Up UX pass R1: the button says what it will do, and its confirm says where nothing goes. "Kept some?"
+// The button says what it will do, and its confirm says where nothing goes. "Kept some?"
 // starts a batch the way Make this does — there is no batch yet to put up.
 export const I_MADE_THIS_CTA = 'Made it, ate it all'
 export const MADE_CONFIRM_TEXT = 'Logs a make of this for today, every line as written. Nothing goes into the Pantry.'
@@ -41,10 +39,10 @@ export const MADE_AS_WRITTEN_CTA = 'Made it as written'
 export const SAVE_AS_RECIPE_CTA = 'Save as recipe'
 export const FOLLOWING_QUESTION = 'Following a recipe?'
 export const NEW_TYPE_CTA = 'New type…'
-// "Made it, ate it all" is a make with nothing kept (V4 §2.2): recorded as eaten ('consumed', "Ate it").
+// "Made it, ate it all" is a make with nothing kept: recorded as eaten ('consumed', "Ate it").
 export const NOTHING_KEPT_OUTCOME = 'consumed'
 
-// The recipe sheet's words (UX pass R1). Two pickers, each saying what it is for; a line asks for its name
+// The recipe sheet's words. Two pickers, each saying what it is for; a line asks for its name
 // and the amount as he would write it, and keeps the exact number behind one tap.
 export const TYPE_LABEL = 'What it makes'
 export const TYPE_HELP = 'Groups it in your recipe list.'
@@ -56,13 +54,13 @@ export const LINE_AMOUNT_LABEL = "Amount as you'd write it"
 export const AT_THE_END_LABEL = 'at the end'
 export const EXACT_AMOUNT_CTA = '▸ exact amount'
 export const KEEPS_LABEL = 'How long, and where'
-// What the length is counted from and to (Put-Up R2a, M4): it reads after the legend's "optional — ".
+// What the length is counted from and to: it reads after the legend's "optional — ".
 export const KEEPS_HELP = 'from put-up day to its discard date'
 export const KEEPS_N_LABEL = 'How many'
 export const MORE_PLACES_CTA = 'More…'
 export const COOKED_LABEL = 'Cooked after blending'
 
-// The word for each kind of place is the ONE list's (putup/placeKinds.js, contract 10): the recipe sheet's
+// The word for each kind of place is the ONE list's (putup/placeKinds.js): the recipe sheet's
 // chips and its keeps line name a kind exactly as the door does ("Counter or other", never a word of its own).
 export const STORAGE_KIND_WORDS = Object.freeze(Object.fromEntries(PLACE_KINDS.map(k => [k.kind, k.label])))
 export const KEEPS_UNIT_WORDS = Object.freeze({ day: ['day', 'days'], week: ['week', 'weeks'], month: ['month', 'months'] })
@@ -87,7 +85,7 @@ export function containerWords(label, size, unit, count = null) {
   return count != null && Number(count) > 1 ? `${Number(count)} × ${main}` : main
 }
 
-// The process jar and the final container, in one line each (Dave 2026-09-30: a make can be multi-vessel).
+// The process jar and the final container, in one line each (a make can be multi-vessel).
 export function vesselWords(r) { return r ? containerWords(r.vessel_label, r.vessel_size, r.vessel_unit, r.vessel_count) : null }
 export function bottleWords(r) {
   const c = r ? containerWords(r.bottle_label, r.bottle_size, r.bottle_unit) : null
@@ -119,10 +117,10 @@ function putUpCountWords(b) {
 }
 
 // The day a batch began, as shortDay takes it. `started_at` is an INSTANT (Start's "Today" sends
-// now.toISOString(), so 9:30 pm on Oct 1 in New York is stored as 2026-10-02T01:30:00.000Z): its day is the
-// reader's local day, never the instant's first ten characters, which are the UTC day. A date-only value has
-// no instant and is read from its parts — `new Date('2026-10-01')` is UTC midnight, which is Sep 30 west of
-// Greenwich. shortDay reads a Date by its local parts and text by its leading YYYY-MM-DD, so text that is
+// now.toISOString(), so 9:30 pm on Oct 1 in New York is stored as the 2nd at 01:30 UTC): its day is
+// the reader's local day, never the instant's first ten characters, which are the UTC day. A date-only value
+// has no instant and is read from its parts — `new Date('2026-10-01')` is UTC midnight, which is Sep 30 west
+// of Greenwich. shortDay reads a Date by its local parts and text by its leading YYYY-MM-DD, so text that is
 // not an instant is handed on as it came.
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/
 function batchDay(at) {
@@ -134,7 +132,7 @@ function batchDay(at) {
 // A batch made from the recipe, dated, with its ending in plain words at equal weight — never a reading.
 // Returns { when, ending } strings. The ending is batchClose.js's own label with the count after it; the one
 // label the count already says ("Put it up", when put-ups follow) is left out, so the row reads
-// "Mojo Oct · Oct 2 · 6 put-ups" and not an instruction (UX pass R1; the closed list drops it the same way).
+// "Mojo Oct · Oct 2 · 6 put-ups" and not an instruction (the closed list drops it the same way).
 export function madeBatchWords(b, now = new Date()) {
   const at = b?.started_at ?? b?.first_recorded_at ?? null
   const when = at ? shortDay(batchDay(at), now) : 'date not recorded'
@@ -204,7 +202,7 @@ export function sortTypes(types) {
     || (a.builtin ? (a.sort_order ?? 0) - (b.sort_order ?? 0) : String(a.label).localeCompare(String(b.label))))
 }
 
-// The type chips of the recipe sheet (UX pass R1): { front, rest }. `front` is what shows at open — the type
+// The type chips of the recipe sheet: { front, rest }. `front` is what shows at open — the type
 // the picker opened on (`pinned`), then the types this household's recipes already use (`usedIds`); `rest`
 // is every other type, behind "More types…". Both keep sortTypes' order, and `pinned` is the value at OPEN,
 // not the live one, so a chip never moves under a finger when another is tapped.
@@ -390,7 +388,7 @@ export function vesselPatch(r) {
   return Object.keys(out).length ? out : null
 }
 
-// F's line POST refuses salt_base 'peppers' (a 1b word) — such facts stay on the recipe, not the batch.
+// The line POST refuses salt_base 'peppers' — such facts stay on the recipe, not the batch.
 const LINE_SALT_BASES = new Set(['produce', 'water', 'all'])
 // "Made it as written": every line (by default the pot lines — `at the end` lines go in at the bottling)
 // as a keyed typed line, amounts asserted. An amount written with no number rides as the line's note.
@@ -420,7 +418,7 @@ export function asWrittenLines(r, { includeAtTheEnd = false } = {}) {
 
 // ── Put it up with a recipe: the first row's defaults and the recipe rung of the preview ───────────
 // The first row takes the recipe's final container and "cooked after blending" as DEFAULTS the person can
-// change (Dave 2026-09-30). Rows 2..N inherit from row 1 as they always do.
+// change. Rows 2..N inherit from row 1 as they always do.
 export function recipeFirstRow(r) {
   const row = newRow()
   if (!r) return row
@@ -435,9 +433,9 @@ export function recipeFirstRow(r) {
   return row
 }
 
-// V4 §3.1's second rung, for the preview line before Save: typed rows are the shipped preview's; a row at a
+// The recipe rung of the preview line before Save: typed rows are the existing preview's; a row at a
 // place of the recipe's storage kind shows the recipe's date, worded "from the recipe: <name>" with no
-// duration (§3.2). null = the recipe does not decide this row (the caller shows the engine's preview).
+// duration. null = the recipe does not decide this row (the caller shows the engine's preview).
 export function recipePreview({ row, when, recipe, now = new Date() }) {
   if (!recipe || !when?.date || row?.discard?.mode === 'none' || row?.discard?.mode === 'date') return null
   const res = engine.recipeUseBy(recipe, row?.place?.kind ?? null, String(when.date).slice(0, 10), { precision: when.precision })

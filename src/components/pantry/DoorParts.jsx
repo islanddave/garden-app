@@ -1,10 +1,9 @@
-// src/components/pantry/DoorParts.jsx
-// Put-Up B′ release 2 — the chip rows Put something up and Walk a place share (V4 §6.4, Appendix B):
+// The chip rows Put something up and Walk a place share:
 // the place chips, the method row (required: role=radiogroup + aria-required, role=radio chips) and the
 // discard-by choice. Plain SelectChip touch chips (48 px, 8 px gaps); no new visual design.
-// Put-Up UX pass R1: the methods' disclosure reads "Other ways…", a method chosen under other chips
+// The methods' disclosure reads "Other ways…", a method chosen under other chips
 // stays as one chip, and the discard choice takes its words from putItUp.DISCARD_LABELS.
-// Put-Up R2a: the three things a method can put directly under its row — Raw · In oil (RawInOilChips, ONE
+// The three things a method can put directly under its row — Raw · In oil (RawInOilChips, ONE
 // part for both doors), How dry? (HowDry) and the canning reference line (CanningLine).
 import React, { useState } from 'react'
 import { P } from '../../lib/constants.js'
@@ -17,7 +16,7 @@ import { AS_IS, methodLabel, OTHER_WAYS_LABEL, CANNING_LINE, HOW_DRY_LABEL, RAW_
 
 const row = { display: 'flex', flexWrap: 'wrap', gap: 8 }
 
-// Appendix B's "＋ Somewhere else" (a name + a kind), and Cellar among its kinds. The new place is a chip
+// "＋ Somewhere else" (a name + a kind), and Cellar among its kinds. The new place is a chip
 // with no id; the write that uses it finds or creates it (pantryApi.ensurePlaceId, or the route's own
 // find-or-create for a jar move).
 export { NEW_PLACE_KINDS } from '../putup/placeKinds.js'
@@ -80,7 +79,7 @@ export function PlaceChipRow({
 // preselected. Other ways… reveals every other method inside the same radiogroup. A method chosen
 // before the chips changed under it (a place picked afterwards, whose four do not include it) stays on
 // the row as ONE more chip — the row does not grow to every method because of it. `groupRef` receives
-// the radiogroup so a Save with no method can move focus to its first chip (V4 §2.2; focusFirstRadio).
+// the radiogroup so a Save with no method can move focus to its first chip (focusFirstRadio).
 export function MethodRow({ choices, value, onChange, what, idPrefix, disabled = false, invalid = false, groupRef = null, label = 'How was it put up?' }) {
   const [moreOpen, setMoreOpen] = useState(false)
   const chosenElsewhere = value && value !== AS_IS && !choices.chips.includes(value) ? [value] : []
@@ -117,9 +116,9 @@ export function focusFirstRadio(groupRef) {
   if (el && typeof el.focus === 'function') el.focus()
 }
 
-// Discard by: worked out (the engine) · a date from the label · no date (V4 §3.1) — in the ONE set of
+// Discard by: worked out (the engine) · a date from the label · no date — in the ONE set of
 // words every surface that asks it uses (putItUp.DISCARD_LABELS): a put-up "Work it out · From the label ·
-// No date"; a bought item "From the label · No date" (a discard date only if typed, §2.5 — `itemMode`
+// No date"; a bought item "From the label · No date" (a discard date only if typed — `itemMode`
 // leaves Work it out off, and its `auto` chip is the one that means no date, so it is pressed for either
 // of the two modes that store none). The list itself is putSomethingUp.discardOptions, which the refusal
 // for a label date not picked reads too.

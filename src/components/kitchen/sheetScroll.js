@@ -1,17 +1,15 @@
-// src/components/kitchen/sheetScroll.js
-// Put-Up 1a item 8 (V4 §6.6–§6.7: "the focused field under neither sticky band") — keeping the field
-// a cook is typing into clear of a sheet's PINNED footer.
+// Keeping the field a cook is typing into clear of a sheet's PINNED footer.
 //
-// THE DEFECT THIS EXISTS FOR, measured by gate:putup at 426×492 (keyboard up): Check on it's note
-// field, focused, sat at y425-489 under the pinned Save footer (top y411). The browser does not scroll
-// a focused field that is inside the scroll container's box, and a sticky footer covering it does not
-// count as out of view — so nothing moved it. The plan's own remedy is scroll-padding on the scroller,
-// but the scroller here is the shared <Sheet> panel (a frozen primitive another lane owns), so the
-// correction is made from inside the sheet instead: on focus, and again when the keyboard resizes the
-// viewport, the panel is scrolled just far enough that the focused field sits above the footer.
+// THE DEFECT THIS EXISTS FOR (seen in gate:putup at 426×492, keyboard up): Check on it's note field,
+// focused, sat under the pinned Save footer. The browser does not scroll a focused field that is inside
+// the scroll container's box, and a sticky footer covering it does not count as out of view — so nothing
+// moved it. The scroller here is the shared <Sheet> panel (a frozen primitive), so scroll-padding on it
+// is not available; the correction is made from inside the sheet instead: on focus, and again when the
+// keyboard resizes the viewport, the panel is scrolled just far enough that the focused field sits above
+// the footer.
 //
 // Pure DOM arithmetic, no layout assumptions: it reads the two rects it is given and moves only the
-// nearest [role="dialog"] ancestor's scrollTop.
+// nearest dialog-role ancestor's scrollTop.
 import { useCallback, useEffect } from 'react'
 
 export const FOOTER_GAP_PX = 8

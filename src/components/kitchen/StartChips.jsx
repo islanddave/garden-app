@@ -1,38 +1,25 @@
-// src/components/kitchen/StartChips.jsx
 // WHEN did it start, asked as ONE tap and NEVER as a grade — the shared Start sheet's chip row.
 //
-// V5-INFLIGHTBATCH-001 set the ruling this file still holds (API-CONTRACT §3.5): never ask for a
-// precision grade. Asking someone to rate the reliability of their own memory is a second decision
-// stacked on the one already avoided, and `exact` vs `day` are not humanly distinguishable anyway. So
-// precision is DERIVED from which chip was tapped — uncertainty is expressed by choosing a wider
-// chip, which is a natural act.
+// Never ask for a precision grade (API-CONTRACT §3.5): rating the reliability of one's own memory is a
+// second decision stacked on the one already avoided, and `exact` vs `day` are not humanly
+// distinguishable anyway. So precision is DERIVED from which chip was tapped — uncertainty is expressed
+// by choosing a wider chip, which is a natural act.
 //
-// ⚠ Put-Up 1a item 5 RETIRED the seven-chip Snap row that used to live here (Today · Yesterday · A few
-// days ago · About a week · 2–3 weeks · Longer / not sure · Pick a date, with the photo's taken_at as
-// the untouched default). Snap's "Something in the kitchen" now opens the ONE shared Start sheet, and
-// the plan's chips for that sheet are the four below, Today preselected (V4 §2.2, §6.3, Appendix B).
-// The retired row's characterization tests were re-pointed at this vocabulary in the same commit.
-// The Going-now "Set a start date →" editor (now on batch detail) keeps its own six chips in
-// goingNow.js; src/__tests__/startChipParity.test.js binds the labels the two tables share.
+// The chips are the four below, Today preselected. The Going-now "Set a start date →" editor (on batch
+// detail) keeps its own six chips in goingNow.js; src/__tests__/startChipParity.test.js binds the labels
+// the two tables share.
 //
 //     Today (preselected) · Yesterday · Earlier… · Not sure
 //
-// "Earlier…" opens the estimate chips. §3.6 defines six of them, each storing its window's START plus
-// one precision word, but THE LIVE CHECK decides which can be stored in 1a — read on prod AND staging
-// 2026-09-29 (pg_constraint, read-only), identical to the migration that created it
-// (v5-inflightbatch-001/0a-additive-ddl.sql:137-139):
-//     chk_kitchen_batch_start_precision: exact · hour · day · week · month · unknown
-// So 1a offered the three whose precision is in that list — This month (month), Last month (month),
-// Pick a date (day). Put-Up release 1b widens the CHECK (v5-putupmake-001/0a: + season, year) and this
-// row now offers all six §3.6 windows: "2–3 months ago" (season), "Earlier this year" (year) and "Last
-// year" (year) join, each computed from today and hidden when its window is empty — the SAME windows
-// Put it up's Earlier… offers (putup/putItUp.js estimateChips), so one estimate means one thing. "Not
-// sure" is the shipped biconditional's other legal state: no date + `unknown`
+// "Earlier…" opens the six estimate windows, each storing its window's START plus one precision word.
+// Every precision stored must be in the live CHECK chk_kitchen_batch_start_precision (exact · hour · day ·
+// week · month · unknown · season · year). The windows are computed from today and hidden when empty —
+// the SAME windows Put it up's Earlier… offers (putup/putItUp.js estimateChips), so one estimate means one
+// thing. "Not sure" is the other legal state of the biconditional: no date + `unknown`
 // (chk_kitchen_batch_start_pairing).
 import React from 'react'
-// Direct import, NOT via the forms barrel — the same idiom and the same reason CaptureFlow.jsx
-// records for buttonChrome: formsPrimitivesFreeze.test.js pins the barrel's export set exactly, and
-// labelChrome is shared chrome rather than a frozen primitive.
+// Direct import, NOT via the forms barrel: formsPrimitivesFreeze.test.js pins the barrel's export set
+// exactly, and labelChrome is shared chrome rather than a frozen primitive.
 import { labelChrome, optionalMarkChrome } from '../forms/formStyles.js'
 import Input from '../forms/Input.jsx'
 import SelectChip from '../forms/SelectChip.jsx'
@@ -94,7 +81,7 @@ function localYmd(d) {
 //   Yesterday  -> local midnight yesterday, day
 //   This month / Last month / 2–3 months ago / Earlier this year / Last year -> the window's START at
 //              local midnight, at its precision (derived dates start from the earliest the estimate
-//              allows, V4 §3.6); a window that is empty today is refused like an unanswered Earlier…
+//              allows); a window that is empty today is refused like an unanswered Earlier…
 //   Pick a date -> that local calendar day, day, anchored 'manual'
 //   Not sure   -> no date + unknown
 export function resolveSheetStart({ chip = 'today', earlier = null, pickedDate = '', now = new Date() } = {}) {
@@ -121,11 +108,11 @@ export function resolveSheetStart({ chip = 'today', earlier = null, pickedDate =
   return { error: START_ERRORS.earlier }
 }
 
-// The chip row. An OPTIONAL single-select (role="group" + aria-pressed, V4 §6.4) that always holds an
+// The chip row. An OPTIONAL single-select (role="group" + aria-pressed) that always holds an
 // answer — Today until another is tapped — so re-tapping the chosen chip keeps it: "Not sure" is how
 // "I don't know" is said, not an empty row. 48px touch chips, 8px gaps: the house SelectChip `touch`.
 // NOT wrapped in <Field>: Field takes exactly one control child, and this is a group of buttons plus a
-// conditional date input. `label` / `dateLabel` (release F): the batch detail's stage edit asks the
+// conditional date input. `label` / `dateLabel`: the batch detail's stage edit asks the
 // same question of a Log entry — "When was this?" — through this same row.
 export function SheetStartChips({
   value = 'today', onChange, earlier = null, onEarlierChange, pickedDate = '', onPickedDateChange,

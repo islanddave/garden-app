@@ -1,22 +1,21 @@
-// src/components/pantry/PantryRowSheet.jsx
-// Put-Up B′ release 2 (V4 §2.5 "Row sheet", §3.2, §6.3) — what opens when a Pantry row is tapped.
+// What opens when a Pantry row is tapped.
 //
-// A PUT-UP (jar), in this order: Move it… (the shipped move route) · Next time… (a batch jar writes the
+// A PUT-UP (jar), in this order: Move it… (the existing move route) · Next time… (a batch jar writes the
 // batch's `noted` stage row; a batchless jar appends a dated line to its notes) · Gave it away… (a use of a
-// count, default 1, fate given_away) · Went bad (fate discarded) · Edit… (the shipped jar editor, with
+// count, default 1, fate given_away) · Went bad (fate discarded) · Edit… (the existing jar editor, with
 // Remove… inside, two-step, refused with the server's reason) · then How it was made → (a put-up with no
-// batch, only when the host hands in `onHowItWasMade` — the batch-builder lane wires it) or What went in →
+// batch, only when the host hands in `onHowItWasMade`) or What went in →
 // (a put-up that came from a batch the host can name, only when the host hands in `onOpenBatch`).
 // A BOUGHT ITEM: Move it… (PATCH storage_location_id) · Edit… (name, how much, where it's from, when you
 // got it, a discard date from the label, notes; Remove… inside, two-step). Used it up is the row's own
 // inline action.
 //
-// WHAT A LABEL'S ENDING SAYS (Put-Up R2a, the ellipsis rule): "…" opens a step that asks before anything is
+// WHAT A LABEL'S ENDING SAYS (the ellipsis rule): "…" opens a step that asks before anything is
 // written; "→" leaves the sheet; a bare label acts at the tap. So Went bad reads bare only where it acts at
 // once, and the button INSIDE a panel (the Move panel's "Move it", the count panel's "Gave it away") is
 // bare: it is the tap that writes.
 //
-// WENT BAD (Put-Up UX pass R1). With several of a counted put-up left (pantryRows.severalLeft — the test
+// WENT BAD. With several of a counted put-up left (pantryRows.severalLeft — the test
 // the row's own Used one hangs on) it reads "Went bad…" and opens the count panel at ALL that is left;
 // otherwise (one left, a weighed bag, an uncounted row) it reads "Went bad" and acts at the tap. THE
 // REQUEST: at the top of the stepper, and at every one tap, `{ all_remaining: true, fate: 'discarded' }`
@@ -31,7 +30,7 @@
 // the list closes the sheet.
 //
 // Every one-tap write reports back through `onUsed` so the ROW shows "… · Undo" in place for the person
-// who acted (V4 §2.5); everything else through `onChanged`, and the host re-reads the list.
+// who acted; everything else through `onChanged`, and the host re-reads the list.
 import React, { useEffect, useId, useRef, useState } from 'react'
 import { P } from '../../lib/constants.js'
 import { T } from '../../lib/tokens.js'
@@ -73,10 +72,10 @@ const actionBtn = {
   fontSize: T.type.base, fontWeight: 600, color: P.dark,
 }
 
-// "2 × 8 oz woozy · put up sometime in August · produce from Warner Farms" — the shipped jar row's words,
+// "2 × 8 oz woozy · put up sometime in August · produce from Warner Farms" — the existing jar row's words,
 // said once in the sheet from the jar's own record. A put-up's source is where what WENT IN came from, not
-// where the jar came from, so a source that is not the garden reads "produce from <name>" (Put-Up R2a); a
-// planting reads "from <its name>", as it did.
+// where the jar came from, so a source that is not the garden reads "produce from <name>"; a
+// planting reads "from <its name>".
 export function jarRecordWords(rec, now = new Date()) {
   const parts = []
   const size = sizeWords(rec)
@@ -99,7 +98,7 @@ export function notesAsRead(notes, now = new Date()) {
   return String(notes ?? '').split(/\r?\n/).map(line => nextTimeWords(line, now)).join('\n')
 }
 
-// `onHowItWasMade(row)` is the batch-builder lane's door (useHowItWasMade().open); `canHowItWasMade(row)`
+// `onHowItWasMade(row)` is the host's door (useHowItWasMade().open); `canHowItWasMade(row)`
 // says whether this row may offer it (a put-up with no batch). Neither handed in → no door.
 // `onMoved({ row, place, saved })`: a move landed — the place tapped and the row the server answered (a
 // put-up's jar, a bought item's item), for the host's in-place line. `onChanged('moved')` still follows.
@@ -229,10 +228,10 @@ function RowSheetOpen({ row, fetch, onClose, onUsed, onChanged, onMoved, JarEdit
         )}
 
         {/* Move it — a panel, like the others (it rides this sheet's one Back entry). The rule line reads
-            the row's STORED basis and date and the kind of place it is in now. A bought item moves by a
-            PATCH of its place, with no When. What the write answered goes to the host through `onMoved` —
-            AFTER the sheet has closed and its Back entry is consumed (landAfterClose): the host brings its
-            line into view, and a scroll made while that entry is still being popped is undone by the pop. */}
+          * the row's STORED basis and date and the kind of place it is in now. A bought item moves by a
+          * PATCH of its place, with no When. What the write answered goes to the host through `onMoved` —
+          * AFTER the sheet has closed and its Back entry is consumed (landAfterClose): the host brings its
+          * line into view, and a scroll made while that entry is still being popped is undone by the pop. */}
         {panel === 'move' && (
           <MoveJarSheet open now={now} whenless={!jar} onBusyChange={setPanelBusy}
             jar={{ id: row.stock_id, label: row.name, storage_location_id: row.place?.id ?? null, storage_kind: row.place?.kind ?? null,
@@ -302,7 +301,7 @@ function CountPanel({ row, busy, idPrefix, start, question, label, cta, onCancel
   )
 }
 
-// "Next time…" (V4 §2.5): a batch jar writes its batch's `noted` stage row (the shipped stages route); a
+// "Next time…": a batch jar writes its batch's `noted` stage row (the existing stages route); a
 // batchless jar appends a dated line to its own notes (the PATCH's notes_append).
 function NextTimePanel({ row, fetch, onCancel, onSaved }) {
   const [text, setText] = useState('')
@@ -344,7 +343,7 @@ function NextTimePanel({ row, fetch, onCancel, onSaved }) {
   )
 }
 
-// Remove, two-step (V4 §2.5: "logged by mistake"; refused on a jar with uses or live lines, with the
+// Remove, two-step ("logged by mistake"; refused on a jar with uses or live lines, with the
 // server's reason and its path).
 function RemoveTwoStep({ onRemove, busy, testId }) {
   const [confirm, setConfirm] = useState(false)
@@ -360,11 +359,11 @@ function RemoveTwoStep({ onRemove, busy, testId }) {
   )
 }
 
-// A jar's Edit is the shipped jar editor (the page's RowEditor, handed in as `JarEditor`) over the full
+// A jar's Edit is the existing jar editor (the page's RowEditor, handed in as `JarEditor`) over the full
 // jar (GET /api/preservation/:id): the Pantry row carries only what the list shows.
 function JarEditPanel({ row, rec, recFailed, fetch, JarEditor, onCancel, onSaved, onRemoved }) {
   const [busy, setBusy] = useState(false)
-  // The editor's refusal (a string or describeRefusal's object — the shipped editor renders both), and
+  // The editor's refusal (a string or describeRefusal's object — the existing editor renders both), and
   // Remove's, kept apart so each says its own thing where it happened.
   const [editErr, setEditErr] = useState(null)
   const [removeErr, setRemoveErr] = useState(null)
@@ -406,7 +405,7 @@ function JarEditPanel({ row, rec, recFailed, fetch, JarEditor, onCancel, onSaved
 // A bought item's Edit, in this order: name, how much, where it's from, when you got it, a discard date
 // from the label, notes. ONE PATCH of what changed (presence-sentinel); an untouched field is an absent key.
 //
-// HOW MUCH and WHERE IT'S FROM (Put-Up R2a) are the door's own controls, and each is a PAIR on the wire:
+// HOW MUCH and WHERE IT'S FROM are the door's own controls, and each is a PAIR on the wire:
 // quantity_value + quantity_unit, source_kind + source_label. A pair travels WHOLE or not at all — the
 // server refuses one key without the other — and clearing a pair sends `null, null`. The amount goes as a
 // JSON number. Both open on what the LIST ROW carries (there is no read of one item). Where it's from is

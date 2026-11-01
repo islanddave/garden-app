@@ -1,7 +1,6 @@
-// src/components/pantry/WhereFromField.jsx
-// Put-Up R2a (prep) — "where it's from", the one control the door, the jar's Edit and the item's Edit share.
+// "Where it's from", the one control the door, the jar's Edit and the item's Edit share.
 // Controlled: the host holds { kind, label } and passes the heading (its own words for the question, which
-// differ between a put-up and an as-is item). FROZEN for the lanes of R2a; mounted nowhere by prep.
+// differ between a put-up and an as-is item).
 //
 //   kind    one of the server's source kinds (lambda/preservation/provenance.js VALID_SOURCE_KINDS), or null
 //   label   the typed name ('' when none)

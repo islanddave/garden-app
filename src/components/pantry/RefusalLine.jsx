@@ -1,5 +1,4 @@
-// src/components/pantry/RefusalLine.jsx
-// V4 §6.5 "409 handling" for every B′ write: the server's words by `code` (putUpErrors.describeRefusal),
+// The refusal line for every Pantry/Put-Up write: the server's words by `code` (putUpErrors.describeRefusal),
 // an uncoded 4xx in the server's own sentence, anything else (offline, a timeout, a 500) in the caller's
 // copy — and, for client_stale only, a user-tapped "Refresh now" (useAppUpdate().apply()), never an
 // automatic reload. Mounted only while a refusal is on screen, so the update hook costs nothing otherwise.

@@ -1,21 +1,18 @@
-// src/components/kitchen/KindChips.jsx
-// Put-Up 1a (V4 §2.3) — "What kind of batch?", asked as ONE OPTIONAL TAP, never as a required field.
+// "What kind of batch?", asked as ONE OPTIONAL TAP, never as a required field.
 //
-// WHY IT EXISTS NOW. `kind` has been nullable since V5-INFLIGHTBATCH-001 and nothing in the client
-// could write it, so every batch the app ever created carried kind NULL — and the shipped submersion,
-// pH-cadence and stall prompts are all gated on kind = 'ferment' (goingNow.js). They could never fire
-// on a real batch. One tap here is what wakes them, and it is the only thing that does.
+// WHY IT EXISTS. `kind` is nullable and, without this tap, every batch carries kind NULL — and the
+// submersion, pH-cadence and stall prompts are all gated on kind = 'ferment' (goingNow.js). They never
+// fire on a batch with no kind; one tap here is what wakes them.
 //
-// SIX CHIPS, stored in the live chk_kitchen_batch_kind vocabulary (the labels are the V4 names, the
+// SIX CHIPS, stored in the live chk_kitchen_batch_kind vocabulary (the labels are display names, the
 // values are the column's). `age` is still a valid stored value and is deliberately NOT offered: a
 // row already carrying it reads back fine, and nothing asks it again.
 //
-// "OTHER" NEEDS NO TEXT FROM RELEASE 1b (V4 §2.3). In 1a chk_kitchen_batch_kind_other refused kind
-// 'other' without a non-blank kind_other; 1b relaxes it (v5-putupmake-001/0a) and the Lambda twin with
-// it (contract-F §2.1 "kind 'other' with no text"). The Other chip still reveals its short text field,
-// now optional: a name typed there rides along as kind_other, and a blank one sends kind alone.
+// "OTHER" NEEDS NO TEXT: chk_kitchen_batch_kind_other no longer requires a non-blank kind_other, and the
+// Lambda twin agrees. The Other chip still reveals its short text field, optional: a name typed there
+// rides along as kind_other, and a blank one sends kind alone.
 //
-// OPTIONAL SINGLE-SELECT, so role="group" + aria-pressed (V4 §6.4) — never a radiogroup, which would
+// OPTIONAL SINGLE-SELECT, so role="group" + aria-pressed — never a radiogroup, which would
 // announce a required choice. 48px touch chips with 8px gaps, the house SelectChip `touch` variant.
 import React from 'react'
 import { P, T } from '../../lib/tokens.js'

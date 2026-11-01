@@ -1,24 +1,21 @@
-// src/components/pantry/NameSearchField.jsx
-// Put-Up B′ release 2 (V4 §2.5a "the name search"; §2.2 Put something up and Walk a place) — "What is
-// it?". One text field over the SHIPPED name search (GET /api/kitchen-batches/line-search: the
+// "What is it?". One text field over the name search (GET /api/kitchen-batches/line-search: the
 // household's plantings, and its put-ups) plus the Pantry rows the host already holds (put-ups and bought
 // items, each with its place). A typed name with no hit is kept as a name (a label).
 //
 // A hit fills what it knows: a planting → its planting, crop and variety ("Fresh, as picked" keeps them
 // on a bought-item save); a put-up or item → its name and crop. In the Walk (`placeId` set) a stock hit
 // AT this place reads "already here" and opens that row instead of logging it twice; one at another
-// place reads "That's this one → move it here" (V4 §2.2 duplicate prevention).
+// place reads "That's this one → move it here" (duplicate prevention).
 //
 // Every hit is ONE button (no nested interactive), 48 px tall, named from its visible words.
 //
 // `under` (optional): what a host puts DIRECTLY under the name, above the match list — so it is still on
 // screen with the keyboard up and the matches showing. Put something up puts its way out to Start a batch
-// there. Absent, the field is as it was.
+// there. Absent, the field has nothing there.
 //
-// Put-Up R2a (lane Dn; PLAN-R2-V2 "Name search (A4)", amendments C3, C6, D9, rulings Dn-1, Dn-2):
 //   · TWO PATHS. An answer with `hits` (an array) is walked in the SERVER's order and never re-sorted:
 //     plantings, put-ups, pantry items, crops and varieties, as ranked. An answer with no `hits` (an older
-//     Lambda, a stand-in) is read by its arms, as it always was.
+//     Lambda, a stand-in) is read by its arms.
 //   · A STOCK HIT KEEPS ITS PLACE. For a put-up or pantry-item hit the line and the pick ARE the host's
 //     Pantry row with that id when the host has one (it carries `place`, which "already here" and "move it
 //     here" key on). `stockRows` null means "use the server's stock hits". One jar is one line.
@@ -241,7 +238,7 @@ export default function NameSearchField({
   // in the commit of the render the answer landed in, and only if that render still shows the text it was asked
   // about: an answer that lands as the host changes the name (a save that clears the field for the next one) is
   // never written back over it.
-  // A LAYOUT effect, so that nothing comes between that render and this write (BUG-NAMESEARCHSTALECROPRACE-001).
+  // A LAYOUT effect, so that nothing comes between that render and this write (guard: PutUpR2Dn.nameSearch.test.jsx).
   // The passive effects of a render that outruns the scheduler's frame run a task after its commit, and a
   // keystroke (or the host clearing the name) in between was then overwritten with THAT render's name and the
   // crop: the letter just typed was taken back, and a save that landed there got its name back.

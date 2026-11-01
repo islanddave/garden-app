@@ -1,26 +1,24 @@
-// src/components/recipes/FollowingRecipe.jsx
-// Put-Up release 4 (V4 §2.2 "Following a recipe?" on the Start-a-batch sheet; its "pH" section) — collapsed, it reads
-// "Following a recipe? · tested recipes →"; open, it offers F's free-text reference (kitchen_batch.recipe_ref:
+// "Following a recipe?" on the Start-a-batch sheet — collapsed, it reads
+// "Following a recipe? · tested recipes →"; open, it offers the free-text reference (kitchen_batch.recipe_ref:
 // a card, a book, a link) and the tested-recipe caution in full, as reference content with a link-out
 // (FOODSAFETY-RULING-V101 §3: record and prompt, never assess). Optional; required at open: 0.
 //
-// Put-Up UX pass R1 (PLAN-V3 D10). The household's OWN recipes are no longer picked here: the native select
-// that listed them left this row for the Start sheet's "Start from · a recipe" (RecipePick, below), where a
-// pick can fill the batch's name. The ruled row itself is unchanged — its question, its collapsed
-// "· tested recipes →", its free-text reference and its caution behind the toggle, and the rule for when it
+// The household's OWN recipes are picked in the Start sheet's "Start from · a recipe" (RecipePick, below),
+// where a pick can fill the batch's name, not here. This row is the question, its collapsed
+// "· tested recipes →", the free-text reference and the caution behind the toggle, and the rule for when it
 // opens by itself (a recipe already chosen, or a reference already typed).
 //
 // `value` = { recipeId, recipeRef, recipe } — `recipe` is `{ id, name, kind }` of the recipe that was
 // picked, or null: the name is what "From the recipe: …" says, and the Start sheet fills an empty name and
-// the kind from it. `recipe` is OPTIONAL on a value read from storage: a draft a release-4 client stored
-// carries `recipeId` alone, and RecipePick names it from the list.
+// the kind from it. `recipe` is OPTIONAL on a value read from storage: an older draft carries
+// `recipeId` alone, and RecipePick names it from the list.
 // `locked` = a recipe the sheet was opened FROM (Make this): shown as chosen, and the list is not fetched.
 import React, { useEffect, useId, useMemo, useState } from 'react'
 import { P, T } from '../../lib/tokens.js'
 import { TESTED_RECIPE_NOTE, TESTED_RECIPE_LINK, RECIPE_REF_MAX } from '../putup/RecipeRefRow.jsx'
 import { FOLLOWING_QUESTION, groupByType } from './recipes.js'
 
-// 48px tall (Put-Up UX pass R1, F16: height only — the size and weight are as they were).
+// 48px tall (height only).
 const link = { display: 'inline-flex', alignItems: 'center', minHeight: T.buttonMinHeight, padding: '2px 0', background: 'none',
   border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: T.type.sm, fontWeight: 600, color: P.green }
 const box = { minHeight: T.tapMinHeight, width: '100%', padding: '6px 8px', border: `1px solid ${P.border}`, borderRadius: T.radiusButton,
@@ -47,7 +45,7 @@ export function clearRecipe(value) {
   return { ...value, recipeId: null, recipe: null }
 }
 
-// "Start from · a recipe" (PLAN-V3 D10): what was picked, with its undo, and — while `open` — the
+// "Start from · a recipe": what was picked, with its undo, and — while `open` — the
 // household's recipes as ROWS grouped by what they make, the way the Recipes segment lists them
 // (recipes.js groupByType). Twenty-odd recipes as chips would be eight wrapped rows of them.
 //
@@ -74,7 +72,7 @@ export function RecipePick({
     return () => { alive = false }
   }, [wanted, recipes, fetch])
 
-  // A release-4 draft's pick, named once the list is in hand.
+  // An older draft's pick (recipeId alone), named once the list is in hand.
   useEffect(() => {
     if (!unnamed || recipes == null) return
     const hit = recipes.find(r => r.id === value.recipeId)

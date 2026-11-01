@@ -1,14 +1,12 @@
-// src/components/pantry/putSomethingUp.js
-// Put-Up B′ release 2 (V4 §2.2 "Put something up" and "Walk a place", §3.1, §6.3, Appendix B) — the
-// pure half of the two doors that add stock one thing at a time: which method chips a place offers,
+// The pure half of the two doors that add stock one thing at a time: which method chips a place offers,
 // when "As is" is offered and what it is called, which table a save goes to, the preview line, and the
 // one request body per route. PutSomethingUpSheet.jsx and WalkPlace.jsx paint these.
 //
-// THE ONE TABLE RULE (V4 §2.1): if the household applied a method it is a put-up (POST /api/preservation),
+// THE ONE TABLE RULE: if the household applied a method it is a put-up (POST /api/preservation),
 // whatever the source; As is — bought, fresh or leftovers — is a pantry item (POST /api/pantry/items).
 // The person never picks a table; the method chip does.
 //
-// THE PREVIEW (§3.1): before Save, one line with the put-up date it uses and the discard date with its
+// THE PREVIEW: before Save, one line with the put-up date it uses and the discard date with its
 // basis, computed by putItUp.js previewDiscard — the SAME engine module (lambda/preservation/shelfLife.js)
 // the create route resolves with, so the date shown is the date stored. The completion line afterwards
 // is built from what the server answered, never from this preview.
@@ -32,11 +30,11 @@ export const DOOR_TITLE = 'Put something up'
 export const DOOR_CTA = 'Put something up'
 export const DOOR_SHEET = 'putsomethingup'
 export const METHOD_REQUIRED_TEXT = 'How was it put up? Pick one — or As is.'
-// Every disclosure says what it holds (there were two controls called "More" 60 px apart): the methods'
-// one, and the options' — which hold different things on the door and on the Walk.
+// Every disclosure says what it holds (never two controls both called "More"): the methods' one, and the
+// options' — which hold different things on the door and on the Walk.
 export const OTHER_WAYS_LABEL = 'Other ways…'
 export const WALK_OPTIONS_LABEL = 'Raw or in oil, discard by, another date'
-// Put-Up R2a — the door has TWO: A holds what changes the date line (When · In oil · Discard by), B what is
+// The door has TWO: A holds what changes the date line (When · In oil · Discard by), B what is
 // record only (where it's from · notes). A names In oil only where it is offered (a put-up method); B is
 // "Notes" alone for a planting, which gets no where-from row (its origin is the planting).
 export const DOOR_OPTIONS_LABEL = 'Date, discard by'
@@ -61,11 +59,11 @@ export const WHERE_REQUIRED_TEXT = 'Where does it live? Pick a place.'
 
 const FREEZER_KINDS = new Set(['deep_freezer', 'fridge_freezer'])
 
-// Before a place is picked there is no kind to rank by: the general four (Put-Up UX pass R1), so the
-// row is never just "As is" and a link. A place then puts ITS four in their place.
+// Before a place is picked there is no kind to rank by: the general four, so the row is never just
+// "As is" and a link. A place then puts ITS four in their place.
 export const GENERAL_METHODS = Object.freeze(['whole_freeze', 'can_water_bath', 'ferment', 'dehydrate'])
 
-// Appendix B "Method chips on Put something up and the Walk, by place kind" — ≤ 4, a fixed seed order.
+// Method chips on Put something up and the Walk, by place kind — at most 4, a fixed seed order.
 export const PLACE_KIND_METHODS = Object.freeze({
   deep_freezer: ['whole_freeze', 'blanch_freeze', 'roast_freeze', 'pesto'],
   fridge_freezer: ['whole_freeze', 'blanch_freeze', 'roast_freeze', 'pesto'],
@@ -106,7 +104,7 @@ export function doorFromLabel(what) { return isPlantingHit(what) ? DOOR_FROM_LAB
 export function doorNotesPlaceholder(method) { return isPutUpMethod(method) ? DOOR_NOTES_PLACEHOLDER_PUT_UP : DOOR_NOTES_PLACEHOLDER }
 export function whereFromHeading(method) { return isPutUpMethod(method) ? MADE_WITH_HEADING : WHERE_FROM_HEADING }
 
-// ── The canning line (R2a A7) ────────────────────────────────────────────────────────────────────
+// ── The canning line ────────────────────────────────────────────────────────────────────
 // A quoted reference with a link-out, shown under the method row for the two canning methods on the door
 // and the Walk. It says what each method is for and reads nothing about this jar: it never compares,
 // colours, gates or changes a date. ONE constant; DoorParts.CanningLine is its one part.
@@ -130,7 +128,7 @@ export function methodSlot(method) {
   return null
 }
 
-// ── Size (R2a A1) ────────────────────────────────────────────────────────────────────────────────
+// ── Size ────────────────────────────────────────────────────────────────────────────────
 // `size`: { value: the typed text, unit: a stored unit | null } — the size of EACH container. The column
 // holds the TOTAL (jarWords "QUANTITY IS THE TOTAL"), so what is sent is size × how many. The typed text is
 // read through AmountField.parseAmount FIRST: it takes a comma ("0,5"), and jarWords.totalOfEach — size
@@ -158,7 +156,7 @@ export function sizeEcho(size, count) {
   return `${n} × ${qtyText(t.each)} ${t.unit} = ${qtyText(t.total)} ${t.unit} in all`
 }
 
-// "Save · frozen", "Save · as is" — the button names the result (V4 §2.2).
+// "Save · frozen", "Save · as is" — the button names the result.
 const SAVE_WORDS = {
   whole_freeze: 'frozen', blanch_freeze: 'frozen', roast_freeze: 'frozen', dehydrate: 'dried', powder: 'dried',
   can_water_bath: 'canned', can_pressure: 'canned', ferment: 'fermenting', ferment_mash: 'fermenting',
@@ -171,13 +169,13 @@ export function saveLabel(method, what = null) {
 }
 
 // ── When ─────────────────────────────────────────────────────────────────────────────────────────
-// The door: Today by default; Yesterday / Earlier… under More (putItUp.resolveWhen, §3.6 windows).
+// The door: Today by default; Yesterday / Earlier… under More (putItUp.resolveWhen, estimate windows).
 export function doorWhen({ chip = 'today', estimate = null, pickedDate = '', now = new Date() } = {}) {
   return resolveWhen({ chip, estimate, pickedDate, now })
 }
 
-// The Walk: one date per sitting from the §3.6 estimate chips, Not sure included. Not sure stores the
-// walk day with precision `unknown` (§3.6) — that jar gets no table or house date (§3.1).
+// The Walk: one date per sitting from the estimate chips, Not sure included. Not sure stores the
+// walk day with precision `unknown` — that jar gets no table or house discard date.
 export const WALK_NOT_SURE = { id: 'unsure', label: 'Not sure' }
 export function walkWhenChips(now = new Date()) {
   return [...estimateChips(now), WALK_NOT_SURE]
@@ -197,7 +195,7 @@ export function walkWhen({ choice, pickedDate = '', now = new Date() } = {}) {
   return { when: { date: toYmd(c.start), precision: c.precision }, words: putUpDateWords(toYmd(c.start), c.precision, { now }) }
 }
 
-// ── The preview line (§3.1) ──────────────────────────────────────────────────────────────────────
+// ── The preview line ──────────────────────────────────────────────────────────────────────
 // `discard`: { mode: 'auto' | 'none' | 'date', date }. A put-up resolves auto through the engine; a
 // bought item has a discard date only if one is typed — and SAYS SO when none is ("got it today · no
 // discard date"), so the line states both things a save will store.
@@ -252,7 +250,7 @@ export const discardOptions = (itemMode) => (itemMode
   ? [{ id: 'date', label: DISCARD_LABELS.date }, { id: 'auto', label: DISCARD_LABELS.none }]
   : [{ id: 'auto', label: DISCARD_LABELS.auto }, { id: 'date', label: DISCARD_LABELS.date }, { id: 'none', label: DISCARD_LABELS.none }])
 
-// { error, field } for the three required answers (§6.3: what · where · how), else null. A "date from
+// { error, field } for the three required answers (what · where · how), else null. A "date from
 // the label" chosen with no date is refused rather than silently saved as the worked-out one — and the
 // way out it names is the method's own `auto` chip ("Work it out"; a bought item's "No date").
 export const discardDateText = (method) =>
@@ -268,11 +266,10 @@ export function doorError({ what, place, method, discard = null }) {
 
 // POST /api/preservation (the 1b create). `storageLocationId` is the place's id (a template chip is made
 // first, pantryApi.ensurePlaceId). An absent use_by_target is the engine's date; null is "no date · set
-// by hand"; a date is his (§3.1, key presence). `is_raw` / `in_oil` are sent ONLY when chosen (true), and
+// by hand"; a date is his (key presence). `is_raw` / `in_oil` are sent ONLY when chosen (true), and
 // Raw only for a method that allows it — an untouched save's body is exactly what it was, and the route
 // ignores a key it does not know, so a misspelt one would store nothing and say nothing.
-// Put-Up R2a — three OPTIONAL named arguments; a call passing none returns the body it always did, byte for
-// byte. `size` ({ value, unit }, the size of EACH container): quantity_value is the TOTAL, a JSON NUMBER
+// Three OPTIONAL named arguments; a call passing none returns the plain body, byte for byte. `size` ({ value, unit }, the size of EACH container): quantity_value is the TOTAL, a JSON NUMBER
 // (=== Number(totalOfEach(size, count))), with quantity_unit — and when there is no total BOTH keys are
 // absent, never a Number(null). `source` ({ kind, label }): source_kind, and source_label when a name was
 // typed for a kind that takes one; a planting What ALWAYS sends own_garden and no label, whatever the state
@@ -317,8 +314,7 @@ export function jarBody({
 }
 
 // POST /api/pantry/items (the contract shape). A planting hit keeps its planting and crop.
-// Put-Up R2a — two OPTIONAL named arguments; a call passing none returns the body it always did, byte for
-// byte. `amount` ({ value, unit }): quantity_value, a JSON NUMBER (the route refuses a string), with
+// Two OPTIONAL named arguments; a call passing none returns the plain body, byte for byte. `amount` ({ value, unit }): quantity_value, a JSON NUMBER (the route refuses a string), with
 // quantity_unit — the amount as logged, never a count and never "left". `source` ({ kind, label }) as on a
 // put-up, EXCEPT that a planting What sends plant_id and NO source keys: an item's garden origin is its
 // planting (nothing reads an item's source_kind while plant_id is set, and sending one would turn every
@@ -339,13 +335,13 @@ export function itemBody({ key, what, place, when, discard, notes = '', amount =
   return body
 }
 
-// ── A replayed item create (BUG-PUTUPREPLAYDROPSEDIT-001; kitchen/idempotencyKey.js) ─────────────────────
+// ── A replayed item create (kitchen/idempotencyKey.js) ───────────────────────────────────────────────
 // The item's PATCH carries every key a create body can hold EXCEPT the planting (the Lambda's
 // ITEM_PATCH_KEYS), so plant_id is the fixed half of an item send's print. itemPatchOf is a create body as
 // that PATCH, for the item a replay answered with (`item`): a key the body left out goes as null (the create
 // stored nothing there; the PATCH is presence-sentinel, and each pair travels together), and the place goes
 // by id. The crop a typed name resolved to goes ONLY when it is not the item's already — so a change that
-// leaves the crop alone sends the body the PATCH has always taken — and never for a planting, whose crop is
+// leaves the crop alone sends the plain PATCH body — and never for a planting, whose crop is
 // the planting's (the Lambda refuses it there).
 // ITEM_PATCH_READS is how each field of that PATCH is read back off the item (idempotencyKey.js holdsOwnUpdate):
 // a date as its day, an amount as a number, and a date sent with no precision as the 'day' the route stores.
@@ -418,7 +414,7 @@ export function itemHolds(body, item, what) {
 // A put-up's name is its label; an item's is its name.
 const quoted = (item) => { const name = String(item?.name ?? item?.label ?? '').trim(); return name ? `“${name}”` : null }
 
-// ── A replayed put-up create (BUG-PUTUPREPLAYREST-001; kitchen/idempotencyKey.js) ───────────────────────
+// ── A replayed put-up create (kitchen/idempotencyKey.js) ─────────────────────────────────────────────
 // PATCH /api/preservation/:id carries the name, the method, how many, the size, the discard date, Raw / In
 // oil / How dry, the notes and where it is from (the Lambda's JAR_PATCH_KEYS). It does NOT carry the date it
 // was put up, the place, or the crop / variety / planting — and it never re-works the grams a WEIGHED jar was
@@ -502,7 +498,8 @@ export function jarHolds(body, jar, what, opts = {}) {
   if (jarFixedPart(body, jar, what, opts)) return false
   return rowHoldsFields(jar, jarPatchOf(body), JAR_PATCH_READS)
 }
-// ── ONE KEY, TWO TABLES (QA I-1) ─────────────────────────────────────────────────────────────────────────
+
+// ── ONE KEY, TWO TABLES ──────────────────────────────────────────────────────────────────────────────
 // The door and the Walk keep ONE key for whichever way the thing is saved, and the two ways are two routes with
 // two tables: a put-up's key lives in preservation_log, an As is item's in pantry_item, and neither route looks
 // in the other's. So once a create has gone out under the key on one route — answered, or its answer lost — a
@@ -510,25 +507,24 @@ export function jarHolds(body, jar, what, opts = {}) {
 // and never under a new key (that would be the same second thing). A key's route is the route its FIRST print
 // went out on: a put-up's print starts "jar:" (jarPrint), an item's never does. otherRouteSent answers that
 // route when it is not the one being saved on now, else null. (Under this rule every print of a key is on one
-// route. A draft stored by a bundle from before it can hold both; it stays on its first, so it is never left
-// with no route at all.)
+// route. An older stored draft can hold both; it stays on its first, so it is never left with no route.)
 export const printRoute = (print) => (typeof print === 'string' && print.startsWith('jar:') ? 'jar' : 'item')
 export function otherRouteSent(sent, route) {
   const first = (Array.isArray(sent) ? sent : []).find(s => typeof s === 'string')
   if (first == null) return null
   return printRoute(first) === route ? null : printRoute(first)
 }
-// A WALK'S WAY ON (re-review I-E). A walk's group has no close, and it keeps its key until the walk is ended: a
+// A WALK'S WAY ON. A walk's group has no close, and it keeps its key until the walk is ended: a
 // refusal with no way through in the group leaves it spent for whatever is typed there next. So every such line
 // said in a walk ends with the way on — in ONE wording, this one, wherever the Walk says it.
 const WALK_ON = 'end this walk and start another'
 export const WALK_NEXT_TEXT = `To log more here, ${WALK_ON}.`
-// Whether a line said in a walk ends with that way on (the Walk reads it: such a group is spent — delta F-2).
+// Whether a line said in a walk ends with that way on (the Walk reads it: such a group is spent).
 export const saysWalkOn = (text) => typeof text === 'string' && text.endsWith(`${WALK_ON}.`)
 // Said for that refusal. `first` is the route the earlier Save went out on; `row` is the row it is KNOWN to
 // have made (a replay answered with it in the door that is open) or null when its answer never came back —
 // then nothing says it is in the Pantry, only that it may be, and the way on is to finish THAT Save. `walk`:
-// a walk's group has no close; its way to a new one is to end the walk. `offered` (re-review M-A): whether the
+// a walk's group has no close; its way to a new one is to end the walk. `offered`: whether the
 // first way's chip is on screen where he is now. A planting has no “Fresh, as picked” at a freezer, so "choose
 // it again" would ask for a chip that is not there: the door names the row that brings it back (the place),
 // and a walk — whose place is the walk's own — says where to look and the way on.
@@ -552,13 +548,13 @@ export function otherRouteText({ first, row = null, what = null, walk = false, o
 // Said when an earlier Save made the jar and this one differs from it in a part no PATCH carries: nothing is
 // written, and the form stays as it is. `jar` is the row the replay answered with; `part` is jarFixedPart's.
 // Putting that part back DOES let the next Save through (it is read off the row) — so the sentence NAMES what
-// the jar holds, which is what to put back (QA I-6: "as it was" is not always what the jar holds — the first
+// the jar holds, which is what to put back ("as it was" is not always what the jar holds — the first
 // Save may never have arrived and a later one landed). It says a thing cannot be changed only where no screen
 // changes it (the date; the planting or crop), and where the Pantry can (the place, the name, the size) it says
 // "from here" and points there. `placeLabel` is the jar's place as the caller's own list names it; with none —
 // a place that is gone, or a list that did not load — it cannot be picked here, and the sentence does not ask.
 // The key is kept. `walk`: the three lines that cannot name what to put back leave a walk's group spent, and end
-// with the walk's way on (re-review I-E); the ones that name it are the door's own — "tap Save" is the way on.
+// with the walk's way on; the ones that name it are the door's own — "tap Save" is the way on.
 const containersHeld = (jar) => {
   const n = Number(jar?.package_count)
   if (!Number.isInteger(n) || n < 1) return null
@@ -607,7 +603,7 @@ export function replayFixedText(item) {
 // afterReplay 'stale'): nothing is written, the form stays, and the KEY IS KEPT — Save again is refused
 // again, and can never add a second item. It says only what is certain (saved earlier; this Save changed
 // nothing) and promises no way to add from here. A replayed item can be one that was removed since. `walk`: the
-// group is spent, and the line ends with the walk's way on (re-review I-E).
+// group is spent, and the line ends with the walk's way on.
 export function replayStaleText(item, { walk = false } = {}) {
   const name = quoted(item)
   const on = walk ? ` ${WALK_NEXT_TEXT}` : ''
@@ -616,8 +612,8 @@ export function replayStaleText(item, { walk = false } = {}) {
 }
 // Said when an earlier Save made the item and the change could not be put on it just now: the item is there.
 // `why` is the server's own sentence when it refused the change in words; `lost` is true when no answer came
-// back at all or the server answered with an error of its own, a 5xx (the change may be on it). "An earlier Save", never "the first": the first may never have arrived
-// and a later one landed (QA M-7).
+// back at all or the server answered with an error of its own, a 5xx (the change may be on it). "An earlier
+// Save", never "the first": the first may never have arrived and a later one landed.
 export function replayUnsavedText(item, { why = '', lost = false } = {}) {
   const name = quoted(item)
   const head = `${name ? `${name} is already in the Pantry` : 'This is already in the Pantry'} — an earlier Save went through.`
@@ -625,7 +621,7 @@ export function replayUnsavedText(item, { why = '', lost = false } = {}) {
   return lost ? `${head} This change may not have saved — try again.` : `${head} This change did not save — try again.`
 }
 
-// The completion line, from what the server answered (V4 §2.2 "completion in place on the Pantry"):
+// The completion line, from what the server answered (completion is shown in place on the Pantry):
 // a put-up is the created row (POST /api/preservation answers the row itself); an item is `{item}`'s.
 export function completionWords({ route, saved, place = null, now = new Date() }) {
   const name = String((route === 'item' ? saved?.name : saved?.label) ?? '').trim() || 'It'

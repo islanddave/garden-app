@@ -1,44 +1,42 @@
-// src/components/kitchen/StartBatchSheet.jsx
-// Put-Up 1a item 4 (V4 §2.2 "Start a batch", §6.2–§6.6) — ONE start sheet, two doors: the quiet
-// "Start a batch" at the top of Going now (mounted by PutUp.jsx, the page lane) and Snap's "Something
-// in the kitchen" (CaptureFlow.jsx). The same sheet in both, so a batch cannot be started two ways.
+// ONE start sheet, two doors: the quiet "Start a batch" at the top of Going now (mounted by PutUp.jsx)
+// and Snap's "Something in the kitchen" (CaptureFlow.jsx). The same sheet in both, so a batch cannot be
+// started two ways.
 //
-// THE CONTRACT with the page lane: `{ open, onClose, onStarted(batch) }`, plus two OPTIONAL props
-// only Snap passes — `photo` (the File it already holds) and `photoPreview` (its object URL).
+// CONTRACT with the host: `{ open, onClose, onStarted(batch) }`, plus two OPTIONAL props only Snap
+// passes — `photo` (the File it already holds) and `photoPreview` (its object URL).
 //   · onStarted(batch) fires AFTER the sheet has closed itself (onClose) AND its own Android-Back
 //     entry has been consumed. So the host may push OR replace freely in onStarted: a push lands as
 //     [page, page?batch=] and a replace can take the entry UNDER the sheet (Snap's /capture) — neither
 //     strands a dead Back entry mid-stack (the SheetRowLink hazard). If no Back entry was armed
 //     (flags off, no provider) it fires at once.
 //
-// FIELDS (the Jen rule, V4 §6.3 — required at open: 1):
-//   · Name it — the label, the ONLY required field. ("What is it?" until Put-Up UX pass R1: Dave could not
-//     tell that this is where a ferment's name goes.)
-//   · Start from — R1 (PLAN-V3 D10), optional, directly under the name: two 48px buttons, "a recipe" and
-//     "a past batch". Not a radiogroup and nothing required: each opens a list, and a pick fills an EMPTY
-//     name (never a typed one) and an unpicked kind, shows what was picked, and can be undone.
+// FIELDS (required at open: 1):
+//   · Name it — the label, the ONLY required field.
+//   · Start from — optional, directly under the name: two 48px buttons, "a recipe" and "a past batch".
+//     Not a radiogroup and nothing required: each opens a list, and a pick fills an EMPTY name (never a
+//     typed one) and an unpicked kind, shows what was picked, and can be undone.
 //       a recipe     — the household's recipes as rows grouped by what they make (recipes/FollowingRecipe.jsx
 //                      RecipePick); the pick is recipe_id on the create.
-//       a past batch — B′ release 3's "Like a past batch, except…" (putup/LikeBatchPicker.jsx, here with
-//                      this row as its door): copies that batch's lines and kind in (putup/likeBatch.js);
-//                      the copied lines are posted, keyed, to POST /:id/inputs right after the create, and
-//                      are then ordinary lines of the new batch to edit or take out.
-//   · When did it start? — Today (preselected) · Yesterday · Earlier… · Not sure; Earlier… offers only
-//     what the live CHECK can store in 1a (see StartChips.jsx SHEET_START_CHIPS).
+//       a past batch — "Like a past batch, except…" (putup/LikeBatchPicker.jsx, here with this row as its
+//                      door): copies that batch's lines and kind in (putup/likeBatch.js); the copied lines
+//                      are posted, keyed, to POST /:id/inputs right after the create, and are then ordinary
+//                      lines of the new batch to edit or take out.
+//   · When did it start? — Today (preselected) · Yesterday · Earlier… · Not sure; Earlier… offers
+//     the estimate windows of StartChips.jsx EARLIER_CHIPS.
 //   · Photo — optional; Snap hands its photo in, Going now can add one.
-//   · "What kind of batch?" — collapsed, optional (KindChips). "Other" still asks its short name in 1a.
-//   · "Following a recipe? · tested recipes →" — the ruled row, unchanged: a free-text reference and the
-//     tested-recipe caution behind its toggle.
-// The salt/brine note Snap used to ask at pack time is NOT here: the plan puts Salt with What went in
-// in release 3 (V4 §2.2) — recorded in the lane report as a disclosed change.
+//   · "What kind of batch?" — collapsed, optional (KindChips). "Other" still asks its short name.
+//   · "Following a recipe? · tested recipes →" — a free-text reference and the tested-recipe caution
+//     behind its toggle.
+// There is no salt/brine field here: Salt is entered with What went in.
 //
 // ONE WRITE: the photo (if any) is uploaded first into the inbox as `pending_tag` with no parent —
 // the one parentless shape photos_must_have_parent admits — then POST /api/kitchen-batches carries
 // its id as cover_photo_id. A retry after a failed POST reuses the already-uploaded photo rather than
-// uploading it twice. No idempotency key in 1a (they arrive with release 1b); `busy` + a synchronous
-// ref refuse a second Start it, and Back / the backdrop are refused mid-write.
+// uploading it twice. The create carries an idempotency key (kitchen/idempotencyKey.js), so a retry whose
+// first answer was lost is a replay, not a twin; `busy` + a synchronous ref refuse a second Start it,
+// and Back / the backdrop are refused mid-write.
 //
-// A REPLAYED START (BUG-PUTUPREPLAYREST-001; kitchen/idempotencyKey.js; the precedent on this PUT is
+// A REPLAYED START (guard: PutUpReplayRest.start.test.jsx; the precedent on this PUT is
 // putup/HowItWasMadeSheet.jsx). A Start it whose answer was lost, a change, and Start it again is answered
 // with the batch the FIRST tap made. A changed name, kind or typed recipe reference goes onto it through the
 // batch's own merge PUT and the sheet lands on what the PUT answered — when the batch is this sitting's (sent
@@ -54,33 +52,34 @@
 // What has gone out under the key rides in the draft as `sent`; its print is of what was CHOSEN — the start
 // chip, never the instant "Today" came to.
 //
-// WHAT FOLLOWS A START (QA I-3). The create writes the batch and its `started` row in one statement and nothing
+// WHAT FOLLOWS A START. The create writes the batch and its `started` row in one statement and nothing
 // else (lambda/preservation/kitchenRoutes.js createBatch). The lines copied from a past batch and the recipe's
 // process jar are SEPARATE requests, sent only once the create has been answered — so a tap whose answer was
 // lost never sent them. A refused replay does not leave them off in silence:
 //   · the batch is this sheet's own (every body under the key went out from the sheet that is open now, and
-//     nothing but this sheet has written to it since) → they are sent AS
-//     THE TAP THAT WENT THROUGH DESCRIBED THEM, never from the edited form: the copied lines when every tap
-//     under the key went out with this same pick (each line carries its own key, and POST /:id/inputs replays a
-//     key it holds — lineRoutes.js addKeyedLines — so sending them again adds nothing); the jar when the BATCH
-//     says it was started from this recipe and holds no jar (a merge PUT of fixed values);
+//     nothing but this sheet has written to it since) → they are sent AS THE TAP THAT WENT THROUGH DESCRIBED
+//     THEM, never from the edited form: the copied lines when every tap under the key went out with this same
+//     pick (each line carries its own key, and POST /:id/inputs replays a key it holds — lineRoutes.js
+//     addKeyedLines — so sending them again adds nothing); the jar when the BATCH says it was started from
+//     this recipe and holds no jar (a merge PUT of fixed values);
 //   · the batch is not (a draft restored from storage, or touched by someone since), or which pick the landed
 //     tap had is not known → nothing is sent.
-// HOW LONG AGO IT WAS MADE IS NOT ASKED HERE (delta F-4). The ten-minute bound is for writing the form over the
-// batch's own fields (the name, the kind, the reference). A keyed line adds nothing twice and the jar goes only
-// onto a batch with none, so neither can write over anything: a tap from the same sheet after a long loss of
-// signal still adds them.
+// HOW LONG AGO IT WAS MADE IS NOT ASKED HERE. The ten-minute bound is for writing the form over the batch's
+// own fields (the name, the kind, the reference). A keyed line adds nothing twice and the jar goes only onto a
+// batch with none, so neither can write over anything: a tap from the same sheet after a long loss of signal
+// still adds them.
 // Either way the sentence says what this tap did and what was left off (startRefusalText), and a change whose
 // PUT failed says what did not follow it (startUnsavedText).
-// A REPLAY THAT NEEDS NOTHING PUT ON IT IS HELD TO THE SAME TEST (re-review I-C). One body under the key, or a
-// batch that already holds the form, is "started, as sent" — and may still be an earlier sitting's batch (a
-// stored Make this draft tapped again most of a day on) or one somebody has written to since. The lines and the
-// jar are then not this tap's to add: neither is sent, and when one of them is missing from the batch the sheet
-// stays and says so in the refusal's own words. With nothing left off there is nothing to say, and it lands.
-// THE RECIPE'S JAR GOES ONLY ONTO A BATCH THAT HOLDS NO JAR (delta F-3), on every path. "This sheet's own PUT"
-// vouches for the four fields that PUT sends and not for the jar, so a batch read as this sitting's may hold a
-// jar somebody set since. A batch that holds one — the recipe's, or one somebody chose — is sent nothing for the
-// jar and told nothing about the recipe's: it is not left off, and "open the batch to add it" would be to replace theirs.
+// A REPLAY THAT NEEDS NOTHING PUT ON IT IS HELD TO THE SAME TEST. One body under the key, or a batch that
+// already holds the form, is "started, as sent" — and may still be an earlier sitting's batch (a stored Make
+// this draft tapped again most of a day on) or one somebody has written to since. The lines and the jar are
+// then not this tap's to add: neither is sent, and when one of them is missing from the batch the sheet stays
+// and says so in the refusal's own words. With nothing left off there is nothing to say, and it lands.
+// THE RECIPE'S JAR GOES ONLY ONTO A BATCH THAT HOLDS NO JAR, on every path. "This sheet's own PUT" vouches for
+// the four fields that PUT sends and not for the jar, so a batch read as this sitting's may hold a jar
+// somebody set since. A batch that holds one — the recipe's, or one somebody chose — is sent nothing for the
+// jar and told nothing about the recipe's: it is not left off, and "open the batch to add it" would be to
+// replace theirs.
 //
 // <Sheet armsBack>, size full; the draft survives a dismiss (kitchen/sheetDraft.js, sheet 'start',
 // batch 'new'); confirmOnDirty off; the reload gate is held while anything is typed or a write is in
@@ -105,16 +104,16 @@ import { useFieldsClearOfFooter, scrollClearOfFooter } from './sheetScroll.js'
 import { readCaptureMeta } from '../../lib/imagePipeline.js'
 import { mintKey, sendPrint, noteSent, afterReplay, whenChoice, answerLost, sameFact, answeredNo, updateSent, holdsOwnUpdate, rowIsThisSittings } from './idempotencyKey.js'
 import LikeBatchPicker from '../putup/LikeBatchPicker.jsx'
-// Put-Up release 4 — "Following a recipe?" (pick one of the household's recipes → recipe_id, or F's free text),
-// and Make this's prefill (a recipe's name, kind and process jar).
+// "Following a recipe?" (pick one of the household's recipes → recipe_id, or free text), and Make this's
+// prefill (a recipe's name, kind and process jar).
 import FollowingRecipe, { RecipePick, followingBody } from '../recipes/FollowingRecipe.jsx'
 import { startPrefill, vesselPatch } from '../recipes/recipes.js'
 
 export const START_SHEET = 'start'
 export const START_SHEET_TITLE = 'Start a batch'
 export const START_CTA = 'Start it'
-// Put-Up UX pass R1 (PLAN-V3 D10) — the field's words. The placeholder is one of his own batch names, so
-// the field reads as "the name you will look for it under", not as a description to fill in.
+// The placeholder is a real batch name, so the field reads as "the name you will look for it under", not
+// as a description to fill in.
 export const START_LABEL_TEXT = 'Name it'
 export const START_LABEL_PLACEHOLDER = 'e.g. Megatron mash'
 export const START_LABEL_MAX = 120
@@ -174,12 +173,12 @@ const fromButton = (open) => ({
   color: open ? P.green : P.mid,
 })
 
-// `key` (release 1b, V4 §5.2/§6.5) is optional on read: a 1a draft has none and gets one when it is
-// next written, which is before any POST can carry it.
-// `recipe` (R1) is optional on read the same way: it is the picked recipe's `{ id, name, kind }`, stored
-// beside `recipeId` so the sheet can say what was picked without a read. A draft a release-4 client stored
-// has `recipeId` alone and still restores (the Start-from row names it from the list); one whose `recipe`
-// is not that shape is dropped whole, like any other draft that would half-restore.
+// `key` is optional on read: an older draft has none and gets one when it is next written, which is
+// before any POST can carry it.
+// `recipe` is optional on read the same way: it is the picked recipe's `{ id, name, kind }`, stored
+// beside `recipeId` so the sheet can say what was picked without a read. A draft with `recipeId` alone
+// still restores (the Start-from row names it from the list); one whose `recipe` is not that shape is
+// dropped whole, like any other draft that would half-restore.
 // `sent` (what has gone out under `key`, idempotencyKey.js) is optional the same way.
 export function isStartDraft(d) {
   return !!d && typeof d === 'object' && !Array.isArray(d)
@@ -195,8 +194,8 @@ export function isStartDraft(d) {
     && (d.sent == null || Array.isArray(d.sent))
 }
 
-// Put-Up release 1b (train §6a "Snap's start date"): Snap's photo carries the day it was taken, and
-// the shipped kitchen path used it. The chip that says that day: Yesterday, or Earlier… → Pick a date.
+// Snap's photo carries the day it was taken, and the kitchen path uses it. The chip that says that day:
+// Yesterday, or Earlier… → Pick a date.
 // null when the photo is from today (Today stays), has no capture time, or is in the future.
 export function photoDayChoice(takenAt, now = new Date()) {
   const t = takenAt instanceof Date ? takenAt : (takenAt ? new Date(takenAt) : null)
@@ -212,9 +211,9 @@ export function photoDayChoice(takenAt, now = new Date()) {
 
 // `photoTakenAt` (optional): a host that already knows when Snap's photo was taken. Absent, the sheet
 // reads it off the photo itself (readCaptureMeta, the upload pipeline's own EXIF read).
-// `recipe` (release 4, optional): Make this — the recipe the batch is made from (its detail). The sheet opens
+// `recipe` (optional): Make this — the recipe the batch is made from (its detail). The sheet opens
 // prefilled with its name, kind and recipe, under its own draft key so a half-typed plain start is untouched.
-// `initialLabel` (R1, optional): a name the sheet is opened WITH — the Put something up door's escape,
+// `initialLabel` (optional): a name the sheet is opened WITH — the Put something up door's escape,
 // "Still going (a ferment)? Start a batch instead →", carries what was typed there. A non-blank one is a
 // fresh intent and WINS over a stored draft (the door's own "seeded" rule, PutSomethingUpSheet.jsx): the
 // draft is not restored, and the first write replaces it. Read ONCE, at mount: a host that re-renders with
@@ -263,7 +262,7 @@ function StartBatchOpen({ onClose, onStarted, onExists, photo, photoPreview, pho
   const [kind, setKind] = useState(initial.kind)
   const [kindOther, setKindOther] = useState(initial.kindOther)
   const [kindOpen, setKindOpen] = useState(initial.kind != null)
-  // B′ release 3: "Like <batch>, except…" — { from, lines, kind } or null. Held for this open only.
+  // "Like <batch>, except…" — { from, lines, kind } or null. Held for this open only.
   const [like, setLike] = useState(null)
   // The pick EVERY tap under this key went out with (or null for none) — `false` once two taps differed, or when
   // the key came out of storage with something already sent: then which pick the landed tap had is not known.
@@ -271,7 +270,7 @@ function StartBatchOpen({ onClose, onStarted, onExists, photo, photoPreview, pho
   // What this sheet has already put on a refused batch, so a later tap neither sends it again nor speaks of it.
   const followedRef = useRef({ lines: false, jar: false })
   const [following, setFollowing] = useState({ recipeId: initial.recipeId ?? null, recipeRef: initial.recipeRef ?? '', recipe: initial.recipe ?? null })
-  // R1 — which Start-from list is open: 'recipe' | 'batch' | null. One at a time, so the sheet stays short.
+  // Which Start-from list is open: 'recipe' | 'batch' | null. One at a time, so the sheet stays short.
   const [fromOpen, setFromOpen] = useState(null)
   // What each Start-from pick PUT into the name and the kind, so undoing the pick takes back exactly that
   // — and never a name typed, or a kind chosen, since.
@@ -333,8 +332,8 @@ function StartBatchOpen({ onClose, onStarted, onExists, photo, photoPreview, pho
     // The draft carries what can be serialised; a picked File cannot, and is not pretended to.
     const text = label.trim() !== '' || chip !== 'today' || earlier != null || pickedDate !== '' || kind != null || kindOther.trim() !== ''
       || following.recipeId != null || following.recipeRef.trim() !== ''
-    // The recipe pair rides only when answered, so a plain start's draft keeps its 1b shape exactly; the
-    // picked recipe's `{ id, name, kind }` rides beside its id (R1, additive).
+    // The recipe pair rides only when answered, so a plain start's draft keeps its original shape; the
+    // picked recipe's `{ id, name, kind }` rides beside its id.
     const recipePart = following.recipeId != null || following.recipeRef !== ''
       ? { recipeId: following.recipeId, recipeRef: following.recipeRef, ...(following.recipe ? { recipe: following.recipe } : null) }
       : {}
@@ -343,7 +342,7 @@ function StartBatchOpen({ onClose, onStarted, onExists, photo, photoPreview, pho
     } else clearSheetDraft(draftKey)
   }, [draftKey, label, chip, earlier, pickedDate, kind, kindOther, key, following, sent, spent])
 
-  // The create's idempotency key (release 1b, V4 §6.5): minted the first time the sheet is dirty, kept
+  // The create's idempotency key: minted the first time the sheet is dirty, kept
   // in the draft, reused on every retry — a Start it whose answer was lost is a replay, not a twin.
   useEffect(() => { if (dirty && !key) setKey(mintKey()) }, [dirty, key])
 
@@ -371,7 +370,7 @@ function StartBatchOpen({ onClose, onStarted, onExists, photo, photoPreview, pho
     landAfterClose(onClose, () => onStarted?.(batch))
   }, [onClose, onStarted])
 
-  // START FROM (R1). A pick fills what is EMPTY and only that: a typed name is never replaced, a chosen kind
+  // START FROM. A pick fills what is EMPTY and only that: a typed name is never replaced, a chosen kind
   // never overridden — and a kind no chip offers (a legacy `age` batch) is not put in the kind at all, where
   // it could not be sent. Undoing the pick takes back what THAT pick filled, if it still stands.
   //
@@ -436,10 +435,10 @@ function StartBatchOpen({ onClose, onStarted, onExists, photo, photoPreview, pho
           && sameFact(batch?.recipe_ref, chose.recipe_ref),
       })
       // Whether what follows a start is this tap's to add: the batch is this sheet's own and untouched since —
-      // read at the batch's own instant, so its age is not asked (delta F-4; see WHAT FOLLOWS A START).
+      // read at the batch's own instant, so its age is not asked (see WHAT FOLLOWS A START).
       const ours = mineRef.current && rowIsThisSittings(batch, new Date(batch?.created_at).getTime(), holdsOwnUpdate(batch, putRef.current))
       // A replay with nothing to put on it, on a batch that is not: what follows a start is not this tap's to
-      // add either (re-review I-C).
+      // add either.
       const notOurs = todo == null && batch?.replayed === true && !ours
       if (todo === 'fixed' || todo === 'stale' || notOurs) {
         // None of what is on the form is written, and the key is KEPT: Start it again is this refusal again,
@@ -496,7 +495,7 @@ function StartBatchOpen({ onClose, onStarted, onExists, photo, photoPreview, pho
           method: 'POST', body: JSON.stringify({ inputs: like.lines }),
         })).catch(() => {})
       }
-      // Make this (release 4): the recipe's process jar, through the merge PUT. Best effort — the batch is
+      // Make this: the recipe's process jar, through the merge PUT. Best effort — the batch is
       // already started, and its Jar & heat row can set the jar if this does not land.
       const vp = !notOurs && recipe && batch?.id && following.recipeId === recipe.id && holdsNoJar(batch) ? vesselPatch(recipe) : null
       if (vp) await fetch(`/api/kitchen-batches/${batch.id}`, { method: 'PUT', body: JSON.stringify(vp) }).catch(() => {})
@@ -535,9 +534,9 @@ function StartBatchOpen({ onClose, onStarted, onExists, photo, photoPreview, pho
             style={{ scrollMarginBottom: FOOTER_PX }} />
         </Field>
 
-        {/* START FROM (R1, PLAN-V3 D10). Two doors, not a choice: a group of buttons that each open a list
-            (aria-expanded), so nothing here reads as required and nothing is preselected. Made from a
-            recipe (Make this) the recipe is already chosen, and only the past batch is offered. */}
+        {/* START FROM. Two doors, not a choice: a group of buttons that each open a list (aria-expanded),
+          * so nothing here reads as required and nothing is preselected. Made from a recipe (Make this)
+          * the recipe is already chosen, and only the past batch is offered. */}
         <div data-testid="start-from" style={{ marginBottom: T.space.md }}>
           <div role="group" aria-label={START_FROM_LABEL} style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
             <span aria-hidden="true" style={{ fontSize: T.type.sm, fontWeight: 600, color: P.mid }}>{START_FROM_LABEL}</span>

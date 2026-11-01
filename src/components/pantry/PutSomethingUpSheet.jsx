@@ -1,34 +1,31 @@
-// src/components/pantry/PutSomethingUpSheet.jsx
-// Put-Up B′ release 2 (V4 §2.2 "Put something up", §3.1, §6.3–§6.6) — the one page-level door that adds
-// ONE thing to the Pantry per save.
+// The one page-level door that adds ONE thing to the Pantry per save.
 //
-// Required at open: 3 — What is it? (the shipped name search) · Where does it live? (place chips) ·
+// Required at open: 3 — What is it? (the existing name search) · Where does it live? (place chips) ·
 // How was it put up? (method chips + the as-is chip + Other ways…; nothing preselected). Before a place
 // is picked the row offers the general four; a place puts its own four there, and a method already
 // chosen stays as one more chip. Save is NEVER disabled: tapped with no method it moves focus to the
-// method row with one line (V4 §2.2).
+// method row with one line.
 //
-// Put-Up R2a — THE FIRST SCREEN, in order: What · Where · How · ONE slot under the method row, by method
+// THE FIRST SCREEN, in order: What · Where · How · ONE slot under the method row, by method
 // (the canning line; Raw with its line; How dry?) · How many? and "＋ Size of each container" (As is:
 // "＋ How much" alone) · "▸ Date, discard by[, in oil]" (what changes the date line) · "▸ Where from, notes"
 // (record only) · the preview with Change · the pinned Save. Everything past the three questions is
 // optional; a half-filled size or amount, and Other with no name, are refused in place.
 //
-// Put-Up UX pass R1: the preview line carries "Change", its own target, which opens the first disclosure on
-// the When chips (the door's date was only reachable by knowing it was under a control called More).
+// The preview line carries "Change", its own target, which opens the first disclosure on the When chips.
 // `onStartBatchInstead(name)` — the page's, optional: a line under the name hands the typed name to the
 // Start sheet for a thing that is still going. The door clears its OWN draft first (the name has left
 // it), then calls it and closes. Absent, there is no such line.
 //
-// THE WRITE, by the method chip (V4 §2.1's one table rule): a method → POST /api/preservation (the 1b
-// create; a template place is made first); As is / Fresh, as picked → POST /api/pantry/items (a planting
-// hit keeps plant_id and crop). One key per draft, minted when the sheet first becomes dirty, kept in the
-// draft and reused on every retry (V4 §5.2, §6.5) — and minted AGAIN only after an answered 4xx, which is
-// the one failure that proves nothing was written (after no answer, or a 5xx, the first row may exist, and
-// the same key is what makes the retry find it). Before Save, one role=status line previews the date it
-// uses and the discard-by with its basis (the shared engine, putItUp.previewDiscard).
+// THE WRITE, by the method chip (the one table rule): a method → POST /api/preservation (a template place
+// is made first); As is / Fresh, as picked → POST /api/pantry/items (a planting hit keeps plant_id and
+// crop). One key per draft, minted when the sheet first becomes dirty, kept in the draft and reused on every
+// retry — and minted AGAIN only after an answered 4xx, which is the one failure that proves nothing was
+// written (after no answer, or a 5xx, the first row may exist, and the same key is what makes the retry
+// find it). Before Save, one role=status line previews the date it uses and the discard-by with its basis
+// (the shared engine, putItUp.previewDiscard).
 //
-// A REPLAYED ITEM (BUG-PUTUPREPLAYDROPSEDIT-001; kitchen/idempotencyKey.js). The key does not change with what
+// A REPLAYED ITEM (kitchen/idempotencyKey.js). The key does not change with what
 // is typed, so after a lost answer and a change the item route answers `replayed: true` with the item the
 // FIRST Save made. When that item is THIS sitting's (sent from the door that is open now, made minutes ago,
 // untouched since) the door PATCHes what it holds onto it and completes from the PATCH's answer. When it is
@@ -48,7 +45,7 @@
 // What has gone out under the key rides in the draft as `sent`, from the first Save on; its prints are of
 // what was chosen, not of the date or the searched crop (putSomethingUp.js itemPrint, jarPrint).
 //
-// A REPLAYED PUT-UP (BUG-PUTUPREPLAYREST-001) is read the same way, by the same rule. Its PATCH carries the
+// A REPLAYED PUT-UP (guard: PutUpReplayRest.jar.test.jsx) is read the same way, by the same rule. Its PATCH carries the
 // name, the method, how many, the size, the discard date, Raw / In oil / How dry, the notes and where it is
 // from — so a change in those goes onto a jar that is this sitting's, and the door completes from the PATCH's
 // answer. It does not carry the date it was put up, the place, or the crop / variety / planting, and it leaves
@@ -57,7 +54,7 @@
 // to that, the next Save goes through.
 // A jar that is not this sitting's is said as saved earlier (replayStaleText), and that ends the stored draft.
 //
-// ONE KEY, TWO TABLES (QA I-1). The key is the same whichever way the thing is saved, and the two ways are two
+// ONE KEY, TWO TABLES. The key is the same whichever way the thing is saved, and the two ways are two
 // routes that do not look in each other's table. So once a Save has gone out under it one way, a Save the OTHER
 // way is refused before anything is sent (putSomethingUp.js otherRouteText) — a jar AND an item for one sitting
 // is a second row. It never mints a new key for it. If the first row is known to be there (a replay answered in
@@ -116,10 +113,11 @@ const quietAction = {
 const PANEL = '[role=dialog]'
 
 // ── The draft ────────────────────────────────────────────────────────────────────────────────────
-// Its shape, checked on read (sheetDraft.js: a record that fails is dropped, never half-restored). The first
-// five clauses are v4.168's; R2a's nine keys are each OPTIONAL and typed, so a record stored by yesterday's
-// client still restores, and a record written today still passes yesterday's check (a forward undo restores
-// the subset it knows). SHEET_DRAFT_VERSION is not bumped: a bump would drop every stored draft.
+// Its shape, checked on read (sheetDraft.js: a record that fails is dropped, never half-restored). The
+// first five clauses are the original shape; the later keys are each OPTIONAL and typed, so a record
+// stored by an older client still restores, and a record written today still passes the older check (a
+// forward undo restores the subset it knows). SHEET_DRAFT_VERSION is not bumped: a bump would drop every
+// stored draft.
 const optional = (v, type) => v == null || typeof v === type
 export function isDoorDraft(d) {
   return !!d && typeof d === 'object'
@@ -272,11 +270,11 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
   // The stored draft is this door's to replace or clear only once it has written one (or restored it): a
   // fresh seeded open leaves a draft it did not make alone until the first real change.
   const ownsDraftRef = useRef(!seed)
-  // Set by a "saved earlier" refusal (pre-promote I-1): the first Save landed, so the STORED draft has done its
+  // Set by a "saved earlier" refusal: the first Save landed, so the STORED draft has done its
   // job. It is taken out of storage and not written back — the door opened next, after a close or a reload, is
   // a clean one with no key — while THIS door keeps its key and `sent`: Save again is refused again. Nothing
   // sets it back: once it is set a row is known to exist under the key, a Save on that row's route can only
-  // replay, and a Save on the other route is not sent (QA I-1) — no create can go out that a stored draft would
+  // replay, and a Save on the other route is not sent — no create can go out that a stored draft would
   // have to remember.
   const [spent, setSpent] = useState(false)
   // The row a create under this key is KNOWN to have made, and on which route ({ route, row }): set when the
@@ -491,7 +489,7 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
     }
     const fromErr = planting ? null : whereFromError(source)
     if (fromErr) { setFromOpen(true); refuse(fromErr, 'source', 'door-source-label'); return }
-    // ONE KEY, TWO TABLES (QA I-1; putSomethingUp.js). A Save has gone out under this key the OTHER way — as a
+    // ONE KEY, TWO TABLES (putSomethingUp.js). A Save has gone out under this key the OTHER way — as a
     // put-up, and this one is As is, or the reverse: this would be a second thing for one sitting. Nothing is
     // sent and no key is minted. When that first row is known to exist the stored draft has done its job and is
     // ended, as "saved earlier" ends it; when its answer never came back the draft and its key stay — they are
@@ -527,7 +525,7 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
         if (saved?.replayed === true) existsRef.current = { route, row: saved }
         const read = { whenMoved: jarWhenMoved(sentNow, print) }
         const part = jarFixedPart(body, saved, what, read)
-        // A replayed row that was REMOVED since is not a save, whatever went out under the key (QA M-5).
+        // A replayed row that was REMOVED since is not a save, whatever went out under the key.
         const todo = saved?.replayed === true && saved.deleted_at ? 'stale' : afterReplay(saved, sentNow, print, {
           row: saved, mine: mineRef.current, updatedHere: holdsOwnUpdate(saved, patchedRef.current, JAR_PATCH_READS),
           fixed: part != null, holds: jarHolds(body, saved, what, read), nullIsUntouched: true,

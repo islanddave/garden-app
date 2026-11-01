@@ -1,9 +1,7 @@
-// src/components/pantry/CompletionLine.jsx
-// Put-Up R2a (prep) — moved here from PantryView.jsx, unchanged, so a second host (the planting page) can
-// draw the same line the Pantry draws. Props: { completion: { route, saved, place, text }, fetch, onDone,
+// Shared by two hosts (the Pantry and the planting page), so both draw the same line. Props: { completion: { route, saved, place, text }, fetch, onDone,
 // onChanged, onHowItWasMade?, canHowItWasMade? }.
 //
-// THE RELOAD HOLD (Put-Up R2a, lane P). The door holds the page's reload while it is dirty and lets go when
+// THE RELOAD HOLD. The door holds the page's reload while it is dirty and lets go when
 // it closes on Save — the same moment this line appears. A deploy that landed during that save was only
 // waiting for the last hold to clear, so the page reloaded within a frame and the row was in the list with
 // no line and no Undo. The line now holds the reload itself (lib/reloadGate.js, one key per mounted line):
@@ -22,7 +20,7 @@ import { deletePantryItem } from '../../lib/pantryApi.js'
 import { setReloadBlocked } from '../../lib/reloadGate.js'
 import RefusalLine, { refusalOf } from './RefusalLine.jsx'
 
-// The door's completion, in place on the Pantry (V4 §2.2): what was saved, in the server's words, with
+// The door's completion, in place on the Pantry: what was saved, in the server's words, with
 // Undo (a soft delete of what was just made) and — for a put-up — How it was made → when wired.
 export default function CompletionLine({ completion, fetch, onDone, onChanged, onHowItWasMade, canHowItWasMade }) {
   const [busy, setBusy] = useState(false)

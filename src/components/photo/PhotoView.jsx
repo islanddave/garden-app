@@ -1,13 +1,12 @@
-// src/components/photo/PhotoView.jsx — V4-PHOTOMODEL-001. THE photo primitive.
+// THE photo primitive.
 //
 // One component, one way to render a photo. It COMPOSES <PhotoImg> rather than extending it:
 // PhotoImg's contract is frozen at "owns the presigned-URL lifecycle, gains no VARIANT MODE", and
-// tier/derivative selection is exactly the concern that was missing. PhotoView owns that half —
-// which source to render and how to degrade — and delegates expiry self-healing downward.
-// V4-TIERBLINDMINT-001 makes the delegation say WHAT it is delegating: `mintTier` names the source
-// this component chose so the heal renews THAT object. The selection still happens here — the tier
-// travels down as an identity that only the mint URL and the cache key read, and nothing in
-// PhotoImg's render, layout or degrade branches on it.
+// tier/derivative selection is the concern that was missing. PhotoView owns that half — which source to
+// render and how to degrade — and delegates expiry self-healing downward. `mintTier` names the source this
+// component chose so the heal renews THAT object. The selection still happens here: the tier travels down
+// as an identity that only the mint URL and the cache key read, and nothing in PhotoImg's render, layout or
+// degrade branches on it.
 //
 // Split of responsibility:
 //   photoModel.js  — WHAT a photo is (parents, sources, expiry)
@@ -15,53 +14,43 @@
 //   PhotoImg       — keeping that source's presigned URL alive (900s TTL re-mint)
 //
 // LAZY LOADING: `loading="lazy"` is BANNED app-wide (noNativeLazyImages.static.test.js, empty
-// allow-list) because it was MEASURED not to fire — 120 images with correct srcs, 9 in viewport,
-// 0 network requests (2026-07-27, live). Deferral here is done by bounding how many PhotoViews
-// exist, via useImageWindow at the consumer. Adding the attribute here would make images silently
-// stop loading, which is the failure this component exists to prevent.
+// allow-list) because it was MEASURED not to fire: many images with correct srcs, a few in the viewport,
+// 0 network requests. Deferral here is done by bounding how many PhotoViews exist, via useImageWindow at
+// the consumer. Adding the attribute here would make images silently stop loading, which is the failure
+// this component exists to prevent.
 //
 // ── THE ID-ONLY ARM (`resolveById`) ───────────────────────────────────────────────────────────
 // Not every endpoint presigns. GET /api/events/:id returns { id, storage_path, cover_for } and
 // preservation_log carries a bare photo_id: presigning lives in the photos Lambda and those
-// functions deliberately do not reach for it. Such a row has an EMPTY source chain, so this
-// component used to render `null` — i.e. the mandated primitive could not express the one photo
-// shape two live surfaces actually have, and both shipped on raw <PhotoImg> through the drift
-// guard's allow-list instead. `resolveById` closes that: an empty chain WITH an id hands the id to
-// PhotoImg's fetch-on-mount path (A2b P1), which mints against the household-scoped
-// GET /api/photos/view-url/:id — the app's ONE signed-URL mechanism, shared cache, storm-dedup,
-// concurrency cap and expiry self-heal included. No second URL path, no bypassed presign.
+// functions deliberately do not reach for it. Such a row has an EMPTY source chain, which would render
+// `null` — the mandated primitive could not express the one photo shape two live surfaces actually
+// have. `resolveById` closes that: an empty chain WITH an id hands the id to PhotoImg's fetch-on-mount
+// path, which mints against the household-scoped GET /api/photos/view-url/:id — the app's ONE
+// signed-URL mechanism, shared cache, storm-dedup, concurrency cap and expiry self-heal included. No
+// second URL path, no bypassed presign.
 //
-//   OPT-IN, NOT AUTOMATIC. A URL-less row without the flag still renders nothing, byte-identically
-//     to before. Turning the arm on implicitly would convert every surface that ever receives a
-//     URL-less row (a failed presign, a soft-deleted id) from a free silent omission into one
-//     network mint per row — a behaviour change no existing caller asked for.
+//   OPT-IN, NOT AUTOMATIC. A URL-less row without the flag still renders nothing. Turning the arm on
+//     implicitly would convert every surface that ever receives a URL-less row (a failed presign, a
+//     soft-deleted id) from a free silent omission into one network mint per row.
 //   FALLBACK, NOT AN OVERRIDE. The flag only matters when the chain is empty; a row that DOES
 //     carry a URL renders from it with zero network, so a later server-side widening (events
 //     starting to send view_url) upgrades every id-only caller transparently, no client change.
-//   IT HONOURS `tier`, BY DEGRADING RATHER THAN BY CHOOSING (V4-HARVCROPPHOTO-001). This arm used
-//     to pass TIER.FULL for every caller, and the reason was sound at the time: it had no second
-//     source in hand, so `hasFallback` was false and PhotoImg's one retry would re-mint the SAME
-//     tier — a thumb with no object (181 of 1094 live rows, BUG-PHOTONEWTHUMB-001) would 404,
-//     re-mint, 404 and go terminal blank, where asking for the original rendered it fine. "Asking
-//     for a tier costs nothing only when there is something to degrade to" was the rule, and the
-//     answer was to ask for nothing. What changed is the second half, not the rule: V4-TIERBLINDMINT
-//     made BOTH derivatives addressable by id, so `idTiers` below can be a real two-rung chain
+//   IT HONOURS `tier`, BY DEGRADING RATHER THAN BY CHOOSING. With no second source in hand,
+//     `hasFallback` would be false and PhotoImg's one retry would re-mint the SAME tier — a thumb with
+//     no object would 404, re-mint, 404 and go terminal blank, where asking for the original renders
+//     fine. Both derivatives are addressable by id, so `idTiers` below is a real two-rung chain
 //     (thumb → original) walked by the same `step` cursor and the same hasFallback contract as a
-//     URL-bearing row. A tier=THUMB caller now gets the thumb, and gets the original the moment the
-//     thumb fails — which is what "tier-blind" was standing in for all along.
-//     IT MATTERS AT SCALE, which is why it was worth changing: measured live 2026-08-24, the 31
-//     Harvest-Totals crop heroes are 134 MB as originals and 5.6 MB as thumbs, and 29 of the 31 have
-//     a thumb object. Default is unchanged — a caller that names no tier still resolves the original
-//     in exactly one request, so PutUpPhotoThumb and EventDetail are byte-identical.
+//     URL-bearing row. A tier=THUMB caller gets the thumb, and gets the original the moment the
+//     thumb fails. This matters at scale: thumbs are a small fraction of the originals' bytes. A
+//     caller that names no tier still resolves the original in exactly one request.
 //   STATES (an async resolve has more than two): PENDING and UNRESOLVABLE both render PhotoImg's
 //     `fallback` — 'placeholder' (default) reserves the consumer's box, so a grid does not reflow
 //     when the mint lands, and a TERMINAL failure with a meaningful alt announces as role=img;
 //     'none' collapses silently (PutUpPhotoThumb's contract: the record is the payload, the photo
 //     is garnish). A 404 (deleted) or 403 is terminal. A network/5xx failure is NOT terminal and
-//     stays pending — note that PhotoImg's proactive re-mint is viewport-gated on a RENDERED <img>,
-//     so a pending instance heals on remount rather than on the next foreground. Pre-existing to
-//     this arm (it is PhotoImg's mount-fetch path, unchanged); called out because "renders nothing
-//     forever" is exactly the failure class this component exists to make impossible to ship blind.
+//     stays pending — PhotoImg's proactive re-mint is viewport-gated on a RENDERED <img>, so a
+//     pending instance heals on remount rather than on the next foreground. "Renders nothing
+//     forever" is the failure class this component exists to make impossible to ship blind.
 import React, { useState, useCallback } from 'react'
 import PhotoImg from '../PhotoImg.jsx'
 import { toPhoto, sourceChain, TIER } from '../../lib/photoModel.js'
@@ -75,8 +64,8 @@ import { toPhoto, sourceChain, TIER } from '../../lib/photoModel.js'
 export default function PhotoView({ photo, tier = TIER.FULL, alt, resolveById = false, onOpen, onError, ...rest }) {
   // Index into the source chain. A thumb that fails degrades to the full original that came down in
   // the SAME list response — zero network, because a missing thumb is the expected case
-  // (BUG-PHOTONEWTHUMB-001: only the 913 backfilled photos actually have one, yet thumb_url is a
-  // non-empty presigned string on all 1094 rows, so its truthiness proves nothing).
+  // (guard: PhotoImg.tier.test.jsx; thumb_url is a non-empty presigned string even for a photo
+  // with no thumb object, so its truthiness proves nothing).
   const [step, setStep] = useState(0)
 
   const p = toPhoto(photo)
@@ -84,10 +73,9 @@ export default function PhotoView({ photo, tier = TIER.FULL, alt, resolveById = 
 
   // The id-only arm's OWN chain, expressed in tiers because it has no URLs to express it in. It is
   // the same degrade sourceChain() performs for a URL-bearing row — thumb first, original as the
-  // rung beneath — and it exists now for the reason the header's old "still full-tier" note gave for
-  // why it could not: the arm finally HAS a second source in hand, because ?tier= makes both
-  // derivatives addressable by id. Empty unless this render is actually taking the id-only branch,
-  // so `steps` below stays exactly chain.length for every URL-bearing caller.
+  // rung beneath — possible because ?tier= makes both derivatives addressable by id. Empty unless
+  // this render is actually taking the id-only branch, so `steps` below stays exactly chain.length
+  // for every URL-bearing caller.
   const idTiers = (chain.length === 0 && resolveById && p?.id)
     ? (tier === TIER.THUMB ? [TIER.THUMB, TIER.FULL] : [TIER.FULL])
     : []
@@ -127,9 +115,8 @@ export default function PhotoView({ photo, tier = TIER.FULL, alt, resolveById = 
     // mintTier swap would leave the failed thumb in `src` and the once-per-photoId mount-fetch guard
     // would refuse to mint the original. Remounting is the honest way to say "different object".
     // Cost of the degrade, stated: a DELETED id spends two mints instead of one (thumb 404 → step →
-    // full 404 → terminal). That is the right trade — a thumb-less-but-live photo is 2 of the 31
-    // live crop heroes measured 2026-08-24, a deleted one is the rarer case, and only one of the two
-    // outcomes loses a photo the user actually has.
+    // full 404 → terminal). That is the right trade — a thumb-less-but-live photo is the commoner
+    // case, a deleted one the rarer, and only one of the two outcomes loses a photo the user has.
     return (
       <PhotoImg
         key={idTier}
@@ -144,21 +131,19 @@ export default function PhotoView({ photo, tier = TIER.FULL, alt, resolveById = 
     )
   }
 
-  // The id is a fact about the PHOTO, so it is handed over at every step — gating it on `atLast` (as
-  // this did until the thumb tier gave the Garden tile a two-entry chain) silently disabled PhotoImg's
-  // PROACTIVE re-mint for every mid-chain source: `if (!photoId) return`. A tier=THUMB surface resumed
-  // past the 900s TTL therefore stopped re-minting before render — it 403'd on the thumb, degraded all
-  // the way to the ORIGINAL and recovered reactively, i.e. it both failed requests and landed on the
-  // very payload tier=THUMB exists to avoid. `hasFallback` carries the part `atLast` was actually
-  // right about: only the LAST source may spend a mint on an error, because every earlier one has a
-  // cheaper swap in hand. Proactive is orthogonal to that and must run at any step.
+  // The id is a fact about the PHOTO, so it is handed over at every step — gating it on `atLast`
+  // would silently disable PhotoImg's PROACTIVE re-mint for every mid-chain source (`if (!photoId)
+  // return`): a tier=THUMB surface resumed past the 900s TTL would 403 on the thumb, degrade all the
+  // way to the ORIGINAL and recover reactively, failing requests and landing on the very payload
+  // tier=THUMB exists to avoid. `hasFallback` carries the part `atLast` was right about: only the LAST
+  // source may spend a mint on an error, because every earlier one has a cheaper swap in hand.
+  // Proactive is orthogonal to that and must run at any step.
   //
   // `mintTier` is the tier of the source ACTUALLY BEING RENDERED, not the requested `tier`, so it
   // walks the degrade chain in lockstep: step 0 renews the thumb, and once a missing thumb has
   // pushed the cursor to step 1 the very same prop renews the original. Without it the proactive
-  // heal above re-minted the ORIGINAL for a thumb tile and adopted it — one request instead of
-  // three and no blank, but the tile then carried a ~2.97 MB image for the rest of its life, which
-  // is the whole saving tier=THUMB exists for.
+  // heal would re-mint the ORIGINAL for a thumb tile and adopt it, and the tile would then carry the
+  // full-size image for the rest of its life — the cost tier=THUMB exists to avoid.
   return (
     <PhotoImg
       photoId={p.id}

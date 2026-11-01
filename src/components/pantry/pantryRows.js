@@ -1,5 +1,4 @@
-// src/components/pantry/pantryRows.js
-// Put-Up B′ release 2 (V4 §2.5 The Pantry, §3.2 basis words, §6.1) — the pure half of the Pantry list:
+// The pure half of the Pantry list:
 // how the server's rows are grouped, searched and said, and which ONE inline action a row offers.
 // PantryView.jsx paints these; nothing here fetches, renders or reads a clock it was not handed.
 //
@@ -7,11 +6,11 @@
 // name, group_key, group_label, place: {id,label,kind}|null, where_from, from_garden, plant_id,
 // crop_type_slug, batch_id, stock_mode: 'counted'|'weighed'|'item', count_left, count_made, grams_left,
 // method, discard: {date, basis, status: 'ok'|'soon'|'past'|null}, acquired_at, created_by, updated_at }.
-// Put-Up R2a: every row also carries, AS STORED, quantity_value (a number or null), quantity_unit,
+// Every row also carries, AS STORED, quantity_value (a number or null), quantity_unit,
 // source_kind, source_label — a bought item's amount and where it is from. `where_from` stays the server's
 // derived words (the planting first, else the stored source).
 // The server sorts by group then name and classifies discard status; this module never re-decides
-// either (the same rule StoresView held for use_by_status: "the server classifies, this only selects").
+// either ("the server classifies, this only selects").
 import { discardWords, parseYmd, qtyText } from '../putup/jarWords.js'
 // The engine's own list, imported (as putItUp.js imports the engine), so there is no copy to drift.
 import { HOUSE_SOURCED_SHELF_LIFE } from '../../../lambda/preservation/shelfLife.js'
@@ -42,7 +41,7 @@ export function groupRows(rows) {
   return out
 }
 
-// ── "Use soon" (V4 §3.2: the only filter name; Today's band links here with ?filter=use-soon) ──────
+// ── "Use soon" (the only filter name; Today's band links here with ?filter=use-soon) ───────────────
 export const USE_SOON_FILTER = 'use-soon'
 export function isUseSoon(row) {
   const s = row?.discard?.status
@@ -52,8 +51,8 @@ export function onlyUseSoon(rows) {
   return (rows ?? []).filter(isUseSoon)
 }
 
-// ── The page search (V4 §2.5): name/label match only, case-insensitive, over the Pantry list plus
-// whatever else the page hands in (the recipes lane's loaded recipes, via `extraSearchItems`). ─────
+// ── The page search: name/label match only, case-insensitive, over the Pantry list plus
+// whatever else the page hands in (the loaded recipes, via `extraSearchItems`). ─────────────────────
 export function normalizeQuery(q) {
   return String(q ?? '').trim().toLowerCase()
 }
@@ -62,7 +61,7 @@ export function nameMatches(name, q) {
   return !!n && String(name ?? '').toLowerCase().includes(n)
 }
 
-// Hits: rows first (in list order), then the extra items. An extra item is the recipes lane's
+// Hits: rows first (in list order), then the extra items. An extra item is a recipe's
 // `{ kind: 'recipe', id, name, type_label?, keeps? }` (or `{ key, name, kindLabel? }`), with an optional
 // `onOpen` — the host decides what opening one means (a recipe opens recipe detail).
 export function extraKey(it) {
@@ -84,9 +83,9 @@ export function searchHits(rows, extraItems, q) {
 }
 
 // ── What a row says ────────────────────────────────────────────────────────────────────────────────
-// What is left of a WEIGHED bag (one container sized in a weight), IN THE UNIT IT WAS TYPED IN (Put-Up R2a,
-// UX I-2): "about 1 lb left" · "about 12 oz left" · "about 1.5 kg left". A bag typed in grams, and one whose
-// unit was never stored or is not a weight, says whole grams ("about 412 g left", V4 §2.5, 06 §1.4).
+// What is left of a WEIGHED bag (one container sized in a weight), IN THE UNIT IT WAS TYPED IN:
+// "about 1 lb left" · "about 12 oz left" · "about 1.5 kg left". A bag typed in grams, and one whose
+// unit was never stored or is not a weight, says whole grams ("about 412 g left").
 // `grams` is the server's count of what is left and `unit` the row's quantity_unit AS STORED. The factors
 // are the ones the server made those grams with (MASS_G: its create seeds quantity_value × the factor, its
 // row multiplies the same way), so a fresh 1 lb divides back to 1. At most two decimals, no trailing zeros
@@ -106,7 +105,7 @@ export function weighedLeftWords(grams, unit) {
 }
 
 // How many left: "3 left" for counted stock, what is left of a weighed bag in its own unit
-// (weighedLeftWords), nothing for a bought item (no counts on bought items, §10.3).
+// (weighedLeftWords), nothing for a bought item (no counts on bought items).
 export function leftWords(row) {
   if (!row || isItem(row)) return null
   if (row.stock_mode === 'weighed') return weighedLeftWords(row.grams_left, row.quantity_unit)
@@ -115,7 +114,7 @@ export function leftWords(row) {
   return `${Number(n)} left`
 }
 
-// ── A bought item's amount (Put-Up R2a) ──────────────────────────────────────────────────────────
+// ── A bought item's amount ──────────────────────────────────────────────────────────
 // "2 lb" · "1.5 qt" · "12 count" · "1 bag" · "2 bags" · "2 bunches". AS LOGGED: nothing decrements it, so
 // it is what was got, never what remains — it is never followed by "left", and it is not `leftWords`.
 // A unit written out as a WORD takes its plural when the number is not one; an abbreviation never does
@@ -145,7 +144,7 @@ export function amountWords(row) {
 // amount (· how long a bought item has been had). `batchName` is the host's (the names read,
 // pantryApi.listBatchNames): a jar whose batch the host cannot name says nothing about it — never
 // "from undefined".
-// `finished` (Put-Up R2a): the row is one the person's own use just finished (finishedByUse) and is still
+// `finished`: the row is one the person's own use just finished (finishedByUse) and is still
 // on screen for its Undo. What it says is left is the count from BEFORE that use, so it is not said: the
 // line under it ("used it up", "marked gone bad") is what is true now. Decided here, where a row is drawn,
 // and never in leftWords, which the name search and the Walk also print.
@@ -171,7 +170,7 @@ export function severalLeft(row) {
   return isJar(row) && row.stock_mode === 'counted' && Number(row.count_left) > 1
 }
 
-// The ONE inline action (V4 §2.5): Used one while a counted row has more than one left; Used it up
+// The ONE inline action: Used one while a counted row has more than one left; Used it up
 // when one is left, when it is uncounted (weighed) and on a bought item.
 export const USED_ONE = 'used_one'
 export const USED_UP = 'used_up'
@@ -195,8 +194,8 @@ export function effectiveBasis(row) {
   return isJar(row) && d.date && HOUSE_METHODS.has(row.method) ? 'house' : null
 }
 
-// The discard-by chip, stated once (V4 §3.2), through the shipped basis-words helper. A bought item
-// shows a date only if one was typed (§2.5); anything else about it is silence, never "no date".
+// The discard-by chip, stated once, through the basis-words helper. A bought item
+// shows a date only if one was typed; anything else about it is silence, never "no date".
 export function discardChip(row, now = new Date()) {
   const d = row?.discard
   if (!d) return null
@@ -207,7 +206,7 @@ export function discardChip(row, now = new Date()) {
   })
 }
 
-// "had it 12 days" — a bought item's age, only when the day it came in is known (V4 §2.5). An estimated
+// "had it 12 days" — a bought item's age, only when the day it came in is known. An estimated
 // acquired date (a month, a season) is not a known day, so it says nothing rather than a false count.
 const KNOWN_DAY = new Set(['day', 'exact', 'hour'])
 export function ageWords(row, now = new Date()) {
@@ -229,7 +228,7 @@ function leftAfter(jar) {
   return left != null && Number.isFinite(Number(left)) ? Number(left) : null
 }
 
-// The in-place line after a use, for the person who acted (V4 §2.5 "3 left · used one · Undo"). `jar`
+// The in-place line after a use, for the person who acted ("3 left · used one · Undo"). `jar`
 // is what the use route answered ({remaining_count, ...}) and `use` the use row it wrote ({count_used,
 // ...}); the counts said are the SERVER's, never the row's own arithmetic, because the other person may
 // have used one in between. Went bad that left some says both counts ("4 left · 2 went bad"); Went bad
@@ -253,7 +252,7 @@ export function afterUseWords({ action, jar, use }) {
 }
 
 // The in-place line after a move: "<name> — moved to <place> · <the discard words of the row the server
-// answered>" (PLAN-V3 D4). The date, its basis and its status are the ANSWER's, never worked out here: a
+// answered>". The date, its basis and its status are the ANSWER's, never worked out here: a
 // put-up's move answers the jar (use_by_target, use_by_basis, use_by_status); a bought item's answers the
 // item, whose date a move never touches. `place` is the chip that was tapped. An answer that is not a row
 // (nothing came back) leaves the line at the name and the place.

@@ -1,25 +1,24 @@
-// src/components/recipes/BatchRecipeRow.jsx
-// Put-Up release 4 (V4 §2.6) — the recipe's place on batch detail:
+// The recipe's place on batch detail:
 //   · "From the recipe: <name>" when the batch follows one, with the recipe's lines as REFERENCE TEXT (Make
 //     this copies them as reference, never as lines) and **Made it as written** — one tap that writes every
-//     pot line with its amount (keyed lines through F's line POST), offered while the batch has none of its
+//     pot line with its amount (keyed lines through the line POST), offered while the batch has none of its
 //     own yet. "at the end" lines stay reference: they go in at the bottling.
 //   · **Save as recipe** — the name prefilled with the batch label; one keyed POST to
 //     /api/recipes/from-batch/:batchId, which carries every line, amount, form, brand, heat, note, the salt
-//     facts, the jar, Made and mash in, and the first bottling's container (F §1.5).
-// ⚠ Never the recipe's notes here (his target pH lives in them and renders only on recipe detail, V4 "pH"):
+//     facts, the jar, Made and mash in, and the first bottling's container.
+// ⚠ Never the recipe's notes here (the cook's target pH lives in them and renders only on recipe detail):
 // the batch read does not carry them.
 //
-// Put-Up UX pass R1 (D15) — TWO components now, because batch detail puts them in two places:
+// TWO components, because batch detail puts them in two places:
 //   · BatchRecipeRow (default) — the recipe row. With `onOpenRecipe` the name is the way to the recipe:
 //     "From <name> →" calls onOpenRecipe(id, { label: batch.label, kind: 'batch', id: batch.id }), so the
-//     recipe's Back can name the batch it came from. Without the prop it is the words it always was.
+//     recipe's Back can name the batch it came from. Without the prop it is plain words.
 //   · SaveAsRecipe — the Save as recipe door and its one-field form, which batch detail mounts down beside
 //     Pause and the ending. BatchRecipeRow still renders it inside itself unless told `saveAsRecipe={false}`,
-//     so a host that mounts the row alone gets exactly what it got before.
+//     so a host that mounts the row alone gets the whole thing.
 // "Made it as written" has two doors (the row's quiet link, and a button for the empty What went in block),
 // so its write lives in ONE hook, useMadeAsWritten: one key set per recipe, reused on a retry from EITHER
-// door — a second key set would add every line twice. A page shows ONE of them (Put-Up R2a, M2): batch
+// door — a second key set would add every line twice. A page shows ONE of them: batch
 // detail hands the row its hook (`asWritten`) and draws the button, so the hosted row draws no link; a row
 // mounted alone has no button below it and keeps the link.
 import React, { useEffect, useId, useRef, useState } from 'react'
@@ -237,8 +236,8 @@ export default function BatchRecipeRow({ batch, inputs = [], onChanged, onOpenRe
         </div>
       )}
       {/* The quiet link is this row's door when it stands alone. A HOSTED row sits above the host's own
-          "Made it as written" button (the empty What went in block), so the link is not drawn there: one
-          door, said once (Put-Up R2a, M2). */}
+        * "Made it as written" button (the empty What went in block), so the link is not drawn there: one
+        * door, said once. */}
       {asWritten.can && !hosted && (
         <button type="button" style={link} data-testid="batch-recipe-as-written" disabled={asWritten.busy} onClick={() => asWritten.run('row')}>
           {asWritten.busy ? 'Adding…' : `${MADE_AS_WRITTEN_CTA} →`}

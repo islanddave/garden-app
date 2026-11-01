@@ -1,10 +1,9 @@
-// src/components/recipes/TypePicker.jsx
-// Put-Up release 4 — what a recipe makes (Dave 2026-09-30): chips of the built-in types, then the household's,
+// What a recipe makes: chips of the built-in types, then the household's,
 // then "New type…" which opens one inline field and find-or-creates the type (POST /api/recipes/types — an
 // existing name, any case or spacing, comes back as the existing type; the crop-type precedent). Optional:
-// tapping the chosen chip again clears it. Plain markup (functionality first; design pass later).
+// tapping the chosen chip again clears it.
 //
-// Put-Up UX pass R1: sixteen built-in chips at 48 px pushed the rest of the sheet off the first screen, so the
+// Many built-in chips at 48 px pushed the rest of the sheet off the first screen, so the
 // row opens SHORT — the type the picker opened on, then the types this household's recipes already use
 // (`usedIds`) — and "More types…" brings the rest, with "New type…" at their end. Every type is still one
 // more tap away at most. The order is fixed when the picker opens (recipes.js typeChips), so a chip never

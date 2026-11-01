@@ -1,5 +1,4 @@
-// src/components/pantry/Stepper.jsx
-// V4 §6.6 "Count": a numeric input (inputmode numeric; 48 px tall from the Put-Up UX pass R1, the tap
+// Count: a numeric input (inputmode numeric; 48 px tall, the tap
 // floor of every Put-Up surface) between 48×48 − / + buttons at least 8 px away, named with the row
 // ("One more — Megatron reaper"); at 1, − is aria-disabled and stays 48 px; no press-and-hold repeat.
 // `min` is 1 unless the host says otherwise; `max` caps + (Gave it away cannot give more than are left;

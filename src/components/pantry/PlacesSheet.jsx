@@ -1,5 +1,4 @@
-// src/components/pantry/PlacesSheet.jsx
-// Put-Up R2a (lane P) — the Pantry's Places sheet: rename a place, change what kind of place it is, delete
+// The Pantry's Places sheet: rename a place, change what kind of place it is, delete
 // one that holds nothing. Opened by "Edit places" on the Pantry's Group-by row.
 //
 // THE LIST is the places read (GET /api/storage-locations), read when the sheet opens — an EMPTY place
