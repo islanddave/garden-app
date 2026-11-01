@@ -1,33 +1,30 @@
 // src/lib/voiceAliases.js
-// V5-VOICEALIAS-001 — the learned-mishearing layer for the /log/voice planting chooser.
+// V5-VOICEALIAS-001: the learned-mishearing layer for the /log/voice planting chooser.
 //
-// WHERE THIS SITS. Three layers now answer "which planting did he just say", in strict order:
-//   1. matchPlantings          — exact/substring on the collapsed key. Unchanged, still first.
-//   2. THIS FILE               — a mishearing the user has already corrected, once, by hand.
-//   3. voiceFuzzyMatch         — closed-set scoring, for a mishearing nobody has taught yet.
-// Learned beats fuzzy deliberately: a human said so, and no score outranks that. Fuzzy is a guess
-// that is right 77% of the time; an alias is a fact.
+// WHERE THIS SITS. Three layers answer "which planting did the user just say", in strict order:
+//   1. matchPlantings  - exact/substring on the collapsed key. Unchanged, still first.
+//   2. THIS FILE       - a mishearing the user has already corrected, once, by hand.
+//   3. voiceFuzzyMatch - closed-set scoring, for a mishearing nobody has taught yet.
+// Learned beats fuzzy deliberately: a human said so, and no score outranks that (fuzzy is a guess; an
+// alias is a fact).
 //
-// WHY IT IS NOT MERGED INTO voiceFuzzyMatch. That module is pure, synchronous and network-free,
-// which is what let its thresholds be measured over 750 adversarial utterances offline. This layer
-// is none of those things — it fetches, it caches, it fails soft. Keeping them apart means a network
-// problem here can never change a matching decision there.
+// WHY IT IS NOT MERGED INTO voiceFuzzyMatch. That module is pure, synchronous and network-free, which is
+// what let its thresholds be measured offline. This layer fetches, caches and fails soft, so keeping
+// them apart means a network problem here can never change a matching decision there.
 //
 // EVERYTHING HERE FAILS SOFT, and that asymmetry is the design:
-//   * a failed READ degrades the chooser to exactly its v4.78.0 behaviour (fuzzy only). Voice harvest
-//     keeps working; the user loses only the corrections they had taught.
-//   * a failed WRITE must be LOUD. The moment someone teaches a correction is the moment they have
-//     already been let down once, and a teach that silently did nothing would let them believe it was
+//   * a failed READ degrades the chooser to fuzzy only. Voice harvest keeps working; the user loses only
+//     the corrections they had taught.
+//   * a failed WRITE must be LOUD. A teach that silently did nothing would let the user believe it was
 //     fixed and meet the same failure tomorrow. So teachAlias REJECTS and the caller says so.
-//   * a failed USE COUNT is SILENT (recordAliasUse). It is bookkeeping about a write that already
-//     landed; nothing the user did depends on it, so it may never cost them anything.
+//   * a failed USE COUNT is SILENT (recordAliasUse). It is bookkeeping about a write that already landed,
+//     so it may never cost the user anything.
 //
-// BUG-VOICEALIASFAILSOFT-001 — A FAILED READ IS null, NOT []. "He has taught nothing" and "his taught
-// names could not be read" were the same empty list, and the harvest page's one-breath reader acts on
-// the difference: with his list loaded, "cucumber one" is a NAME (taught 2026-09-15 for Suyo Long);
-// with it missing, the same words read as the crop "cucumber" plus an amount of 1, and "cucumber one",
-// "next" saved a 1 count he never said. Soft still means never rejecting — the caller decides what
-// "unknown" costs.
+// BUG-VOICEALIASFAILSOFT-001: A FAILED READ IS null, NOT []. "Nothing taught" and "taught names could not
+// be read" were the same empty list, and the harvest page's one-breath reader acts on the difference:
+// with the list loaded, "cucumber one" is a taught NAME; with it missing, the same words read as the
+// crop "cucumber" plus an amount of 1, and a following "next" saved a 1 count nobody said. Soft still
+// means never rejecting; the caller decides what "unknown" costs.
 
 // The client's normalisation contract, imported rather than re-derived: heard_key must be exactly
 // what looseKey produces, or a stored alias can never match a live utterance. The server enforces the
@@ -65,15 +62,13 @@ export function indexAliases(rows) {
 /**
  * Resolve a spoken phrase to the plantings of a learned variety.
  *
- * Returns [] when nothing is learned for the phrase, so the caller falls through to fuzzy — an empty
+ * Returns [] when nothing is learned for the phrase, so the caller falls through to fuzzy: an empty
  * result here is "no opinion", never "no match".
  *
- * AN ALIAS NAMES A VARIETY, NOT A PLANTING, so this returns EVERY live planting of that variety and
- * the caller still disambiguates. That is not a weakness of the storage choice, it is the point of
- * it: plantings are seasonal and a planting-scoped alias would expire every winter. Where a variety
- * has several live plantings (46 tomato, 38 pepper on prod) the existing "Which one?" list handles it
- * exactly as it does for a strict match — the alias narrows the field from 239 to a handful, which is
- * all it ever claimed to do.
+ * AN ALIAS NAMES A VARIETY, NOT A PLANTING, so this returns EVERY live planting of that variety and the
+ * caller still disambiguates. Plantings are seasonal, so a planting-scoped alias would expire every
+ * winter. Where a variety has several live plantings the existing "Which one?" list handles it as for a
+ * strict match: the alias narrows the field, which is all it claims to do.
  */
 export function resolveAlias(aliasIndex, spoken, plantings) {
   if (!aliasIndex || !aliasIndex.size) return []
@@ -85,13 +80,13 @@ export function resolveAlias(aliasIndex, spoken, plantings) {
 }
 
 /**
- * Fetch the caller's aliases. FAILS SOFT — never rejects, because a chooser that refuses to work
- * because a cache could not load is worse than one that has forgotten a few corrections.
- * `apiFetch` is injected so this is testable without the Clerk-authenticated wrapper.
+ * Fetch the caller's aliases. FAILS SOFT: never rejects, because a chooser that refuses to work because
+ * a cache could not load is worse than one that has forgotten a few corrections. `apiFetch` is injected
+ * so this is testable without the Clerk-authenticated wrapper.
  *
- * Returns the rows when the list LOADED — [] means he has taught nothing — and null when it did not:
- * any error, or a payload with no `aliases` array (the GET always sends one, so anything else is not
- * an answer). null is "unknown", and a caller that treats it as [] is guessing his taught names away.
+ * Returns the rows when the list LOADED ([] means nothing taught) and null when it did not: any error,
+ * or a payload with no `aliases` array (the GET always sends one). null is "unknown"; a caller that
+ * treats it as [] guesses the taught names away.
  */
 export async function fetchAliases(apiFetch) {
   try {
@@ -103,24 +98,23 @@ export async function fetchAliases(apiFetch) {
 }
 
 /**
- * BUG-VOICEALIASHITCOUNT-001 — count a USE of taught aliases. `uses` is [{ heard_key, variety_id }],
- * sent after the write each alias led to has landed. voice_alias.hit_count and last_used_at were read
- * and reset but never written, so every learned alias read 0 and nothing could say which ones are
- * load-bearing and which were one-off noise worth pruning — the column's stated purpose.
+ * BUG-VOICEALIASHITCOUNT-001: count a USE of taught aliases. `uses` is [{ heard_key, variety_id }], sent
+ * after the write each alias led to has landed. It feeds voice_alias.hit_count and last_used_at, which
+ * say which aliases are load-bearing and which are one-off noise worth pruning.
  *
- * FIRE AND FORGET, and that is the contract rather than a shortcut: nothing awaits it, it never rejects
- * and never throws, so a failed or slow count cannot block, delay or fail the write it follows. The
- * variety rides along so the server credits the meaning that was used — a phrase re-taught to another
- * variety in between (which resets its count) is not credited for the old one.
+ * FIRE AND FORGET, by contract: nothing awaits it, it never rejects and never throws, so a failed or
+ * slow count cannot block, delay or fail the write it follows. The variety rides along so the server
+ * credits the meaning that was used (a phrase re-taught to another variety in between is not credited
+ * for the old one).
  *
- * PATCH on the route that already exists, not a new one: the varieties Lambda owns voice_alias, and a
- * new endpoint is the four-wiring hazard lambda/varieties/index.js records above these routes.
+ * PATCH on the existing route, not a new one: the varieties Lambda owns voice_alias, and a new endpoint
+ * is the four-wiring hazard lambda/varieties/index.js records above these routes.
  *
- * AT MOST MAX_ALIAS_USES KEYS, DISTINCT FIRST (review v4.147 MINOR). The server refuses a longer list
- * outright — a 400 for the whole request, which this function swallows by contract — so an uncapped
- * list of 21 would count NOTHING, silently. A repeated phrase is one use and must not take a slot, so
- * duplicates go first (the first occurrence of a key wins), then the list stops at the cap. This is
- * the one place a count is sent from, so it caps the harvest page and Log many alike.
+ * AT MOST MAX_ALIAS_USES KEYS, DISTINCT FIRST. The server refuses a longer list outright (a 400 for the
+ * whole request, which this function swallows by contract), so an uncapped list of 21 would count
+ * NOTHING, silently. A repeated phrase is one use and must not take a slot, so duplicates go first (the
+ * first occurrence wins), then the list stops at the cap. This is the one place a count is sent from, so
+ * it caps the harvest page and Log many alike.
  */
 export function recordAliasUse(apiFetch, uses) {
   const seen = new Set()
@@ -143,9 +137,8 @@ export function recordAliasUse(apiFetch, uses) {
 }
 
 /**
- * Teach one correction. DOES NOT SWALLOW ERRORS — see the header. The caller must surface a failure,
- * because a silent no-op here is indistinguishable from success to the person who just corrected the
- * app and is about to trust it again.
+ * Teach one correction. DOES NOT SWALLOW ERRORS (see the header): a silent no-op is indistinguishable
+ * from success to the person who just corrected the app and is about to trust it again.
  *
  * Returns the stored row. Throws on validation failure or transport failure.
  */
