@@ -528,16 +528,18 @@ export const handler = async (event) => {
       }
 
       // BUG-PLANTSLISTARCHIVEDCONTAINER-001: one transaction with unarchiveContainerOfLivePlanting (see
-      // its header), which runs second and reads the row restored here. A planting that comes back
+      // its header), which runs after the planting's UPDATE and reads the row restored here. A planting that comes back
       // still archived on its own goes to the Archived page and leaves its container alone — the
       // statement requires it LIVE. The already_restored arm above sends neither statement.
       //
       // BUG-PLANTRESTORESTRAND-001: and with restorePacketOfLivePlanting (see its header), which runs
-      // third. The NOT EXISTS below is the other half of that statement: a deleted packet it could
+      // last. The NOT EXISTS below is the other half of that statement: a deleted packet it could
       // NOT bring back (not this household's — unreachable through the app, whose writers all pass
       // loadOwnedInventoryItem) refuses the planting too, so the two never half-apply and the route
       // cannot make the strand. Its ownership test is the exact negation of the packet statement's.
-      const [rows, , packets] = await sql.transaction([
+      // withActor leads the batch with the actor GUC (the planting UPDATE writes audited plants.deleted_at), so the
+      // results are [GUC, planting, container, packet].
+      const [, rows, , packets] = await withActor(sql, userId, () => [
         sql`
         UPDATE public.garden_node p
            SET deleted_at = NULL
