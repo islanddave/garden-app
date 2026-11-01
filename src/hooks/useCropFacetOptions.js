@@ -1,18 +1,15 @@
-// useCropFacetOptions — V5-PHOTOFILTERPARITY-001 (BD0901-01). THE shared derivation behind every
+// useCropFacetOptions — THE shared derivation behind every
 // crop-chip row: the option universe (count-descending, drawn from the rows on screen), the labels
 // (from the controlled crop-type vocabulary), and the derived pins FilterChipRow collapses around.
 //
-// MINTED BECAUSE IT WAS ABOUT TO BE WRITTEN A FOURTH TIME. The same twelve lines already exist in
-// PlantingSelect.jsx (`cropUniverse` + `pinnedSlugs`, entangled with bandOrder's recents band) and
-// TWICE inside SavedSeeds.jsx (`cropOptions`/`cropPinned` for the packet picker and
-// `trackedCropOptions`/`trackedCropPinned` for the page). Photos would have been the fourth copy and
-// Log Many's crop filter the fifth — ScopeChecklist.jsx ADOPTED this hook instead
-// (V4-LOGMANYCROPFILTER-001), which is what put the controlled `display_name` on its chips in place
-// of a titleized slug. This is the seam; the remaining copies are a tracked follow-up rather than
-// part of this change, because PlantingSelect's pins are NOT simply the top two (it layers a recents
-// band and a tie-preference on top) and re-pointing a chooser that eight surfaces open is its own
-// regression surface. Adopting it in SavedSeeds is a drop-in and is deliberately left to the lane
-// that owns that file.
+// The same derivation also exists inline in PlantingSelect.jsx (`cropUniverse` + `pinnedSlugs`,
+// entangled with bandOrder's recents band) and twice inside SavedSeeds.jsx (`cropOptions`/
+// `cropPinned` for the packet picker and `trackedCropOptions`/`trackedCropPinned` for the page).
+// PhotoLibrary and ScopeChecklist.jsx use this hook instead, which also puts the controlled
+// `display_name` on ScopeChecklist's chips in place of a titleized slug. The remaining copies are
+// not folded in because PlantingSelect's pins are NOT simply the top two (it layers a recents band
+// and a tie-preference on top) and re-pointing a chooser that many surfaces open is its own
+// regression surface. Adopting it in SavedSeeds would be a drop-in.
 //
 // THE SEAM IS rows + slugOf, not rows + a field name, because the three shapes reach their crop
 // differently and only one of them reads a column: a seed lot has `crop_slug`, a planting has
@@ -23,7 +20,7 @@
 // COUNT-DESC, NOT ALPHABETICAL, and derived from the ROWS rather than from the vocabulary. Both are
 // SavedSeeds' recorded reasoning and both hold generally: a chip that matches nothing is a control
 // that can only disappoint, and frequency order puts the reachable answers where the thumb already
-// is. FilterChipRow's pinned-first re-sort is stable (FilterChipRow.jsx:55-63), so this order
+// is. FilterChipRow's pinned-first re-sort is stable, so this order
 // survives into the More tray untouched.
 //
 // PASS THE PRE-FILTER ROWS. Deriving the universe from the already-chip-filtered set is the
@@ -49,8 +46,7 @@ export function useCropFacetOptions(rows, slugOf, { pinCount = DEFAULT_CROP_PIN_
     for (const t of cropTypes ?? []) if (t?.slug) m.set(t.slug, t.display_name || prettySlug(t.slug))
     return m
   }, [cropTypes])
-  // V4-LOGMANYCROPFILTER-001 — the ROWS, not just their labels, and additive so PhotoLibrary's
-  // destructure is untouched. A chip row and the search box beside it must answer to the same
+  // The ROWS, not just their labels. A chip row and the search box beside it must answer to the same
   // vocabulary: ScopeChecklist labels a chip "Summer Squash" from `labelBySlug` and then feeds
   // `looseIncludesCropType(slug, q, bySlug.get(slug))` — the ONE crop-type matcher Search,
   // PlantingSelect and VarietyPicker already share (comboboxInput.js) — so typing that same label,

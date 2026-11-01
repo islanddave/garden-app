@@ -1,4 +1,4 @@
-// src/hooks/useNearViewport.js — V5-SEEDCARDS-001. Which rows of a long list are within reach of the
+// src/hooks/useNearViewport.js — which rows of a long list are within reach of the
 // viewport, for a list whose page height does NOT depend on what is mounted in it.
 //
 // WHY NOT useImageWindow. That hook mounts a first page of N items and grows it whenever the viewport
@@ -6,8 +6,8 @@
 // step makes the page taller, so growth follows the scroll. My seeds renders every row at full height
 // whether its thumbnail is mounted or not (a fixed 40x40 box), so the page never grows: thumbnails past
 // the first page never mounted while an open group was scrolled, and then ALL mounted at once near the
-// bottom — the BUG-PHOTOTHUMB-001 burst the window exists to prevent (QA pre-promote review, 2026-09-19:
-// a 60-row group scrolled to rows ~24-38 showed 24 thumbnails; near the bottom, 60 of 60 at once).
+// bottom — the thumbnail burst the window exists to prevent (a 60-row group scrolled to rows
+// ~24-38 showed 24 thumbnails; near the bottom, 60 of 60 at once).
 //
 // WHY NOT IntersectionObserver, or loading="lazy". useImageWindow's header records the measurement:
 // native lazy loading never fired on these surfaces on the live app (0 of 120 images requested), and IO

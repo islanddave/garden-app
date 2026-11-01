@@ -1,4 +1,4 @@
-// useHandedness — V4-HANDEDNESSCONTROLS-001 (BD-054). The React seam over src/lib/handedness.js.
+// useHandedness — the React seam over src/lib/handedness.js.
 //
 // TWO HOOKS, DELIBERATELY SPLIT, and the split is the whole design:
 //
@@ -8,7 +8,7 @@
 //                          primitive require an auth context and broken every one of those suites.
 //   useHandednessSync()  — the ONE-SHOT server adopt. Takes getToken as an argument rather than
 //                          reaching for useApiFetch itself, so its caller keeps owning the auth
-//                          seam that its own tests already mock (api.js:258-263).
+//                          seam that its own tests already mock.
 //
 // The sync is latched at MODULE scope, not per-component: the value is global, so a second consumer
 // mounting must not fire a second GET. Same reasoning as HarvestWatchBand's `hwModule` cache.
@@ -16,15 +16,15 @@
 // SERVER WINS, LAST-WRITE-WINS — not a merge. This is a single stated preference, like
 // log_many_all_selected and unlike the append-only skip set, so there is nothing to union.
 // `handedness` absent or null means "this user has never set it anywhere": keep the local answer
-// rather than stomping it with a default (ScopeChecklist.jsx:78 makes the same distinction, and for
+// rather than stomping it with a default (ScopeChecklist.jsx makes the same distinction, and for
 // the same reason — an unset server value is not a choice).
 //
-// PRE-MIGRATION BEHAVIOUR IS SAFE BY CONSTRUCTION. user_notification_prefs.handedness does not
-// exist yet (migrations/v4-handednesscontrols-001, authored, NOT applied). Until it does the GET
-// simply has no such field, so the adopt is a no-op; and saveHandedness's PATCH carries only that
-// one key, so the critter Lambda's HAS_UPDATABLE check (validators.js:102) rejects it with a 400 —
-// which notificationPrefsClient turns into a silent null, never a throw. The setting works
-// per-device today and gains cross-device sync the moment the column lands, with no client change.
+// A MISSING COLUMN IS SAFE BY CONSTRUCTION. If user_notification_prefs.handedness
+// (migrations/v4-handednesscontrols-001) is absent, the GET simply has no such field, so the adopt
+// is a no-op; and saveHandedness's PATCH carries only that one key, so the critter Lambda's
+// HAS_UPDATABLE check (validators.js) rejects it with a 400 — which notificationPrefsClient turns
+// into a silent null, never a throw. The setting then works per-device and gains cross-device sync
+// the moment the column exists, with no client change.
 import { useEffect, useState } from 'react'
 import { fetchNotificationPrefs } from '../lib/notificationPrefsClient.js'
 import { HANDEDNESS_EVENT, HANDS, readHand, writeHand } from '../lib/handedness.js'
@@ -36,7 +36,7 @@ export function useHandedness() {
   useEffect(() => {
     const onChange = () => setHand(readHand())
     window.addEventListener(HANDEDNESS_EVENT, onChange)
-    // Another tab on the same device (Dave keeps the app open on a laptop and a phone).
+    // Another tab on the same device.
     window.addEventListener('storage', onChange)
     return () => {
       window.removeEventListener(HANDEDNESS_EVENT, onChange)

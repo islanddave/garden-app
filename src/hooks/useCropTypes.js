@@ -1,17 +1,16 @@
-// useCropTypes — V4-PLANTTYPE-001 controlled crop-type vocabulary (GET /api/varieties/crop-types).
+// useCropTypes — controlled crop-type vocabulary (GET /api/varieties/crop-types).
 // Loaded once per mount; globally readable. Non-fatal by design: any failure (or a test mock that
 // returns a non-Promise) resolves to an empty list so consumers (VarietyPicker) degrade to the
 // legacy no-type create path rather than blocking variety creation. Promise.resolve() wraps the
 // fetch so a synchronous/undefined mock return can't throw.
 //
-// V4-CROPTYPE-001 adds WRITES: the vocabulary is no longer read-only from the app. Previously a
-// crop with no matching type had to be saved with crop_type_slug = NULL, which dropped it out of
-// every type-grouped view.
+// The vocabulary is writable from the app: a crop with no matching type would otherwise have to be
+// saved with crop_type_slug = NULL, which drops it out of every type-grouped view.
 //
-// V4-MATURITYBASIS-001 adds `dtm_basis` ('from-sow' | 'from-transplant' | null) to the row shape —
-// the DTM basis for the crop kind. Additive; null means uncurated.
+// Rows carry `dtm_basis` ('from-sow' | 'from-transplant' | null) — the DTM basis for the crop kind;
+// null means uncurated.
 //
-// V4-PUTUPFOODCATEGORY-001 adds SCOPE. crop_types now also carries non-plant food classes (bread,
+// SCOPE. crop_types also carries non-plant food classes (bread,
 // cheese, milk, butter, yogurt, meat, fish — category 'non_plant_food') so that Put-Up can record
 // and browse food that never grew in a garden. Those rows are correct in the pantry and wrong
 // everywhere else: `Bread` must never be offerable as a crop to plant, to type a variety to, or to
@@ -23,12 +22,12 @@
 // default would put a loaf of bread in the planting picker the first time somebody added a call
 // site without reading this file, and nothing would have failed.
 //
-// OPS-CROPTYPEALIASCLIENT-001 adds `search_aliases` to the row shape — the comma-separated alternate
+// Rows carry `search_aliases` — the comma-separated alternate
 // names for the crop ('melon' -> 'cantaloupe, muskmelon, honeydew'), null for most types. It is a
 // MATCHING column, never a display one: split it with splitCropAliases() and filter against it, and
 // do not render it. The reason it is a column of its own rather than more parentheticals inside
 // display_name is that display_name reaches the text of a public Facebook/Instagram post
-// (lambda/facebook-share/index.js:319), and the alias list must not follow it there.
+// (lambda/facebook-share/index.js), and the alias list must not follow it there.
 //
 // Contract: { cropTypes: [{ slug, display_name, default_lifecycle, category, sort_order, dtm_basis,
 //                           search_aliases }], loading,
@@ -49,10 +48,9 @@ export function useCropTypes({ scope = 'garden', enabled = true } = {}) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // OPS-CROPTYPEALIASCLIENT-001 — `enabled` exists for ONE call site and one invariant.
-    // PlantingSelect needs this vocabulary to match a crop's aliases, but in CONTROLLED mode
-    // (`plants` supplied by the host) it is contractually forbidden to hit the network at all —
-    // BUG-PLANTFETCHSILENT-001, and PlantingSelect.test.jsx asserts the fetch spy was never called
+    // `enabled` exists for ONE call site and one invariant. PlantingSelect needs this vocabulary to
+    // match a crop's aliases, but in CONTROLLED mode (`plants` supplied by the host) it is
+    // contractually forbidden to hit the network at all, and PlantingSelect.test.jsx asserts the fetch spy was never called
     // on mount OR on focus. The vocabulary is read only inside the typed filter, so that site defers
     // until a query exists and this flag is what lets it. Default true: every other caller
     // (VarietyPicker, PutUp, VarietyEdit, ProjectsAdminClassify, Search, VoiceHarvest) is unchanged
@@ -75,7 +73,7 @@ export function useCropTypes({ scope = 'garden', enabled = true } = {}) {
   // another word for a crop whose DERIVED facets a duplicate type would silently lose, so the UI
   // should present adopting the existing type as the correct action rather than as a failure.
   // Inserts locally in sort order so the picker reflects it without a refetch.
-  // V4-CROPTYPERETIRE-001 — `code` is 'crop_type_retired' when the name matches a type the admin
+  // `code` is 'crop_type_retired' when the name matches a type the admin
   // retired and the caller is not the admin; `error` is then the one plain line both inline forms print.
   const createCropType = useCallback(async (payload) => {
     try {
