@@ -311,6 +311,19 @@ describe('My seeds — what each card says', () => {
     expect(live.style.flex).toBe('0 0 auto')
   })
 
+  it('a lot still drying across New Year says the year its stage began, not the clock\'s year (ageOf reads stage_entered_at)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2027-01-10T12:00:00'))
+    onTestFinished(() => vi.useRealTimers())
+    rows = [pkt({
+      id: 'overyear', name: 'Sungold — saved 2026', variety_name: 'Sungold', seed_stage: 'drying', source_plant_id: 'pl',
+      seed_count: 300, stage_entered_at: '2026-12-20T15:00:00Z',
+    })]
+    await mount()
+    await openAll()
+    expect(within(lineOf('overyear')).getByTestId('my-seed-rest').textContent).toBe(' · Saved from my plant · harvested 2026')
+  })
+
   it('EVERY row with a heat keeps it as a whole item of its wrapping line — bought or saved, with or without an amount or chips', async () => {
     rows = [
       pepper({ id: 'reaper', name: 'Carolina Reaper', variety_name: 'Carolina Reaper', source_id: 'src-sandia', unit: 'each',
