@@ -1,15 +1,14 @@
-// src/lib/photoFilters.js — V5-PHOTOFILTERPARITY-001 (BD0901-01). The Photos page's filter/sort
-// DECISIONS, held here rather than inside PhotoLibrary.jsx for the reason scrollRestore.js records:
-// `src/pages/**` is not in vitest's coverage.include, so a predicate that lives in the page is
-// unmeasured by construction. The page keeps the wiring; this file keeps the answers.
+// The Photos page's filter/sort DECISIONS, held here rather than inside PhotoLibrary.jsx for the reason
+// scrollRestore.js records: `src/pages/**` is not in vitest's coverage.include, so a predicate that lives
+// in the page is unmeasured by construction. The page keeps the wiring; this file keeps the answers.
 //
 // WHAT A PHOTO'S CROP ACTUALLY IS, stated up front because it is the one thing here that can be
 // misread. GET /api/photos returns no crop, no variety and no plant NAME — only `plant_id`
-// (lambda/photos/index.js, the five list templates all select the same column set). So a crop is
-// resolved by JOINING that id against the planting picker projection, and it therefore means
-// "the crop of the planting this photo is filed under" — NOT "what is in the frame". A photo shot
-// while logging a tomato pick is filed under that tomato whether it shows fruit, a trellis or the
-// dog. The chips are honest about the filing, and nothing here infers subject matter from metadata.
+// (lambda/photos/index.js; the list templates all select the same column set). So a crop is resolved by
+// JOINING that id against the planting picker projection, and it therefore means "the crop of the
+// planting this photo is filed under" — NOT "what is in the frame". A photo shot while logging a tomato
+// pick is filed under that tomato whether it shows fruit, a trellis or the dog. Nothing here infers
+// subject matter from metadata.
 //
 // PHOTOS WITH NO PLANTING HAVE NO CROP, and that is a real exclusion rather than a gap to paper
 // over: a photo attached only to an event, a zone, a project or an inventory item carries no
@@ -18,9 +17,9 @@
 // The active-filter breadcrumb on the page is what keeps that from being a silent disappearance.
 
 // Sort vocabulary. The server hands the list back created_at DESC (every template ends
-// `ORDER BY p.created_at DESC`), so 'newest' reproduces the shipped order — but it is re-derived
-// here rather than assumed, because the client now re-orders and a sort that merely trusted the
-// wire would silently disagree with itself the moment anything reordered the array upstream.
+// `ORDER BY p.created_at DESC`), so 'newest' reproduces the server order, but it is re-derived
+// here rather than assumed: a sort that merely trusted the wire would silently disagree with itself
+// the moment anything reordered the array upstream.
 import { photoDate } from './photoModel.js'
 
 export const PHOTO_SORT_NEWEST = 'newest'
@@ -72,15 +71,14 @@ export function filterByCrop(photos, cropSel, cropByPlantId) {
 }
 
 // Non-mutating. Sorts on photoDate() — capture time where the camera recorded one, upload time
-// otherwise — so "newest" means the newest PHOTOGRAPH, not the newest upload. V4-PHOTOTAKENAT-002;
-// the rule and the measurements behind it live on photoDate() in photoModel.js, in one place so
-// this helper and PhotosWall's month sectioning cannot drift apart.
+// otherwise — so "newest" means the newest PHOTOGRAPH, not the newest upload. The rule lives on
+// photoDate() in photoModel.js, in one place so this helper and PhotosWall's month sectioning cannot
+// drift apart.
 //
-// LEXICAL COMPARE STILL HOLDS, and now spans two columns rather than one. Both taken_at and
-// created_at are timestamptz that reach the client as ISO-8601 with a Z — the driver renders them
-// identically because they are the same PG type on the same round trip — so a string compare IS the
-// chronological one and mixing the two is safe. That is a property of the wire format, not a
-// coincidence: if either column ever arrives in a different shape, this must become Date.parse.
+// LEXICAL COMPARE HOLDS across two columns. Both taken_at and created_at are timestamptz that reach the
+// client as ISO-8601 with a Z (the driver renders them identically, same PG type on the same round trip),
+// so a string compare IS the chronological one and mixing the two is safe. That is a property of the
+// wire format: if either column ever arrives in a different shape, this must become Date.parse.
 //
 // `id` breaks ties so the order is total and a test can pin it. A row with no date at all sorts
 // LAST in both directions rather than drifting to the head of 'oldest' — an unknown timestamp must

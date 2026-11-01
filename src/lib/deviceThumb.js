@@ -1,11 +1,9 @@
-// src/lib/deviceThumb.js — BUG-SEEDTHUMBSOFFLINE-001. "Does this phone already hold the thumb?"
+// "Does this phone already hold the thumb?"
 //
 // The seed list carries each lot's photo ID and its thumb's object KEY (`hero_thumb_key`,
-// thumbs/<storage path>), never a signed link (BUG-SEEDLISTSIGNING-001). Minting a link per drawn
-// row made My seeds depend on the network for pictures the phone had already downloaded: offline, or
-// on a signal too weak to mint, rows it had shown a hundred times drew grey boxes. This asks the
-// photo cache first.
-//
+// thumbs/<storage path>), never a signed link. Minting a link per drawn row would make My seeds depend
+// on the network for pictures the phone had already downloaded: offline, or on a signal too weak to
+// mint, rows it had shown a hundred times would draw grey boxes. This asks the photo cache first.
 // HOW THE CACHE IS KEYED, which is the whole trick. sw.js stores a photo thumb in `photos-v1` under
 // its presigned URL with every X-Amz-* parameter removed (normalizeImageUrl) — i.e. the object's own
 // URL plus whatever non-signing query the signer adds (the SDK's `x-id=GetObject`). That key is the
