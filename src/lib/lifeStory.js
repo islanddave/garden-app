@@ -1,4 +1,4 @@
-// V4-PLANTINGUI-001 — life-story milestone spine for a planting.
+// Life-story milestone spine for a planting.
 // Pure: derives an ordered list of lifecycle MILESTONES from the planting's own date fields.
 // This is intentionally NOT the event ledger (the Event log section keeps that) — it's the
 // crop's lifecycle arc, so the full event-log contract is untouched.
@@ -7,15 +7,14 @@ import { parseDayOrInstant as parseDate } from './dateLocal.js'
 
 // Ordered milestone definitions: [field, approxField, key, label, iconName].
 //
-// V4-ICON-001 (done). These are lifecycle STAGES — meaningful — so each carries a registry KEY and
-// LifeStoryTimeline resolves it; this module stays pure and JSX-free.
+// These are lifecycle STAGES, so each carries a registry KEY and LifeStoryTimeline resolves it; this
+// module stays pure and JSX-free.
 //
-// `planted_out` was the one open design call, and it is care.plantedOut — a NEWLY DRAWN glyph, not
-// a reuse. The obvious reuse was event.transplant, and it is wrong here for a specific reason: the
-// `transplanted` row sits DIRECTLY ABOVE this one, so the same mark twice would make two adjacent
-// milestones visually identical, which loses the distinction the timeline exists to draw. It could
-// not live under event.* either — eventTypeIconWiring.test.js pins event.* 1:1 against EVENT_TYPES,
-// and planted_out is a date field, not an event type. See iconAnchors.js for the form's rationale.
+// `planted_out` uses care.plantedOut, a drawn glyph rather than a reuse of event.transplant: the
+// `transplanted` row sits DIRECTLY ABOVE it, so the same mark twice would make two adjacent milestones
+// visually identical, which loses the distinction the timeline exists to draw. It cannot live under
+// event.* either: eventTypeIconWiring.test.js pins event.* 1:1 against EVENT_TYPES, and planted_out is
+// a date field, not an event type. See iconAnchors.js for the form's rationale.
 const MILESTONES = [
   ['sown_at', 'sown_at_approx', 'sown', 'Sown', 'event.sowing'],
   ['germinated_at', 'germinated_at_approx', 'germinated', 'Germinated', 'event.germination'],

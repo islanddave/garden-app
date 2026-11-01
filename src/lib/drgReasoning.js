@@ -1,4 +1,4 @@
-// drgReasoning.js — Slice 8 (V4-THEME-001) Doctor Gardener "Why today looks like this".
+// drgReasoning.js — Doctor Gardener "Why today looks like this".
 // Pure, anti-fabrication: derives a read-only rationale STRICTLY from the daily-plan data the
 // engine already produced (counts / substrate / weather / hydrology / rain_skipped). It invents
 // NOTHING — every line is gated on real data, and there are no tappable tasks here (Today owns the

@@ -1,4 +1,4 @@
-// V3-FEED-001 — client-side feed helpers for the /feed page.
+// Client-side feed helpers for the /feed page.
 // The /api/events/feed endpoint paginates RAW events (batch member rows included). The page
 // accumulates pages and collapses the WHOLE accumulated array each render, so a Log-Many batch
 // split across a page boundary still folds into ONE entry. Mirrors the server-side collapse in
@@ -8,7 +8,7 @@ import { eventTypeText } from './eventDisplay.js';
 // Collapse Log-Many batches: each batch -> ONE entry, anchored at its newest row (rows arrive
 // created_at DESC). batch_count prefers event_batches.item_count (exact, window-proof) and falls
 // back to occurrences seen. A critter earned by ANY member surfaces on the collapsed entry
-// (the batch awards one critter total — V4 social-feed hook). Non-batch rows pass through as count 1.
+// (the batch awards one critter total). Non-batch rows pass through as count 1.
 export function collapseFeed(rows) {
   const out = [];
   const byBatch = new Map();
@@ -68,6 +68,6 @@ export function relativeTime(isoStr) {
   return `${Math.floor(days / 365)}y ago`;
 }
 
-// BUG-LOSSEVENTLABEL-001: through the shared wording, so the feed chip and filter say "plants lost"
-// rather than the stored token "failed", which is also a planting status.
+// Through the shared wording, so the feed chip and filter say "plants lost" rather than the stored
+// token "failed", which is also a planting status.
 export const prettyEventType = (t) => eventTypeText(t);
