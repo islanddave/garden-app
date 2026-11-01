@@ -1,34 +1,31 @@
-// src/components/seed/SavedFromCard.jsx — V5-SEEDMULTIPARENT-001 release 2b. The lot page's "Saved from",
-// for a jar whose PARENT SET is known.
+// src/components/seed/SavedFromCard.jsx — the lot page's "Saved from", for a jar whose PARENT SET is known.
 //
-// A jar can be gathered off several plantings, so this card lists every one of them (each a door to its
-// planting), adds another, takes one away, and keeps the jar FILED under what the set now says: one
-// cultivar, or the named mix of several. It renders INSIDE the page's `seed-source-plant` card; the page
-// keeps the heading, the arrival ref and the origin select below.
+// A jar can be gathered off several plantings, so this card lists every one of them (each a door to its planting), adds
+// another, takes one away, and keeps the jar FILED under what the set now says: one cultivar, or the named mix of
+// several. It renders INSIDE the page's `seed-source-plant` card; the page keeps the heading, the arrival ref and the
+// origin select below.
 //
-// EVERY CHANGE IS ONE WRITE. PUT /api/inventory-items/:id/source-plants carries the whole set, the set
-// this page last read (`expected_source_plant_ids`, always), and — when the change moves the set's
-// cultivars — the `filing` that goes with it, in one transaction. A mix has to exist before it can be
-// filed under, so POST /api/varieties/blend { create: true } runs first when the set spans more than one
-// cultivar; it is idempotent, so a PUT refused after it leaves a row the next try reuses.
+// EVERY CHANGE IS ONE WRITE. PUT /api/inventory-items/:id/source-plants carries the whole set, the set this page last
+// read (`expected_source_plant_ids`, always), and, when the change moves the set's cultivars, the `filing` that goes
+// with it, in one transaction. A mix has to exist before it can be filed under, so POST /api/varieties/blend
+// { create: true } runs first when the set spans more than one cultivar; it is idempotent, so a PUT refused after it
+// leaves a row the next try reuses.
 //
-// ONE SET WRITE AT A TIME. While one runs no row control answers: the likeliest cause of the server's
-// "changed at the same moment" is the user's own second tap, and this removes it.
+// ONE SET WRITE AT A TIME. While one runs no row control answers: the likeliest cause of the server's "changed at the
+// same moment" is the user's own second tap, and this removes it.
 //
-// REMOVE IS FORGIVING, IN PLACE. The row stays where it was, struck, reading "<name> · Removed", with
-// Undo where the ✕ was, until the page is left. Undo puts the planting back into the set as it stands
-// now and asks for the cache the jar had before. A removed plant's `seed_saved` timeline entry is
-// withdrawn only on LEAVING with the row still struck (see the unmount effect), so Undo never has an
-// entry to restore.
+// REMOVE IS FORGIVING, IN PLACE. The row stays where it was, struck, reading "<name> · Removed", with Undo where the ✕
+// was, until the page is left. Undo puts the planting back into the set as it stands now and asks for the cache the
+// jar had before. A removed plant's `seed_saved` timeline entry is withdrawn only on LEAVING with the row still
+// struck (see the unmount effect), so Undo never has an entry to restore.
 //
-// AN ADD WRITES THE PLANT ITS ENTRY (V5-SEEDLOTADDENTRY-001; Dave 2026-10-07). The Save seed sheet
-// writes one `seed_saved` entry per parent; a plant added HERE got none, so a plant removed, withdrawn
-// and added back had lost its line for good, and a corrected jar could have a line on no plant. A fresh
-// add (never an Undo, whose entry was never withdrawn) now writes that plant one entry for this jar,
-// dated the day the jar was started, unless it still has a live one. It runs after the set write and
-// is never waited for, with one exception: a later change to THAT plant waits for it, because the
-// server pays an entry's rewards per jar only while its plant is on the jar
-// (lambda/events/seedLotRewards.js). Taking the add back takes the entry it wrote back too.
+// AN ADD WRITES THE PLANT ITS ENTRY. The Save seed sheet writes one `seed_saved` entry per parent; without the same
+// here, a plant removed, withdrawn and added back would lose its line for good, and a corrected jar could have a line
+// on no plant. A fresh add (never an Undo, whose entry was never withdrawn) writes that plant one entry for this jar,
+// dated the day the jar was started, unless it still has a live one. It runs after the set write and is never waited
+// for, with one exception: a later change to THAT plant waits for it, because the server pays an entry's rewards per
+// jar only while its plant is on the jar (lambda/events/seedLotRewards.js). Taking the add back takes the entry it
+// wrote back too.
 //
 // `lot` is the page's item with `name` as the page's NAME FIELD SHOWS IT NOW: the jar is renamed with a
 // re-file only while that name is still the automatic one (rowTitle's test), and a name being typed is
@@ -73,7 +70,7 @@ const NOT_ADDED = {
 const COUNT_NOT_A_NUMBER = 'A plant count is a whole number, 1 or more.'
 const COUNT_NOT_SAVED = "Couldn't record the plant count."
 const EMPTY_HELP = 'The plant this seed was saved from. Leave it empty for bought seed.'
-// The page's own sentence for a failed picker load, unchanged.
+// The page's own sentence for a failed picker load.
 const LOAD_FAILED = "Couldn't load your plantings — the rest of this page still saves normally."
 
 // What a refetch may move on the page's item: the parent set, its cache, the filing and the count.
@@ -87,8 +84,8 @@ const insertAt = (list, item, at) => {
   out.splice(Math.max(0, Math.min(at, out.length)), 0, item)
   return out
 }
-// O-4: a planting whose variety is gone (no id, or an id whose row is soft-deleted and so has no name)
-// is a planting with no variety.
+// A planting whose variety is gone (no id, or an id whose row is soft-deleted and so has no name) is a planting with no
+// variety.
 const hasNoVariety = (p) => p.variety_id == null || p.variety_name == null
 
 // The year of a name that is still the automatic one, else null. rowTitle answers the variety only for
@@ -102,14 +99,12 @@ function automaticYear(varietyName, name) {
   return shown.slice(-4)
 }
 
-// The planting's live entries, ALL of them. The route answers its newest 200 by entry date, and an
-// entry an add writes is dated the jar's start day, so on a busy planting it sits past the first page
-// from the moment it is written (prod 2026-10-08: two plantings over 200, the busiest at 246). The
-// first request is the one this card has always sent (a bare array); only a full page asks for more,
-// by `offset`, which the route answers as { events, has_more }. A failed FIRST read rejects. After
-// that it answers what it has: `complete` is false when a later page failed, came from the offline
-// copy (`fromCache`: such a copy is never the latest, on any page), or the cap was reached with more
-// to read. The withdrawal acts on what was read; the add writes only on a complete list.
+// The planting's live entries, ALL of them. The route answers its newest 200 by entry date, and an entry an add writes
+// is dated the jar's start day, so on a busy planting it sits past the first page from the moment it is written. The
+// first request answers a bare array; only a full page asks for more, by `offset`, which the route answers as
+// { events, has_more }. A failed FIRST read rejects. After that it answers what it has: `complete` is false when a
+// later page failed, came from the offline copy (`fromCache`: such a copy is never the latest, on any page), or the
+// cap was reached with more to read. The withdrawal acts on what was read; the add writes only on a complete list.
 const EVENTS_PAGE = 200
 // 5,000 entries: no planting is near it, and a route that kept answering full pages must not spin.
 const EVENTS_MAX_PAGES = 25
@@ -135,9 +130,9 @@ async function plantEntries(fetch, plantId) {
   return { list, fromCache: false, complete: true }
 }
 
-// O-11 — withdraw a removed plant's `seed_saved` entries for this jar. Fired once, never awaited, every
-// failure silent: the entry links to the jar, which shows the live answer, so a missed withdrawal is a
-// stale line and not a wrong one. None found is success.
+// Withdraw a removed plant's `seed_saved` entries for this jar. Fired once, never awaited, every failure silent: the
+// entry links to the jar, which shows the live answer, so a missed withdrawal is a stale line and not a wrong one.
+// None found is success.
 function withdrawSeedSaved(fetch, plantId, lotId) {
   Promise.resolve()
     .then(() => plantEntries(fetch, plantId))
@@ -166,11 +161,10 @@ export function lotStartDay(lot) {
   return at && !Number.isNaN(at.getTime()) ? toLocalISO(at) : todayLocalISO()
 }
 
-// V5-SEEDLOTADDENTRY-001 — the `seed_saved` entry for a plant added from this page. Resolves to the id
-// of the entry it wrote, or null when it wrote none: the plant still has a live one for this jar, the
-// list came from the offline copy (which cannot say, and with no network the write fails anyway), or
-// anything failed (a list that is not `complete` cannot say, whichever page stopped it).
-// Never rejects and says nothing: the plant is on the jar either way. Same list as the withdrawal.
+// The `seed_saved` entry for a plant added from this page. Resolves to the id of the entry it wrote, or null when it
+// wrote none: the plant still has a live one for this jar, the list came from the offline copy (which cannot say, and
+// with no network the write fails anyway), or anything failed (a list that is not `complete` cannot say, whichever
+// page stopped it). Never rejects and says nothing: the plant is on the jar either way. Same list as the withdrawal.
 function writeSeedSaved(fetch, plantId, lotId, day, note) {
   return Promise.resolve()
     .then(() => plantEntries(fetch, plantId))
@@ -234,8 +228,8 @@ export default function SavedFromCard({ lot, onLot, onName, storedName = null, n
     return out
   }, [live, struck])
 
-  // X7 — the adder's crop is the set's one shared crop. No crop (a planting with no variety, O-4
-  // included) means every add would be refused, so the adder is not offered and the card says why.
+  // The adder's crop is the set's one shared crop. No crop (a planting with no variety included) means every add would
+  // be refused, so the adder is not offered and the card says why.
   const orphan = live.find(hasNoVariety) ?? null
   const liveFacts = useMemo(() => parentSetFacts(live), [live])
   const cropSlug = !orphan && typeof liveFacts.cropSlug === 'string' ? liveFacts.cropSlug : null
@@ -243,10 +237,9 @@ export default function SavedFromCard({ lot, onLot, onName, storedName = null, n
   // Stable while the rows are: PlantingSelect lists it in a memo's deps.
   const excludeIds = useMemo(() => (rowKey ? rowKey.split(',') : []), [rowKey])
 
-  // ── Leaving with a row still struck (O-11) ─────────────────────────────────────────────────────────
-  // Unmount only: a route change, the lot reloading, or an origin that takes the parent picker away.
-  // A removal the server never confirmed is not withdrawn, and neither is a deleted planting's (its
-  // event list answers 404).
+  // Leaving with a row still struck: unmount only (a route change, the lot reloading, or an origin that takes the parent
+  // picker away). A removal the server never confirmed is not withdrawn, and neither is a deleted planting's (its event
+  // list answers 404).
   const leaveRef = useRef({ struck, fetch, lotId })
   leaveRef.current = { struck, fetch, lotId }
   useEffect(() => () => {
@@ -279,9 +272,8 @@ export default function SavedFromCard({ lot, onLot, onName, storedName = null, n
     }
   }
 
-  // ── The one set write ──────────────────────────────────────────────────────────────────────────────
-  // `kind` is what happens to `plant`; `undo` is the earlier act this one reverses (a struck row's, or
-  // the "Filed as" line's, which sets `fromFiled`), null for a fresh add or remove.
+  // The one set write. `kind` is what happens to `plant`; `undo` is the earlier act this one reverses (a struck row's,
+  // or the "Filed as" line's, which sets `fromFiled`), null for a fresh add or remove.
   async function run({ kind, plant, index = 0, undo = null, fromFiled = false }) {
     if (busyRef.current) return
     busyRef.current = true
@@ -317,13 +309,12 @@ export default function SavedFromCard({ lot, onLot, onName, storedName = null, n
       const own = wroteRef.current.get(pid)
       if (own) await own
 
-      // ── The filing that rides with this change (O-3) ─────────────────────────────────────────────
-      // An Undo of the very act that re-filed the jar goes back to what the server said was there
-      // (`previous`), name included when that act renamed it and the field still shows that name.
-      // Anything else is filed by what the resulting set says, and only when the set's cultivars moved.
-      // A jar with no parents, before or after, is never sent a filing (PP-11), with one exception: an
-      // Undo that puts a planting back onto a jar this visit emptied. The jar may by then be filed
-      // under the OTHER removed planting's cultivar, and the server does not judge a one-plant set.
+      // The filing that rides with this change. An Undo of the very act that re-filed the jar goes back to what the
+      // server said was there (`previous`), name included when that act renamed it and the field still shows that name.
+      // Anything else is filed by what the resulting set says, and only when the set's cultivars moved. A jar with no
+      // parents, before or after, is never sent a filing, with one exception: an Undo that puts a planting back onto a
+      // jar this visit emptied. The jar may by then be filed under the OTHER removed planting's cultivar, and the
+      // server does not judge a one-plant set.
       let filing = null
       let target = null
       const shown = String(lot.name ?? '').trim()
@@ -339,8 +330,8 @@ export default function SavedFromCard({ lot, onLot, onName, storedName = null, n
       } else if ((cur.length > 0 || undo) && next.length > 0 && nextFacts.varietyIds.length > 0
           && !sameIds(facts.varietyIds, nextFacts.varietyIds)) {
         if (nextFacts.varietyIds.length === 1) {
-          // O-4: an id with no name is a variety since deleted. A jar cannot be filed under it (the
-          // server refuses the whole edit), so the set changes alone and the filing stays as it is.
+          // An id with no name is a variety since deleted. A jar cannot be filed under it (the server refuses the whole
+          // edit), so the set changes alone and the filing stays as it is.
           const one = nextFacts.varieties.find((v) => v.variety_id != null)
           if (one.variety_name != null) {
             target = { variety_id: one.variety_id, variety_name: one.variety_name, breeding_system: one.breeding_system }
@@ -401,9 +392,8 @@ export default function SavedFromCard({ lot, onLot, onName, storedName = null, n
       setAdding(false)
       if (kind === 'add' && !undo) show({ message: '✓ Saved' })
 
-      // ── The plant's timeline entry (V5-SEEDLOTADDENTRY-001) ──────────────────────────────────────
-      // Only once the server holds the plant on the jar. An add taken back (the "Filed as" line's
-      // Undo: nothing is struck, so leaving would withdraw nothing) takes back the entry it wrote.
+      // The plant's timeline entry, only once the server holds the plant on the jar. An add taken back (the "Filed as"
+      // line's Undo: nothing is struck, so leaving would withdraw nothing) takes back the entry it wrote.
       if (kind === 'add' && !undo && storedIds.has(pid)) {
         wroteRef.current.set(pid, writeSeedSaved(fetch, plant.id, lotId, lotStartDay(lot),
           addedSeedSavedNote(refiled?.name ?? storedName ?? lot.name)))
@@ -415,11 +405,10 @@ export default function SavedFromCard({ lot, onLot, onName, storedName = null, n
           .then(() => null, () => null))
       }
     } catch (e) {
-      // A refusal writes nothing (one transaction, one verdict), so the row goes back to how it was
-      // before the tap. A reply lost on the way (api.js: `timeout` on its own 15 s limit, the
-      // browser's TypeError with no `status` for a dropped connection) is the one case the page cannot
-      // see, so it claims nothing: the jar is read again and drawn as stored. When that read fails
-      // too, the next write's `expected_source_plant_ids` answers lot_changed and reads it then.
+      // A refusal writes nothing (one transaction, one verdict), so the row goes back to how it was before the tap. A
+      // reply lost on the way (api.js `timeout`, or the browser's TypeError with no `status` for a dropped connection)
+      // is the one case the page cannot see, so it claims nothing: the jar is read again and drawn as stored. When that
+      // read fails too, the next write's `expected_source_plant_ids` answers lot_changed and reads it then.
       if (strikes) setStruck((list) => list.filter((s) => sid(s.plant.id) !== pid))
       const code = e?.body?.code
       const unanswered = sent && (e?.timeout || (e?.status == null && e instanceof TypeError))
@@ -462,8 +451,8 @@ export default function SavedFromCard({ lot, onLot, onName, storedName = null, n
     run({ kind: act.kind === 'add' ? 'remove' : 'add', plant: act.plant, undo: act, fromFiled: true })
   }
 
-  // ── The plant count: written when the field is left, on its own route ──────────────────────────────
-  // Blank clears it. A 200 without the key is a Lambda from before the column: nothing was saved.
+  // The plant count, written when the field is left, on its own route. Blank clears it. A 200 without the key is a
+  // Lambda from before the column: nothing was saved.
   async function saveCount() {
     const typed = countText.trim()
     const value = typed === '' ? null : /^\d+$/.test(typed) ? Number(typed) : NaN
@@ -553,11 +542,10 @@ export default function SavedFromCard({ lot, onLot, onName, storedName = null, n
         </div>
       )}
 
-      {/* V5-SEEDLOTADDITION-001 — taking a plant off the lot does not take its seed out of the count:
-          the count is one number for the whole lot, and what was added off each plant is kept with
-          the plant's link, not subtracted. So while a row is struck the card says what the lot still
-          says and leaves the number to the person who knows. Nothing to say for a lot with no count;
-          gone with the strike on Undo. */}
+      {/* Taking a plant off the lot does not take its seed out of the count: the count is one number for the whole */}
+      {/* lot, and what was added off each plant is kept with the plant's link, not subtracted. So while a row is */}
+      {/* struck the card says what the lot still says and leaves the number to the person who knows. Nothing to say */}
+      {/* for a lot with no count; gone with the strike on Undo. */}
       {stillSays && (
         <p data-testid="saved-from-still-says" role="status" style={quietLine}>
           The lot still says {stillSays}. Change the count if that is no longer right.
@@ -578,7 +566,7 @@ export default function SavedFromCard({ lot, onLot, onName, storedName = null, n
         </div>
       )}
 
-      {/* No parents yet: the picker itself, pinned to the jar's own cultivar, as before this release. */}
+      {/* No parents yet: the picker itself, pinned to the jar's own cultivar. */}
       {live.length === 0 && (
         <PlantingSelect
           id="inv-source-plant"

@@ -1,30 +1,26 @@
-// src/components/seed/seedLots.js — V5-SEEDSTAB-001. What a seed lot IS, said once.
+// src/components/seed/seedLots.js — what a seed lot IS, said once.
 //
-// These helpers lived inside SavedSeeds.jsx until the Seeds page gave that page two siblings that
-// render the same rows. My seeds and Saved seeds now sit one tap apart on one page, so a lot that read
-// "approx. 175 seeds" on one and "~175 seeds" on the other, or a ferment that was "day 5" here and
-// "day 4" there, would be the page contradicting itself. Moved rather than re-spelled, into the leaf
-// module seedStages.js already lives beside, so no page imports another page for them.
+// These helpers are shared by the Seeds page's views: My seeds and Saved seeds sit one tap apart on one page, so a lot
+// that read "approx. 175 seeds" on one and "~175 seeds" on the other, or a ferment that was "day 5" here and "day 4"
+// there, would be the page contradicting itself. They live in the leaf module seedStages.js sits beside, so no page
+// imports another page for them.
 //
-// Two defects are fixed here rather than carried across, because the move is the moment every
-// consumer starts sharing the answer:
-//   · VENDOR (candidateFacts). `inventory_items.source` stopped meaning "vendor" when the source
-//     registry landed: on prod it holds order references and whole intake sentences ("Order #4411
-//     rec'd 7/2"). The vendor is `source_id` -> GET /api/varieties/sources. The facts line printed
-//     the order text as though it were the shop. Callers now pass a resolver.
-//   · CALENDAR DAYS (elapsedDays), BUG-SEEDSOWRELDAY-001. Dave saved two lots one evening and both
-//     cards still read "today" the next morning, because the count was a rolling 24-hour window.
-//     A day is a calendar date in Eastern, the same rule the harvest export's Today/Yesterday chips
-//     use (V4-HARVEXPORTDAYS-001). The ferment thresholds read the same number, so "day 4" now means
-//     the fourth calendar day, which is how a person counts a jar on the counter.
+// Two rules worth knowing:
+//   · VENDOR (candidateFacts). `inventory_items.source` is NOT the vendor: it holds order references and whole intake
+//     sentences ("Order #4411 rec'd 7/2"). The vendor is `source_id` -> GET /api/varieties/sources, so callers pass a
+//     resolver.
+//   · CALENDAR DAYS (elapsedDays). A day is a calendar date in Eastern, the same rule the harvest export's
+//     Today/Yesterday chips use; a rolling 24-hour window left two lots saved one evening both reading "today" the
+//     next morning. The ferment thresholds read the same number, so "day 4" means the fourth calendar day, which is
+//     how a person counts a jar on the counter.
 import { formatQty, formatDate, formatSeedWeight } from '../../lib/format.js'
 import { etDay } from '../../lib/harvestSummary.js'
 import { IN_PROCESS_STAGES } from '../../lib/sowEngine.js'
 import { seedsHref } from '../../lib/seedsRoutes.js'
 import { isSavedLot, lotNotice } from './seedParents.js'
 
-// Last-resort chip label when the crop vocabulary has no row for a slug the lots DO carry. Sentence
-// case ("Winter squash"), unchanged from SavedSeeds.
+// Last-resort chip label when the crop vocabulary has no row for a slug the lots DO carry. Sentence case ("Winter
+// squash").
 export const prettySlug = (s) => {
   const t = String(s ?? '').replace(/_/g, ' ').trim()
   return t ? t[0].toUpperCase() + t.slice(1) : ''
@@ -33,9 +29,8 @@ export const prettySlug = (s) => {
 // The first line of a lot in the picker: what the seed IS.
 export const candidateTitle = (i) => i?.variety_name || i?.name || ''
 
-// V5-SEEDQTY-001 / V5-SEEDCOUNTCARD-001 — "how many SEEDS", as its own fact. null is "nobody has
-// counted this" and renders nothing; 0 is a counted lot that yielded nothing and DOES render.
-// "approx." is a word rather than a glyph on purpose — see SavedSeeds' history of this line.
+// "How many SEEDS", as its own fact. null is "nobody has counted this" and renders nothing; 0 is a counted lot that
+// yielded nothing and DOES render. "approx." is a word rather than a glyph on purpose.
 export const seedCountLabel = (n, estimated) => {
   if (n == null || n === '') return ''
   const c = Number(n)
@@ -46,16 +41,14 @@ export const seedCountLabel = (n, estimated) => {
 }
 
 /**
- * The picker's second line: the facts that separate two packets of one cultivar, in the order they
- * separate them — how much seed, how many containers, who sold it, when it was bought. Absent facts
- * are dropped, never dashed.
+ * The picker's second line: the facts that separate two packets of one cultivar, in the order they separate them:
+ * how much seed, how many containers, who sold it, when it was bought. Absent facts are dropped, never dashed.
  *
- * A SAVED lot leaves the container count out, lotMeasure's rule: every saved lot is "1 packet", so
- * "175 seeds · 1 packet" read as though the jar held a packet. Dave, 2026-09-25: it "seems to default
- * to showing 1 packet which is not correct ever". A bought packet keeps it — "2 packet" is its amount.
+ * A SAVED lot leaves the container count out, lotMeasure's rule: every saved lot is "1 packet", so "175 seeds · 1
+ * packet" read as though the jar held a packet. A bought packet keeps it: "2 packet" is its amount.
  *
- * `vendorOf(row)` resolves the row's `source_id` to a name. Absent (or answering '') means no
- * vendor segment at all — and never the free-text `source` column, which is an order reference.
+ * `vendorOf(row)` resolves the row's `source_id` to a name. Absent (or answering '') means no vendor segment at all,
+ * and never the free-text `source` column, which is an order reference.
  */
 export function candidateFacts(i, vendorOf) {
   const parts = []
@@ -73,8 +66,8 @@ export function candidateFacts(i, vendorOf) {
 }
 
 /**
- * V5-SEEDCOUNTCARD-001 — how much seed a TRACKED lot holds: count and/or weight, never the
- * container count (every saved lot is "1 packet", which says nothing). '' when nothing was measured.
+ * How much seed a TRACKED lot holds: count and/or weight, never the container count (every saved lot is "1 packet",
+ * which says nothing). '' when nothing was measured.
  */
 export function lotMeasure(i) {
   const parts = []
@@ -86,19 +79,18 @@ export function lotMeasure(i) {
 }
 
 /**
- * The seed detail page's first packet-card fact: how much seed, in lotMeasure's words. Dave,
- * 2026-09-25: a saved seed's page "never surfaces the count" — the only amount on it was the
- * container field, "1 packet".
+ * The seed detail page's first packet-card fact: how much seed, in lotMeasure's words. Without it the only amount on a
+ * saved seed's page is the container field, "1 packet".
  *
- * A SAVED lot with nothing measured states the absence, NOT_COUNTED: the count is the fact looked for
- * on a jar of saved seed, the reasoning seedFacts gives a pepper's heat. A bought packet with nothing
- * measured says nothing. Labelled "Seed weight" when only a weight was taken, so a gram figure never
- * sits under "Seed count". null when there is nothing to say.
+ * A SAVED lot with nothing measured states the absence, NOT_COUNTED: the count is the fact looked for on a jar of
+ * saved seed, the reasoning seedFacts gives a pepper's heat. A bought packet with nothing measured says nothing.
+ * Labelled "Seed weight" when only a weight was taken, so a gram figure never sits under "Seed count". null when there
+ * is nothing to say.
  *
- * `saved` defaults to isSavedLot(i); the detail page passes its LIVE provenance (a parent picked a
- * moment ago counts), the answer its form and its Sow sheet use. Not a seedFacts entry, deliberately:
- * My seeds renders seedFacts in its expanded row, and that row's second line already carries this
- * measure (howMuch), so a fact there would print it twice.
+ * `saved` defaults to isSavedLot(i); the detail page passes its LIVE provenance (a parent picked a moment ago counts),
+ * the answer its form and its Sow sheet use. Not a seedFacts entry, deliberately: My seeds renders seedFacts in its
+ * expanded row, and that row's second line already carries this measure (howMuch), so a fact there would print it
+ * twice.
  */
 export const NOT_COUNTED = 'Not counted yet'
 export function lotCountFact(i, saved = isSavedLot(i)) {
@@ -110,16 +102,15 @@ export function lotCountFact(i, saved = isSavedLot(i)) {
 }
 
 /**
- * Decorate the rows about to be rendered so that NO TWO READ ALIKE (BUG-SEEDCANDIDATEAMBIG-001).
+ * Decorate the rows about to be rendered so that NO TWO READ ALIKE.
  *
- * Computed over the RENDERED lines — title plus whatever the caller renders as the second line —
- * because the property being kept is "nothing on this screen reads the same". My seeds' rows carry
- * a stepper since V5-SEEDSTAB-001, so two rows that looked identical would now let a thumb write to
- * the wrong lot, not merely pick the wrong one.
+ * Computed over the RENDERED lines (title plus whatever the caller renders as the second line) because the property
+ * being kept is "nothing on this screen reads the same". My seeds' rows carry a stepper, so two rows that looked
+ * identical would let a thumb write to the wrong lot, not merely pick the wrong one.
  *
- * `facts(row)` is the second line (default: the picker's candidateFacts with no vendor resolver);
- * `title(row)` the first. A group that still collides gets an ordinal naming its size, and a second
- * pass backstops with the row id, the one thing guaranteed distinct.
+ * `facts(row)` is the second line (default: the picker's candidateFacts with no vendor resolver); `title(row)` the
+ * first. A group that still collides gets an ordinal naming its size, and a second pass backstops with the row id,
+ * the one thing guaranteed distinct.
  */
 export function labelCandidates(rows, facts = candidateFacts, title = candidateTitle) {
   const base = rows.map((i) => ({ item: i, title: title(i), facts: facts(i) }))
@@ -195,66 +186,60 @@ export function dueFerments(items, now = new Date()) {
 
 const isLotInProcess = (i) => IN_PROCESS_STAGES.includes(String(i?.seed_stage ?? '').trim().toLowerCase())
 
-// §4.2 — the Seeds page lands on Saved seeds while any lot is fermenting or drying, else My seeds.
-// Exactly the rows Saved seeds files under its Fermenting and Drying sections (a stage, any status),
-// so the rule and the sections it points at cannot disagree.
+// The Seeds page lands on Saved seeds while any lot is fermenting or drying, else My seeds. Exactly the rows Saved
+// seeds files under its Fermenting and Drying sections (a stage, any status), so the rule and the sections it points
+// at cannot disagree.
 export function hasLotInProcess(items) {
   return (items ?? []).some(isLotInProcess)
 }
 
-// V5-SEEDSTAB-001 slice 2 — where a door into ONE lot lands: Saved seeds on that lot while it is
-// fermenting or drying (the view that holds its clock and its stage controls), else the lot's own
-// page. The same split SaveSeedSheet makes after a save and the detail page's stage link makes. null
-// for a row with no id, so a caller renders no link rather than a link to nowhere.
+// Where a door into ONE lot lands: Saved seeds on that lot while it is fermenting or drying (the view that holds its
+// clock and its stage controls), else the lot's own page. The same split SaveSeedSheet makes after a save and the
+// detail page's stage link makes. null for a row with no id, so a caller renders no link rather than a link to nowhere.
 export function lotHref(lot) {
   if (lot?.id == null || lot.id === '') return null
   return isLotInProcess(lot) ? seedsHref('saved', { lot: lot.id }) : `/inventory/${lot.id}`
 }
 
-// V5-SEEDSTAB-001 slice 2 — Saved seeds' "Not started" group: seed you SAVED that has not entered a
-// stage yet. Decided by the lot's ORIGIN (off one of your plants, or out of produce — a farm-stand
-// pepper, a gift), never by the sow engine's isUnstartedSave, which also asks whether anything was
-// measured and counts only `own_garden` among the kinds, so a farm-stand lot saved "Not yet" would be
-// missing (BUG-SOWSEEDSTATEGAPS-001). A bought packet carries neither origin fact and never qualifies.
+// Saved seeds' "Not started" group: seed you SAVED that has not entered a stage yet. Decided by the lot's ORIGIN (off
+// one of your plants, or out of produce: a farm-stand pepper, a gift), never by the sow engine's isUnstartedSave, which
+// also asks whether anything was measured and counts only `own_garden` among the kinds, so a farm-stand lot saved "Not
+// yet" would be missing. A bought packet carries neither origin fact and never qualifies.
 export function isNotStartedLot(i) {
   if (!i || (i.seed_stage != null && i.seed_stage !== '')) return false
   return isSavedLot(i)
 }
 
-// BUG-SAVEDSEEDPARENTONPRODUCE-001 — may this lot be given a parent PLANT? The database's answer, not an
-// approximation of it: chk_inventory_seed_source_plant is `source_kind IS NULL OR source_kind =
-// 'own_garden' OR source_plant_id IS NULL` (read off live prod 2026-09-24; the same text as
-// migrations/v4-seedorigin-001), so a lot whose origin kind names somewhere other than this garden — a
-// farm stand, a gift, a shop — is REFUSED a parent, and any door offering to set one on it offers a
-// write that can only fail. NULL and 'own_garden' both admit one; "has a source_kind" is not the rule.
-// Takes the KIND rather than the lot so /inventory/:id can ask it of its live select, whose '' is "Not
-// recorded" (sent as null) — the only other spelling of NULL this client has.
-// seedLots.parentPlant.test.js derives the admitted kinds from the migration's CHECK text itself.
+// May this lot be given a parent PLANT? The database's answer, not an approximation of it: chk_inventory_seed_source_plant
+// is `source_kind IS NULL OR source_kind = 'own_garden' OR source_plant_id IS NULL` (the same text as
+// migrations/v4-seedorigin-001), so a lot whose origin kind names somewhere other than this garden (a farm stand, a
+// gift, a shop) is REFUSED a parent, and any door offering to set one on it offers a write that can only fail. NULL and
+// 'own_garden' both admit one; "has a source_kind" is not the rule. Takes the KIND rather than the lot so
+// /inventory/:id can ask it of its live select, whose '' is "Not recorded" (sent as null), the only other spelling of
+// NULL this client has. seedLots.parentPlant.test.js derives the admitted kinds from the migration's CHECK text itself.
 export function kindAllowsParentPlant(kind) {
   return kind == null || kind === '' || kind === 'own_garden'
 }
 
-// Seed you saved yourself, as opposed to a packet you bought. Defined in seedParents.js (the leaf this
-// module imports, so the parent-set rules can read it without a cycle) and exported from here as before.
+// Seed you saved yourself, as opposed to a packet you bought. Defined in seedParents.js (the leaf this module imports,
+// so the parent-set rules can read it without a cycle) and re-exported from here.
 export { isSavedLot }
 
-// V5-SEEDSTAB-001 slice 3 (design §2 rule 8, §5.4) — seed saved off an F1 plant is F2 seed, and F2 does
-// not come true: the F1's one uniform combination segregates in its seed, so next year's plants vary,
-// some of them a lot. Said about the saved LOT only. A bought F1 packet sows true as the F1 — that is
-// what it is bought for — so it is never labelled. The words name the consequence and stop: saving F2
+// Seed saved off an F1 plant is F2 seed, and F2 does not come true: the F1's one uniform combination segregates in its
+// seed, so next year's plants vary, some of them a lot. Said about the saved LOT only. A bought F1 packet sows true as
+// the F1, which is what it is bought for, so it is never labelled. The words name the consequence and stop: saving F2
 // seed on purpose is how dehybridizing starts, so nothing here calls it a mistake.
 //
-// The parent's breeding is the lot's CULTIVAR's (`breeding_system`, projected onto the list and the
-// detail rows from the cultivar view): a saved lot is filed under its parent's variety. Only 'f1'
-// speaks. NULL (never researched), 'unknown', open-pollinated and landrace say nothing here.
+// The parent's breeding is the lot's CULTIVAR's (`breeding_system`, projected onto the list and the detail rows from
+// the cultivar view): a saved lot is filed under its parent's variety. Only 'f1' speaks. NULL (never researched),
+// 'unknown', open-pollinated and landrace say nothing here.
 //
-// One predicate and one label, read by My seeds' row chip, the Saved seeds card and the Breeding fact
-// (seedFacts.js), so no two surfaces can disagree about one jar.
+// One predicate and one label, read by My seeds' row chip, the Saved seeds card and the Breeding fact (seedFacts.js),
+// so no two surfaces can disagree about one jar.
 //
-// V5-SEEDMULTIPARENT-001 release 2b: the answer is seedParents.lotNotice's, which reads the jar's parent
-// SET when it has one. With no set on the row (null, absent, empty) or SEED_MULTI_PARENT off, it is the
-// rule above on the filed variety, unchanged. The label stays this ONE literal line: seed-detail-shot.mjs
-// and seeds-page-shot.mjs read it out of this file by regex.
+// The answer is seedParents.lotNotice's, which reads the jar's parent SET when it has one. With no set on the row
+// (null, absent, empty) or SEED_MULTI_PARENT off, it is the rule above on the filed variety. The label stays this ONE
+// literal line: seed-detail-shot.mjs and seeds-page-shot.mjs read it out of this file by regex.
 export const F2_LABEL = 'F2 — won’t come true'
 export function isF2Lot(i) {
   return lotNotice(i).f2 === 'full'
