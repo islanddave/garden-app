@@ -1,12 +1,10 @@
-// growYear.js — V4-HARVESTVIEW-001 S4. THE shared grow-year derivation. Consolidates the two
-// previously duplicated copies (Harvests.jsx + useHarvestSnapshot.js) — never mint another copy
-// (design §2b: one shared helper). Season = grow-year, Nov 1 – Oct 31; "2026 season" = the season
-// ENDING Oct 2026 (canon harvest-view §4 label convention).
+// growYear.js — THE shared grow-year derivation; never mint another copy. Season = grow-year,
+// Nov 1 – Oct 31; "2026 season" = the season ENDING Oct 2026.
 //
 // ET-safe BY CONSTRUCTION: day keys are parsed with string math, never `new Date('YYYY-MM-DD')` —
 // that form parses as UTC midnight, which is the previous evening in America/New_York, so an
-// Oct 31 / Nov 1 boundary date lands in the WRONG grow-year (design §2b hardening). Date inputs are
-// first projected into the harvest zone via etDay (Intl-based), then handled as day keys.
+// Oct 31 / Nov 1 boundary date lands in the WRONG grow-year. Date inputs are first projected into the
+// harvest zone via etDay (Intl-based), then handled as day keys.
 import { etDay } from './harvestSummary.js'
 
 export const HARVEST_TZ = 'America/New_York'
@@ -35,8 +33,8 @@ export function growYearSpan(year) {
 // Grow-year sheet universe: CONTINUOUS range from the earliest harvest's grow-year up to the
 // current one, newest first. Includes empty seasons on purpose — an empty season renders the honest
 // empty state, and a continuous range neutralizes the ISO-week Nov-boundary omission and the
-// overwinter first_pick gap (design §2b). No data -> just the current season (All time stays a chip,
-// never a sheet row).
+// overwinter first_pick gap. No data -> just the current season (All time stays a chip, never a
+// sheet row).
 export function growYearOptions(minDayKey, current) {
   const min = growYearOfDayKey(minDayKey)
   if (min == null || min >= current) return [current]

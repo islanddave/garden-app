@@ -1,4 +1,4 @@
-// V4-RESTORESURFACE-001 — the non-photo half of "Recently deleted", in ONE place.
+// The non-photo half of "Recently deleted", in ONE place.
 //
 // Sibling of deletedPhotos.js, and it exists for the same reason that file gives: a route literal
 // that appears in both a component and its test is not a contract, it is two guesses that happen to
@@ -8,10 +8,9 @@
 //
 // ORDER IS LOAD-BEARING, not alphabetical. Containers come FIRST because restoring one is a
 // precondition for restoring things inside it: every container-reaching read in lambda/plants
-// requires the container to be live (the F4 gate), so a planting whose container is also deleted is
-// invisible to the plantings list until the container comes back. On live prod at authoring time
-// that was 11 of 33 soft-deleted plantings. A user who works down this page top-to-bottom hits the
-// unblocking action before the blocked one; a user who works alphabetically does not.
+// requires the container to be live, so a planting whose container is also deleted is invisible to
+// the plantings list until the container comes back. A user who works down this page top-to-bottom
+// hits the unblocking action before the blocked one; a user who works alphabetically does not.
 //
 // NO DELETE VERB, EVER. Same rule as the photos surface: the only action here is Restore. Nothing on
 // this page removes anything, so there is no destructive control to keep away from the thumb path.
@@ -42,9 +41,8 @@ export const DELETED_ENTITY_KINDS = [
     subtitle: (row) => row?.project_name || null,
     invalidatePrefixes: ['/api/plants'],
     toast: 'Planting restored',
-    // BUG-PLANTRESTORESTRAND-001: the restore un-deletes the planting's own deleted seed packet in the
-    // same transaction and answers its id. Say so, or a packet deleted on purpose reappears in Seeds
-    // with nothing said. Words: Dave 2026-10-12.
+    // The restore un-deletes the planting's own deleted seed packet in the same transaction and answers
+    // its id. Say so, or a packet deleted on purpose reappears in Seeds with nothing said.
     toastFor: (reply) => (reply?.restored_packet_id
       ? 'Planting restored. Its seed packet was brought back too.'
       : 'Planting restored'),

@@ -1,26 +1,17 @@
 // src/lib/inventoryEnums.js
 // ────────────────────────────────────────────────────────────────────────────
-// Canonical inventory_items enums — the SINGLE client source of truth, mirroring
-// the LIVE prod Neon CHECK constraints verified read-only 2026-06-04
-// (forms-consolidation-plan-V002 §4 RESULT). The committed schema-v2.sql /
-// inventory-migration-v2.sql are STALE: the live table is `inventory_items` (not
-// `inventory`); `type` is ('consumable','durable') (NOT '…equipment'); the live
-// `category` set is the 10 below. The previous constants.js INVENTORY_ITEM_TYPES /
-// INVENTORY_SUBCATEGORIES / INVENTORY_CATEGORIES claimed "matches schema CHECK" but
-// used dead values ('equipment','fertilizer','hand_tools','misc','soil_amend…') and
-// had ZERO importers — removed. InventoryAdd now imports from here.
+// Canonical inventory_items enums — the SINGLE client source of truth, mirroring the live prod CHECK
+// constraints. The committed schema-v2.sql / inventory-migration-v2.sql are STALE: the live table is
+// `inventory_items` (not `inventory`); `type` is ('consumable','durable') (NOT '…equipment').
+// InventoryAdd imports from here; do not re-declare these in constants.js.
 //
-// Drift guard: inventoryEnums.test.js pins the rich lists below to
-// INVENTORY_CHECK_SETS (the verified live CHECK snapshot). If the DB CHECK changes,
-// update INVENTORY_CHECK_SETS + the lists in lockstep (the stronger guard — snapshot
-// vs the actual live CHECK — belongs in a staging schema test, noted in the plan).
+// Drift guard: inventoryEnums.test.js pins the rich lists below to INVENTORY_CHECK_SETS (the verified
+// live CHECK snapshot). If the DB CHECK changes, update INVENTORY_CHECK_SETS + the lists in lockstep
+// (the stronger guard — snapshot vs the actual live CHECK — belongs in a staging schema test).
 
 // ── Spec-compliant enums (inventory_items schema) ────────────────────────────
-// V4-ICON-001 (done). `iconName` is inventory-type IDENTITY, so it is a registry key ChoiceGrid
-// resolves. Both marks had to be DRAWN — nothing in the pre-existing registry read as either, and
-// a near-miss key renders the silent neutral dot, which is worse than the emoji. The seedling this
-// replaced was also wrong on its own terms: it named ONE consumable category (seeds) out of six,
-// and it was the seedling form three plant-status keys already own.
+// `iconName` is inventory-type IDENTITY, so it is a registry key ChoiceGrid resolves. A near-miss key
+// renders the silent neutral dot, so keep these in step with the icon registry.
 export const INVENTORY_TYPES = [
   {
     value: 'consumable',
@@ -56,7 +47,7 @@ export const INVENTORY_CONDITIONS = ['excellent', 'good', 'fair', 'poor']
 // Item lifecycle status (inventory_items.status CHECK).
 export const INVENTORY_STATUSES = ['active', 'depleted', 'retired', 'missing']
 
-// Verified-live CHECK value-sets (prod Neon, 2026-06-04). Drift-guard source of truth.
+// Verified-live CHECK value-sets. Drift-guard source of truth.
 export const INVENTORY_CHECK_SETS = {
   type:      ['consumable', 'durable'],
   category:  ['seeds', 'growing_media', 'lighting', 'shelving', 'tools', 'pest_control', 'containers', 'climate_control', 'nutrients_and_amendments', 'fertilizer', 'amendment', 'other'],
@@ -66,7 +57,7 @@ export const INVENTORY_CHECK_SETS = {
 }
 
 
-// ── Derived option sets for filter/select consumers (V3-CONFIG-001) ──────────
+// ── Derived option sets for filter/select consumers ──────────────────────────
 // Label derivation lives HERE so pages (Inventory.jsx etc.) never re-declare inventory vocabulary.
 export const INVENTORY_CATEGORY_OPTIONS = [...INVENTORY_CATEGORIES]
   .sort((a, b) => a.label.localeCompare(b.label))

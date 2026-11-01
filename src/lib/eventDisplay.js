@@ -1,21 +1,18 @@
-// BUG-LOSSEVENTLABEL-001 (Dave 2026-09-29) — what an event row SAYS about itself.
+// What an event row SAYS about itself.
 //
-// Every history surface rendered an untitled event as its stored token with the underscores
-// swapped out. For almost every type that reads fine ("brought inside", "fruit set"). For the loss
-// event it printed "failed": Dave logged 2 of 8 Mini Roses lost and the planting's log said
-// "failed" — about a planting that is alive and well, in the one word that is also a planting
-// STATUS ("Failed", constants.js PLANT_STATUSES). Wrong twice: too dramatic for a partial loss, and
-// indistinguishable from the status.
+// An untitled event renders as its stored token with the underscores swapped out. For almost every
+// type that reads fine ("brought inside", "fruit set"). For the loss event it would print "failed",
+// the one word that is also a planting STATUS ("Failed", constants.js PLANT_STATUSES): too dramatic
+// for a partial loss of a planting that is alive and well, and indistinguishable from the status.
 //
-// So the two plant-reduction types speak in the words Dave picked them by ("Plants lost"), with
-// the count when the row carries one: "2 plants lost", "1 plant given away". Every other type keeps
-// the de-snaked token exactly as before — this module changes what two types say, not the voice of
-// the whole log.
+// So the two plant-reduction types speak in the words they are picked by ("Plants lost"), with the
+// count when the row carries one: "2 plants lost", "1 plant given away". Every other type keeps the
+// de-snaked token exactly as before — this module changes what two types say, not the voice of the
+// whole log.
 //
-// V5-LOSSTOKEN-001 then moved the STORED tokens themselves to `reduction_lost` /
-// `reduction_given_away`. Every function here canonicalises first, so a row still stored under the
-// legacy `failed` / `given_away` (before the backfill, or brought back by a restore) reads exactly
-// like a new one.
+// The STORED tokens are `reduction_lost` / `reduction_given_away`. Every function here canonicalises
+// first, so a row still stored under the legacy `failed` / `given_away` (before the backfill, or
+// brought back by a restore) reads exactly like a new one.
 import {
   LOSS_EVENT_TYPE,
   GIVEAWAY_EVENT_TYPE,
