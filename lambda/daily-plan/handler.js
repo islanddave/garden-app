@@ -291,20 +291,14 @@ async function writeWeatherDaily(pg, spaceId, today, hy, prov) {
         ? null
         : ((isYesterday && mergedYest != null && yestIsGauge) ? WEATHER_DAILY_SOURCE_GAUGE : WEATHER_DAILY_SOURCE_LIVE);
       const et0Source = d.et0_in == null ? null : WEATHER_DAILY_SOURCE_LIVE;
-      // ONE ROW, ONE TRY. The catch used to sit outside this loop, so a single row that tripped a
-      // CHECK (a negative precip out of a unit bug, an out-of-domain source string) aborted every
-      // LATER day of the run — and the one warning it logged was indistinguishable from a single
-      // failed write. The days are independent upserts; nothing here is transactional across them,
-      // so the correct boundary is the row.
+      // ONE ROW, ONE TRY: a single row that trips a CHECK (a negative precip out of a unit bug, an out-of-domain source string) must not abort every LATER
+      // day of the run, and the warning must be distinguishable from a single failed write. The days are independent upserts, so the row is the boundary.
       try {
-        // Every parameter carries an explicit cast. Neon's driver cannot infer a type for a NULL bind
-        // and answers "could not determine data type of parameter" — which, inside a catch, would
-        // present as the weather substrate silently never populating.
-        // V5-WXBACKFILLVARS-001 APPENDS $9..$13 at the END of both lists. Existing positions are
-        // load-bearing in the suite (weatherdaily.test.js reads params[1], params[5], params[6] by
-        // index), and more importantly a re-ordered column list is the kind of edit that reads as
-        // cosmetic and silently writes tmin into precip. plot_id (V5-SPACEPLOTTIER-001) is appended
-        // LAST and takes no bind of its own: its stamp re-reads $1, so the array below is unchanged.
+        // Every parameter carries an explicit cast: Neon's driver cannot infer a type for a NULL bind ("could not determine data type of parameter"), which
+        // inside a catch would present as the substrate silently never populating.
+        // Column positions are load-bearing: appended columns go at the END of both lists (weatherdaily.test.js reads params[1], params[5], params[6] by index),
+        // and a re-ordered column list reads as cosmetic and silently writes tmin into precip. plot_id is appended LAST and takes no bind of its own: its
+        // stamp re-reads $1.
         await pg.query(
           `insert into weather_daily (space_id, "date", et0_in, tmax_f, tmin_f, precip_in, precip_source, et0_source,
                                       daylight_s, sunshine_s, solar_mj_m2, wind_max_mph, precip_hours, plot_id)
@@ -319,11 +313,9 @@ async function writeWeatherDaily(pg, spaceId, today, hy, prov) {
         written++;
       } catch (e) {
         skipped++;
-        // The one error worth treating as terminal for the loop, and the one that is not a "bad
-        // row" at all. If the migration has not landed, every remaining day throws identically
-        // (BUG-SEEDEDGATE-001 at TABLE granularity), and N copies of the same warning is how a
-        // genuine per-row defect gets lost later. Stop, having left the nightly plan unaffected —
-        // and keep the original wording, because the whole write did fail.
+        // The one error worth treating as terminal for the loop: if the migration has not landed, every remaining day throws identically, and N copies of the
+        // same warning is how a genuine per-row defect gets lost later. Stop, leaving the nightly plan unaffected, and keep the original wording because the
+        // whole write did fail.
         if (isRelationMissing(e)) {
           console.warn(JSON.stringify({ msg: 'weather_daily write failed — plan unaffected', space: spaceId, error: e?.message }));
           break;
@@ -332,12 +324,8 @@ async function writeWeatherDaily(pg, spaceId, today, hy, prov) {
           space: spaceId, date: d.date, error: e?.message }));
       }
     }
-    // Design Part 4 asks for named soak observability rather than vibes: rows/day per space and the
-    // null-rate, so a substrate that is quietly writing all-NULL rows is visible in CloudWatch before
-    // F2 ever reads it. `skipped` is new and is the half that was previously invisible: under the old
-    // loop-wide catch a partial run and a total failure both logged nothing at all. An alarm
-    // threshold on this line is a pre-F2 task (OPS-WXOBSERVABILITY-001) — as of this change nothing
-    // in the repo consumes this line: no metric filter, no alarm, no dashboard.
+    // Named soak observability: rows/day per space and the null-rate, so a substrate quietly writing all-NULL rows is visible in CloudWatch before the ledger
+    // reads it. `skipped` is the half a loop-wide catch could not report. Nothing in the repo consumes this line yet (no metric filter, alarm or dashboard).
     console.log(JSON.stringify({ msg: 'weather-daily-write', space: spaceId, rows: written, skipped,
       dates: days.map((d) => d && d.date).filter(Boolean),
       null_et0: days.filter((d) => d && d.et0_in == null).length,
@@ -345,21 +333,17 @@ async function writeWeatherDaily(pg, spaceId, today, hy, prov) {
       gauge_yesterday: yestIsGauge }));
     return written;
   } catch (e) {
-    // Retained so the documented contract above ("never throws, never returns a rejected promise")
-    // survives anything the per-row catch cannot see — a malformed `days` bag reached by the log
-    // line, say. Per-STATEMENT failure is handled in the loop and no longer reaches here.
+    // Retained so the documented contract above ("never throws, never returns a rejected promise") survives anything the per-row catch cannot see — a
+    // malformed `days` bag reached by the log line, say. Per-STATEMENT failure is handled in the loop.
     console.warn(JSON.stringify({ msg: 'weather_daily write failed — plan unaffected', space: spaceId, error: e?.message }));
     return 0;
   }
 }
 
-// FLAG-GATED READ. Nothing in F1 calls this unless CARE_WATER_LEDGER_ENABLED is exactly 'true'; F2's
-// fold is its only real consumer. The gating is the whole point — a SELECT against a relation that
-// does not exist yet is precisely the seededgate defect (one bad query blanked the entire nightly plan
-// for both users), so the read must be structurally unreachable until the migration is known to have
-// landed, not merely defensive about it. Pinned by an EXECUTING test that counts the queries run()
-// actually issues, not by a source grep: a grep proves where the call site is written, and the thing
-// worth proving is that it is never reached.
+// FLAG-GATED READ: called only when CARE_WATER_LEDGER_ENABLED is exactly 'true'. A SELECT against a relation that does not exist yet is the seededgate
+// defect (one bad query blanked the entire nightly plan for both users), so the read must be structurally unreachable until the migration is known to have
+// landed, not merely defensive about it. Pinned by an EXECUTING test that counts the queries run() actually issues, not by a source grep: a grep proves
+// where the call site is written, and the thing worth proving is that it is never reached.
 async function readWeatherDaily(pg, spaceId, fromDate, toDate) {
   try {
     const { rows } = await pg.query(
@@ -370,44 +354,29 @@ async function readWeatherDaily(pg, spaceId, fromDate, toDate) {
       [spaceId, fromDate, toDate]);
     return rows;
   } catch (e) {
-    // Fail-open to an EMPTY SERIES, never to a throw. Design Part 4's degenerate branch is explicit:
-    // a missing weather_daily row yields demand = 1.0, which is today's model exactly. An unreadable
-    // table must therefore degrade the ledger to present-day behaviour, not take the run down.
+    // Fail-open to an EMPTY SERIES, never to a throw: a missing weather_daily row yields demand = 1.0, which is today's model exactly, so an unreadable table
+    // must degrade the ledger to present-day behaviour, not take the run down.
     console.warn(JSON.stringify({ msg: 'weather_daily read failed — ledger degrades to demand 1.0', space: spaceId, error: e?.message }));
     return [];
   }
 }
 
-// ── V4-ANCHORSUPERSEDE-001 — the supersede maintainer, nightly half ──────────────────────────────
-// Canon for the rule: migrations/v4-anchorbase-001/0b-backfill.sql's second transaction, whose
-// header calls it "run on every subsequent execution" — and which nothing ran after the one-shot
-// backfill of 2026-08-12. public.plant_anchor_derivation holds an INVENTED anchor for a planting
-// that had no real date; the moment a real one arrives the guess has been contradicted and must be
-// retired, or lambda/harvests/watch-route.js keeps citing it (its `derived` CTE selects exactly the
-// rows this statement retires).
+// ── The supersede maintainer, nightly half ──
+// Canon for the rule: migrations/v4-anchorbase-001/0b-backfill.sql's second transaction ("run on every subsequent execution"). public.plant_anchor_derivation
+// holds an INVENTED anchor for a planting that had no real date; the moment a real one arrives the guess has been contradicted and must be retired, or
+// lambda/harvests/watch-route.js keeps citing it (its `derived` CTE selects exactly the rows this statement retires).
 //
-// WHY BOTH HERE AND ON THE WRITE PATH. The plants PUT and the merge cutover retire synchronously,
-// which is what makes the window zero for anything a user does in the app. This sweep is not
-// redundant with them, for two reasons neither of them can cover:
-//   1. It is the ONLY thing that heals rows that went stale BEFORE the write-path fix shipped. A
-//      write-path retire fires on the next write to that planting; a planting that gained its date
-//      last week and is never edited again would hold a live contradicted derivation forever.
-//   2. Writers that never touch a Lambda — the rescue-intake style imports, a one-off UPDATE, a
-//      migration — bypass every app path by construction.
-// Together they are what makes gates.yml's post_no_derived_beside_observed safe to run continuous:
-// the write path stops Dave's own data entry from ever reddening it, and this heals everything else
-// within a night.
+// WHY BOTH HERE AND ON THE WRITE PATH. The plants PUT and the merge cutover retire synchronously, so the window is zero for anything done in the app. This
+// sweep is not redundant with them: (1) it is the ONLY thing that heals rows that went stale BEFORE the write-path fix shipped (a write-path retire fires
+// on the next write to that planting); (2) writers that never touch a Lambda — imports, a one-off UPDATE, a migration — bypass every app path by
+// construction. Together they make gates.yml's post_no_derived_beside_observed safe to run continuous.
 //
-// SAME WRITE DISCIPLINE AS writeWeatherDaily, for the same reasons: !dryRun only (a dry replay must
-// read and never write — scripts/rerun-daily-plan.sh depends on it), and NON-FATAL always. Losing a
-// night of the sweep costs a day of a stale marker; taking the nightly plan down costs Dave his
-// Today. No user_id scoping: the marking rule is an invariant of the table, not of a household, and
-// this runs as one indexed statement rather than per planting.
+// SAME WRITE DISCIPLINE AS writeWeatherDaily: !dryRun only (a dry replay must read and never write — scripts/rerun-daily-plan.sh depends on it), and
+// NON-FATAL always. Losing a night of the sweep costs a day of a stale marker; taking the nightly plan down costs Dave his Today. No user_id scoping: the
+// marking rule is an invariant of the table, not of a household, and this runs as one indexed statement rather than per planting.
 //
-// RETIRE, NEVER DELETE. The (guess, later truth) pair is the only accuracy measurement the add-date
-// baseline tier will ever produce; deleting it throws away the measurement the backfill exists to
-// create. `superseded_at is null` is both the idempotence guard (a second run matches nothing) and
-// the reason a re-run cannot rewrite an earlier retirement's timestamp.
+// RETIRE, NEVER DELETE. The (guess, later truth) pair is the only accuracy measurement the add-date baseline tier will ever produce. `superseded_at is null`
+// is both the idempotence guard (a second run matches nothing) and the reason a re-run cannot rewrite an earlier retirement's timestamp.
 async function sweepSupersededAnchors(pg) {
   try {
     const res = await pg.query(
@@ -424,109 +393,68 @@ async function sweepSupersededAnchors(pg) {
     console.log(JSON.stringify({ msg: 'anchor-supersede-sweep', rows }));
     return rows;
   } catch (e) {
-    // Same posture as the weather_daily writer: a missing relation (0a not applied in some
-    // environment) or any other failure warns and leaves the nightly plan completely unaffected.
+    // Same posture as the weather_daily writer: a missing relation (0a not applied in some environment) or any other failure warns and leaves the nightly plan
+    // completely unaffected.
     console.warn(JSON.stringify({ msg: 'anchor-supersede sweep failed — plan unaffected', error: e?.message }));
     return 0;
   }
 }
 
-// ── V4-ANCHORRESWEEP-001 — the nightly RE-derivation sweep ───────────────────────────────────────
-// Canon for the derivation itself: migrations/v4-anchorbase-001/0b-backfill.sql (the tier ladder and
-// every written value) as corrected by lambda/plants/anchorCreate.js (two-arm ownership,
-// rescue_suspect-only plausibility). This is the THIRD copy of that statement and it is deliberate
-// for the reason the other two state: each Lambda is zipped from its own directory
-// (deploy-lambda.yml: cd lambda/<fn> && zip -r), so a shared module is not packaged and the handler
-// 502s at module load. anchor-rederive.test.js is the drift guard.
+// ── The nightly RE-derivation sweep ──
+// Canon for the derivation: migrations/v4-anchorbase-001/0b-backfill.sql (the tier ladder and every written value) as corrected by lambda/plants/anchorCreate.js
+// (two-arm ownership, rescue_suspect-only plausibility). This is the THIRD copy of that statement, deliberately: each Lambda is zipped from its own directory
+// (deploy-lambda.yml: cd lambda/<fn> && zip -r), so a shared module is not packaged and the handler 502s at module load. anchor-rederive.test.js is the
+// drift guard.
 //
-// ─────────────────────────────────────────────────────────────────────────────────────────────────
-// THE TWO DEFECTS THIS CLOSES, both recorded in anchorCreate.js's header as known and deferred
+// THE TWO DEFECTS THIS CLOSES (known and deferred in anchorCreate.js's header): the row is a snapshot of what was knowable at t=0, so
+//   1. THE CLAMP FREEZES. mark() clamps a future anchor to today. At CREATE time add_date IS today, so add_date + 7 is always ahead and the clamp ALWAYS
+//      binds: every create-path row lands at add_date with clamped_to_today = true, 7 days earlier than the same planting derives once a week has passed.
+//   2. LATER EVIDENCE DOES NOT UPGRADE. A sowing / seed_soak / potting_up logged AFTER the create leaves a tier-3 guess live where tier 1 or 2.5 evidence now
+//      exists (a transplant is self-healing: events/index.js writes transplanted_at and retires the derivation in one transaction).
+// Both are fixed by re-running the derivation against the accrued state, which is what a nightly sweep is for.
 //
-//   1. THE CLAMP FREEZES. mark() clamps a future anchor to today. At CREATE time add_date IS today,
-//      so add_date + 7 is always ahead of it and the clamp ALWAYS binds — every create-path row
-//      lands at add_date with clamped_to_today = true, i.e. 7 days earlier than the same planting
-//      derives once a week has passed. Nothing ever revisits it.
-//   2. LATER EVIDENCE DOES NOT UPGRADE. A transplant is self-healing (events/index.js writes
-//      transplanted_at and retires the derivation in one transaction), but a sowing / seed_soak /
-//      potting_up logged AFTER the create leaves a tier-3 guess live where tier 1 or 2.5 evidence
-//      now exists.
-//
-// Both are the same shape — the row is a snapshot of what was knowable at t=0 — so both are fixed by
-// re-running the derivation against the accrued state, which is what a nightly sweep is for.
-//
-// ─────────────────────────────────────────────────────────────────────────────────────────────────
 // TWO STATEMENTS, AND THE SECOND ONE IS THE RECOVERY MECHANISM FOR THE FIRST
+// uq_plant_anchor_derivation_live is UNIQUE(plant_id) WHERE superseded_at IS NULL, so a re-derivation is retire-then-insert and cannot be one statement:
+// folding the retire into a data-modifying CTE puts both sub-statements on the SAME command id, the unique check still sees the old tuple as live, and the
+// INSERT raises 23505. So they are issued separately, on the pool, each its own transaction.
+// THERE IS NO ROLLBACK ACROSS THE PAIR. What there is instead is a second statement whose predicate — "a live anchorless planting with NO live derivation" —
+// is EXACTLY the state a crash between them would leave. A partial failure degrades to a planting temporarily missing its derived anchor (it drops out of
+// the watch band's derived tier for a night, no wrong value is ever written) and the NEXT run repairs it. Ordering the pair the other way round would not
+// merely fail to self-heal, it would 23505 on the first row.
+// Statement 2 also stands alone as the backstop anchorCreate.js's call-site try/catch claims ("a failed derive leaves nothing at all, and the nightly sweep is
+// the backstop"): a failed create hook, a planting created before that hook shipped, and any writer that never touches a Lambda.
 //
-// uq_plant_anchor_derivation_live is UNIQUE(plant_id) WHERE superseded_at IS NULL, so a re-derivation
-// is retire-then-insert and cannot be one statement: folding the retire into a data-modifying CTE
-// puts both sub-statements on the SAME command id, the unique check still sees the old tuple as live,
-// and the INSERT raises 23505. So they are issued separately, on the pool, each its own transaction.
+// THE ELIGIBILITY PREDICATE — the highest-risk decision here, so every clause is a deliberate NO. Re-deriving the wrong row is data loss wearing a fix's
+// clothing, so the retire is narrow by construction:
+//   * plausibility IS NULL. 0a2's marks (rescue_suspect / post_frost_impossible) are rows the backfill itself flagged as not believable, and watch-route.js's
+//     `derived` CTE drops them. Re-deriving one means recomputing its plausibility HERE with a narrower rule than 0b's (no first-frost anchor and no catalogue
+//     DTM, so it cannot reproduce post_frost_impossible), which would silently UN-SUPPRESS rows a human decision put out of the band. Excluded outright: the
+//     sweep can only touch rows that already feed the band.
+//   * model_version matches. A row written by a future model is not this model's to rewrite; an unrecognised source falls out through the NULL arm of the
+//     rank CASE below.
+//   * the fresh derivation is NOT CLAMPED. This is the convergence guard: a clamped anchor equals et_today, so it MOVES EVERY NIGHT, and re-deriving one would
+//     retire and re-insert the same planting nightly for its first week. Refusing to write a clamped value makes the output a pure function of (add_date,
+//     events, offset), which is what makes a second run in the same day a provable no-op. The cost: for the ~7 days a row is still clamped it keeps the
+//     EARLIER anchor the create path wrote, which opens a watch window early, never hides one, and self-corrects when the clamp releases.
+//   * NEVER A TIER DOWNGRADE (c.tier_rank <= the stored row's rank). If a sowing event is soft-deleted the fresh derivation falls back to the add-date guess,
+//     and replacing recorded evidence with a guess is the one direction this table must never move. It also bounds the blast radius of an evidence join that
+//     transiently returned nothing.
+//   * SOMETHING MUST ACTUALLY CHANGE (different anchor_date, or a strictly better tier): the steady state is zero writes, not a rewrite per night.
+// Not in the list, because it is structural: a planting that has since gained a real date is absent from `target` (all three observed columns must be NULL),
+// so the marking rule cannot be violated here even if sweepSupersededAnchors failed on the same run.
 //
-// That makes the boundary honest to state: THERE IS NO ROLLBACK ACROSS THE PAIR. What there is
-// instead is a second statement whose predicate — "a live anchorless planting with NO live
-// derivation" — is EXACTLY the state a crash between them would leave. A partial failure therefore
-// degrades to a planting temporarily missing its derived anchor (it drops out of the watch band's
-// derived tier for a night, no wrong value is ever written) and the NEXT run repairs it without
-// knowing anything went wrong. Ordering the pair the other way round would not merely fail to
-// self-heal, it would 23505 on the first row.
-//
-// Statement 2 also earns its place standing alone: it is the backstop anchorCreate.js's call-site
-// try/catch already claims exists ("a failed derive leaves nothing at all, and the nightly sweep is
-// the backstop") and which, until now, did not. It covers a failed create hook, a planting created
-// before that hook shipped, and any writer that never touches a Lambda.
-//
-// ─────────────────────────────────────────────────────────────────────────────────────────────────
-// THE ELIGIBILITY PREDICATE — the highest-risk decision here, so every clause is a deliberate NO
-//
-// Re-deriving the wrong row is data loss wearing a fix's clothing, so the retire is narrow by
-// construction and each clause below removes a distinct way of being wrong:
-//
-//   * plausibility IS NULL. 0a2's marks (rescue_suspect / post_frost_impossible) are rows the
-//     backfill itself flagged as not believable, and watch-route.js's `derived` CTE drops them —
-//     22 of the 60 live rows on prod today. Re-deriving one means recomputing its plausibility HERE,
-//     with a narrower rule than 0b's (this Lambda has no first-frost anchor and no catalogue DTM, so
-//     it cannot reproduce post_frost_impossible), which would silently UN-SUPPRESS rows a human
-//     decision put out of the band. Excluded outright: the sweep can only ever touch rows that are
-//     already feeding the band.
-//   * model_version matches. A row written by a future model is not this model's to rewrite; an
-//     unrecognised source likewise falls out through the NULL arm of the rank CASE below.
-//   * the fresh derivation is NOT CLAMPED. This is the convergence guard, not a taste filter. A
-//     clamped anchor equals et_today, so it MOVES EVERY NIGHT — re-deriving one would retire and
-//     re-insert the same planting nightly for the whole first week after it was added, seven rows of
-//     churn in the relation that exists to hold the tier's accuracy record. Refusing to write a
-//     clamped value makes the output a pure function of (add_date, events, offset) with no
-//     dependence on today at all, which is what makes a second run in the same day a provable no-op.
-//     The cost is stated rather than hidden: for the ~7 days a row is still clamped it keeps the
-//     EARLIER anchor the create path wrote. That error opens a watch window early; it never hides
-//     one, and it self-corrects on the day the clamp releases.
-//   * NEVER A TIER DOWNGRADE (c.tier_rank <= the stored row's rank). If a sowing event is
-//     soft-deleted, the fresh derivation falls back to the add-date guess — and replacing recorded
-//     evidence with a guess is the one direction this table must never move. It also bounds the
-//     blast radius of a bug in the evidence join: a join that transiently returned nothing would
-//     otherwise downgrade every event-tier row in the household in one night.
-//   * SOMETHING MUST ACTUALLY CHANGE (different anchor_date, or a strictly better tier). This is
-//     what makes the steady state zero writes rather than 60 rewrites a night.
-//
-// Not in the list, because it is structural: a planting that has since gained a real date is absent
-// from `target` (all three observed columns must be NULL), so the marking rule cannot be violated
-// here even if sweepSupersededAnchors above failed on the same run.
-//
-// SAME WRITE DISCIPLINE AS THE OTHER SWEEPS: !dryRun only, and NON-FATAL always — losing a night of
-// re-derivation costs a stale marker, taking the nightly plan down costs Dave his Today.
+// SAME WRITE DISCIPLINE AS THE OTHER SWEEPS: !dryRun only, and NON-FATAL always.
 const ANCHOR_MODEL_VERSION = 'anchor-derive-v1';
-// Distinct from 'observed_anchor' on purpose. That reason means "a real date contradicted the guess",
-// and the (guess, later truth) pair it creates is the ONLY accuracy measurement the add-date tier
-// will ever produce. A row retired here was contradicted by nothing — it was replaced by a better
-// derivation — so a calibration extract filtering on 'observed_anchor' must not pick it up.
+// Distinct from 'observed_anchor' on purpose: that reason means "a real date contradicted the guess", and the (guess, later truth) pair it creates is the ONLY
+// accuracy measurement the add-date tier will produce. A row retired here was replaced by a better derivation, so a calibration extract filtering on
+// 'observed_anchor' must not pick it up.
 const REDERIVE_REASON = 'rederived';
-// Cap on the per-row detail carried in the summary log line. Named rather than counted, the way
-// station.js reports station_rejected_days, because "which plantings moved" is the question an
-// operator actually has; capped because a runaway sweep must not also blow up the log line.
+// Cap on the per-row detail carried in the summary log line: "which plantings moved" is the question an operator has, but a runaway sweep must not also blow
+// up the log line.
 const REDERIVE_LOG_MAX = 20;
 
-// The derivation, once. Both statements below embed this identical CTE chain, so the retire's
-// judgement and the insert's values can never be computed by two different ladders. Contains no
-// parameters and no caller input of any kind — every literal in it is a constant from this module.
+// The derivation, once. Both statements below embed this identical CTE chain, so the retire's judgement and the insert's values can never be computed by two
+// different ladders. Contains no parameters and no caller input of any kind — every literal in it is a constant from this module.
 const REDERIVE_CTE = `
   prm AS (
     SELECT 'America/New_York'::text AS tz,
