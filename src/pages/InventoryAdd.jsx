@@ -14,29 +14,24 @@ import { EnumSelect, Field, Input, Textarea, Button, SourcePicker } from '../com
 import ChoiceGrid from '../components/forms/ChoiceGrid.jsx'
 import { seedsHref, seedsReturnReader, noteSeedAdded } from '../lib/seedsRoutes.js'
 
-// V5-SEEDSTAB-001 — seed left the Inventory list, so a seed packet saved here goes home to
-// Seeds › My seeds unless the door that opened this form named somewhere else.
+// A seed packet saved here goes home to Seeds › My seeds unless the door that opened this form named
+// somewhere else.
 const SEEDS_MINE = seedsHref('mine')
 
-// V4-DIRTYGUARDSWEEP-001 — draft-stash route key (siblings: 'logone', 'logmany').
+// Draft-stash route key (siblings: 'logone', 'logmany').
 const DRAFT_KEY = 'inventoryadd'
 
-// ── V4-SEEDNOPLANTING-001 — arriving here FROM the seed flow ──────────────────────────────────────
-// Dave, 2026-09-02, having just been shipped the create-a-lot flow: "i don't see where to go right
-// now to add seeds into this flow when not from a planting - is that just adding a seed item to
-// inventory?" It is, and that answer is the problem: the two-step detour was real, correct, and
-// signposted nowhere. /seeds/saved now links here, and these params are what stop the link dumping
-// him onto a blank general-purpose form to re-derive that a seed packet is a `consumable` in
-// category `seeds`.
+// Arriving here FROM the seed flow. /seeds/saved links here with `type`/`category` params so the link
+// does not dump the user on a blank general-purpose form to re-derive that a seed packet is a
+// `consumable` in category `seeds`.
 //
-// VALIDATED AGAINST THE SAME ENUMS THE FORM USES, never trusted. A URL is user-editable input;
-// `?category=nonsense` must leave the field empty for the user to fill, not seed an invalid value
-// that fails at submit with a message about a field they never touched.
-// THE TWO ENUM LISTS DO NOT SHARE A KEY NAME: INVENTORY_TYPES entries carry `value`,
-// INVENTORY_CATEGORIES entries carry `v` (inventoryEnums.js:24 and :39). A single `.value` test
-// would have matched nothing for categories and silently seeded no category at all — a dead link
-// that looks like it works. Read both, and fall back to a bare string so the helper survives either
-// list being flattened later.
+// Validated against the same enums the form uses, never trusted. A URL is user-editable input;
+// `?category=nonsense` must leave the field empty for the user to fill, not seed an invalid value that
+// fails at submit with a message about a field they never touched.
+// The two enum lists do not share a key name: INVENTORY_TYPES entries carry `value`, INVENTORY_CATEGORIES
+// entries carry `v` (inventoryEnums.js). A single `.value` test would match nothing for categories and
+// silently seed no category, a dead link that looks like it works. Read both, and fall back to a bare
+// string so the helper survives either list being flattened.
 const enumHas = (list, wanted) => list.some(e => (e?.value ?? e?.v ?? e) === wanted)
 
 const seedFromParams = (params) => {
@@ -66,25 +61,23 @@ export function safeReturnTo(raw, fallback = '/inventory') {
 // takes the whole form object.
 const TEXT_FIELDS = ['name', 'brand', 'model', 'source', 'source_url', 'notes', 'location_text']
 
-// ── Main page ────────────────────────────────────────────────────────────────
 export default function InventoryAdd() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const { createItem } = useInventory()
   const { show } = useToast()
 
-  // V4-SEEDNOPLANTING-001 — read ONCE into the initialiser rather than in an effect. An effect that
-  // set type/category after mount would fight the draft restore below and would re-seed the fields
-  // if the user deliberately cleared them; the params describe where the user CAME FROM, which is a
-  // fact about this mount and does not change during it.
+  // Read ONCE into the initialiser rather than in an effect: an effect that set type/category after mount
+  // would fight the draft restore below and re-seed the fields if the user deliberately cleared them. The
+  // params describe where the user CAME FROM, a fact about this mount that does not change during it.
   const [returnTo] = useState(() => searchParams.get('return'))
-  // V5-SEEDSTAB-001 — the Seeds URL that PUSHED this form, when a Seeds door did. If it is also the
-  // return target, leaving is a Back (navigate(-1)) rather than a fresh push of the page underneath,
-  // so N packets added from My seeds and then one Back leaves Seeds instead of walking through N
-  // copies of it. Asked when the form leaves (seedsReturnReader, BUG-SEEDSRETURNUNDEROVERLAY-001).
+  // The Seeds URL that PUSHED this form, when a Seeds door did. If it is also the return target, leaving
+  // is a Back (navigate(-1)) rather than a fresh push of the page underneath, so N packets added from My
+  // seeds and then one Back leaves Seeds instead of walking through N copies of it. Asked when the form
+  // leaves (seedsReturnReader).
   const [pushedFromSeeds] = useState(seedsReturnReader)
-  // Set on a successful save and never cleared: the submit stays disabled from success until the
-  // page is gone. The old 2.5 s toast window let a second tap create a duplicate row.
+  // Set on a successful save and never cleared: the submit stays disabled from success until the page is
+  // gone, so a second tap cannot create a duplicate row.
   const [done, setDone] = useState(false)
   const [form, setForm] = useState({
     name:             '',
@@ -103,8 +96,8 @@ export default function InventoryAdd() {
     // shared optional
     source:           '',
     source_url:       '',
-    // V4-SOURCEREG-001 — the controlled registry ids. Empty string, not null, so the stash
-    // predicate below (`(v ?? '') !== ''`) reads them the same way as every other blank field.
+    // The controlled registry ids. Empty string, not null, so the stash predicate below
+    // (`(v ?? '') !== ''`) reads them the same way as every other blank field.
     source_id:              '',
     acquired_from_source_id:'',
     purchase_date:    '',
@@ -115,61 +108,58 @@ export default function InventoryAdd() {
     // Variety reference (CHECK constraint chk_inventory_seed_requires_variety:
     // category='seeds' requires variety_id NOT NULL).
     variety:          null, // full variety object — flattens to variety_id on submit
-    // V4-SEEDNOPLANTING-001 — LAST, so it overrides the blank defaults above rather than being
-    // overridden by them. Only ever sets `type`/`category`, and only to a value that is already in
-    // the form's own enum lists.
+    // LAST, so it overrides the blank defaults above rather than being overridden by them. Only ever sets
+    // `type`/`category`, and only to a value that is already in the form's own enum lists.
     ...seedFromParams(searchParams),
   })
 
-  // V5-SRCDISCLOSE-001 — SEEDS OPEN THE PANE. `source_id` (the controlled vendor, ~:592) lives inside
-  // "Add more details", and for a seed packet the vendor is not optional detail: it is the fact that
-  // separates a genuine second packet from a duplicate row. Collapsed-by-default meant packets got
-  // entered with no vendor at all. Computed in the INITIALISER rather than an effect for the
-  // /seeds/saved door (`?category=seeds`), which mounts already in seeds — an effect would open it a
-  // paint later and the card would visibly jump on the phone. Reading `form` here is safe: a lazy
-  // initialiser runs on the FIRST render only, so this sees the initial form object above.
+  // Seeds open the pane. `source_id` (the controlled vendor) lives inside "Add more details", and for a
+  // seed packet the vendor is not optional detail: it separates a genuine second packet from a duplicate
+  // row. Computed in the INITIALISER rather than an effect for the /seeds/saved door (`?category=seeds`),
+  // which mounts already in seeds: an effect would open it a paint later and the card would visibly jump.
+  // Reading `form` here is safe: a lazy initialiser runs on the FIRST render only, so this sees the
+  // initial form object above.
   const [showFull,      setShowFull]      = useState(() => form.category === 'seeds')
   const [saving,        setSaving]        = useState(false)
   const [errors,        setErrors]        = useState({})
   const [typeWarning,   setTypeWarning]   = useState(false) // pending type switch
 
-  // V5-SRCDISCLOSE-001 — the auto-open latch, shared by the two effects below. Only the first
-  // render's value is kept (useRef ignores the argument thereafter), which is the whole point: this
-  // records whether the seeds auto-open has been SPENT, not what the category currently is.
+  // The auto-open latch, shared by the two effects below. Only the first render's value is kept (useRef
+  // ignores the argument thereafter), which is the point: this records whether the seeds auto-open has
+  // been SPENT, not what the category currently is.
   const seedsAutoOpened = useRef(form.category === 'seeds')
 
-  // V4-DIRTYGUARDSWEEP-001 — restore an interrupted draft, one-shot on mount. `showFull` rides along
-  // so a restored draft whose only content is inside the collapsed "Add more details" pane does not
-  // come back invisible (same failure EventNew guards with showAddDetails/showHarvestMore).
+  // Restore an interrupted draft, one-shot on mount. `showFull` rides along so a restored draft whose
+  // only content is inside the collapsed "Add more details" pane does not come back invisible (the same
+  // failure EventNew guards with showAddDetails/showHarvestMore).
   useEffect(() => {
     const draft = readDraft(DRAFT_KEY)
     if (!draft?.form) return
     setForm(f => ({ ...f, ...draft.form }))
     if (draft.showFull) setShowFull(true)
-    // V5-SRCDISCLOSE-001 — a draft stashed ALREADY IN SEEDS with the pane shut can only record a
-    // collapse the user made by hand, because the auto-open below would otherwise have opened it. So
-    // spend the latch instead of springing it open again on the way back from an interruption. This
-    // adds no CLOSING power to the restore (the invariant above): a draft carried in through the
-    // `?category=seeds` door mounts open and stays open.
+    // A draft stashed ALREADY IN SEEDS with the pane shut can only record a collapse the user made by
+    // hand, because the auto-open below would otherwise have opened it. So spend the latch instead of
+    // springing it open again on the way back from an interruption. This adds no CLOSING power to the
+    // restore (the invariant above): a draft carried in through the `?category=seeds` door mounts open
+    // and stays open.
     else if (draft.form.category === 'seeds') seedsAutoOpened.current = true
   }, [])  // eslint-disable-line react-hooks/exhaustive-deps
 
-  // V5-SRCDISCLOSE-001 — the mid-entry half. `category` is a form field, so it can BECOME 'seeds'
-  // after mount: picked in the select, or arriving in the restored draft above. Fires AT MOST ONCE
-  // per mount, and that latch is what keeps the pane the user's afterwards — once he collapses it,
-  // no keystroke, no re-render, and no later seeds → other → seeds round trip re-opens it.
-  // It never auto-CLOSES either: switching away from seeds leaves the pane as it is, because closing
-  // it would hide whatever he has already typed in there — the same reason the restore only opens.
+  // The mid-entry half. `category` is a form field, so it can BECOME 'seeds' after mount: picked in the
+  // select, or arriving in the restored draft above. Fires AT MOST ONCE per mount, and that latch is what
+  // keeps the pane the user's afterwards: once collapsed, no keystroke, re-render or later
+  // seeds -> other -> seeds round trip re-opens it. It never auto-CLOSES either: switching away from seeds
+  // leaves the pane as it is, because closing it would hide what the user already typed in there.
   useEffect(() => {
     if (form.category !== 'seeds' || seedsAutoOpened.current) return
     seedsAutoOpened.current = true
     setShowFull(true)
   }, [form.category])
 
-  // STASH predicate — BROAD, and unusually simple here because EVERY field of this form is empty on
-  // a pristine mount (19 keys: 18 empty strings and `variety: null`). Nothing is seeded, so "any
-  // field at all" is both the broadest and the narrowest honest predicate, and over-capturing costs
-  // nothing: handleSubmit clears the draft on success, so there is no stale post-save rewrite.
+  // STASH predicate: BROAD, and unusually simple here because EVERY field of this form is empty on a
+  // pristine mount (empty strings and `variety: null`). Nothing is seeded, so "any field at all" is both
+  // the broadest and the narrowest honest predicate, and over-capturing costs nothing: handleSubmit
+  // clears the draft on success, so there is no stale post-save rewrite.
   const hasDraftContent = Object.values(form).some(v => (v ?? '') !== '')
 
   useEffect(() => {
@@ -181,10 +171,10 @@ export default function InventoryAdd() {
   // them is fine but because the stash above already restores them and each extra term is another
   // chance to hold a service-worker update for a user who only tapped "Consumable" and walked away.
   // A false-positive guard costs a held update and a dead backdrop; that is the expensive direction.
-  // V4-SOURCEREG-001 — the two registry ids are NOT in TEXT_FIELDS and must not be: that array is
-  // consumed by `.trim()` and names the free-text fields. They are named separately here because
-  // the guard would otherwise miss a form whose only content is a chosen source — the picker is a
-  // real edit, and losing it to a service-worker reload is the same loss as losing a typed vendor.
+  // The two registry ids are NOT in TEXT_FIELDS and must not be: that array is consumed by `.trim()` and
+  // names the free-text fields. They are named separately here because the guard would otherwise miss a
+  // form whose only content is a chosen source; the picker is a real edit, and losing it to a
+  // service-worker reload is the same loss as losing a typed vendor.
   const hasUnsavedInput = !!(
     TEXT_FIELDS.some(k => (form[k] ?? '').trim()) || form.variety ||
     form.source_id || form.acquired_from_source_id
@@ -192,20 +182,18 @@ export default function InventoryAdd() {
 
   useReportOverlayDirty(hasUnsavedInput)
 
-  // /inventory/add is not an overlayable route today, so the hook above is a strict no-op and the
-  // reload gate below is what actually protects this page. Per-instance key + BOOLEAN dep for the
-  // reasons EventNew.jsx:933-941 records.
+  // /inventory/add is not an overlayable route, so the hook above is a strict no-op and the reload gate
+  // below is what protects this page. Per-instance key + BOOLEAN dep for the reasons EventNew.jsx records.
   const reloadGateKey = `inventory-add:${useId()}`
   useEffect(() => {
     setReloadBlocked(reloadGateKey, hasUnsavedInput)
     return () => setReloadBlocked(reloadGateKey, false)
   }, [reloadGateKey, hasUnsavedInput])
 
-  // BUG-INVADDNAVLEAK-001 — the post-toast navigate is component-lifetime-owned, same shape as
-  // Garden.jsx's editorScrollTimerRef. `useNavigate()`'s function dispatches through the router's
-  // shared history and does NOT care whether this component is still mounted, so an uncleared timer
-  // does not warn or throw — it silently yanks the user back to /inventory 2.5s after they tapped
-  // away from the toast, which is exactly the freedom a non-blocking toast is supposed to buy them.
+  // The post-toast navigate is component-lifetime-owned, same shape as Garden.jsx's editorScrollTimerRef.
+  // `useNavigate()`'s function dispatches through the router's shared history and does NOT care whether
+  // this component is still mounted, so an uncleared timer does not warn or throw: it silently yanks the
+  // user back to /inventory 2.5s after they tapped away from the toast.
   const navTimerRef = useRef(null)
   useEffect(() => () => clearTimeout(navTimerRef.current), [])
 
@@ -214,18 +202,15 @@ export default function InventoryAdd() {
     : CATEGORIES
   ).slice().sort((a, b) => a.label.localeCompare(b.label))
 
-  // Clear type-specific fields when type changes
   function applyTypeSwitch(newType) {
     setForm(f => ({
       ...f,
       type: newType,
       category:          '',
-      // clear consumable-only
       quantity_on_hand:  '',
       unit:              '',
       reorder_threshold: '',
       reorder_quantity:  '',
-      // clear durable-only
       quantity:          '',
       condition:         '',
     }))
@@ -234,7 +219,6 @@ export default function InventoryAdd() {
 
   function handleTypeSelect(newType) {
     if (!newType || newType === form.type) return
-    // Show confirmation if user already entered qty fields
     const hasConsumableData = form.quantity_on_hand || form.unit
     const hasDurableData    = form.quantity || form.condition
     if (form.type && (hasConsumableData || hasDurableData)) {
@@ -268,9 +252,8 @@ export default function InventoryAdd() {
     if (form.category === 'seeds' && !form.variety) {
       e.variety = 'Pick or create the seed variety so the packet links to a plant.'
     }
-    // CHECK chk_inventory_source_distinct — a row may not name the same source twice. The Lambda
-    // rejects it too (inventory-items/index.js:193), but its message names the two columns; caught
-    // here it costs no round trip and reads like the form.
+    // CHECK chk_inventory_source_distinct: a row may not name the same source twice. The Lambda rejects it
+    // too, but its message names the two columns; caught here it costs no round trip and reads like the form.
     if (form.source_id && form.source_id === form.acquired_from_source_id) {
       e.acquired_from_source_id = 'Same as the origin — leave this blank when they match.'
     }
@@ -296,9 +279,9 @@ export default function InventoryAdd() {
       clearDraft(DRAFT_KEY)   // the item exists — the working draft is spent
       setDone(true)
 
-      // V5-SEEDSTAB-001 — a seed packet goes home NOW, not after the toast: the toast is the global
-      // layer and survives the navigation, and waiting 2.5 s on a form that is already saved only
-      // bought the double-tap duplicate. The Seeds page outlines the new row on the way in.
+      // A seed packet goes home NOW, not after the toast: the toast is the global layer and survives the
+      // navigation, and waiting 2.5 s on a form that is already saved only bought the double-tap duplicate.
+      // The Seeds page outlines the new row on the way in.
       if (payload.category === 'seeds') {
         show({ message: '✓ Seeds added' })
         noteSeedAdded(created?.id)
@@ -308,10 +291,9 @@ export default function InventoryAdd() {
 
       // Operational confirmation via the GLOBAL toast layer (2500ms), then navigate.
       show({ message: '✓ Item added' })
-      // V4-SEEDNOPLANTING-001 — return the user where they came from. Arriving from /seeds/saved to
-      // create the packet and then being dropped on the general Inventory list is the same
-      // navigational dead end the door was added to remove, one step further along: the reason they
-      // came here was to track that lot, and the tracking control is on the page they left.
+      // Return the user where they came from: arriving from /seeds/saved to create the packet and then being
+      // dropped on the general Inventory list is a navigational dead end, since the tracking control is on
+      // the page they left.
       navTimerRef.current = setTimeout(() => {
         navTimerRef.current = null
         navigate(safeReturnTo(returnTo))
@@ -322,9 +304,8 @@ export default function InventoryAdd() {
     }
   }
 
-  // V5-SEEDSTAB-001 — how a seed-mode form leaves, saved or cancelled. Back when the page underneath
-  // IS where we are going; otherwise a REPLACE, so the form does not stay in the stack behind the
-  // page it returned to.
+  // How a seed-mode form leaves, saved or cancelled. Back when the page underneath IS where we are going;
+  // otherwise a REPLACE, so the form does not stay in the stack behind the page it returned to.
   function leaveSeedMode() {
     const target = safeReturnTo(returnTo, SEEDS_MINE)
     if (pushedFromSeeds() === target) navigate(-1)
@@ -341,9 +322,8 @@ export default function InventoryAdd() {
       notes:         form.notes.trim()        || null,
       source:        form.source.trim()       || null,
       source_url:    form.source_url.trim()   || null,
-      // V4-SOURCEREG-001. Sent ALWAYS, null when blank — POST names both columns in its INSERT
-      // (inventory-items/index.js:1183) so an omitted key is a null anyway; sending it explicitly
-      // keeps this builder honest about what the row will hold.
+      // Sent ALWAYS, null when blank: POST names both columns in its INSERT, so an omitted key is a null
+      // anyway; sending it explicitly keeps this builder honest about what the row will hold.
       source_id:               form.source_id               || null,
       acquired_from_source_id: form.acquired_from_source_id || null,
       purchase_date: form.purchase_date       || null,
@@ -388,7 +368,7 @@ export default function InventoryAdd() {
     <div style={{ minHeight: '100dvh', backgroundColor: P.cream }}>
       <div style={{ maxWidth: 600, margin: '0 auto', padding: '28px 16px 80px' }}>
 
-        {/* Breadcrumb — V5-SEEDSTAB-001: a seed packet belongs to Seeds, not the Inventory list. */}
+        {/* Breadcrumb: a seed packet belongs to Seeds, not the Inventory list. */}
         <div style={{ fontSize: '0.82rem', color: P.light, marginBottom: 8 }}>
           {seedMode
             ? <Link to={SEEDS_MINE} style={{ color: P.green, textDecoration: 'none' }}>Seeds</Link>
@@ -400,7 +380,6 @@ export default function InventoryAdd() {
           {seedMode ? 'Add seeds' : 'Add item'}
         </h1>
 
-        {/* Type switch confirmation */}
         {typeWarning && (
           <div style={{
             backgroundColor: P.warn, border: `1px solid ${P.warnBorder}`,
@@ -438,11 +417,9 @@ export default function InventoryAdd() {
 
         <form onSubmit={handleSubmit} noValidate style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
 
-          {/* ── Required group ── */}
           <div style={card}>
             <div style={groupLabel}>Required to save</div>
 
-            {/* Name */}
             <Field label="What's the item?" error={errors.name}>
               <Input
                 value={form.name}
@@ -452,7 +429,6 @@ export default function InventoryAdd() {
               />
             </Field>
 
-            {/* Type */}
             <Field label="Type" error={errors.type}>
               <ChoiceGrid
                 layout="grid"
@@ -465,7 +441,6 @@ export default function InventoryAdd() {
               />
             </Field>
 
-            {/* Category */}
             <Field label="Category" error={errors.category}>
               <EnumSelect
                 value={form.category}
@@ -484,9 +459,8 @@ export default function InventoryAdd() {
             </Field>
 
             {/* Variety picker — required when category is seeds (DB CHECK chk_inventory_seed_requires_variety) */}
-            {/* BUG-FIELDCHILDDROP-001: the hint below was a second child of the Field and had
-                never rendered. The `help` prop is where it belongs — same position under the
-                control, plus the aria-describedby the loose <div> never had. */}
+            {/* The hint goes in the `help` prop: Field takes exactly one control child, so a second child
+                never rendered, and `help` also supplies the aria-describedby. */}
             {form.category === 'seeds' && (
               <Field
                 label="Variety"
@@ -505,7 +479,6 @@ export default function InventoryAdd() {
               </Field>
             )}
 
-            {/* Quantity — type-aware */}
             {form.type === 'consumable' && (
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <Field label="Qty on hand" error={errors.quantity_on_hand}>
@@ -546,7 +519,6 @@ export default function InventoryAdd() {
             )}
           </div>
 
-          {/* ── Full Add (collapsible) ── */}
           <div style={card}>
             <button
               type="button"
@@ -568,7 +540,6 @@ export default function InventoryAdd() {
             {showFull && (
               <div style={{ marginTop: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
 
-                {/* Consumable extras */}
                 {form.type === 'consumable' && (
                   <>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
@@ -592,7 +563,6 @@ export default function InventoryAdd() {
                   </>
                 )}
 
-                {/* Durable extras */}
                 {form.type === 'durable' && (
                   <>
                     <Field label="Condition">
@@ -622,7 +592,6 @@ export default function InventoryAdd() {
                   </>
                 )}
 
-                {/* Shared optional fields */}
                 <Field label="Location (free text)">
                   <Input
                     value={form.location_text}
@@ -648,13 +617,10 @@ export default function InventoryAdd() {
                     />
                   </Field>
                 </div>
-                {/* ── V4-SOURCEREG-001 — the field that produced 73 spellings of 35 places ────────
-                    `inventory_items.source` was free text and stayed free text; what changes is
-                    that the VENDOR NAME now has a controlled home (`source_id` -> public.source)
-                    and the free text below is relabelled to the order/lot reference it actually
-                    holds. Both are kept: 567 rows carry text that has no other column anywhere in
-                    this design (order numbers, "(HOMESTEAD discount)", received-on dates), and it
-                    was deliberately never overwritten. */}
+                {/* `inventory_items.source` stays free text, now labelled as the order/lot reference it
+                    actually holds; the VENDOR NAME has a controlled home (`source_id` -> public.source).
+                    Both are kept: the free text carries order numbers, discounts and received-on dates that
+                    have no other column. */}
                 <Field label="Origin" help="Who grew, bred, packed or gave it.">
                   <SourcePicker
                     label="Origin"
@@ -721,13 +687,12 @@ export default function InventoryAdd() {
             )}
           </div>
 
-          {/* ── Actions ── */}
           <div style={{ display: 'flex', gap: 14, alignItems: 'center', paddingTop: 4 }}>
             <Button type="submit" variant="primary" loading={saving} loadingLabel="Saving…" disabled={done}>
               {seedMode ? 'Add seeds' : 'Add item'}
             </Button>
-            {/* V5-SEEDSTAB-001 — Cancel in seed mode follows the save's rule (Back to the Seeds view
-                that opened this form, else to My seeds); every other category is unchanged. */}
+            {/* Cancel in seed mode follows the save's rule (Back to the Seeds view that opened this form,
+                else to My seeds); every other category is unchanged. */}
             {seedMode ? (
               <button
                 type="button"
@@ -751,8 +716,6 @@ export default function InventoryAdd() {
   )
 }
 
-// ── Sub-components ────────────────────────────────────────────────────────────
-// ── Styles ────────────────────────────────────────────────────────────────────
 const card = {
   backgroundColor: P.white,
   border: `1px solid ${P.border}`,
