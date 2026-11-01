@@ -1,76 +1,66 @@
 // Words the frost ADVISORY that the daily-plan engine already sent by SNS, for rendering on Today.
-// Pure: no fetch, no clock, no DOM. Mirrors the vocabulary of the SNS text (frostEval
-// advisoryMessage) so the message on the phone and the line in the app cannot drift into
-// describing the same night two ways.
+// Pure: no fetch, no clock, no DOM. Mirrors the vocabulary of the SNS text (frostEval advisoryMessage) so
+// the message on the phone and the line in the app cannot describe the same night two ways.
 //
 // ─────────────────────────────────────────────────────────────────────────────────────────────────
 // IT RENDERS THE ADVISORY TIER AND THE RADIATIVE WATCH; THE EXCLUSIONS ARE MEASURED, NOT TASTE.
 //
-// Today already has a frost surface: WeatherCueLine renders computeCallout's `freeze` cue at
-// `tonightLow < 40` and `cold` at `< 45`. A second tonight-line would duplicate it in a slot where a
+// Today already has a tonight frost surface (WeatherWidget renders computeCallout's `freeze` cue at
+// `tonightLow < 40` and `cold` at `< 45`); a second tonight-line would duplicate it in a slot where a
 // third warn-family item turns the other two into wallpaper. What has NO surface is the LEAD TIME:
-// frostEval's evalAdvisory scans the D1..D3 forecast window (Open-Meteo) and picks the coldest civil
-// day in it; the engine's cue keys on the NWS plan low alone. On a night THIS line names as tonight,
-// Today re-keys the card and the freeze cue on the colder of the two lows (src/lib/tonightLow.js).
+// frostEval's evalAdvisory scans the D1..D3 forecast window (Open-Meteo) for the coldest civil day; the
+// engine's cue keys on the NWS plan low alone. On a night this line names as tonight, Today prints one
+// low across card, cue and line (src/lib/tonightLow.js).
 //
-// An advisory CAN refer to tonight, and usually does when it picks D1. `dayOffset` is the CIVIL DAY of
-// the minimum, and most cold minima fall before noon, at the end of the night that starts THIS
-// evening. So the night is worded from `nightOffset` on the entry (the night the SNS text named),
-// never from dayOffset, which would name most nights one day late.
+// An advisory can refer to tonight, and usually does when it picks D1: `dayOffset` is the CIVIL DAY of
+// the minimum, but most cold minima fall before noon, at the end of the night that starts THIS evening.
+// So the night is worded from `nightOffset` (the night the SNS text named), never from dayOffset, which
+// would name most nights one day late.
 //
-//   - imminent  -> a THRESHOLD send is skipped: it fires on the same plan low the engine's cue keys on
-//                  (weather.tonightLow, handler.js frostForSpace), so the cue already says "Freeze
-//                  tonight" (< 40F). A RADIATIVE send (`trip: 'radiative'`, the "Frost watch tonight"
-//                  email) is RENDERED, as a watch: it fires ABOVE its trip point (39-42F for the tender
-//                  band, radiativeFrost.js proximity 4), where the cue says "Cold night" or nothing.
-//                  The most recently sent imminent entry decides: a later threshold send leaves tonight
-//                  to the freeze cue again. pickFrostLines ranks it.
+//   - imminent  -> a THRESHOLD send is skipped: it fires on the same plan low the engine's cue keys on,
+//                  so the cue already says "Freeze tonight" (< 40F). A RADIATIVE send (`trip: 'radiative'`,
+//                  the "Frost watch tonight" email) is RENDERED, as a watch: it fires ABOVE its trip point
+//                  (39-42F for the tender band), where the cue says "Cold night" or nothing. The most
+//                  recently sent imminent entry decides; a later threshold send leaves tonight to the freeze
+//                  cue again.
 //   - heat      -> skipped. computeCallout renders `high >= 88` already.
-//   - advisory  -> rendered, tonight included: its figure is a second model's, and it is the one the
-//                  owner was texted about. When it names tonight, Today prints ONE low for the night on
-//                  the card, the cue and this line (the colder of this figure and the plan low,
-//                  src/lib/tonightLow.js), so this line's number can be the plan's. Any other night
-//                  keeps this line's own figure. A RADIATIVE-ONLY advisory (`trip: 'radiative'`) is
-//                  worded as the watch its email is titled ("Frost watch <night>"); an entry stored
-//                  before `trip` existed has none and keeps "Frost possible".
+//   - advisory  -> rendered, tonight included: its figure is a second model's, and it is the one the owner
+//                  was texted about. When it names tonight, Today prints ONE low (the colder of this figure
+//                  and the plan low, tonightLow.js). A RADIATIVE-ONLY advisory (`trip: 'radiative'`) is
+//                  worded as the watch its email is titled; an entry stored before `trip` existed keeps
+//                  "Frost possible".
 //   - forced    -> skipped, any tier: a rehearsal, never a real alert.
 //
 // UP TO TWO LINES, ONE PER NIGHT, tonight's first; never two lines about the same night:
 //   1. tonight: the watch, or an advisory naming tonight. When neither applies and a THRESHOLD "Frost
 //      protect tonight" email went out earlier but the plan low has since warmed out of the freeze cue
-//      (>= FREEZE_BELOW_F), the facts: "Forecast warmed to 44°F since the 3 PM frost email." It is
-//      the only Today trace such an email would otherwise leave.
-//   2. a later night: the newest advisory statement about one: the advisory entry when it names a
-//      later night, or the "Colder ahead" advisory a watch email carried (`colder` on the imminent entry).
+//      (>= FREEZE_BELOW_F), the facts: "Forecast warmed to 44°F since the 3 PM frost email."
+//   2. a later night: the newest advisory statement about one: the advisory entry, or the "Colder ahead"
+//      advisory a watch email carried.
 // A watch entry's `colder` (handler.frostWeatherFacts) is the colder advisory its email printed. Naming
-// TONIGHT it is the second forecast's low for the watch's own night ("Colder on a second forecast:
-// 35°F tonight"): the watch line says "as low as 35°F", and tonightLow.js agrees the night on it.
-// Naming a later night it is line 2's candidate.
+// TONIGHT it is the second forecast's low for the watch's own night, and the watch line says "as low as
+// 35°F"; naming a later night it is line 2's candidate.
 //
-// A SAME-NIGHT ADVISORY RETIRES ONCE BOTH MODELS HAVE WARMED PAST IT.
-// An advisory entry is the second model's low at SEND time and no later run writes a fresher one
-// (dedup is escalation-only), so "Frost possible tonight — low 38°F" would hold tonight's line, and
-// the colder-wins 38 on the card and cue, all evening after both forecasts warmed to 44, and block the
-// warmed line. The plan therefore stores the second model's CURRENT D1..D3 lows
-// (hydrology.forecast_lows/forecast_dates, while the frost alert is on); currentLows(plan) hands them
-// in with the plan low. A THRESHOLD advisory naming tonight is retired only when the second model's
-// low for the advisory's own civil date is above ADVISORY_TRIP_F (the email's own trigger would no
-// longer fire) AND the plan low is at or above FREEZE_BELOW_F (the freeze cue has let go). Tonight's
-// line is then the watch if one was sent, else the warmed line citing the newest real frost email
-// about tonight (the protect email after the advisory, or the advisory itself when it was the only
-// one), and only when that line can speak, so the email always leaves one line about tonight. Models
-// disagree -> colder wins. Anything unknown (no stored lows, the date not among them, a hole, no plan
-// low) -> not retired. Nothing is stored: the next run that turns either model cold again brings the
-// email's line back. A radiative-only advisory keeps its figure (the plan holds no clear-and-calm
-// verdict).
+// A SAME-NIGHT ADVISORY RETIRES ONCE BOTH MODELS HAVE WARMED PAST IT. An advisory entry is the second
+// model's low at SEND time and no later run rewrites it (dedup is escalation-only), so "Frost possible
+// tonight — low 38°F" would hold tonight's line, and the colder-wins 38 on card and cue, all evening
+// after both forecasts warmed, and block the warmed line. The plan therefore stores the second model's
+// CURRENT D1..D3 lows (hydrology.forecast_lows/forecast_dates); currentLows(plan) hands them in with the
+// plan low. A THRESHOLD advisory naming tonight is retired only when the second model's low for the
+// advisory's own civil date is above ADVISORY_TRIP_F (the email's own trigger would no longer fire) AND
+// the plan low is at or above FREEZE_BELOW_F. Tonight's line is then the watch if one was sent, else the
+// warmed line citing the newest real frost email about tonight, and only when that line can speak, so
+// the email always leaves one line about tonight. Anything unknown (no stored lows, the date not among
+// them, a hole, no plan low) -> not retired. Nothing is stored: the next run that turns either model
+// cold again brings the email's line back. A radiative-only advisory keeps its figure.
 //
 // ─────────────────────────────────────────────────────────────────────────────────────────────────
 // AN ENTRY WITHOUT A TEMPERATURE RENDERS NOTHING, DELIBERATELY.
 //
 // Entries written before the handler persisted the weather facts carry key/tier/level/at only. A line
-// built from those could say no more than "an advisory was sent at 11:27pm", which raises a question
-// it cannot answer and is worse than silence on a screen whose whole discipline is that silence means
-// something. So: no lowF, no line. Those rows age out on their own; nothing needs backfilling.
+// built from those could say no more than "an advisory was sent at 11:27pm", which raises a question it
+// cannot answer and is worse than silence on a screen whose discipline is that silence means something.
+// So: no lowF, no line. Those rows age out; nothing needs backfilling.
 
 const SEVERITY = { advisory: 1 };
 
