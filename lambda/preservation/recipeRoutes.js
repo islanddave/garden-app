@@ -1,5 +1,4 @@
-// Put-Up release 4 — /api/recipes: the recipe library (V4 §2.6, §4.5, §5.1 row 4; F §1.5; recipe types per
-// Dave 2026-09-30).
+// /api/recipes: the recipe library (V4 §2.6, §4.5, §5.1 row 4; F §1.5).
 //
 //   GET    /api/recipes                    the household's recipes (list rows; ?type_id= narrows)
 //   POST   /api/recipes                    keyed create: the recipe and its lines in ONE statement
@@ -12,23 +11,23 @@
 //   POST   /api/recipes/types              find-or-create a type by lower(btrim(label))
 //   DELETE /api/recipes/types/:id          soft delete a household type (a built-in is refused)
 //
-// WHY A SIBLING MODULE. index.js loads neon, clerk and aws at module scope and cannot be imported by vitest;
-// this file takes `sql` as an argument and imports only dependency-free siblings, so every statement below is
-// EXECUTED under `npm test` against a mock driver (recipeRoutes.test.js). index.js delegates with the same
+// A sibling module: index.js loads neon, clerk and aws at module scope and cannot be imported by vitest; this
+// file takes `sql` as an argument and imports only dependency-free siblings, so every statement is EXECUTED
+// under `npm test` against a mock driver (recipeRoutes.test.js). index.js delegates with the same
 // null-for-not-mine contract the kitchen and jar delegations use.
 //
-// HOUSEHOLD SCOPE (V4 §5.3). Dave and Jen read and write every recipe; STRANGER gets not-found. The owner
-// column is user_id (the creator; never changed — prevent_recipe_ownership_transfer). Lines take their owner
-// from their recipe. Every body-settable FK has a household loader: recipe_type_id (loadOwnedRecipeType) here,
-// and a batch's recipe_id (loadOwnedRecipe, exported for kitchenRoutes.js's create).
+// Household scope (V4 §5.3): members read and write every recipe; a STRANGER gets not-found. The owner
+// column is user_id (the creator; never changed, prevent_recipe_ownership_transfer). Lines take their owner
+// from their recipe. Every body-settable FK has a household loader: recipe_type_id (loadOwnedRecipeType)
+// here, and a batch's recipe_id (loadOwnedRecipe, exported for kitchenRoutes.js's create).
 //
-// ⚠ pH (V4 "pH"). His target pH lives in `notes` and is returned ONLY by GET /api/recipes/:id (recipe detail).
+// pH (V4 "pH"): the target pH lives in `notes` and is returned ONLY by GET /api/recipes/:id (recipe detail).
 // The list omits notes; the batch-facing read (readRecipeForBatch) omits notes; the detail's batch list is an
 // explicit column list with no pH column. No route here parses the notes.
 //
-// IDEMPOTENCY (V4 §5.2). The key lives on the recipe row (uq_recipe_idempotency_key, global partial). A 23505
-// on that index is a replay → re-read owner-scoped → 200 `replayed: true`; a key held outside the household →
-// 409 key_conflict, no payload. Never ON CONFLICT DO NOTHING on the recipe row.
+// Idempotency (V4 §5.2): the key lives on the recipe row (uq_recipe_idempotency_key, global partial). A 23505
+// on that index is a replay -> re-read owner-scoped -> 200 `replayed: true`; a key held outside the
+// household -> 409 key_conflict, no payload. Never ON CONFLICT DO NOTHING on the recipe row.
 import {
   parseRecipeRoute, validateRecipeCreate, validateRecipePatch, recipePatchPlan, recipeCreateValues,
   validateFromBatch, validateTypeCreate, typeLabelOf,
@@ -41,9 +40,8 @@ const bad = (error) => ({ status: 400, body: { error } });
 const keyConflict = { status: 409, body: { error: 'That key is already in use.', code: 'key_conflict' } };
 const isUuid = (v) => typeof v === 'string' && KITCHEN_UUID_RE.test(v);
 
-// ── household loaders (V4 §5.3) ──────────────────────────────────────────────────────────────────
-// A row on success, null on ANY failure (malformed, foreign, soft-deleted): the caller answers the same 400 for
-// all of them, so there is no existence oracle.
+// Household loaders (V4 §5.3): a row on success, null on ANY failure (malformed, foreign, soft-deleted), so
+// the caller answers the same 400 for all of them and there is no existence oracle.
 export async function loadOwnedRecipe(sql, recipeId, householdIds) {
   if (!isUuid(recipeId)) return null;
   const rows = await sql`
@@ -67,9 +65,10 @@ export async function loadOwnedRecipeType(sql, typeId, householdIds) {
   return rows.length ? rows[0] : null;
 }
 
-// The batch surface's view of its recipe (getBatch's `recipe` key, and Put it up's preview): the name, the keeps
-// line, the process jar and the final container (Put it up's row defaults), and the lines as reference text. NOT the notes — his target pH is in them, and it renders only on recipe
-// detail (V4 "pH"). A soft-deleted recipe answers null (the batch keeps its recipe_id; the surface stops naming it).
+// The batch surface's view of its recipe (getBatch's `recipe` key, and Put it up's preview): the name, the
+// keeps line, the process jar and the final container (Put it up's row defaults), and the lines as
+// reference text. NOT the notes: the target pH is in them and renders only on recipe detail (V4 "pH"). A
+// soft-deleted recipe answers null (the batch keeps its recipe_id; the surface stops naming it).
 export async function readRecipeForBatch(sql, recipeId, householdIds) {
   if (!isUuid(recipeId)) return null;
   const rows = await sql`
@@ -94,7 +93,6 @@ export async function readRecipeForBatch(sql, recipeId, householdIds) {
   return rows.length ? rows[0] : null;
 }
 
-// ── the route table ──────────────────────────────────────────────────────────────────────────────
 export async function handleRecipeRoute({ sql, rawPath, method, rawBody, query, userId, householdIds }) {
   const route = parseRecipeRoute(rawPath);
   if (!route) return null;
@@ -130,9 +128,8 @@ export async function handleRecipeRoute({ sql, rawPath, method, rawBody, query, 
   return notAllowed;
 }
 
-// ── reads ────────────────────────────────────────────────────────────────────────────────────────
-// The list: no notes (they can be long, and they carry his target pH — detail only). What a list row needs to
-// group, filter and say "made 3 times, last Sep 12": its type, its keeps line, its line count, its batches.
+// Reads. The list carries no notes (they can be long and carry the target pH; detail only): what a list row
+// needs to group, filter and say "made 3 times, last Sep 12": its type, keeps line, line count, batches.
 async function listRecipes(sql, q, householdIds) {
   const typeId = isUuid(q.type_id) ? q.type_id : null;
   const rows = await sql`
@@ -153,9 +150,10 @@ async function listRecipes(sql, q, householdIds) {
   return { status: 200, body: { recipes: rows } };
 }
 
-// One recipe. Notes verbatim; lines in order; the dated batches made from it, newest first, with their endings
-// (the client words them). The batch list is an EXPLICIT column list: no last_ph_reading, no outcome_note —
-// "recipe detail's batch list never shows a pH" (V4 "pH") is decided here, not left to the client.
+// One recipe. Notes verbatim; lines in order; the dated batches made from it, newest first, with their
+// endings (the client words them). The batch list is an EXPLICIT column list: no last_ph_reading, no
+// outcome_note, so "recipe detail's batch list never shows a pH" (V4 "pH") is decided here, not left to the
+// client.
 async function readRecipe(sql, recipeId, householdIds) {
   const rows = await sql`
     SELECT r.id, r.user_id, r.name, r.kind, r.recipe_type_id, t.label AS type_label, r.link_url, r.notes,
@@ -207,7 +205,6 @@ async function replayRecipe(sql, key, householdIds) {
   return recipe ? { status: 200, body: { recipe, replayed: true } } : keyConflict;
 }
 
-// ── POST /api/recipes ────────────────────────────────────────────────────────────────────────────
 async function createRecipe(sql, body, userId, householdIds) {
   const verr = validateRecipeCreate(body);
   if (verr) return bad(verr);
@@ -260,11 +257,10 @@ async function createRecipe(sql, body, userId, householdIds) {
   return { status: 201, body: { recipe } };
 }
 
-// ── PATCH /api/recipes/:id ───────────────────────────────────────────────────────────────────────
-// Presence-sentinel: every column is a CASE on its presence flag (absent = unchanged, explicit null = clear;
-// COALESCE could not tell them apart). `lines` present replaces the live set in the SAME statement: the old
-// lines are soft-deleted and the new ones inserted, both hanging off the recipe UPDATE's RETURNING, so a recipe
-// that is not the household's (or went away) changes nothing at all.
+// PATCH /api/recipes/:id. Presence-sentinel: every column is a CASE on its presence flag (absent =
+// unchanged, explicit null = clear; COALESCE could not tell them apart). `lines` present replaces the live
+// set in the SAME statement: the old lines are soft-deleted and the new ones inserted, both hanging off the
+// recipe UPDATE's RETURNING, so a recipe that is not the household's (or went away) changes nothing at all.
 async function patchRecipe(sql, recipeId, body, householdIds) {
   const verr = validateRecipePatch(body);
   if (verr) return bad(verr);
@@ -329,8 +325,8 @@ async function patchRecipe(sql, recipeId, body, householdIds) {
   return { status: 200, body: { recipe } };
 }
 
-// ── DELETE /api/recipes/:id — soft, the recipe and its live lines in one statement ──────────────────
-// A batch made from it keeps its recipe_id (history); the batch surface stops naming a removed recipe.
+// DELETE /api/recipes/:id: soft, the recipe and its live lines in one statement. A batch made from it keeps
+// its recipe_id (history); the batch surface stops naming a removed recipe.
 async function deleteRecipe(sql, recipeId, householdIds) {
   const rows = await sql`
     WITH r AS (
@@ -351,17 +347,16 @@ async function deleteRecipe(sql, recipeId, householdIds) {
   return { status: 200, body: { ok: true } };
 }
 
-// ── POST /api/recipes/from-batch/:batchId — "Save as recipe" (V4 §2.6; F §1.5) ─────────────────────
-// ONE statement. It reads, household-scoped, every column F §1.5 says a batch hands a recipe without retyping:
-// the batch's label (the default name), kind, vessel (label/size/unit/count) and "No salt"; every LIVE line's
-// name, amount (qty + unit, and the same written as text), form, brand, listed heat, note, order, sitting
-// membership (a line added at a bottling = "at the end") and salt facts (role, salt_pct, salt_base, base_g,
-// salt_method, base_from); and from the live (un-voided) bottlings, Made (the put_up rows' amount in g) and
-// mash_in_g, summed across sittings so ratio scaling can be derived; and (Dave 2026-09-30) the final
-// container — the first bottling's first row's container, size of each and "cooked after blending" — as
-// bottle_*. Method, day gates, scale rules, targets and serve notes come across ONLY as notes: the batch's notes verbatim, its brine note, "Following: <recipe_ref>"
-// and its "Next time…" rows. No stage note, no reading, no pH (V4 "pH"). The batch is linked to the new recipe
-// when it follows none yet (it was made this way).
+// POST /api/recipes/from-batch/:batchId: "Save as recipe" (V4 §2.6; F §1.5). ONE statement. It reads,
+// household-scoped, every column F §1.5 says a batch hands a recipe without retyping: the batch's label (the
+// default name), kind, vessel (label/size/unit/count) and "No salt"; every LIVE line's name, amount (qty +
+// unit, and the same written as text), form, brand, listed heat, note, order, sitting membership (a line
+// added at a bottling = "at the end") and salt facts; from the live (un-voided) bottlings, Made (the put_up
+// rows' amount in g) and mash_in_g, summed across sittings so ratio scaling can be derived; and the final
+// container (the first bottling's first row's container, size of each and "cooked after blending") as
+// bottle_*. Method, day gates, scale rules, targets and serve notes come across ONLY as notes: the batch's
+// notes verbatim, its brine note, "Following: <recipe_ref>" and its "Next time…" rows. No stage note, no
+// reading, no pH (V4 "pH"). The batch is linked to the new recipe when it follows none yet.
 async function fromBatch(sql, batchId, body, userId, householdIds) {
   const verr = validateFromBatch(body);
   if (verr) return bad(verr);
@@ -468,7 +463,7 @@ async function fromBatch(sql, batchId, body, userId, householdIds) {
   return { status: 201, body: { recipe, batch_linked: rows[0].linked > 0 } };
 }
 
-// ── types (Dave 2026-09-30: "create a type"; the crop_types / place find-or-create precedent) ────────
+// Types (the crop_types / place find-or-create precedent).
 async function listTypes(sql, householdIds) {
   const rows = await sql`
     SELECT id, label, sort_order, user_id, (user_id IS NULL) AS builtin

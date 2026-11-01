@@ -1,40 +1,34 @@
-// lambda/preservation/sourceRoutes.js
-// V5-PUTUPMULTISOURCE-001 (BD-058) — /api/preservation/:id/sources.
+// /api/preservation/:id/sources (V5-PUTUPMULTISOURCE-001).
 //
-// The database half. Every decision lives in putUpSources.js; this file loads, writes and scopes.
-// It imports only dependency-free siblings and takes `sql` as an argument, so vitest can import and
-// RUN it — the same property that lets kitchenRoutes.test.js assert bound parameters rather than
-// spelling. index.js cannot be imported by a test (module-scope @neondatabase/serverless and
-// @clerk/backend), which is why the routes live here and index.js only delegates.
+// The database half: every decision lives in putUpSources.js; this file loads, writes and scopes. It imports
+// only dependency-free siblings and takes `sql` as an argument, so vitest can RUN it (the property that
+// lets kitchenRoutes.test.js assert bound parameters rather than spelling); index.js cannot be imported by a
+// test, so the routes live here and index.js only delegates.
 //
-// TWO ROUTES, deliberately. GET reads the list; PUT replaces it whole. There is no POST-one and no
-// DELETE-one:
-//   * A whole-list PUT makes "I mistyped ingredient 3" a single well-defined request. The per-row
-//     alternative makes the CLIENT compute a diff against a list it may be holding staler than it
-//     thinks, and kitchen_batch_input's own per-row add already carries the scar — its predicate
-//     form "discards its RETURNING ids so even a targeted undo needs a full before/after GET diff"
-//     (kitchenBatch.js:100-106).
-//   * The replace is a SOFT delete of the previous set plus an insert of the new one, in ONE
-//     statement pair inside one request. Ordinals are reassigned from array position every time, so
-//     uq_ps_parent_ordinal (partial on deleted_at IS NULL) always sees exactly one row per slot.
+// TWO ROUTES, deliberately: GET reads the list; PUT replaces it whole. No POST-one, no DELETE-one:
+//   * A whole-list PUT makes "I mistyped ingredient 3" one well-defined request. A per-row API makes the
+//     CLIENT compute a diff against a list it may hold staler than it thinks (the predicate add on
+//     kitchen_batch_input "discards its RETURNING ids so even a targeted undo needs a full before/after
+//     GET diff").
+//   * The replace is a SOFT delete of the previous set plus an insert of the new one in one transaction.
+//     Ordinals are reassigned from array position every time, so uq_ps_parent_ordinal (partial on
+//     deleted_at IS NULL) always sees exactly one row per slot.
 //
-// ⚠ THE PARENT CACHE IS WRITTEN IN THE SAME REQUEST AS THE CHILDREN, ALWAYS.
+// THE PARENT CACHE IS WRITTEN IN THE SAME REQUEST AS THE CHILDREN, ALWAYS.
 // migrations/v5-putupmultisource-001/0a-additive-ddl.sql D1 leaves preservation_log unmigrated by
-// re-reading its source columns as a mirror of the ordinal-0 child. If this handler ever wrote the
-// children without the parent, the mirror would be stale and the design's central claim would be
-// false — silently, because nothing reads the two together. `parentCache` is called on every PUT,
-// including the one that ends with an empty list.
+// re-reading its source columns as a mirror of the ordinal-0 child. If this handler wrote the children
+// without the parent, the mirror would go stale silently, because nothing reads the two together.
+// `parentCache` is called on every PUT, including the one that ends with an empty list.
 //
-// SCOPING: `= ANY(householdIds)` on every predicate, never `= userId`, matching every other handler
-// in this directory. The ownership loader returns null for absent / malformed / out-of-household /
-// soft-deleted alike — that uniformity is itself the leak prevention, since "not found" vs
-// "forbidden" is a distinction worth having only to an attacker.
+// Scoping: `= ANY(householdIds)` on every predicate, never `= userId`. The ownership loader returns null for
+// absent / malformed / out-of-household / soft-deleted alike: "not found" vs "forbidden" is a distinction
+// worth having only to an attacker.
 import { withActor } from './audit-actor.js';
 import {
   PS_ORDER, PS_WRITABLE_COLUMNS, normalizeSourceRows, parentCache,
 } from './putUpSources.js';
-// BUG-AUTHZLAMBDA-001 (B3): the batch household loaders for the two garden pointers a row may carry.
-// pantryRoutes.js imports the same module, so it already loads under vitest.
+// The batch household loaders for the two garden pointers a row may carry (pantryRoutes.js imports the same
+// module, so it already loads under vitest).
 import { loadPlantings, loadPicks } from './lineRoutes.js';
 import { warnRejectedFk } from './household.js';
 
@@ -43,11 +37,10 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const notFound = { status: 404, body: { error: 'Not found' } };
 const notAllowed = { status: 405, body: { error: 'Method not allowed' } };
 
-// /api/preservation/{uuid}/sources — and NOTHING ELSE. Returning null for every other path is what
-// lets index.js delegate this FIRST without disturbing the literal sub-routes ('whats-put-up',
-// 'use-soon') that must be checked before /api/preservation/:id. The uuid shape is tested HERE
-// rather than at the loader so that /api/preservation/whats-put-up/sources — a real typo shape —
-// falls through to the existing 404 instead of being claimed by this module.
+// /api/preservation/{uuid}/sources and NOTHING ELSE. Null for every other path lets index.js delegate this
+// FIRST without disturbing the literal sub-routes ('whats-put-up', 'use-soon') that must be checked before
+// /api/preservation/:id. The uuid shape is tested HERE rather than at the loader so a typo shape like
+// /api/preservation/whats-put-up/sources falls through to the existing 404.
 export function parseSourceRoute(rawPath) {
   if (typeof rawPath !== 'string') return null;
   const path = rawPath.length > 1 && rawPath.endsWith('/') ? rawPath.slice(0, -1) : rawPath;
@@ -57,8 +50,8 @@ export function parseSourceRoute(rawPath) {
   return { kind: 'sources', id: m[1] };
 }
 
-// Uniform contract, lifted from index.js and kitchenRoutes.js: the row on success, null on ANY
-// failure. Reads preservation_log directly — there is no view for it, unlike the kitchen family.
+// Uniform contract, from index.js and kitchenRoutes.js: the row on success, null on ANY failure. Reads
+// preservation_log directly (no view).
 async function loadOwnedPutUp(sql, id, householdIds) {
   if (!UUID_RE.test(String(id))) return null;
   const rows = await sql`
@@ -70,9 +63,9 @@ async function loadOwnedPutUp(sql, id, householdIds) {
   return rows.length ? rows[0] : null;
 }
 
-// The live sources of one jar, in ordinal order. Columns are named rather than SELECT *: a column
-// added to the table later must be added to the read deliberately, which is also what makes
-// preservation-source-columns.test.js's L-081 contract able to see the read surface at all.
+// The live sources of one jar, in ordinal order. Columns are named rather than SELECT *, so a column added
+// later must be added to the read deliberately (which also lets preservation-source-columns.test.js's L-081
+// contract see the read surface).
 async function listSources(sql, putUpId, householdIds) {
   const rows = await sql`
     SELECT id, preservation_log_id, ordinal, source_kind, source_label, display_label,
@@ -87,13 +80,12 @@ async function listSources(sql, putUpId, householdIds) {
   return { status: 200, body: { sources: rows } };
 }
 
-// BUG-AUTHZLAMBDA-001 (B3): sourceRowError proves only the uuid SHAPE of plant_id / harvest_log_id.
-// This proves each one is the household's, then that the row agrees with what it points at. It runs
-// BEFORE the soft-delete, so a refusal writes nothing and the existing list survives. A miss answers
-// the same generic sentence for a foreign, absent or deleted id (no existence oracle) and goes to
-// CloudWatch through warnRejectedFk. Two batch reads cover the whole list; a list with no garden
-// pointers issues none (the loaders return [] for no ids without querying).
-// Ids are compared lower-cased: the shape check is case-insensitive and Postgres returns lower case.
+// sourceRowError proves only the uuid SHAPE of plant_id / harvest_log_id. This proves each one is the
+// household's, then that the row agrees with what it points at. It runs BEFORE the soft-delete, so a
+// refusal writes nothing and the existing list survives. A miss answers the same generic sentence for a
+// foreign, absent or deleted id (no existence oracle) and goes to CloudWatch through warnRejectedFk. Two
+// batch reads cover the whole list; a list with no garden pointers issues none. Ids are compared
+// lower-cased: the shape check is case-insensitive and Postgres returns lower case.
 async function gardenPointerError(sql, rows, userId, householdIds) {
   const lc = (v) => (v == null ? null : String(v).toLowerCase());
   const distinct = (col) => [...new Set(rows.map((r) => lc(r[col])).filter((v) => v != null))];
@@ -132,19 +124,17 @@ async function gardenPointerError(sql, rows, userId, householdIds) {
 }
 
 // The whole-list replace. Order of statements is load-bearing:
-//   1. soft-delete the current set  — frees every ordinal before any is reused, so the partial
-//      unique index cannot collide with a row that is on its way out. Doing the insert first would
-//      make replacing [A,B] with [B,A] a 23505 on ordinal 0.
-//   2. insert the new set
-//   3. write the parent cache from ordinal 0
+//   1. soft-delete the current set: frees every ordinal before any is reused, so the partial unique index
+//      cannot collide with a row on its way out (inserting first would make replacing [A,B] with [B,A] a
+//      23505 on ordinal 0);
+//   2. insert the new set;
+//   3. write the parent cache from ordinal 0.
 //
-// All three run in ONE sql.transaction, in that order, behind the actor GUC (BUG-LAMBDAERRPATHS-001
-// I9). Every value is known before the batch is built — the rows are normalized, the garden pointers
-// checked and the parent cache computed from the rows, not read back — so nothing has to run between
-// the statements. A failure anywhere (a nonexistent variety_id is still only shape-checked, so row k
-// can 23503) rolls the whole replace back and the old list stays live. Before this the soft-delete
-// and the INSERTs ran as separate statements, and a failure on row k left the jar with rows 0..k-1
-// and a stale parent cache. Refusals (400) all happen before the batch, so a refused PUT writes nothing.
+// All three run in ONE sql.transaction, in that order, behind the actor GUC. Every value is known before the
+// batch is built (rows normalized, garden pointers checked, parent cache computed from the rows, not read
+// back), so nothing has to run between the statements. A failure anywhere (a nonexistent variety_id is only
+// shape-checked, so row k can 23503) rolls the whole replace back and the old list stays live. Refusals
+// (400) all happen before the batch, so a refused PUT writes nothing.
 async function replaceSources(sql, putUp, body, userId, householdIds) {
   const submitted = body?.sources;
 
@@ -155,14 +145,13 @@ async function replaceSources(sql, putUp, body, userId, householdIds) {
         AND deleted_at IS NULL
     `;
 
-  // An explicit empty list is a legitimate request: "I do not know what went into this after all."
-  // It clears the children AND the parent cache, and normalizeSourceRows refuses [] precisely so
-  // this branch has to be written on purpose rather than falling out of a loop that ran zero times.
+  // An explicit empty list is a legitimate request: "I do not know what went into this after all." It
+  // clears the children AND the parent cache; normalizeSourceRows refuses [] so this branch has to be
+  // written on purpose.
   if (Array.isArray(submitted) && submitted.length === 0) {
     const cache = parentCache([]);
-    // Put-Up release 1b: preservation_log carries trg_audit_preservation_log_upd, so its writes ride the
-    // actor GUC in one transaction (lambda/audit-actor-guc.test.js) — whether or not this statement
-    // touches a watched column today.
+    // preservation_log carries trg_audit_preservation_log_upd, so its writes ride the actor GUC in one
+    // transaction (lambda/audit-actor-guc.test.js), whether or not this statement touches a watched column.
     await withActor(sql, userId, () => [
       softDelete(),
       sql`
@@ -185,19 +174,17 @@ async function replaceSources(sql, putUp, body, userId, householdIds) {
   const refused = await gardenPointerError(sql, rows, userId, householdIds);
   if (refused) return { status: 400, body: { error: refused } };
 
-  // Step 3. Unconditional and total — every one of the six columns is assigned, including the nulls.
-  // A COALESCE-preserving update here would be a bug, not a kindness: it would retain a plant_id
-  // from a previous edit whose source row is now soft-deleted, which is the "false-provenance
-  // generator" shape v4-putupprov-001's own header rejects a DEFAULT for.
+  // Step 3. Unconditional and total: the source, label and garden-pointer columns are assigned nulls
+  // included. A COALESCE-preserving update would retain a plant_id from a previous edit whose source row is
+  // now soft-deleted (the "false-provenance generator" shape).
   const cache = parentCache(rows);
   await withActor(sql, userId, () => [
     softDelete(),
-    // ⚠ EVERY NULL PARAMETER CARRIES AN EXPLICIT ::cast. Neon cannot infer a type for a null bound
-    // parameter and answers `could not determine data type of parameter` — a 500, not a 400, and one
-    // that only appears for the rows that happen to omit a column. Bought-ingredient rows omit four of
-    // these at once, so this is the COMMON path here, not an edge.
-    // user_id is copied from the PARENT rather than from the caller: a household member editing
-    // another member's jar must not silently re-own its sources.
+    // EVERY NULL PARAMETER CARRIES AN EXPLICIT ::cast. Neon cannot infer a type for a null bound parameter and
+    // answers `could not determine data type of parameter`, a 500 not a 400, and only for rows that omit a
+    // column. Bought-ingredient rows omit four at once, so this is the COMMON path.
+    // user_id is copied from the PARENT rather than the caller: a household member editing another member's
+    // jar must not silently re-own its sources.
     ...rows.map((r) => sql`
       INSERT INTO preservation_source
         (preservation_log_id, user_id, ordinal, source_kind, source_label, display_label,
@@ -223,11 +210,10 @@ async function replaceSources(sql, putUp, body, userId, householdIds) {
       AND user_id = ANY(${householdIds})
   `,
   ]);
-  // crop_type_slug / variety_id are the ONE pair written with COALESCE, and the asymmetry is
-  // deliberate: chk_preservation_log_attribution requires at least one of them to be non-null, so
-  // an all-bought source list (which carries neither) would otherwise null the jar's own crop and
-  // 23514 the update. Keeping the existing value is correct — the jar's crop is a fact about the
-  // JAR, set when it was created, not a fact derived from its ingredients.
+  // crop_type_slug / variety_id are the ONE pair written with COALESCE, deliberately:
+  // chk_preservation_log_attribution requires at least one non-null, so an all-bought source list (neither)
+  // would otherwise null the jar's own crop and 23514 the update. The jar's crop is a fact about the JAR,
+  // set at creation, not derived from its ingredients.
 
   return listSources(sql, putUp.id, householdIds);
 }
@@ -235,10 +221,9 @@ async function replaceSources(sql, putUp, body, userId, householdIds) {
 export async function handleSourceRoute({ sql, rawPath, method, rawBody, userId, householdIds }) {
   const route = parseSourceRoute(rawPath);
   if (!route) return null;
-  // userId is not a scope (household scoping covers that): since Put-Up release 1b it is the actor the
-  // preservation_log writes set for the audit trigger. It arrives in the same argument object
-  // index.js passes handleKitchenRoute — two near-identical call sites with different shapes is how
-  // one of them drifts.
+  // userId is not a scope (household scoping covers that): it is the actor the preservation_log writes set
+  // for the audit trigger. It arrives in the same argument object index.js passes handleKitchenRoute, since
+  // two near-identical call sites with different shapes is how one drifts.
 
   const putUp = await loadOwnedPutUp(sql, route.id, householdIds);
   if (!putUp) return notFound;
@@ -256,9 +241,9 @@ export async function handleSourceRoute({ sql, rawPath, method, rawBody, userId,
   return notAllowed;
 }
 
-// The CHECKs on preservation_source, given words. Consulted by index.js's error mapper so a 23514
-// that slips past validateCreate reads as a sentence rather than a constraint name. Returns null for
-// anything that is not ours, so the existing mappers below it are reached unchanged.
+// The CHECKs on preservation_source, given words. Consulted by index.js's error mapper so a 23514 that
+// slips past validateCreate reads as a sentence. Returns null for anything not ours, so the mappers below
+// it are reached unchanged.
 export function sourceErrorMessage(err) {
   if (!err || err.code !== '23514') return null;
   const c = err.constraint;
