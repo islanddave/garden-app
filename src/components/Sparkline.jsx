@@ -1,7 +1,7 @@
-// Sparkline — V4-HARVESTVIEW-001 S4. Presentation-only per canon harvest-view §8:
-// `Sparkline {values[]}` — palette-token stroke, NO API-shape coupling (callers map their payload to
-// a bare number array; this component never sees week_start keys or crop objects). Ambient
-// retrospective texture, not a chart: no axes, no labels, no interaction, no denominator.
+// Sparkline — presentation-only: `values[]` in, palette-token stroke, NO API-shape coupling (callers
+// map their payload to a bare number array; this component never sees week_start keys or crop
+// objects). Ambient retrospective texture, not a chart: no axes, no labels, no interaction, no
+// denominator.
 import React from 'react'
 import { P } from '../lib/constants.js'
 

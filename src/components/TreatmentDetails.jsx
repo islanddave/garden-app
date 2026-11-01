@@ -1,12 +1,11 @@
 // src/components/TreatmentDetails.jsx
 // V4-TREATLOG-001 — dedicated "Treatment details" section, rendered directly below Event Type
-// whenever the event is a pest treatment or a DrG "Doctored / Treated" action. Replaces the old
-// pest/treatment fields that were buried in the collapsible "More details" panel.
+// whenever the event is a pest treatment or a DrG "Doctored / Treated" action.
 //
-// Captures: what pest/disease was targeted (free-type WITH suggestions — the old fixed list that
-// blocked logging is now a datalist you can type past), what was applied (picked from inventory,
-// filtered by kind, OR free-typed), what KIND it was (fertilizer vs amendment are DISTINCT per
-// Dave 2026-07-14), and how much / what strength.
+// Captures: what pest/disease was targeted (free-type WITH suggestions: a datalist you can type
+// past, never a fixed list that blocks logging), what was applied (picked from inventory, filtered by
+// kind, OR free-typed), what KIND it was (fertilizer vs amendment are DISTINCT), and how much / what
+// strength.
 import React from 'react'
 import { P } from '../lib/constants.js'
 import { Input, Select } from './forms'
@@ -110,7 +109,7 @@ export default function TreatmentDetails({ value, onChange, inventory = [] }) {
           />
         </div>
 
-        {/* Amount / strength — free-form (matches how Dave logs: "half strength", "2 tbsp/gal"). */}
+        {/* Amount / strength — free-form ("half strength", "2 tbsp/gal"). */}
         <div>
           <label htmlFor="treatlog-amount" style={fieldLabel}>Amount / strength</label>
           <Input

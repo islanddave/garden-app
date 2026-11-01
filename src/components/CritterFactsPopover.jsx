@@ -6,10 +6,10 @@ import { LAYER } from '../lib/dismissLayers.js'
 const REDUCE_MOTION = typeof window !== 'undefined' && window.matchMedia
   && window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
-// FIX-5: critter Facts / Alt Facts popover. Reward-UX compliant — ambient, opened only on an
-// explicit user tap (no auto-interrupt, no sound, no haptic). Two tabs: Facts (sourced natural
-// history) and Alt Facts (whimsical, always authored). The Facts tab shows a slow-pulsing "?"
-// when the critter has no verified source (content == null OR has_source === false OR empty facts).
+// Critter Facts / Alt Facts popover. Reward-UX compliant: ambient, opened only on an explicit user
+// tap (no auto-interrupt, no sound, no haptic). Two tabs: Facts (sourced natural history) and Alt
+// Facts (whimsical, always authored). The Facts tab shows a slow-pulsing "?" when the critter has no
+// verified source (content == null OR has_source === false OR empty facts).
 // content = { facts, alt_facts, has_source } | null. theme = { bg, strip, name } (Collection THEMES tone).
 const GROUP_LABEL = { cryptid: 'Cryptid', legacy: 'No longer with us', wild: 'Garden visitor' }
 
@@ -17,8 +17,8 @@ export default function CritterFactsPopover({ critter, theme, content, onClose }
   const [tab, setTab] = useState('facts')
   const closeRef = useRef(null)
 
-  // V4-BACKNAV-001 Slice 2 — join the shared registry. This popover is mounted-means-open, and its
-  // keydown below was gated on NOTHING: over an open Sheet, one Escape fired both onCloses.
+  // Joins the shared registry. This popover is mounted-means-open, and the keydown below is gated on
+  // nothing else, so without the registry one Escape over an open Sheet would fire both onCloses.
   const { registered, isTopmost } = useDismissable({ open: true, onDismiss: onClose, layer: LAYER.DIALOG })
 
   useEffect(() => {
