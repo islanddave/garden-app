@@ -1,11 +1,10 @@
 // V4-BATCHUNDO-001 — client helpers for the DURABLE undo of a Log-Many batch.
 //
-// WHY THIS FILE EXISTS. The whole server side has been live on prod since W-BATCHNULL and had ZERO
-// callers in src/: `GET /api/events/batches` (lambda/events/index.js) and the hardened
-// `DELETE /api/events/batch/:id` transaction next to it. Meanwhile the only undo the app ever
-// offered lived inside LogMany's `result &&` success block — navigate away and a mis-scoped batch of
-// up to 157 rows was unrecoverable by anything short of deleting each event by hand. This module is
-// the seam that reaches the deployed capability; nothing here is a new contract.
+// WHY THIS FILE EXISTS. An undo that lived only inside LogMany's `result &&` success block is lost
+// the moment the user navigates away, leaving a mis-scoped batch of many rows recoverable only by
+// deleting each event by hand. This module is the seam to the server's durable undo,
+// `GET /api/events/batches` and `DELETE /api/events/batch/:id` (lambda/events/index.js); nothing
+// here is a new contract.
 //
 // THE SERVER'S SHAPE, verbatim from the handler (do not widen it here — a client-side guess about a
 // field the endpoint does not send is how a surface starts lying):

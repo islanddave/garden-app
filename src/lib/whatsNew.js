@@ -1,6 +1,6 @@
 // src/lib/whatsNew.js — V4-WHATSNEW-001 ambient unread indicator for the /releases page.
-// Last-seen version is localStorage-only (non-critical, ephemeral): cross-device sync is
-// deferred to V4-WHATSNEW-002 per the Cross-Device State Principle expedient carve-out.
+// Last-seen version is localStorage-only (non-critical, ephemeral): an expedient carve-out from the
+// Cross-Device State Principle.
 // Pure helpers + a cross-instance "seen" event so the header dot + More-tab dot clear together.
 const KEY = 'garden.releasesSeenVersion'
 export const SEEN_EVENT = 'garden:whatsnew-seen'

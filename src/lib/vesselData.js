@@ -1,10 +1,9 @@
 // BUG-CADENCESIZE-001 — vessel-data gaps, surfaced where Dave already looks.
 //
-// WHY THIS EXISTS. The watering interval now reads `container_size` for some vessels, so a missing or
-// wrong vessel record stopped being cosmetic. It is not rare: of 228 active plantings (live prod,
-// 2026-08-18) 98 have a NULL `container_size` and 22 have no `container_type` at all — and a location
-// literally named "Bag Area" holds 78 `fabric_bag` rows alongside 26 recorded `plastic_pot`, three of
-// which were photographed and are unambiguously black fabric grow bags.
+// WHY THIS EXISTS. The watering interval reads `container_size` for some vessels, so a missing or
+// wrong vessel record is not cosmetic, and it is not rare: many plantings have a NULL
+// `container_size` or no `container_type`, and a location named "Bag Area" can hold plantings
+// recorded as `plastic_pot`.
 //
 // The engine's answer to a gap is to DECLINE (see engine.dailyFloorFor: unknown vessel keeps today's
 // behaviour). That is correct and safe, but it is also silent. This module makes the same gap visible.
@@ -13,8 +12,7 @@
 // to a data-entry session. So there is no banner, no badge and no new visual language: the detail sheet
 // already hides a row whose value is empty (`.filter(([, v]) => v)`), which renders a missing pot size
 // as literally nothing. This turns that invisible absence into a STATED one in the sheet's existing
-// muted label style — the same "convert an inference into a stated fact" move `waterStaleness` already
-// makes elsewhere in this codebase.
+// muted label style — the same "convert an inference into a stated fact" move `waterStaleness` makes.
 //
 // THIS MODULE NEVER WRITES. It describes; Dave edits.
 
@@ -29,11 +27,9 @@ const READABLE_SIZE = /\d\s*(gal|quart|qt|liter|litre|l|oz|ounce|inch|in|"|cm|ft
 // Location-name -> the container_type family that name implies. Keys are matched case-insensitively as
 // substrings of the location path, so "Gardens / Bag Area" matches 'bag'.
 //
-// SCOPE, stated honestly: this is the LOCATION-NAME half of the conflict check only. A `container_type`
-// that disagrees with its PROJECT SIBLINGS is the other half and is not computed here — the detail page
-// loads one planting and has no sibling vessel data, so it would need a new API field. The location
-// check already covers the motivating case (the Bag Area plastic_pots) because those rows carry the
-// location, so the sibling check is additive value rather than a gap in the motivating scenario.
+// SCOPE: this is the LOCATION-NAME half of the conflict check only. A `container_type` that disagrees
+// with its PROJECT SIBLINGS is not computed here — the detail page loads one planting and has no
+// sibling vessel data, so it would need a new API field.
 const LOCATION_IMPLIES = [
   { match: 'bag', types: ['fabric_bag'], label: 'grow bags' },
   { match: 'trough', types: ['trough'], label: 'troughs' },

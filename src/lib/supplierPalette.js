@@ -1,13 +1,11 @@
 // src/lib/supplierPalette.js — V5-SEEDCARDS-001. Each seed supplier's designated colour pair, for
 // its chip and the thin accent stripe on a My seeds card.
 //
-// Dave, 2026-09-19: "Each supplier should have a designated color (primary+secondary) hopefully based
-// around their main page of their website … but keep the color set of each distinguishable. It is
-// more about visual distinction than pure on-brand style." The pairs below were derived from each
-// supplier's own site (theme CSS, logo fills) by the colour seat and then pulled apart where brands
-// collide — nine of the thirteen suppliers with a website are green, so only Botanical Interests (139
-// of 327 rows) kept its exact green. Evidence per supplier, the CIEDE2000 distances and the contrast
-// numbers: Projects/Gardening/_seedpacket_20260919/design/supplier-palette.{md,json}.
+// Each supplier has a designated colour pair (primary+secondary). It is about visual distinction more
+// than pure on-brand style. The pairs were derived from each supplier's own site (theme CSS, logo
+// fills) and then pulled apart where brands collide — most suppliers with a website are green, so
+// only Botanical Interests (the largest) kept its exact green. Evidence per supplier, the CIEDE2000
+// distances and the contrast numbers: Projects/Gardening/_seedpacket_20260919/design/supplier-palette.{md,json}.
 //
 // Measured rules every entry holds (supplierPalette.test.js re-checks the contrast ones):
 //   • `on` text on `primary` >= 4.5:1; `primary` as a stripe >= 3:1 on P.white and P.cream.

@@ -1,8 +1,7 @@
 // src/lib/pantryApi.js
-// Put-Up B′ release 2 (V4 §2.5, §5.1; the pinned cross-lane contract) — THE ONE client helper for the
-// Pantry routes. Every lane that reads the Pantry list, writes a bought item, records a use or undoes
-// one imports it from here; nobody builds a second helper (contract: "other lanes import it and must
-// not create a competing helper").
+// Put-Up (V4 §2.5, §5.1) — THE ONE client helper for the Pantry routes. Everything that reads the
+// Pantry list, writes a bought item, records a use or undoes one imports it from here; nobody builds
+// a second helper.
 //
 // THIN on purpose: each function is one call through the caller's `fetch` (useApiFetch().fetch, which
 // resolves '/api/pantry…' to the preservation Lambda through api.js's prefix table and throws Error
@@ -104,7 +103,7 @@ export async function listBatchNames(fetch) {
 }
 
 // ── Places ───────────────────────────────────────────────────────────────────────────────────────
-// The storage Lambda's routes (Put-Up R2a: the Pantry's Places sheet reads, renames, re-kinds and deletes).
+// The storage Lambda's routes (the Pantry's Places sheet reads, renames, re-kinds and deletes).
 // GET /api/storage-locations → the household's live places, [{ id, user_id, label, kind }], an EMPTY place
 // included: it is the only list that names a place nothing is stored in. An answer that is not a list
 // THROWS — read as "no places" it would quietly hide the door to the sheet (the BUG-GOINGNOWENVELOPE-001
@@ -122,8 +121,7 @@ export async function listPlaces(fetch) {
 // (409 place_has_dated_jars, with `n`), and a body with no `kind` can never meet that refusal.
 // The by-id path is SPELLED in these two, not built from PLACES_PATH: clientRouteLambdaContract.test.js
 // holds every client route to a Lambda that declares it by reading '/api/...' literals, and it cannot
-// follow a constant. Until Put-Up R2b the retired form's place editor was the one place this route was
-// spelled; these are its only callers now.
+// follow a constant.
 export async function updatePlace(fetch, id, patch = {}) {
   return fetch(`/api/storage-locations/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(patch) })
 }

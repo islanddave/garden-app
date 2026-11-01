@@ -5,14 +5,14 @@
 // EXACT math the SQL must reproduce (so tests can assert expected values) and drives the seed generator's
 // coverage preview. Keep in lockstep with migrations/v4-cal1-pervariety-001/0a-additive-ddl.sql.
 //
-// Dave's hard rule: NEVER emit a guessed conversion factor — a wrong number silently corrupts multi-season
+// The hard rule: NEVER emit a guessed conversion factor — a wrong number silently corrupts multi-season
 // yield comparison; NULL beats a guess. That is why (a) the aggregate is count-weighted (unbiased for
 // yield totals), (b) confidence is dispersion-based (a tight n=2 beats a scattered n=6), (c) a cultivar
 // estimate requires min-n and (d) a high-variance crop with no usable samples resolves to NULL, not a
 // crop-type average.
 //
-// (e) since V4-CAL1INDEP-001, min-n and dispersion are both measured over INDEPENDENT observations, not
-// raw rows: duplicated rows describing one weighing used to give cv = 0 and buy the top confidence tier.
+// (e) V4-CAL1INDEP-001: min-n and dispersion are both measured over INDEPENDENT observations, not raw
+// rows — duplicated rows describing one weighing would give cv = 0 and buy the top confidence tier.
 // See migrations/v4-cal1-indep-001/ — keep this file in lockstep with 0a-derived-v3.sql.
 
 export const WEIGHT_UNITS = { g: 1, kg: 1000, lb: 453.592, oz: 28.3495 }

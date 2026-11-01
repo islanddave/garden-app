@@ -1,13 +1,12 @@
-// V4-HARVSURFACE-001 Slice 1 — the "worth checking" WATCH LIST (Section 2 of the two-section Today
-// harvest surface; design `harvest-two-section-design-V100-20260811.md` §3).
+// V4-HARVSURFACE-001 — the "worth checking" WATCH LIST (Section 2 of the two-section Today harvest
+// surface; design `harvest-two-section-design-V100-20260811.md` §3).
 //
 // THE VOICE RULE IS THE FEATURE. Every string this module and its component produce is in the CHECK
 // form — "start checking X", "look for Y" — and never in the assertion form ("X is ready", "your
-// window opened"). That is not politeness. Ripeness estimates here are 11.8% calibrated with a −22d
-// median error, so an assertion is wrong most of the time; a wrong check-prompt costs one glance,
-// a wrong readiness claim costs trust in the whole surface (§3.1, unanimous panel + Dave-approved).
-// A row may therefore be wrong about TIMING and still be exactly right about WHAT TO LOOK AT — which
-// is why its value does not depend on the calibration number at all.
+// window opened"). That is not politeness. Ripeness estimates here are poorly calibrated, so an
+// assertion is wrong most of the time; a wrong check-prompt costs one glance, a wrong readiness claim
+// costs trust in the whole surface (§3.1). A row may therefore be wrong about TIMING and still be
+// exactly right about WHAT TO LOOK AT — which is why its value does not depend on calibration.
 //
 // PURE, like harvestReadiness.js: no `new Date()` anywhere. `watching_since` arrives from the server
 // as a reporting-zone date string and is formatted by string surgery, never through a Date object
@@ -16,11 +15,11 @@
 // §3.5: "Cap the visible group at 5 — a nine-row declarative group is an inventory again."
 export const MAX_WATCH_ROWS = 5
 
-// PANEL Q2 (harvest-panel-decisions-20260812.md): "Cap any one project at 2 of the 5 visible slots"
-// — a DISPLAY device over slot allocation, NOT grouping. One 56-plant pepper project must not
-// monopolize the band; its overflow stays reachable through the tail. Hard cap by design: when one
-// project is all there is, two rows plus an honest tail count IS the device working — backfilling
-// the slots would reintroduce the monoculture the cap exists to prevent.
+// PANEL Q2 (harvest-panel-decisions-20260812.md): cap any one project at 2 of the 5 visible slots —
+// a DISPLAY device over slot allocation, NOT grouping. One big project must not monopolize the band;
+// its overflow stays reachable through the tail. Hard cap by design: when one project is all there
+// is, two rows plus an honest tail count IS the device working — backfilling the slots would
+// reintroduce the monoculture the cap exists to prevent.
 export const WATCH_PROJECT_SLOT_CAP = 2
 
 // Slot allocation for the collapsed band. Walks the RANKED list: a row takes a slot unless its
@@ -56,8 +55,8 @@ export function monthDayLabel(iso) {
 }
 
 // PANEL Q4 tail mechanics, shared by BOTH bands: above this many hidden rows the tail reveals in
-// steps rather than all at once — a 40-row single-tap expansion is browsing, which is the complaint
-// one level down. At or below it, one tap shows everything.
+// steps rather than all at once — a 40-row single-tap expansion is browsing. At or below it, one
+// tap shows everything.
 export const TAIL_REVEAL_STEP = 20
 export const TAIL_REVEAL_ALL_AT_OR_BELOW = 25
 export function revealStep(hidden) {
@@ -139,14 +138,14 @@ export function rankWatchCandidates(candidates) {
 // perceptual judgment — and the open-ended question is exactly what produces walk-out-and-freeze.
 //
 // We take the FIRST window point's `at` — the name of the state at which the window OPENS, which is
-// precisely what "start checking" targets. Deliberately NOT `look` (median ~200 chars) or
-// `ripe_vs_unripe` (median 543): a five-row declarative group carrying five essays is the 28-row
-// inventory Dave rejected, wearing different clothes. The full window already renders on the planting
-// card (CropCard's HarvestWindow) one navigation away; this surface is the DIFF, not the reference.
+// precisely what "start checking" targets. Deliberately NOT `look` or `ripe_vs_unripe` (long prose):
+// a five-row group carrying five essays is an inventory again. The full window already renders on
+// the planting card (CropCard's HarvestWindow) one navigation away; this surface is the DIFF, not
+// the reference.
 //
 // PROVENANCE IS LABELLED, NEVER IMPLIED (colour-window canon §4/§9: "a labelled derivation is not a
-// confident claim"). Two cases get a short qualifier instead of the record's full 374-char caveat,
-// which would not survive on a compact row:
+// confident claim"). Two cases get a short qualifier instead of the record's full caveat, which
+// would not survive on a compact row:
 //   - crop-level fallback  → the mechanic for the crop, not this cultivar's colour sequence
 //   - confidence 'low'     → cultivar record derived from its market class
 // Same grain rule as CropCard: the cultivar record wins when present, the crop mechanic fills in.

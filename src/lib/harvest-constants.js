@@ -1,5 +1,4 @@
-// Sync source: lambda/events/validators.js git blob 27ce28a3f0a160bdc2b1658ae3f88d3db34f95d5
-// Mirror of HARVEST_UNITS + MAX_PLAUSIBLE for client-side validation.
+// Mirror of HARVEST_UNITS + MAX_PLAUSIBLE in lambda/events/validators.js, for client-side validation.
 // Drift breaks the server CHECK constraint (migrations/v1-2a-2/0a-additive-ddl.sql).
 // On change: update both files in the same commit.
 
@@ -16,7 +15,7 @@ export const MAX_PLAUSIBLE = {
   head:  1000,
 }
 
-// V4-HARVDUAL-001 Slice A — optional measured weight alongside the count. Mirrors the same names in
+// V4-HARVDUAL-001 — optional measured weight alongside the count. Mirrors the same names in
 // lambda/events/validators.js; keep both in sync in one commit (see the header note above).
 export const WEIGHT_UNITS = ['g', 'kg', 'lb', 'oz']
 

@@ -1,11 +1,9 @@
 // numberPad.js — V4-QUICKHITRANGE-001 (BD-047) + V4-WEIGHKBDNEXT-001 (BD-046).
-// The digit BUILDER that supersedes the replace-semantics quick-hit chips on the harvest quantity
-// and weight fields. Pure string math, no React: the pad's LOGIC is falsifiable in jsdom even
-// though its LAYOUT is not (tests/harness/README.md:14-16 — getBoundingClientRect returns zeros).
+// The digit BUILDER for the harvest quantity and weight fields. Pure string math, no React: the pad's LOGIC is falsifiable in jsdom even
+// though its LAYOUT is not (tests/harness/README.md — getBoundingClientRect returns zeros).
 //
-// Build, don't replace. Tapping 1 then 3 yields '13'. The single-digit fast path — 83.2% of
-// measured quantities — is UNCHANGED: one tap still yields one digit. What changes is the tail,
-// which previously required raising the Android keyboard to type at all.
+// Build, don't replace. Tapping 1 then 3 yields '13'. The single-digit fast path (most quantities)
+// is unchanged: one tap yields one digit. The tail no longer requires raising the Android keyboard.
 
 export const PAD_BACKSPACE = '⌫' // ⌫
 
@@ -15,7 +13,7 @@ export const PAD_BACKSPACE = '⌫' // ⌫
 // asserting a bound the server does not also assert.
 export const PAD_MAX_LEN = 8
 
-// `integer` — opt-in, default off, so every existing caller is byte-identical. The put-up walk's
+// `integer` — opt-in, default off. The put-up walk's
 // bag count is a COUNT: preservation_log.package_count is an integer column, so '1.5 bags' is a
 // value the server will reject after the user has finished tapping. Refusing the dot at the
 // keypress is the same late-failure argument the dot-guard below already makes, one column over.
@@ -39,7 +37,7 @@ export function appendDigit(value, key, { maxLen = PAD_MAX_LEN, integer = false 
 
 // A key that cannot change the value renders disabled — the second '.', any digit at the cap, and
 // ⌫ on an empty field. Disabling rather than hiding keeps the pad's geometry fixed, which
-// comboboxInput.js:138-144 requires of every tap target on this surface.
+// comboboxInput.js requires of every tap target on this surface.
 export function padKeyDisabled(value, key, opts = {}) {
   const cur = value == null ? '' : String(value)
   return appendDigit(cur, key, opts) === cur

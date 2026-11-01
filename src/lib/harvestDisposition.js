@@ -9,21 +9,18 @@
 //
 //   harvest_log.disposition  'dropped' | 'culled' | 'aborted' | 'damaged' | NULL
 //
-// NULL IS A MEANING, NOT A GAP: it says "a normal pick". 703 of the 707 live harvests are normal,
-// so the control this vocabulary feeds is OPTIONAL and unselected by default — the opposite of
+// NULL IS A MEANING, NOT A GAP: it says "a normal pick". Nearly every harvest is normal, so the
+// control this vocabulary feeds is OPTIONAL and unselected by default — the opposite of
 // waterDepth.js, whose class is preselected because every watering has one. A default here would
-// destroy the distinction the column exists to carry and put a required decision on 703 picks to
-// record 4. See the bundle's 0a header for the measurements.
+// destroy the distinction the column exists to carry and put a required decision on every pick.
 //
-// A disposition-bearing pick STILL COUNTS AS YIELD (Dave, 2026-08-19). Nothing downstream of this
-// file subtracts it from a total; recording the outcome is the whole feature.
+// A disposition-bearing pick STILL COUNTS AS YIELD. Nothing downstream of this file subtracts it
+// from a total; recording the outcome is the whole feature.
 
 export const HARVEST_DISPOSITION_VALUES = ['dropped', 'culled', 'aborted', 'damaged']
 
-// Chip copy is written from the four real prod harvests that wanted a value ("Fell off plant with
-// major blotch", "Knocked off plant, very green", "Unripe abort", "Very early aborts"). The anchor
-// rides ON the chip rather than in a legend below it, the same rule WATER_DEPTH_CHIPS follows: a
-// caption the user looks away to read is one they stop reading by week two.
+// The anchor rides ON the chip rather than in a legend below it, the same rule WATER_DEPTH_CHIPS
+// follows: a caption the user looks away to read is one they stop reading by week two.
 export const HARVEST_DISPOSITION_CHIPS = [
   { value: 'dropped', label: 'Dropped', anchor: 'knocked off' },
   { value: 'culled',  label: 'Culled',  anchor: 'thrown out' },

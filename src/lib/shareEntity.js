@@ -8,16 +8,16 @@
 // project-level /garden/:slug gated on is_public). Exposing a public per-planting/per-event link
 // is tracked separately (V4-SHARE-001 / V4-PHOTOSHARE-001); this util only surfaces the share
 // affordance consistently, matching the existing planting share (HeroPhoto).
-// V4-COMPOSEPOST-001 — `text` support. On Chrome Android navigator.share({ text }) hands the body
-// straight into the Facebook / Business Suite composer, replacing copy -> app-switch -> long-press
-// -> paste with a single tap. A text share deliberately omits the app URL: appending a Clerk-gated
-// link would drop a login wall into the middle of a public post. Meta's prefill restriction
-// (Developer Policies 5.6.2.d) does not reach an OS share sheet the user drives.
 //
-// V4-HARVPOSTPHOTOS-001 — `files` support. Chrome Android accepts { text, files } in one share, which
-// is what lets the harvest post carry its own photos instead of Dave re-adding them by hand. Files are
-// attached ONLY when navigator.canShare says the payload is shareable; when it does not, the text
-// share proceeds unchanged. A caption is never dropped to make room for pictures.
+// V4-COMPOSEPOST-001 — `text` support. On Chrome Android navigator.share({ text }) hands the body
+// straight into the Facebook / Business Suite composer. A text share deliberately omits the app URL:
+// appending a Clerk-gated link would drop a login wall into the middle of a public post. Meta's
+// prefill restriction (Developer Policies 5.6.2.d) does not reach an OS share sheet the user drives.
+//
+// V4-HARVPOSTPHOTOS-001 — `files` support. Chrome Android accepts { text, files } in one share, so
+// the harvest post can carry its own photos. Files are attached ONLY when navigator.canShare says the
+// payload is shareable; when it does not, the text share proceeds unchanged. A caption is never
+// dropped to make room for pictures.
 //
 // CALL SYNCHRONOUSLY FROM THE CLICK HANDLER. Chrome Android drops transient user activation across
 // an `await`, so building the string and sharing afterwards makes BOTH navigator.share and the
@@ -49,8 +49,7 @@ export async function shareEntity({ title, url, text, files } = {}) {
   const payload = body
     ? { ...(title ? { title } : {}), text: body, ...(url ? { url } : {}) }
     : (link ? { title: title || 'My garden', url: link } : {})
-  // Added only when non-empty, so a caller that passes no files sends the byte-identical payload it
-  // sent before this change.
+  // Added only when non-empty, so a caller that passes no files sends a payload without the key.
   if (attach.length) payload.files = attach
 
   if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {

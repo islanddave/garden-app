@@ -1,5 +1,5 @@
-// Bridge between MVP-Critter SPECIES_POOL and the 168-entry critters-roster.json.
-// Phase 2 wiring (Stickerbook): translate per-user backend rows into roster lookups.
+// Bridge between MVP-Critter SPECIES_POOL and critters-roster.json.
+// Stickerbook wiring: translate per-user backend rows into roster lookups.
 // Pure, no side effects. Frozen exports. Tested via src/__tests__/critterCollection.test.js.
 //
 // Why this bridge exists:
@@ -14,8 +14,8 @@ import { SPECIES_POOL } from './critterSpecies.js'
 
 // Pure string transform: sprite_filename → roster id.
 // Returns null when input is not a non-empty string or doesn't match '{C|L|Y}{NNN}-...' shape.
-// V102: roster spans three groups — wild (C), legacy (L), cryptid (Y) — so the prefix is [CLY],
-// not C-only, or the 24 legacy/cryptid critters would never resolve to a roster id (never show collected).
+// The roster spans three groups — wild (C), legacy (L), cryptid (Y) — so the prefix is [CLY], not
+// C-only, or the legacy/cryptid critters would never resolve to a roster id (never show collected).
 export function rosterIdFromSpriteFilename(filename) {
   if (typeof filename !== 'string' || filename.length === 0) return null
   const m = filename.match(/^([CLY]\d+)-/)
@@ -23,10 +23,9 @@ export function rosterIdFromSpriteFilename(filename) {
 }
 
 // Pre-computed: species_id (int) → roster id (string). Frozen at module load.
-// Baseline residents (species_id 1, 2) are present here — their roster entries WILL render
-// as "collected" if the user has rows for them (V101 2026-06-01: baseline residents retired —
-// residents are client-side ambient + never persisted per revision §3.14). Future-proof:
-// robin/honeybee 1,2 are now earnable and persist like any critter; the bridge handles them).
+// Species_id 1 and 2 (robin/honeybee) are present here: they are earnable and persist like any
+// critter, so their roster entries render as "collected" when the user has rows for them. (Ambient
+// client-side residents are never persisted, revision §3.14.)
 export const ROSTER_ID_BY_SPECIES_ID = Object.freeze(
   Object.fromEntries(
     SPECIES_POOL.map(s => [s.species_id, rosterIdFromSpriteFilename(s.sprite_filename)])

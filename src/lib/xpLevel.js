@@ -8,10 +8,9 @@
 // without a round trip, and so a level renders sensibly if an older API response omits the derived
 // fields the Lambda now sends (level, xp_into_level, xp_to_next_level, next_level_at).
 //
-// The duplication is the same drift class this whole ticket is about, so it is DEFENDED rather than
-// merely apologised for: src/__tests__/xpLevel.test.js parses the coefficient straight out of the
-// migration SQL and fails if these two ever disagree. If you change the curve, change the SQL — the
-// test will then tell you to change this file too.
+// The duplication is DEFENDED: src/__tests__/xpLevel.test.js parses the coefficient straight out of
+// the migration SQL and fails if these two ever disagree. If you change the curve, change the SQL —
+// the test will then tell you to change this file too.
 //
 // THE CURVE — quadratic to level 10, then a constant 1,900 XP band:
 //   xp_floor(L) = 100·(L−1)²           for L ≤ 10     L2 100 · L3 400 · L4 900 · L5 1600

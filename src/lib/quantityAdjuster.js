@@ -1,10 +1,7 @@
 // src/lib/quantityAdjuster.js — V5-SEEDSTAB-001. The inventory − / + stepper, with no store of its own.
 //
-// Extracted from useInventory.adjustQuantity, which closed over that hook's full-inventory list
-// (itemsRef, putSeqRef, commitItems). The Seeds page moves the seed packet's stepper off the Inventory
-// list and onto My seeds, whose rows live in a different store, so the logic could not simply be
-// pointed at the new list — it had to stop owning one. The two guards that took two defects to learn
-// travel with it unchanged, and they are the reason this is one function and not a copy:
+// Shared by hosts whose rows live in different stores, so it owns no list of its own. The two guards
+// below are the reason this is one function and not a copy per host:
 //
 //   BUG-INVUNDOQTY-001 — every read of "the row as it is now" goes through getRow(), which the host
 //   answers from a ref assigned at write time. An undo closure that read the row captured by the
@@ -15,20 +12,19 @@
 //   PUT(3) then PUT(4), and nothing in HTTP stops PUT(3)'s answer landing last and rewinding the row.
 //   The host passes the Map in, from a ref, so the ordering survives a re-created adjuster.
 //
-// Still the WIDE PUT until the narrow /:id/quantity route lands (slice 3). `buildBody` is how a host
-// decides what rides along with the new quantity: the Inventory list round-trips its row, less the
-// stage and process (see wideBody). (My seeds used this with a seed-column strip until V5-SEEDCARDS-001 removed its row
-// stepper at Dave's request — "the 'on hand' item … is not needed"; the seam stays, exercised by
-// quantityAdjuster.test.js, for the next host that needs it.)
+// Still the WIDE PUT until a narrow /:id/quantity route exists. `buildBody` is how a host decides
+// what rides along with the new quantity: the Inventory list round-trips its row, less the stage and
+// process (see wideBody). The seam is also exercised by quantityAdjuster.test.js for any host that
+// needs a different body.
 
 // The shipped body: the row with the new value, less the two keys a quantity tap must never carry.
 //
 // BUG-SEEDSTAGEHEADSHIP-001 — `seed_stage` is not sent. The row is the list's, as old as the list,
 // and POST /:id/seed-stage is the stage's only writer: a − / + tap on a lot that had been moved on
 // from another tab or device sent the old stage back and the wide PUT wrote it, with no entry in the
-// lot's history. The handler ignores the key now; this is the half that holds before that Lambda
-// is deployed. `seed_process` is its twin and is not sent either: the same stale row carries it, its
-// writers are on POST /:id/seed-stage too, and the wide PUT still assigns it by presence.
+// lot's history. The handler ignores the key; this is the half that holds against an older Lambda.
+// `seed_process` is its twin and is not sent either: the same stale row carries it, its writers are
+// on POST /:id/seed-stage too, and the wide PUT still assigns it by presence.
 // Everything else rides as it did, so a host that needs more gone passes `buildBody`.
 export const wideBody = (row, col, value) => {
   const body = { ...row, [col]: value }
@@ -64,7 +60,7 @@ export function createQuantityAdjuster({
   async function adjust(id, delta) {
     const current = getRow(id)
     if (!current) return
-    // Type-aware column (P4, 2026-05-18): consumables count quantity_on_hand, durables quantity.
+    // Type-aware column: consumables count quantity_on_hand, durables quantity.
     const col = current.type === 'durable' ? 'quantity' : 'quantity_on_hand'
     const prevValue = Number(current[col] ?? 0)
     const newValue = Math.max(0, prevValue + Number(delta))

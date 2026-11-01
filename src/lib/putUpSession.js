@@ -1,4 +1,4 @@
-// putUpSession.js — V4-PUTUPSESSION-001 slice 0. The freezer walk: a retrospective put-up sitting.
+// putUpSession.js — V4-PUTUPSESSION-001. The freezer walk: a retrospective put-up sitting.
 //
 // Pure string/array math plus two localStorage accessors, no React and no DOM layout, because the
 // walk's LOGIC has to be falsifiable in jsdom even though its geometry is not (same split
@@ -6,12 +6,11 @@
 //
 // WHY localStorage AND NOT draftStash.js (which is sessionStorage). draftStash's own header says a
 // draft is "scoped to the tab/session, never resurrected weeks later", and that is RIGHT for the
-// ordinary form. It is wrong for this: Dave answered the volume question with "sixty or more,
-// several evenings", so the walk spans days by design, and he runs it as an installed PWA on
-// Android where a backgrounded process can be discarded outright — taking sessionStorage with it.
-// A walk that forgets which freezer you are standing at because a phone call came in is the failure
-// that makes the feature get abandoned. So the walk keeps its OWN store, and draftStash is left
-// alone rather than widened.
+// ordinary form. It is wrong for this: the walk spans several evenings by design, and runs as an
+// installed PWA on Android where a backgrounded process can be discarded outright — taking
+// sessionStorage with it. A walk that forgets which freezer you are standing at because a phone call
+// came in is the failure that makes the feature get abandoned. So the walk keeps its OWN store, and
+// draftStash is left alone rather than widened.
 //
 // What is stashed is deliberately thin: the two session answers, the crop you were on, and a count.
 // Everything already saved is in the database (one POST per item, no batch), so the stash is not a
@@ -49,12 +48,10 @@ function midpoint(startYmd, endYmd) {
 // Returns null when the window has not opened yet (asking "this summer" in March), and the caller
 // drops the choice rather than offering a button that resolves to a lie.
 //
-// `approx` rides alongside the date and is the POINT of this function. Dave accepted "my tomatoes,
-// this summer" as a finished record with only the date marked approximate — so the walk has to be
-// able to TELL an estimate from a date he actually picked. Slice 0 has no column to store it in
-// (preserved_at_approx is slice 1) and does not send it; keeping the distinction in state anyway is
-// what lets slice 1 be a one-line addition to the POST body instead of a redesign, and it is what
-// lets the band say "around Jul 16" rather than presenting a guess as a fact.
+// `approx` rides alongside the date and is the POINT of this function. "My tomatoes, this summer" is
+// a finished record with only the date marked approximate — so the walk has to be able to TELL an
+// estimate from a date Dave actually picked, and the band can say "around Jul 16" rather than
+// presenting a guess as a fact.
 export function coarseDate(choice, todayYmd) {
   const year = todayYmd.slice(0, 4)
   if (choice === 'summer') {
@@ -81,17 +78,16 @@ export function exactDate(ymd) {
 // The callers format the date first and mark it second: the read surfaces (jarWords.js,
 // PutUpFromPlanting.jsx) get JS Date objects back from the neon driver and own the formatting that copes
 // with one. `approx === true` at every call site, never truthiness: the column is three-valued and NULL
-// means "nobody was asked", which must read exactly as it does today.
+// means "nobody was asked", which must read as an exact date.
 export function describeApprox(pretty, approx) {
   return approx ? `around ${pretty}` : pretty
 }
 
 // ── "what haven't I put up?" (design §6 Q4) ─────────────────────────────────
 // Crops picked this year with no put-up row, minus the ones Dave has said are not his to put up.
-// The dismissal is the load-bearing half: most of what he grows is eaten fresh — "i pick watermelons
-// for example but mostly eat them fresh, not freezing" — so without it this list would permanently
-// accuse him of failing to record things he never intended to record, and it would grow all season.
-// Dismissal means "not one I put up", not "done".
+// The dismissal is the load-bearing half: most of what he grows is eaten fresh, so without it this
+// list would permanently accuse him of failing to record things he never intended to record, and it
+// would grow all season. Dismissal means "not one I put up", not "done".
 export function unrecordedCrops({ harvestCrops, putUpSlugs, dismissed }) {
   const put = new Set(putUpSlugs ?? [])
   const skip = new Set(dismissed ?? [])
