@@ -263,6 +263,15 @@ const SHEET_SITES = [
   'pages/SavedSeeds.jsx',
 ]
 
+// Re-listing: the printout is both sets as the tree stands. A kept dialog keeps its metadata, and every comment is
+// carried over by hand; a new dialog gets a TODO only a reviewer can fill, and a TODO left in fails below.
+const PRINT = 'PRINT_LIST=1 npx vitest run --reporter=verbose src/__tests__/modalSurfaceFreeze.static.test.js'
+const TODO_DIALOG = { TODO: 'registered: true once it calls useDismissable; busy while a write is in flight' }
+const relist = (found, frozen) => Object.fromEntries([...found].sort().map((f) => [f, frozen[f] ?? TODO_DIALOG]))
+const printFrozen = (dialogs, sheets) =>
+  `const DIALOG_SURFACES = ${JSON.stringify(relist(dialogs, DIALOG_SURFACES), null, 2)}\n` +
+  `const SHEET_SITES = ${JSON.stringify([...sheets].sort(), null, 2)}`
+
 function diff(found, frozen) {
   const f = new Set(found), z = new Set(frozen)
   return {
@@ -282,12 +291,25 @@ describe('modal surface freeze', () => {
 
   it('the set of role="dialog" surfaces is unchanged', () => {
     const { dialogs } = scan()
-    expect(diff(dialogs, Object.keys(DIALOG_SURFACES))).toEqual({ missing: [], unexpected: [] })
+    expect(diff(dialogs, Object.keys(DIALOG_SURFACES)), `${PRINT} prints the set`).toEqual({ missing: [], unexpected: [] })
   })
 
   it('the set of <Sheet> render sites is unchanged', () => {
     const { sheets } = scan()
-    expect(diff(sheets, SHEET_SITES)).toEqual({ missing: [], unexpected: [] })
+    expect(diff(sheets, SHEET_SITES), `${PRINT} prints the set`).toEqual({ missing: [], unexpected: [] })
+  })
+
+  it('OPS-CODEREVIEW-001 C4: PRINT_LIST=1 prints both frozen sets as the tree stands, paste-ready', () => {
+    const { dialogs, sheets } = scan()
+    const text = printFrozen(dialogs, sheets)
+    if (process.env.PRINT_LIST) console.log(text)
+    for (const f of [...dialogs, ...sheets]) expect(text).toContain(JSON.stringify(f))
+    // A kept surface keeps its metadata, a new file comes out marked TODO, a gone file drops out.
+    expect(relist(new Set(['pages/PhotoLibrary.jsx', 'pages/New.jsx']), DIALOG_SURFACES)).toEqual({
+      'pages/PhotoLibrary.jsx': { registered: true, busy: 'tagging' }, 'pages/New.jsx': TODO_DIALOG,
+    })
+    const todo = Object.entries(DIALOG_SURFACES).filter(([, m]) => 'TODO' in m)
+    expect(todo.map(([f]) => f), 'a pasted row still holds the printer\'s TODO').toEqual([])
   })
 
   // A new modal that skips the registry is the exact regression this file exists to prevent. When

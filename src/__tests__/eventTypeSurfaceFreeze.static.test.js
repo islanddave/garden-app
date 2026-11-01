@@ -85,23 +85,46 @@ const diff = (found, frozen) => ({
   unexpected: [...found].filter((f) => !(f in frozen)).sort(),
 })
 
+// Re-listing: the printout is both registries as the tree stands. A kept row keeps its metadata (carry its
+// comment over by hand); a new file gets a TODO only a reviewer can fill, and a TODO left in fails below.
+const PRINT = 'PRINT_LIST=1 npx vitest run --reporter=verbose src/__tests__/eventTypeSurfaceFreeze.static.test.js'
+const TODO_ROLE = { TODO: "role: 'seam' | 'read' | 'creation', and a note" }
+const TODO_CAPS = { TODO: 'caps: what this creation surface can collect' }
+const relist = (found, frozen, todo) => Object.fromEntries([...found].sort().map((f) => [f, frozen[f] ?? todo]))
+const printRegistries = (selectable, creatable) =>
+  `const SELECTABLE_CONSUMERS = ${JSON.stringify(relist(selectable, SELECTABLE_CONSUMERS, TODO_ROLE), null, 2)}\n` +
+  `const CREATION_SURFACES = ${JSON.stringify(relist(creatable, CREATION_SURFACES, TODO_CAPS), null, 2)}`
+
 describe('V4-PICKERGATE-001 — event-type surface freeze', () => {
   it('the set of files naming SELECTABLE_EVENT_TYPES is exactly the frozen set', () => {
     // A new file here is a new surface. If it is a creation picker it must appear in
     // CREATION_SURFACES too (asserted below) — that is the pairing that catches the sixth site.
-    expect(diff(scan().selectable, SELECTABLE_CONSUMERS)).toEqual({ missing: [], unexpected: [] })
+    expect(diff(scan().selectable, SELECTABLE_CONSUMERS), `${PRINT} prints the registry`).toEqual({ missing: [], unexpected: [] })
   })
 
   it('the set of files calling creatableEventTypes is exactly the frozen set', () => {
     // `missing` is the regression direction: a surface that DROPS its call goes back to offering
     // types it cannot submit. The per-surface render tests catch that behaviourally; this catches
     // it by name, in one line, without a DOM.
-    expect(diff(scan().creatable, CREATION_SURFACES)).toEqual({ missing: [], unexpected: [] })
+    expect(diff(scan().creatable, CREATION_SURFACES), `${PRINT} prints the registry`).toEqual({ missing: [], unexpected: [] })
   })
 
   it('every frozen creation surface actually calls the gate', () => {
     const { creatable } = scan()
     for (const f of Object.keys(CREATION_SURFACES)) expect(creatable.has(f)).toBe(true)
+  })
+
+  it('OPS-CODEREVIEW-001 C4: PRINT_LIST=1 prints both registries as the tree stands, paste-ready', () => {
+    const { selectable, creatable } = scan()
+    const text = printRegistries(selectable, creatable)
+    if (process.env.PRINT_LIST) console.log(text)
+    for (const f of [...selectable, ...creatable]) expect(text).toContain(JSON.stringify(f))
+    // A kept row keeps its metadata, a new file comes out marked TODO, a gone file drops out.
+    expect(relist(new Set(['pages/FeedPage.jsx', 'pages/New.jsx']), SELECTABLE_CONSUMERS, TODO_ROLE)).toEqual({
+      'pages/FeedPage.jsx': SELECTABLE_CONSUMERS['pages/FeedPage.jsx'], 'pages/New.jsx': TODO_ROLE,
+    })
+    const todo = Object.entries({ ...SELECTABLE_CONSUMERS, ...CREATION_SURFACES }).filter(([, m]) => 'TODO' in m)
+    expect(todo.map(([f]) => f), 'a pasted row still holds the printer\'s TODO').toEqual([])
   })
 
   it('no file is BOTH a read filter and a creation surface', () => {

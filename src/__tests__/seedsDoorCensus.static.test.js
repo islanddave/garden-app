@@ -173,6 +173,13 @@ describe('the scanner — near misses are NOT targets', () => {
   })
 })
 
+// What the sweep found, in the form the assertions below compare. PRINT_LIST=1 prints it.
+const PRINT = 'PRINT_LIST=1 npx vitest run --reporter=verbose src/__tests__/seedsDoorCensus.static.test.js'
+const listing = (hits) => ({
+  targets: hits.filter((h) => h.kind === 'target').map((h) => `${h.file}:${h.line}  ${h.context} ${JSON.stringify(h.value)}`),
+  declarations: hits.filter((h) => h.kind === 'declaration').map((h) => `${h.file} ${h.value}`).sort(),
+})
+
 describe('the census — no live source file targets a URL the Seeds page replaced', () => {
   let memo
   const sweep = () => {
@@ -192,17 +199,24 @@ describe('the census — no live source file targets a URL the Seeds page replac
   })
 
   it('finds ZERO navigation targets naming /sow, /seeds/saved or /inventory/add-seeds', () => {
-    const targets = sweep().hits
-      .filter((h) => h.kind === 'target')
-      .map((h) => `${h.file}:${h.line}  ${h.context} ${JSON.stringify(h.value)}`)
+    const { targets } = listing(sweep().hits)
     expect(targets, 'retarget these through src/lib/seedsRoutes.js (seedsHref / addPacketHref)').toEqual([])
   })
 
+  it('OPS-CODEREVIEW-001 C4: PRINT_LIST=1 prints the targets and declarations as the tree stands', () => {
+    const text = JSON.stringify(listing(sweep().hits), null, 2)
+    if (process.env.PRINT_LIST) console.log(text)
+    expect(text).toContain('"App.jsx /sow"')
+    const hits = [
+      { file: 'pages/B.jsx', line: 3, kind: 'target', context: 'to=', value: '/sow' },
+      { file: 'App.jsx', line: 9, kind: 'declaration', context: 'path:', value: '/sow' },
+      { file: 'A.jsx', line: 1, kind: 'declaration', context: 'path:', value: '/seeds/saved' },
+    ]
+    expect(listing(hits)).toEqual({ targets: ['pages/B.jsx:3  to= "/sow"'], declarations: ['A.jsx /seeds/saved', 'App.jsx /sow'] })
+  })
+
   it("sees exactly App.jsx's three route declarations — the two redirects and the add-seeds page", () => {
-    const declarations = sweep().hits
-      .filter((h) => h.kind === 'declaration')
-      .map((h) => `${h.file} ${h.value}`)
-      .sort()
-    expect(declarations).toEqual(['App.jsx /inventory/add-seeds', 'App.jsx /seeds/saved', 'App.jsx /sow'])
+    const { declarations } = listing(sweep().hits)
+    expect(declarations, `${PRINT} prints the list`).toEqual(['App.jsx /inventory/add-seeds', 'App.jsx /seeds/saved', 'App.jsx /sow'])
   })
 })
