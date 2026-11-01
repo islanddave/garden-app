@@ -1,6 +1,5 @@
-// V4-PLANTINGUI-001 — per-crop attribute slot (binds to PLANTTYPE substrate). Surfaces the
-// computed maturity/harvest band + the cultivar's structured attributes + projected
-// type:/lifecycle: faceted chips (GARDENIA bulk-tags substrate via useEntityTags).
+// Per-crop attribute card on the planting page: the computed maturity/harvest band, the cultivar's structured
+// attributes and the projected type:/lifecycle: faceted chips (useEntityTags).
 import React from 'react'
 import { P } from '../../lib/constants.js'
 import { computeMaturity } from '../../lib/plantingMaturity.js'
@@ -10,19 +9,17 @@ import TransplantDatePrompt from './TransplantDatePrompt.jsx'
 import { shuLabel, determinacyLabel, sunLabel } from '../../lib/varietySpec.js'
 import { resolveRipenessCues } from '../../lib/ripenessCues.js'
 
-// V4-RIPENESSCUES-001: the colour-window dataset is ~110KB gzip of JSON reached ONLY from this
-// card, so the resolver module (`../../lib/harvestWindows.js`, which statically imports the JSON)
-// is loaded LAZILY in an effect below — the app's first code-split point. NEVER reintroduce a
-// static `import { resolveHarvestWindow }` here: it silently pulls the dataset back into the entry
-// bundle with every test green; `scripts/verify-window-chunk.sh` is the only detector. React.lazy
-// is forbidden at/above this card — an offline chunk-miss would throw into the route ErrorBoundary
-// and replace the whole PlantingDetail page; the `.catch → render nothing` branch below cannot.
-// Module-scope cache: once the chunk lands, later mounts resolve synchronously at first render.
+// The colour-window dataset is ~110KB gzip of JSON reached ONLY from this card, so the resolver module
+// (`../../lib/harvestWindows.js`, which statically imports the JSON) is loaded LAZILY in an effect below. NEVER
+// reintroduce a static `import { resolveHarvestWindow }` here: it silently pulls the dataset back into the entry
+// bundle with every test green; `scripts/verify-window-chunk.sh` is the only detector. React.lazy is forbidden
+// at/above this card: an offline chunk-miss would throw into the route ErrorBoundary and replace the whole
+// PlantingDetail page, which the `.catch -> render nothing` branch below cannot. Module-scope cache: once the chunk
+// lands, later mounts resolve synchronously at first render.
 let hwModule = null
 
-// V4-PLANTINGMETA-001 — created_at is a full timestamp (not the length-10 date string the lifecycle
-// columns carry), so it is parsed plainly. Same "Mon D, YYYY" shape as plantingMaturity's window
-// dates, so the two dates in this band read as one set rather than as two different kinds of thing.
+// created_at is a full timestamp (not the length-10 date string the lifecycle columns carry), so it is parsed plainly.
+// Same "Mon D, YYYY" shape as plantingMaturity's window dates, so the two dates in this band read as one set.
 function fmtAdded(value) {
   if (!value) return null
   const d = new Date(value)
@@ -40,18 +37,14 @@ function Attr({ label, value }) {
   )
 }
 
-// V4-RIPECUE-001 — "how will I know it's ripe", the crucible's replacement for the killed
-// maturity-window section (100% reach vs 6%; decision D3). Rendered as an ordinary Attr row, at the
-// same weight as Sun and Expected yield, on purpose:
-//   - It is instructions for a task the user already started, not a nudge — the reward-UX seat put
-//     exactly that outside the V102 rule (crucible §7.3). It is still given the lowest salience the
-//     card has, because V102's delivery discipline (no badge, no colour encoding, no promotion, no
-//     time-decaying state, ambient only) is the house default and nothing here needs an exception.
-//   - The cultivar target-state leads the crop mechanic when both exist, because the target state is
-//     what disambiguates ("full canary yellow" tells you what "full colour" means for THIS plant).
-// The source line is not decoration: it is the verifiability half of the downgrade path the crucible
-// required (§9 Slice 1, "do not ship cues without a downgrade path"). Dave can check the claim
-// against the page it came from rather than against his memory of what the app told him.
+// "How will I know it's ripe": rendered as an ordinary Attr row, at the same weight as Sun and Expected yield, on
+// purpose:
+//   - It is instructions for a task the user already started, not a nudge, so the reward-UX rule does not apply. It
+//     still gets the lowest salience the card has: no badge, no colour encoding, no promotion, no time-decaying state.
+//   - The cultivar target-state leads the crop mechanic when both exist, because the target state is what
+//     disambiguates ("full canary yellow" tells you what "full colour" means for THIS plant).
+// The source line is not decoration: it is the verifiability half of the downgrade path (no cue ships without one),
+// so the claim can be checked against the page it came from.
 function RipenessCue({ cues }) {
   const { target, mechanic } = cues
   if (!target && !mechanic) return null   // unsourced crop / anything not harvested -> render NOTHING
@@ -67,11 +60,10 @@ function RipenessCue({ cues }) {
         <div style={{ fontSize: '0.9rem', color: target ? P.mid : P.dark, lineHeight: 1.5, wordBreak: 'break-word',
           marginTop: target ? 4 : 0 }}>{mechanic.cue}</div>
       )}
-      {/* A 'low'-confidence cue is a DERIVATION, not a quotation, and the module requires it to say
-          so. Rendering the caveat is what keeps the confidence tier honest — otherwise a derived
-          wineberry cue reads on screen exactly like a quoted extension instruction. Read off BOTH
-          records rather than off `attribution`: a caveat belongs to the specific claim it qualifies,
-          so a cultivar override must not be able to hide a caveat on the crop mechanic under it. */}
+      {/* A 'low'-confidence cue is a DERIVATION, not a quotation, and the module requires it to say so; rendering the */}
+      {/* caveat keeps a derived cue from reading like a quoted extension instruction. Read off BOTH records, not off */}
+      {/* `attribution`: a caveat belongs to the claim it qualifies, so a cultivar override must not hide one on the */}
+      {/* crop mechanic under it. */}
       {[target?.caveat, mechanic?.caveat].filter(Boolean).map(c => (
         <div key={c} style={{ fontSize: '0.78rem', color: P.mid, lineHeight: 1.5, marginTop: 4, fontStyle: 'italic' }}>
           {c}
@@ -88,28 +80,22 @@ function RipenessCue({ cues }) {
   )
 }
 
-// V4-RIPENESSCUES-001 — the harvest colour WINDOW: every colour you can legitimately pick at, and
-// what each one buys. Dave, 2026-08-11: "I want to know when I CAN pick them… Details should describe
-// the points of the colour pick — what you get at each point."
+// The harvest colour WINDOW: every colour you can legitimately pick at, and what each one buys.
 //
-// WHY EVERY POINT RENDERS. He accepted a machine-readable shape on one condition — "so long as humans
-// utilize it fully" — so this deliberately does not summarise to the label and hide the payoffs behind
-// a tap. The payoffs ARE the feature; the label alone is the old single-cue model with an arrow in it.
+// EVERY POINT RENDERS, not a summary label with the payoffs behind a tap: the payoffs ARE the feature, and the label
+// alone is the old single-cue model with an arrow in it.
 //
-// WHY ONLY ONE GRAIN RENDERS. `resolveHarvestWindow` returns both the cultivar colour sequence and the
-// crop-level mechanic. Rendering both would double an already tall block, and the cultivar records
-// carry their own maturity test inside `ripe_vs_unripe`, so the cultivar window wins when present and
-// the crop mechanic fills in only when it does not.
+// ONLY ONE GRAIN RENDERS. `resolveHarvestWindow` returns both the cultivar colour sequence and the crop-level
+// mechanic. Rendering both would double an already tall block, and cultivar records carry their own maturity test
+// inside `ripe_vs_unripe`, so the cultivar window wins when present and the crop mechanic fills in only when it does
+// not.
 function HarvestWindow({ window: win }) {
-  // V4-RIPENESSCUES-001 disclosure: ≤3-point windows render fully expanded (362 points / 125
-  // records ≈ 2.9 avg — the majority ship complete, zero taps). Only >3-point windows collapse,
-  // and the collapsed view keeps first + FINAL point (endpoint comparison is Dave's canonical
-  // question — "what does letting an Anaheim go to full ripeness give me vs green?") plus
-  // ripe_vs_unripe and the caveat, which render OUTSIDE the points list and are never hidden by
-  // collapse — a collapsed unlabelled low-confidence point would be a confidently-presented
-  // derived claim (colour-window canon §4/§9). Content is never cut; disclosure manages length.
-  // This deviates from canon §6 "every window point renders" for >3-point records — recorded as a
-  // maintenance note on harvest-colour-window-V100-20260811.md (deviation must not be silent).
+  // Disclosure: windows of 3 points or fewer render fully expanded (zero taps). Only longer windows collapse, and the
+  // collapsed view keeps the first and FINAL point (endpoint comparison is the canonical question: what does letting
+  // it go to full ripeness give me vs green?) plus ripe_vs_unripe and the caveat, which render OUTSIDE the points list
+  // and are never hidden by collapse: a collapsed unlabelled low-confidence point would be a confidently-presented
+  // derived claim (colour-window canon §4/§9). Content is never cut; disclosure manages length. This deviates from
+  // canon §6 "every window point renders" for records over 3 points (noted on harvest-colour-window-V100-20260811.md).
   const [expanded, setExpanded] = React.useState(false)
   const rec = win.cultivar ?? win.crop
   if (!rec) return null
@@ -144,9 +130,8 @@ function HarvestWindow({ window: win }) {
         </button>
       )}
 
-      {/* The green-when-ripe answer. Dave: "what is first blush for a green?" On a cultivar whose ripe
-          state looks unripe this is the ONLY field that resolves the plant in front of him, so it gets
-          its own labelled block rather than being folded into a stage description. */}
+      {/* The green-when-ripe answer: on a cultivar whose ripe state looks unripe this is the ONLY field that */}
+      {/* resolves the plant in front of the user, so it gets its own labelled block. */}
       {rec.ripe_vs_unripe && (
         <div style={{ marginTop: 10, backgroundColor: P.greenPale, borderRadius: 8, padding: '8px 10px' }}>
           <div style={{ fontSize: '0.72rem', fontWeight: 700, color: P.green, marginBottom: 2,
@@ -156,9 +141,8 @@ function HarvestWindow({ window: win }) {
         </div>
       )}
 
-      {/* A `low`-confidence window is a DERIVATION from the market class, not a quotation about this
-          cultivar. Rendering the caveat is the entire reason complete coverage is safe — it is what
-          keeps a derived window from reading like a sourced one. */}
+      {/* A `low`-confidence window is a DERIVATION from the market class, not a quotation about this cultivar; */}
+      {/* rendering the caveat is what makes complete coverage safe. */}
       {rec.caveat && (
         <div data-testid="harvest-window-caveat" style={{ fontSize: '0.78rem', color: P.mid, lineHeight: 1.5, marginTop: 8,
           fontStyle: 'italic', wordBreak: 'break-word' }}>{rec.caveat}</div>
@@ -181,15 +165,14 @@ const DETERMINACY_CHIP_SLUG = { Determinate: 'determinate', 'Semi-determinate': 
 export default function CropCard({ planting, onUpdated }) {
   const { projected } = useEntityTags('plant', planting?.id)
   const vref = planting?.variety_ref ?? null
-  // V4-RIPENESSCUES-001: async window state — pending | resolved-with-window | resolved-empty |
-  // failed. Only resolved-with-window changes rendered output (pending, resolved-empty and failed
-  // all render byte-identical to the pre-window card, and null for a sparse record), so it is the
-  // ONLY transition that re-renders: mounts whose cultivar has no window stay free of async churn,
-  // and the non-window test suites stay race-free under the sync stub.
+  // Async window state: pending | resolved-with-window | resolved-empty | failed. Only resolved-with-window changes
+  // rendered output (the others render the card as it renders without windows, and null for a sparse record), so it
+  // is the ONLY transition that re-renders: mounts whose cultivar has no window stay free of async churn, and the
+  // non-window test suites stay race-free under the sync stub.
   const [, bumpWindow] = React.useReducer(t => t + 1, 0)
   React.useEffect(() => {
-    // A bare record (null variety_ref) fires NO import at all — stays synchronous. A landed chunk
-    // (hwModule set, here or by main.jsx's idle warm import) resolves at render, no effect work.
+    // A bare record (null variety_ref) fires NO import at all and stays synchronous. A landed chunk (hwModule set,
+    // here or by main.jsx's idle warm import) resolves at render, with no effect work.
     if (!vref || hwModule) return
     let alive = true
     import('../../lib/harvestWindows.js')
@@ -199,8 +182,8 @@ export default function CropCard({ planting, onUpdated }) {
         const w = m.resolveHarvestWindow(vref)
         if (w.cultivar || w.crop) bumpWindow() // re-render only when a window will render
       })
-      // failed → render nothing: card unchanged, PlantingDetail intact, no error surface.
-      // hwModule stays null so the next mount retries.
+      // failed -> render nothing: card unchanged, PlantingDetail intact, no error surface. hwModule stays null so the
+      // next mount retries.
       .catch(() => {})
     return () => { alive = false }
   }, [vref])
@@ -220,36 +203,33 @@ export default function CropCard({ planting, onUpdated }) {
     : null
 
   const hasMaturity = m.ageDays != null || m.harvestWindowLabel
-  // V4-PLANTINGMETA-001 — see the render site below for why this is display-only and conditional.
+  // Display-only and conditional; see the render site below.
   const addedDate = fmtAdded(planting?.created_at)
-  // V5-PLANTPAGEDESIGNQS-001 part 1 (Dave 2026-10-12, "Green pill on the card") — the growth type shows once.
-  // 41 of 46 live tomato cards said it twice: the green pill above and the cultivar's derived determinacy
-  // facet chip under it. On THIS card the chip that names the pill's own class is dropped, matched on the
-  // tag's facet and slug, never its label. The tag itself is untouched (filters, grouping, Search). With no
-  // green pill, or a chip naming another class (Dwarf; a column that disagrees with the prose), it stays.
+  // The growth type shows once: the green pill above and the cultivar's derived determinacy facet chip under it would
+  // name the same class twice. On THIS card the chip that names the pill's own class is dropped, matched on the tag's
+  // facet and slug, never its label. The tag itself is untouched (filters, grouping, Search). With no green pill, or a
+  // chip naming another class (Dwarf; a column that disagrees with the prose), it stays.
   const facetChips = (Array.isArray(projected) ? projected : [])
     .filter(t => !(determinacy && t?.facet === 'determinacy' && t.slug === DETERMINACY_CHIP_SLUG[determinacy]))
   const hasChips = facetChips.length > 0
-  // V4-RIPECUE-001: a sourced cue is enough on its own to earn the card. Without this a planting
-  // whose cultivar carries no DTM/sun/yield prose renders no card at all, which would silently drop
-  // the cue from exactly the sparsest records — the reach the cue was chosen for.
+  // A sourced cue is enough on its own to earn the card. Without this a planting whose cultivar carries no
+  // DTM/sun/yield prose renders no card at all, silently dropping the cue from exactly the sparsest records.
   const cues = resolveRipenessCues(v)
   const hasCue = !!(cues.target || cues.mechanic)
-  // V4-RIPENESSCUES-001: sync resolution once the lazy chunk has landed. `win` is null while
-  // pending/failed and when the record has no window — all indistinguishable by design.
+  // Sync resolution once the lazy chunk has landed. `win` is null while pending/failed and when the record has no
+  // window, all indistinguishable by design.
   const win = (vref && hwModule) ? hwModule.resolveHarvestWindow(vref) : null
   const hasWindow = !!(win && (win.cultivar || win.crop))
-  // The column holds a code ('full_sun'); until 2026-09-25 the Sun row printed it as-is on 205 of 244
-  // live plantings. sunLabel gives the words VarietyEditor offers; null still hides the row.
+  // The column holds a code ('full_sun'); sunLabel gives the words VarietyEditor offers. null still hides the row.
   const sun = sunLabel(v.sun_requirements)
-  // V5-PLANTPAGEDESIGNQS-001 (Dave 2026-10-11, "add habit") — the cultivar's growth_habit prose as stored,
-  // under the label Search's peek gives the same field. Not beside the determinacy pill: there the prose
-  // opens with the class the pill already names. It counts in `attrs`, so a habit alone earns the card.
+  // The cultivar's growth_habit prose as stored, under the label Search's peek gives the same field. Not shown beside
+  // the determinacy pill: there the prose opens with the class the pill already names. It counts in `attrs`, so a
+  // habit alone earns the card.
   const habit = !determinacy && typeof v.growth_habit === 'string' && v.growth_habit.trim() ? v.growth_habit.trim() : null
   const attrs = [dtm, sun, habit, v.expected_yield_notes].filter(Boolean)
-  // The early return stays SYNC over today's signals; `!hasWindow` is the async-sparse term — a
-  // window-ONLY sparse card renders once the window resolves (pending+sparse renders null,
-  // indistinguishable from today; resolved-empty/failed+sparse returns null permanently).
+  // The early return stays SYNC over today's signals; `!hasWindow` is the async-sparse term: a window-ONLY sparse card
+  // renders once the window resolves (pending+sparse renders null, resolved-empty/failed+sparse returns null
+  // permanently).
   if (!hasMaturity && !hasChips && specChips.length === 0 && attrs.length === 0 && !hasCue && !hasWindow) return null
 
   return (
@@ -263,11 +243,9 @@ export default function CropCard({ planting, onUpdated }) {
               Day {m.ageDays}{m.anchorLabel ? ` since ${m.anchorLabel}` : ''}
             </div>
           )}
-          {/* V4-MATURITYBASIS-001: a from-transplant crop with no transplant date has an
-              unknowable window (design D3). Rather than a bare suppressed label, the slot the date
-              would have occupied carries a low-key tappable prompt that sets the date and yields a
-              correct window on the spot. Same type scale as the label it replaces — see
-              TransplantDatePrompt for why this is not headline treatment. */}
+          {/* A from-transplant crop with no transplant date has an unknowable window. Rather than a bare suppressed */}
+          {/* label, the slot the date would have occupied carries a low-key tappable prompt that sets the date and */}
+          {/* yields a correct window on the spot; see TransplantDatePrompt for why this is not headline treatment. */}
           {m.awaitingTransplant ? (
             <div style={{ marginTop: 3 }}>
               <TransplantDatePrompt planting={planting} onSaved={onUpdated} />
@@ -275,8 +253,7 @@ export default function CropCard({ planting, onUpdated }) {
           ) : m.harvestWindowLabel && (
             <div style={{ fontSize: '0.82rem', color: m.isMature ? P.green : P.mid, marginTop: 3 }}>
               {m.isMature ? '✅ ' : '⏳ '}{m.harvestWindowLabel}
-              {/* V4-MATURITYBASIS-001: name the basis when it moved the number off the sow date,
-                  so a corrected window reads as explained rather than as silently different. */}
+              {/* Name the basis when it moved the number off the sow date, so a corrected window reads as explained. */}
               {m.dtmBasis === 'from-transplant' && m.dtmAnchorLabel && (
                 <span style={{ color: P.light }}> (from {m.dtmAnchorLabel})</span>
               )}
@@ -291,26 +268,20 @@ export default function CropCard({ planting, onUpdated }) {
         </div>
       )}
 
-      {/* V4-PLANTINGMETA-001 (BD-029) — with no sown_at, transplanted_at OR planted_out_at,
-          garden_node.created_at is the only date the record carries, and it is a within-days proxy
-          for when the plant arrived: a planting is added when it goes in. Sugar Rush Peach is the
-          live case — both dates NULL, so the band above renders the set-at-transplant prompt and no
-          date at all, and nothing anywhere on the page says the plant has been here since spring.
-          DISPLAY ONLY, and that is the point. computeMaturity refuses to project a window off a
-          guessed anchor (design D3, because start_indoor_weeks is populated for well under half the
-          affected plantings), and this must not smuggle one back in: it is labelled as the app-added
-          date, never as "sown"/"transplanted", and feeds no computation.
-          Two deliberate limits. It renders ONLY when m.anchorDate is null, so a planting with any
-          real lifecycle date gains nothing. And it is NOT in the hasMaturity/early-return test above
-          — created_at is non-null on every row, so earning the card on it would put a card on every
-          sparse planting in the garden, which is the exact thing that early return exists to stop. */}
+      {/* With no sown_at, transplanted_at OR planted_out_at, garden_node.created_at is the only date the record */}
+      {/* carries, a within-days proxy for when the plant arrived. DISPLAY ONLY: computeMaturity refuses to project a */}
+      {/* window off a guessed anchor (start_indoor_weeks is populated for well under half the affected plantings), */}
+      {/* and this must not smuggle one back in. It is labelled as the app-added date, never "sown"/"transplanted", */}
+      {/* and feeds no computation. Two deliberate limits: it renders ONLY when m.anchorDate is null, and it is NOT in */}
+      {/* the hasMaturity/early-return test above, because created_at is non-null on every row and earning the card on */}
+      {/* it would put a card on every sparse planting, the exact thing that early return exists to stop. */}
       {m.anchorDate == null && addedDate && (
         <div data-testid="planting-added-date" style={{ fontSize: '0.78rem', color: P.light, lineHeight: 1.5 }}>
           Added to the app {addedDate}
         </div>
       )}
 
-      {/* V4-VARSLUG-001 — first-class spec chips (SHU / determinacy) */}
+      {/* First-class spec chips (SHU / determinacy) */}
       {specChips.length > 0 && (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {specChips.map(c => (
@@ -334,9 +305,8 @@ export default function CropCard({ planting, onUpdated }) {
           <Attr label="Habit" value={habit} />
           <Attr label="Expected yield" value={v.expected_yield_notes} />
           <RipenessCue cues={cues} />
-          {/* V4-RIPENESSCUES-001: the window renders BELOW the corrective cue — the cue answers
-              "what would I get wrong", the window answers "when can I pick and what does each
-              colour buy". One visual section; 39/44 cultivars carry both. */}
+          {/* The window renders BELOW the corrective cue: the cue answers "what would I get wrong", the window */}
+          {/* answers "when can I pick and what does each colour buy". One visual section. */}
           {hasWindow && <HarvestWindow window={win} />}
         </div>
       )}
