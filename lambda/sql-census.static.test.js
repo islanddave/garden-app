@@ -20,7 +20,9 @@
 // and carry each `reason` / `why` over by hand: the printer cannot know one.
 //
 // THE RATCHET (§2.4 "Allowlists"). An id may be REPLACED in the same commit when the old id leaves the same
-// file:function and that function's count does not rise; the failure message prints the replacement. A new
+// file:function and that function's count does not rise; the failure message prints the replacement. A statement
+// moved whole to another file:function (same AST hash, that hash's count not rising) still fails, reported RENAMED
+// with the id to replace (renamesOf in sqlCensus.mjs); a changed hash or a raised count is new + stale. A new
 // refused slot (a count that rises) needs a reviewed reason; a new unstamped write before its 4.3 lane is allowed
 // only with one.
 //
@@ -33,7 +35,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import * as acorn from 'acorn'
 import {
-  ROOT, loadParser, censusOf, lambdaFiles, splicesOf, workspaceSlotsOf, classifySlot, targetOnlyWorkspace, relationsOf,
+  ROOT, loadParser, censusOf, lambdaFiles, splicesOf, workspaceSlotsOf, classifySlot, targetOnlyWorkspace, relationsOf, renamesOf,
 } from '../tests/lib/sqlCensus.mjs'
 import { parseSync } from 'libpg-query'
 
@@ -50,13 +52,14 @@ beforeAll(async () => {
     `${s.statementLiterals.withSplices} spliced, ${s.ms.total} ms`)
 })
 
-// Exact-set comparison of current ids against a listed file; returns the failure lines.
+// Exact-set comparison of current ids against a listed file; returns the failure lines. A move (renamesOf) still
+// fails, but names the one-line fix instead of a new id plus a stale one.
 function compareIds(current, entries, what, file) {
-  const have = new Set(current)
-  const want = new Set(entries.map((e) => e.id))
+  const { renamed, added, removed } = renamesOf(current, entries.map((e) => e.id))
   return [
-    ...[...have].filter((id) => !want.has(id)).map((id) => `${what} not in tests/${file}: ${id}`),
-    ...[...want].filter((id) => !have.has(id)).map((id) => `stale entry in tests/${file} (the tree no longer has it): ${id}`),
+    ...renamed.map(({ from, to }) => `RENAMED ${what} (same AST, new file:function): replace ${from} with ${to} in tests/${file} and keep the entry's other fields`),
+    ...added.map((id) => `${what} not in tests/${file}: ${id}`),
+    ...removed.map((id) => `stale entry in tests/${file} (the tree no longer has it): ${id}`),
   ]
 }
 
@@ -104,24 +107,33 @@ describe('SQL census: the workspace_id slot allowlist', () => {
     const reviewed = listed('tenancy-insert-allowlist.json').reviewedParents ?? []
     const opts = (s) => ({ reviewedParents: reviewed.filter((r) => r.file === s.file && r.fn === s.fn).map((r) => r.root) })
     const refused = workspaceSlotsOf(census, opts).filter((r) => r.verdict === 'refuse')
-    const have = new Set(refused.map((r) => r.id))
-    const want = new Set(entries.map((e) => e.id))
-    const problems = []
-    const fnOf = (id) => id.slice(0, id.lastIndexOf(':'))
-    for (const r of refused.filter((x) => !want.has(x.id))) {
-      const key = fnOf(r.id)
-      const gone = [...want].filter((id) => fnOf(id) === key && !have.has(id))
-      const countNow = [...have].filter((id) => fnOf(id) === key).length
-      const countListed = [...want].filter((id) => fnOf(id) === key).length
-      problems.push(gone.length && countNow <= countListed
-        ? `REPLACEMENT in ${key} (count ${countNow} <= ${countListed}): replace ${gone[0]} with ${r.id} in tests/sql-workspace-slots.json`
-        : `NEW refused workspace_id value (${r.reason}, ${r.ctx} ${r.src}) in ${r.id}: stamp it from the resolved scope or a reviewed parent row`)
-    }
-    for (const id of [...want].filter((x) => !have.has(x))) if (!problems.some((p) => p.includes(id))) problems.push(`stale entry in tests/sql-workspace-slots.json (now accepted or gone): ${id}`)
-    for (const e of entries) if (!e.reason?.trim()) problems.push(`entry without a reason: ${e.id}`)
+    const problems = slotListProblems(refused, entries)
     expect(problems, problems.join('\n')).toEqual([])
   })
 })
+
+// The slot allowlist's failure lines: refused rows of the tree against the listed entries.
+function slotListProblems(refused, entries) {
+  const have = new Set(refused.map((r) => r.id))
+  const want = new Set(entries.map((e) => e.id))
+  const problems = []
+  const fnOf = (id) => id.slice(0, id.lastIndexOf(':'))
+  const movedFrom = new Map(renamesOf([...have], [...want]).renamed.map(({ from, to }) => [to, from]))
+  for (const r of refused.filter((x) => !want.has(x.id))) {
+    const key = fnOf(r.id)
+    const gone = [...want].filter((id) => fnOf(id) === key && !have.has(id))
+    const countNow = [...have].filter((id) => fnOf(id) === key).length
+    const countListed = [...want].filter((id) => fnOf(id) === key).length
+    problems.push(movedFrom.has(r.id)
+      ? `RENAMED in tests/sql-workspace-slots.json (same AST, new file:function): replace ${movedFrom.get(r.id)} with ${r.id} and keep its reason`
+      : gone.length && countNow <= countListed
+        ? `REPLACEMENT in ${key} (count ${countNow} <= ${countListed}): replace ${gone[0]} with ${r.id} in tests/sql-workspace-slots.json`
+        : `NEW refused workspace_id value (${r.reason}, ${r.ctx} ${r.src}) in ${r.id}: stamp it from the resolved scope or a reviewed parent row`)
+  }
+  for (const id of [...want].filter((x) => !have.has(x))) if (!problems.some((p) => p.includes(id))) problems.push(`stale entry in tests/sql-workspace-slots.json (now accepted or gone): ${id}`)
+  for (const e of entries) if (!e.reason?.trim()) problems.push(`entry without a reason: ${e.id}`)
+  return problems
+}
 
 // Fixture statements run through the same census as the tree: `read` serves them under a lambda path.
 const fixtureCensus = (file, code) => censusOf({ files: [file], read: () => code })
@@ -236,6 +248,45 @@ SELECT p.id, p.name, p.status
     expect(rewritten.nearMisses.map((m) => m.id).sort()).toEqual(census.nearMisses.map((m) => m.id).sort())
     // and the lines did move, so the ids really carry none
     expect(rewritten.statements.find((s) => s.id === census.statements[0].id).line).not.toBe(census.statements[0].line)
+  })
+})
+
+describe('SQL census: rename acceptance', () => {
+  const BODY = `
+  if (method === 'DELETE') return null
+  return sql\`SELECT id FROM plants WHERE id = \${id} AND deleted_at IS NULL\``
+  const idsOf = (sources) => {
+    const c = censusOf({ files: Object.keys(sources), read: (f) => sources[f] })
+    return { stmts: c.statements.map((s) => s.id), near: c.nearMisses.map((m) => m.id) }
+  }
+  let before
+  beforeAll(() => { before = idsOf({ 'lambda/zz-fixture/index.js': `export async function handler(sql, method, id) {${BODY}\n}\n` }) })
+  const hashOf = (id) => id.slice(id.lastIndexOf(':') + 1)
+
+  it('OPS-CODEREVIEW-001 C4: a statement moved to a new file:function is reported renamed, not new + stale', () => {
+    const after = idsOf({ 'lambda/zz-fixture/plantRoutes.js': `export async function handlePlantRoute(sql, method, id) {${BODY}\n}\n` })
+    expect(before.stmts).toHaveLength(1)
+    expect(before.near).toHaveLength(1)
+    expect(after.stmts[0]).not.toBe(before.stmts[0])
+    expect(hashOf(after.stmts[0])).toBe(hashOf(before.stmts[0]))
+    for (const k of ['stmts', 'near']) {
+      expect(renamesOf(after[k], before[k])).toEqual({ renamed: [{ from: before[k][0], to: after[k][0] }], added: [], removed: [] })
+    }
+    const lines = compareIds(after.near, [{ id: before.near[0] }], 'near-miss', 'sql-near-misses.json')
+    expect(lines).toEqual([`RENAMED near-miss (same AST, new file:function): replace ${before.near[0]} with ${after.near[0]} in tests/sql-near-misses.json and keep the entry's other fields`])
+    const slots = slotListProblems([{ id: after.stmts[0] }], [{ id: before.stmts[0], reason: 'r' }])
+    expect(slots).toEqual([`RENAMED in tests/sql-workspace-slots.json (same AST, new file:function): replace ${before.stmts[0]} with ${after.stmts[0]} and keep its reason`])
+  })
+
+  it('OPS-CODEREVIEW-001 C4: a move that changes the SQL, or raises its count, is still new + stale', () => {
+    const edited = idsOf({ 'lambda/zz-fixture/plantRoutes.js': `export async function handlePlantRoute(sql, method, id) {${BODY.replace('AND deleted_at IS NULL', '')}\n}\n` })
+    expect(renamesOf(edited.stmts, before.stmts)).toEqual({ renamed: [], added: edited.stmts, removed: before.stmts })
+    const twice = idsOf({ 'lambda/zz-fixture/plantRoutes.js': `export async function a(sql, method, id) {${BODY}\n}\nexport async function b(sql, method, id) {${BODY}\n}\n` })
+    expect(twice.stmts).toHaveLength(2)
+    expect(renamesOf(twice.stmts, before.stmts)).toEqual({ renamed: [], added: [...twice.stmts].sort(), removed: before.stmts })
+    const lines = compareIds(twice.stmts, [{ id: before.stmts[0] }], 'splice', 'sql-splices.json')
+    expect(lines.filter((l) => l.startsWith('RENAMED'))).toEqual([])
+    expect(lines).toHaveLength(3)
   })
 })
 
