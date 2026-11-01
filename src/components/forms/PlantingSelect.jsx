@@ -27,7 +27,7 @@
 // are exactly the pieces TalkBack (Chrome/Android, the only target) needs to narrate the list.
 // Where this deviates from APG the reason is stated inline at the deviation.
 import React, { useState, useEffect, useMemo, useRef, useCallback, useId } from 'react'
-import { useCachedFetch } from '../../hooks/useCachedFetch.js'
+import { usePlantPicker } from '../../hooks/usePlantPicker.js'
 import { P } from '../../lib/constants.js'
 import { T, inputChrome } from './formStyles.js'
 import { formatQty } from '../../lib/format.js'
@@ -629,14 +629,10 @@ export default function PlantingSelect({
   // branch carries it. Add a field there, not by reverting to the wide shape.
   //
   // V4-PICKERCACHE-001: SWR-cached, so a chooser opened twice in a session pays one round trip
-  // rather than two. `null` while `controlled` puts the hook in its IDLE mode — no fetch, no cache
-  // entry — which is how a conditional data source stays inside the rules of hooks. The unscoped
-  // string is byte-identical to EventNew's PICKER_PATH deliberately: dataCache keys on the path,
-  // so host and child share one warm entry instead of each holding their own.
-  const selfPath = controlled
-    ? null
-    : (scopeProjectId ? `/api/plants?view=picker&project_id=${scopeProjectId}` : '/api/plants?view=picker')
-  const selfCache = useCachedFetch(selfPath)
+  // rather than two. `enabled: false` while `controlled` puts the hook in its IDLE mode — no fetch,
+  // no cache entry — which is how a conditional data source stays inside the rules of hooks. The
+  // hook spells the path for every reader, so host and child share one warm entry.
+  const selfCache = usePlantPicker({ enabled: !controlled, projectId: scopeProjectId })
   // Read through a ref for the same reason `onOpenChange` above is: callers pass inline closures,
   // and an effect keyed on a per-render identity is the BUG-SOWFOCUS-001 shape.
   const onLoadErrorRef = useRef(onLoadError)
@@ -673,7 +669,7 @@ export default function PlantingSelect({
       // and reachable by its spoken form at last, since looseKey stopped treating '_' as a letter
       // (BUG-LOOSEKEYREPEAT-001 (A)): "bunching onion" now narrows to the bunching_onion rows.
       // OPS-CROPTYPEALIASCLIENT-001: the crop-type ROW now comes from the vocabulary endpoint rather
-      // than from the planting payload, so this needs no widening of ?view=picker (which still
+      // than from the planting payload, so this needs no widening of the picker projection (which still
       // carries the slug and nothing else crop-shaped, lambda/plants/index.js:1313). That is what
       // puts display_name and search_aliases on this filter — "scallion" and "cantaloupe" narrow here
       // exactly as they do in whole-garden search.

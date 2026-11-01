@@ -19,7 +19,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
-import { useCachedFetch } from '../hooks/useCachedFetch.js'
+import { usePlantPicker } from '../hooks/usePlantPicker.js'
 import { P } from '../lib/tokens.js'
 import { useToast } from '../context/ToastContext.jsx'
 import { Sheet, PlantingSelect, Badge } from '../components/forms'
@@ -191,11 +191,6 @@ const PROCESS_ENTRY = {
     sub: 'Beans, peas, lettuce, brassicas: pod dried on the plant before you opened it',
   },
 }
-
-// V4-SEEDLINK-001. Byte-identical to PlantingSelect's own unscoped self-fetch path, deliberately:
-// dataCache keys on the path, so the name lookup below and the picker inside the advance sheet
-// share ONE warm entry instead of each paying a round trip.
-const PICKER_PATH = '/api/plants?view=picker'
 
 // ── V4-SEEDNOPLANTING-001 — the door for seed that came from no planting ──────────────────────────
 // Dave, 2026-09-02, hours after the create-a-lot flow shipped: "i don't see where to go right now to
@@ -663,7 +658,7 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
   // in its IDLE mode and no request goes out at all. When one does exist the entry is the same one
   // the sheet's picker uses, so the second reader is free.
   const anyLinked = useMemo(() => (items ?? []).some((i) => i.source_plant_id), [items])
-  const plantCache = useCachedFetch(anyLinked ? PICKER_PATH : null)
+  const plantCache = usePlantPicker({ enabled: anyLinked })
   const plantNameById = useMemo(() => {
     const rows = Array.isArray(plantCache.data) ? plantCache.data : []
     return new Map(rows.map((p) => [String(p.id), p.name || p.variety_ref?.name || '']))

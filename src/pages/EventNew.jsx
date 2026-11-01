@@ -35,7 +35,7 @@ const nextPhotoId = () => `evphoto-${++eventPhotoSeq}`
 import { Field, Input, Select, Textarea, Button, ErrorBanner, PlantingSelect } from '../components/forms'
 import { T } from '../components/forms/formStyles.js'
 import { snapshotFile, snapshotPicked, unreadableNotice } from '../lib/fileSnapshot.js'
-import { useCachedFetch } from '../hooks/useCachedFetch.js'
+import { usePlantPicker, pickerPath } from '../hooks/usePlantPicker.js'
 import { CROP_CHIPS_AUTO } from '../components/forms/PlantingSelect.jsx'
 import TreatmentDetails from '../components/TreatmentDetails.jsx'
 import Section from '../components/FormSection.jsx'
@@ -151,9 +151,6 @@ const PLANTING_SECTION_ID = 'planting-section'
 // The chooser's own hit target, not its Section wrapper: the wrapper's label sits above the input,
 // and clearing that would leave the input itself under the band.
 const PLANTING_CHOOSER_SELECTOR = '[aria-label="Plant or group"]'
-// One spelling of the unscoped picker path. PlantingSelect's self-fetch builds the same string, so
-// both share one dataCache entry.
-const PICKER_PATH = '/api/plants?view=picker'
 // aria-controls target for the weigh-in tray's Show more/fewer disclosure.
 const HARVEST_TRAY_ID = 'harvest-session-tray'
 // The session save the server kept once (see the setSessionRows site).
@@ -914,7 +911,7 @@ export default function EventNew({ harvestSession = false } = {}) {
     // The picker projection: ~99KB and no presigned photo URLs, versus 814KB for the wide shape. Field
     // census is in the Lambda branch's comment; if this file starts reading a new field, add it there
     // rather than dropping back to the wide shape.
-    apiFetch('/api/plants?view=picker&project_id=' + form.project_id)
+    apiFetch(pickerPath(form.project_id))
       .then(data => {
         if (cancelled) return
         const live = (data ?? []).filter(p => !p.archived_at)
@@ -934,7 +931,7 @@ export default function EventNew({ harvestSession = false } = {}) {
   // SWR-cached: local state stays the render source, so consumption, filtering and reset are
   // unchanged; the hook paints from cache and revalidates on every mount. It surfaces `error` only on
   // a cold failure, so a blip during a background revalidate keeps the list instead of blanking it.
-  const pickerCache = useCachedFetch(PROJECTS_HIDDEN ? PICKER_PATH : null)
+  const pickerCache = usePlantPicker({ enabled: PROJECTS_HIDDEN })
   const { refetch: refetchPicker } = pickerCache
   useEffect(() => {
     if (!PROJECTS_HIDDEN) return

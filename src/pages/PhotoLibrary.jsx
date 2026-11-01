@@ -43,14 +43,11 @@ import useScrollRestore from '../hooks/useScrollRestore.js'
 import { etDay } from '../lib/harvestSummary.js'
 import { HARVEST_TZ } from '../lib/growYear.js'
 import { snapshotPicked, unreadableNotice } from '../lib/fileSnapshot.js'
+import { PICKER_PATH } from '../hooks/usePlantPicker.js'
 
 // Device-local memory of the zone filter, mirroring LogMany.jsx's SCOPE_KEY ('quicklog.lastScope').
 // Same namespaced-by-surface shape, same write-on-change / validate-on-restore contract.
 const LOC_FILTER_KEY = 'photos.lastLocationFilter'
-
-// Byte-identical to EventNew's, PlantingSelect's and SavedSeeds' path: dataCache keys on the path,
-// so any drift (a trailing slash, a reordered param) mints a second cache bucket.
-const PICKER_PATH = '/api/plants?view=picker'
 
 // Photo Library: browse all photos, upload standalone photos (event_id = null), and tag / un-tag
 // photos against projects, locations and plants. The photos Lambda GET returns view_url (signed S3
@@ -128,9 +125,10 @@ export default function PhotoLibrary() {
   // from both the projection and the photo list, so the join has no systematic hole.
   // Both reads are gated on a photo actually naming a planting: otherwise there is no crop to derive,
   // the requests are pure latency, and the Untagged view correctly shows no crop row.
-  // A plain effect rather than useCachedFetch: useCachedFetch calls `fetchRef.current(path).then(...)`
-  // unguarded, so a fetch that returns undefined throws inside a passive effect and takes the page
-  // down. useCropTypes wraps the call in `Promise.resolve()` for the same reason, and so does this.
+  // A plain effect rather than usePlantPicker/useCachedFetch: useCachedFetch calls
+  // `fetchRef.current(path).then(...)` unguarded, so a fetch that returns undefined throws inside a
+  // passive effect and takes the page down. useCropTypes wraps the call in `Promise.resolve()` for the
+  // same reason, and so does this. Guarded by PhotoLibrary.filterParity.test.jsx (undefined picker read).
   const anyPlantPhoto = useMemo(() => photos.some(p => p?.plant_id), [photos])
   const [plantsForCrop, setPlantsForCrop] = useState([])
   useEffect(() => {

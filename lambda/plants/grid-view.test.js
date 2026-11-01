@@ -446,15 +446,15 @@ describe('GET /api/plants?view=picker — exactly the chooser field set (V4-PICK
     // `fetchRef.current(path).then(...)` unguarded and a fetch that returns undefined therefore
     // throws inside a passive effect; useCropTypes wraps the identical call in Promise.resolve() and
     // says why in its header. That is a shared-hook defect, recorded here rather than fixed under a
-    // Photos row. Consequence for THIS census: the page holds its own PICKER_PATH constant, kept
-    // byte-identical so it still shares dataCache's key shape with the five above.
+    // Photos row. Consequence for THIS census: the page imports PICKER_PATH from usePlantPicker.js
+    // rather than calling the hook, so it is still an importer and still counted.
     // archived_at is deliberately NOT read, and unlike the PutUp case that is not an omission: the
     // projection already excludes archived plantings, and the photos list independently drops photos
     // whose planting is archived (`NOT EXISTS ... gna.archived_at IS NOT NULL` in every template), so
     // the two sets agree and there is no archived row for this join to guess about.
-    // NOTE src/lib/photoFilters.js holds the crop-join PREDICATES but deliberately does not spell the
-    // URL, so this census keeps meaning "files that request the projection" rather than "files that
-    // mention the param" — the same distinction the --exclude-dir below draws for tests.
+    // NOTE src/lib/photoFilters.js holds the crop-join PREDICATES but deliberately does not import
+    // usePlantPicker.js, so this census keeps meaning "files that request the projection" rather than
+    // "files that handle its rows" — the same distinction the --exclude-dir below draws for tests.
     //
     // SEVENTH CONSUMER ADDED 2026-09-24 — components/LogManyVoice.jsx (V5-VOICECARE-001), Log many's
     // voice path. It is U, the household list a spoken skip ("except zephyr") is resolved against:
@@ -471,13 +471,19 @@ describe('GET /api/plants?view=picker — exactly the chooser field set (V4-PICK
     //                                  the payload)
     //   variety_ref.id              -> resolveAlias: a taught mishearing names a VARIETY
     // All inside PICKER_KEYS; no widening. The ids it WRITES come from the batch dry run, not from here.
+    //
+    // The URL is spelled once, in src/hooks/usePlantPicker.js, so a consumer is a file that imports
+    // that module (the hook, or PICKER_PATH for the two readers that must not go through the cache).
+    // Two lists, because either alone has a hole: a file spelling the URL again bypasses the importer
+    // list, and the importer list is what grows when a new surface starts requesting the projection.
     const CLIENT = resolve(__dirname, '..', '..', 'src');
     // --exclude-dir=__tests__: the census is of PRODUCTION call sites. Test files legitimately name
     // the URL in their assertions, and counting those would make this assertion self-satisfying —
     // it would go green forever the moment anyone wrote a test mentioning the param.
-    const hits = execSync(`grep -rl --exclude-dir=__tests__ "view=picker" ${CLIENT} || true`, { encoding: 'utf8' })
+    const grepClient = (pattern) => execSync(`grep -rlE --exclude-dir=__tests__ "${pattern}" ${CLIENT} || true`, { encoding: 'utf8' })
       .split('\n').filter(Boolean).map((p) => p.replace(`${CLIENT}/`, '')).sort();
-    expect(hits).toEqual([
+    expect(grepClient('view=picker')).toEqual(['hooks/usePlantPicker.js']);
+    expect(grepClient("hooks/usePlantPicker(\\.js)?'")).toEqual([
       'components/LogManyVoice.jsx',
       'components/forms/PlantingSelect.jsx', 'pages/EventNew.jsx', 'pages/PhotoLibrary.jsx',
       'pages/SavedSeeds.jsx', 'pages/VoiceHarvest.jsx',
