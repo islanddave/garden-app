@@ -807,9 +807,8 @@ function frostWeatherFacts(d) {
   if (d.tier === 'advisory' && d.advisory) {
     const { minLowF, dayOffset, date, nightOffset, radiativeOnly } = d.advisory;
     if (minLowF == null) return {};
-    // V5-TODAYRADIATIVEWATCH-001 — the advisory's trip basis too, in the imminent entry's vocabulary: a radiative-only
-    // advisory (frostEval marks it from the predicate its "FROST WATCH" copy used) fires above its trip point, and the
-    // Today line words it as the watch its email is titled, not "Frost possible". Absent otherwise, as for imminent.
+    // The advisory's trip basis too, in the imminent entry's vocabulary: a radiative-only advisory (frostEval marks it from the predicate its "FROST WATCH" copy used)
+    // fires above its trip point, and the Today line words it as the watch its email is titled, not "Frost possible". Absent otherwise, as for imminent.
     return { lowF: minLowF, ...(dayOffset != null ? { dayOffset } : {}), ...(date ? { date } : {}),
       ...(Number.isInteger(nightOffset) && nightOffset >= 0 ? { nightOffset } : {}),
       ...(radiativeOnly ? { trip: 'radiative' } : {}) };
@@ -817,15 +816,12 @@ function frostWeatherFacts(d) {
   return {};   // heat carries no low; its cue is already on Today (computeCallout high >= 88)
 }
 
-// SNS Subject is email-only (SMS ignores it) and is capped at 100 ASCII chars with no newlines, so it is
-// built separately from the message body rather than sliced off it.
+// SNS Subject is email-only (SMS ignores it) and is capped at 100 ASCII chars with no newlines, so it is built separately from the message body rather than sliced
+// off it.
 //
-// An ADVISORY names its own night and low: the phrase and figure advisoryMessage printed, from the same
-// record, the low rounded as the Today line rounds it (src/lib/frostAlertLine.js). observability.tonightLowF is
-// the NWS low for TONIGHT, a second model's figure for a night the advisory is often not about, so the
-// subject used to read "Frost advisory (low 55F)" over a body saying "frost possible Monday night (low
-// 34.7°F)" — and the subject is the line the phone notification shows. Imminent IS tonight, and heat keeps
-// its old tail.
+// An ADVISORY names its own night and low: the phrase and figure advisoryMessage printed, from the same record, the low rounded as the Today line rounds it
+// (src/lib/frostAlertLine.js). observability.tonightLowF is the NWS low for TONIGHT, a second model's figure for a night the advisory is often not about, so a subject
+// built from it could contradict the body — and the subject is the line the phone notification shows. Imminent IS tonight, and heat keeps its old tail.
 function advisorySubjectTail(a) {
   if (!a) return '';
   const when = nightPhrase(advisoryNight(a));
@@ -834,11 +830,10 @@ function advisorySubjectTail(a) {
   return `${when ? ` ${when}` : ''}${Number.isFinite(lowF) ? ` (low ${Math.round(lowF)}F)` : ''}`;
 }
 
-// V5-TODAYFROSTLINEGAPS-001 follow-up F2 (Dave 2026-09-21) — a radiative watch whose body carries a colder SAME-night
-// second forecast ("Colder on a second forecast: 35°F tonight", frostEval decision.colder at night 0) puts that figure in
-// the subject, the phone notification line: "(as low as 35F)", the words and rounded number Today's watch line prints
-// (src/lib/frostAlertLine.js lineFor), and only when the ROUNDED figure is lower, as there. Else null: the old tail.
-// frostEval records `colder` only on a radiative-only imminent decision (the one message that carries the clause).
+// A radiative watch whose body carries a colder SAME-night second forecast ("Colder on a second forecast: 35°F tonight", frostEval decision.colder at night 0) puts
+// that figure in the subject, the phone notification line: "(as low as 35F)", the words and rounded number Today's watch line prints (src/lib/frostAlertLine.js lineFor),
+// and only when the ROUNDED figure is lower, as there. Else null: the old tail. frostEval records `colder` only on a radiative-only imminent decision (the one message
+// that carries the clause).
 function colderTonightTail(d) {
   const c = d.tier === 'imminent' ? d.colder : null;
   if (!c || c.nightOffset !== 0) return null;
@@ -849,11 +844,9 @@ function colderTonightTail(d) {
 }
 
 function frostSubject(d) {
-  // V5-RADIATIVEFROST-001: a radiative-only trip fires ABOVE the trip point, so "Frost protect tonight
-  // (low 39F)" would assert a threshold crossing at a number that did not cross it — the same
-  // copy-that-lies failure imminentMessage guards against, in the one place that does not read from it.
-  // V5-RADIATIVESUBJECTCOPY-001: the advisory tier's radiative-only case is a watch too ("Frost advisory tonight
-  // (low 42F)" read as a 42F frost forecast); frostEval marks it on the record, from the predicate its body used.
+  // A radiative-only trip fires ABOVE the trip point, so "Frost protect tonight (low 39F)" would assert a threshold crossing at a number that did not cross it — the same
+  // copy-that-lies failure imminentMessage guards against, in the one place that does not read from it. The advisory tier's radiative-only case is a watch too ("Frost
+  // advisory tonight (low 42F)" read as a 42F frost forecast); frostEval marks it on the record, from the predicate its body used.
   const radiativeOnly = !!(d.imminent && d.imminent.radiativeOnly);
   const label = d.tier === 'imminent'
     ? (d.level === 'hard_freeze' ? 'HARD FREEZE tonight'
@@ -865,26 +858,18 @@ function frostSubject(d) {
   return `Garden alert - ${label}${low}`.replace(/[^\x20-\x7E]/g, '').slice(0, 100);
 }
 
-// Frost is a SITE-level event (§3-3): evaluated once per Space, then annotated with the affected crop
-// types. D6: one coalesced alert naming every crop type that tripped ITS OWN threshold; plantings in a
-// HEATED location are excluded (frostClass.summarize). BUG-INGROUND39FSLIVER-001: returns the decision the
-// frost email publishes AND frostCoverage over that same decision, which engine.coldFor reads to drop an
-// in-ground bring-in card, so the card cannot rely on an email that does not name the planting. Pure (no
-// clock, no I/O); run() calls it once per Space and tests call it to build the coverage the same way.
+// Frost is a SITE-level event (§3-3): evaluated once per Space, then annotated with the affected crop types. One coalesced alert naming every crop type that tripped ITS
+// OWN threshold; plantings in a HEATED location are excluded (frostClass.summarize). Returns the decision the frost email publishes AND frostCoverage over that same
+// decision, which engine.coldFor reads to drop an in-ground bring-in card, so the card cannot rely on an email that does not name the planting. Pure (no clock, no I/O);
+// run() calls it once per Space and tests call it to build the coverage the same way.
 function frostForSpace({ rows, weather, hydrology, lowSource, spaceId, today, frostSeason }) {
   const wx = weather || null;
   const hy = hydrology || null;
-  // BUG-FROSTDORMANT-001: `rows` is the UNFILTERED per-space planting set. generatePlan
-  // drops dormant plantings internally (engine.js:387 — `p.status==='dormant' || c.dormant_skip`
-  // then `continue`, before the cold bucket at :493), but that guard lives INSIDE the engine and
-  // does not travel with the array. Handing the same `rows` to summarize() let a dormant planting
-  // into the frost exposure set and therefore into a real outbound alert (FROST_ALERT_ENABLED is
-  // "true" in prod; the topic emails Dave). Dave, 2026-08-10: dormant stock is in temp/humidity-
-  // controlled bins and "never need that treatment".
-  // Filtered HERE rather than inside summarize() so summarize stays a pure classifier, and built
-  // from the engine's own predicate (resolveCadence is already imported for cadenceTenderFor) so
-  // the two cannot drift — one `continue` in the engine was the entire defence and a second
-  // consumer walked straight past it.
+  // `rows` is the UNFILTERED per-space planting set. generatePlan drops dormant plantings internally (`p.status==='dormant' || c.dormant_skip`, then `continue`, before
+  // the cold bucket), but that guard lives INSIDE the engine and does not travel with the array. Handing the same `rows` to summarize() let a dormant planting into the
+  // frost exposure set and therefore into a real outbound alert: dormant stock is in temp/humidity-controlled bins and never needs that treatment. Filtered HERE rather
+  // than inside summarize() so summarize stays a pure classifier, and built from the engine's own predicate (resolveCadence is already imported for cadenceTenderFor) so
+  // the two cannot drift.
   const careRows = rows.filter(p => {
     const c = resolveCadence(p, cadence);
     return !(p.status === 'dormant' || (c && c.dormant_skip));
@@ -896,16 +881,14 @@ function frostForSpace({ rows, weather, hydrology, lowSource, spaceId, today, fr
   const decision = frostEval({
     tonightLow: wx ? wx.tonightLow : null,
     highToday: wx ? wx.highToday : null,
-    forecastLows: hy ? hy.forecast_lows : null,          // G5 — index.js:fetchPrecip temperature_2m_min
+    forecastLows: hy ? hy.forecast_lows : null,          // index.js fetchPrecip temperature_2m_min
     forecastDates: hy ? hy.forecast_dates : null,
-    // BUG-FROSTADVISORYNIGHTWORDING-001 — which night the advisory's civil-day minimum belongs to. null (no
-    // block) names the base-rate night. The threshold trigger never reads it; the radiative one judges that
-    // night's sky, or both candidates' when it is null (BUG-RADIATIVEPAIRINGNIGHT-001).
+    // Which night the advisory's civil-day minimum belongs to. null (no block) names the base-rate night. The threshold trigger never reads it; the radiative one judges
+    // that night's sky, or both candidates' when it is null.
     forecastHourly: hy ? hy.hourly_temp : null,
     lowSource: lowSource || (wx ? 'forecast' : 'forecast_absent'),
-    // V5-RADIATIVEFROST-001 — per-night dewpoint/cloud/wind derived from the hourly block
-    // index.js already carries. [] (not null) when the block is absent, which reads downstream as
-    // "no radiative signal for any night" and leaves every existing trip point untouched.
+    // Per-night dewpoint/cloud/wind derived from the hourly block index.js carries. [] (not null) when the block is absent, which reads downstream as "no radiative
+    // signal for any night" and leaves every existing trip point untouched.
     radiativeNights: nightsFrom(hy ? hy.hourly_frost : null),
     exposure, spaceId, eventDate: today,
   }, { frostSeason });
@@ -913,38 +896,23 @@ function frostForSpace({ rows, weather, hydrology, lowSource, spaceId, today, fr
   return { decision, coverage: frostCoverage(decision, exposure, wx ? wx.tonightLow : null) };
 }
 
-// V4-COVEREDNOTMODELLED-001 phase 2 — COVERAGE INHERITED FROM THE NEAREST STATED ANCESTOR.
+// ── Coverage inherited from the nearest stated ancestor ──
+// `covered` is an editable locations.covered flag, but it is resolved from the planting's OWN location ONLY. locations is a tree (parent_id, level 0-3), the POST defaults
+// `covered` to NULL, and NULL falls through to the type_label heuristic — so a low tunnel created as a `bed` under Stable resolves EXPOSED, takes rain credit for rain the
+// cover sheds, and goes unwatered.
 //
-// Phase 1 (migration v4-loccovered-001 + the `cov` lateral below) made coverage an editable
-// locations.covered flag instead of a name match. It left one hole, and it is the hole the row was
-// opened about: `covered` is resolved from the planting's OWN location ONLY. locations is a tree
-// (parent_id, level 0-3), the POST defaults `covered` to NULL, and NULL falls through to the
-// type_label heuristic — so a low tunnel created as a `bed` under Stable resolves EXPOSED, takes
-// rain credit for rain the cover sheds, and goes unwatered. All 21 live prod locations were
-// backfilled with a stated flag, so nothing in the garden is in that state TODAY; every location
-// Dave creates from now on is born into it.
+// No existing nearest-ancestor scheme exists to honour: the only recursive walks over locations.parent_id (events/index.js By-Space scope, photos/index.js location
+// gallery) go DOWN as `loc_subtree`, and container_closure is a closure table over a different entity. So this mirrors the `loc_subtree` idiom inverted (same recursive-CTE
+// shape, same `deleted_at IS NULL` filter) rather than introducing a second mechanism for one column.
 //
-// THE REPO HAS NO EXISTING NEAREST-ANCESTOR SCHEME TO HONOUR, and that was checked rather than
-// assumed: the only recursive walks over locations.parent_id (events/index.js By-Space scope,
-// photos/index.js location gallery) go DOWN as `loc_subtree`, and container_closure is a closure
-// table over `container`, a different entity. So this mirrors the established `loc_subtree` idiom
-// inverted — same recursive-CTE shape, same `deleted_at IS NULL` filter — rather than introducing
-// a second mechanism (a closure table, a materialised path) for one column.
+// DEPTH BOUND IS LOAD-BEARING. `level` is capped at 3 by the locations POST, but nothing in the schema forbids a parent_id CYCLE, and an unbounded recursive CTE over a
+// cycle does not error — it hangs, which on this Lambda means the nightly plan never generates. `depth < 4` terminates regardless of the data.
 //
-// DEPTH BOUND IS LOAD-BEARING, NOT DECORATION. `level` is capped at 3 by the locations POST so a
-// real chain is at most 4 rows, but nothing in the schema forbids a parent_id CYCLE, and an
-// unbounded recursive CTE over a cycle does not error — it hangs, which on this Lambda means the
-// nightly plan never generates. `depth < 4` terminates regardless of the data.
+// `c.covered is null` in the recursive term stops the walk at the FIRST stated ancestor, which is what makes `distinct on (loc_id) ... order by loc_id, depth` the NEAREST
+// one. A location that states its own flag never recurses, so it contributes no row here and arm 2 of the `cov` lateral continues to answer for it.
 //
-// `c.covered is null` in the recursive term stops the walk at the FIRST stated ancestor, which is
-// what makes `distinct on (loc_id) ... order by loc_id, depth` the NEAREST one rather than an
-// arbitrary one. A location that states its own flag never recurses at all, so it contributes no
-// row here and arm 2 of the `cov` lateral continues to answer for it.
-//
-// STRICTLY BEHIND CARE_COVER_INHERIT_ENABLED, default OFF. Flag off emits the empty string for all
-// three fragments, so the plantings SQL is byte-identical to the pre-change text — pinned by
-// sha256 in cover-inherit.test.js against a hash captured from the pre-change handler, so the
-// no-op claim is executable rather than asserted.
+// STRICTLY BEHIND CARE_COVER_INHERIT_ENABLED, default OFF. Flag off emits the empty string for all three fragments, so the plantings SQL is byte-identical to the
+// pre-change text — pinned by sha256 in cover-inherit.test.js, so the no-op claim is executable rather than asserted.
 const COVER_INHERIT_CTE = `
     with recursive loc_cover_chain as (
       select l0.id as loc_id, l0.parent_id, l0.covered, 0 as depth
@@ -960,38 +928,26 @@ const COVER_INHERIT_CTE = `
     )`;
 const COVER_INHERIT_JOIN = `
     left join loc_cover_inherit cinh on cinh.loc_id = l.id`;
-// Sits BELOW the location's own flag and ABOVE the type_label heuristic in the `cov` lateral: an
-// explicit answer on the row always beats an inherited one, and an inherited one always beats a
-// guess from the label. Documented here and NOT as a `--` comment beside the lateral, deliberately:
-// a SQL comment is part of the emitted statement, so it would break the byte-identity the flag-off
-// no-op proof rests on (cover-inherit.test.js pins a sha256 of the whole statement).
+// Sits BELOW the location's own flag and ABOVE the type_label heuristic in the `cov` lateral: an explicit answer on the row beats an inherited one, and an inherited one
+// beats a guess from the label. Documented here and NOT as a `--` comment beside the lateral, deliberately: a SQL comment is part of the emitted statement, so it would
+// break the byte-identity the flag-off no-op proof rests on (cover-inherit.test.js pins a sha256 of the whole statement).
 const COVER_INHERIT_ARM = `
              when cinh.covered is not null                then cinh.covered`;
 
-// V4-WATERMATH-001 F2: `flagOverrides` is the SHADOW/PARITY seam (canon Part 5 "shadow-soak that can
-// actually run"). Honored ONLY when this run is DRY — resolveInvokeOptions already refuses to emit
-// it otherwise, and the guard below re-checks so no future caller can arm a live A/B through it.
-// An env flip arms the LIVE 02:00/12:00/15:30 runs; this is the only safe replay path.
-// ── V4-RAINAUTOLOG-001 part 2 — turn yesterday's gauge reading into rain EVENTS ──────────────────
-// Every DECISION lives in rainLog.js and is unit-tested without a database; this function is only
-// the SQL. Read that file's header before changing anything here — in particular the gauge-only rule
-// and the binding prohibition on reward side effects.
+// ── Turn yesterday's gauge reading into rain EVENTS ──
+// Every DECISION lives in rainLog.js and is unit-tested without a database; this function is only the SQL. Read that file's header before changing anything here — in
+// particular the gauge-only rule and the binding prohibition on reward side effects.
 //
-// FAIL-OPEN, by construction. The daily plan is already durable when this runs, and rain logging is
-// a convenience on top of it: a station outage, a schema surprise or a lock must never cost Dave his
-// plan. Every exit path logs a structured line with a REASON, because "no rain logged last night"
-// and "the rain logger crashed last night" look identical from the outside.
+// FAIL-OPEN, by construction. The daily plan is already durable when this runs, and rain logging is a convenience on top of it: a station outage, a schema surprise or a
+// lock must never cost Dave his plan. Every exit path logs a structured line with a REASON, because "no rain logged last night" and "the rain logger crashed last night"
+// look identical from the outside.
 //
-// NOT a call to POST /api/events/batch, deliberately — see rainLog.js. The care cache is maintained
-// here exactly as the batch path maintains it; XP, streaks, achievements, critters and app_events
-// telemetry are NOT fired, because auto-logged rain is not a logging action Dave performed.
+// NOT a call to POST /api/events/batch, deliberately — see rainLog.js. The care cache is maintained here exactly as the batch path maintains it; XP, streaks, achievements,
+// critters and app_events telemetry are NOT fired, because auto-logged rain is not a logging action Dave performed.
 async function logRainEvents(pg, { today, dryRun, event, etHour, spaces = [] }) {
   const t0 = Date.now();
-  // BUG-RAINAUTOLOGCLIFF-001: `flag` names WHERE the arming decision came from, and it rides EVERY
-  // exit path including the catch — so "the rain logger is on" and "the rain logger is on because
-  // nobody ever set the key" are separable from outside. Absence-arming was invisible for months
-  // precisely because no line anywhere said which of the two was true. Declared before the try so a
-  // throw before resolveRainRun still reports honestly rather than claiming a state it never read.
+  // `flag` names WHERE the arming decision came from, and it rides EVERY exit path including the catch, so "the rain logger is on" and "on because nobody ever set the key"
+  // are separable from outside. Declared before the try so a throw before resolveRainRun still reports honestly rather than claiming a state it never read.
   let flag = 'unresolved';
   const say = (o) => console.log(JSON.stringify({ msg: 'rain-log', today, flag, ...o, ms: Date.now() - t0 }));
   try {
@@ -1002,11 +958,9 @@ async function logRainEvents(pg, { today, dryRun, event, etHour, spaces = [] }) 
     const day = previousDay(today);
     if (!day) return say({ logged: 0, skipped: 'bad_plan_date' });
 
-    // BUG-AUTHZLAMBDA-001 — PER SPACE, over the Spaces run() already read (no re-query, no "one Space"
-    // assumption). Each Space reads its OWN weather_daily row, decides on it, and writes only its own
-    // household's plantings. This used to take the wettest row of any Space and write every planting in
-    // the database. A Space with no row for the day (no coordinates, so nothing was ever written for it)
-    // is skipped as no_weather_row. An unowned Space owns nothing, so it is skipped before any read.
+    // PER SPACE, over the Spaces run() already read (no re-query, no "one Space" assumption). Each Space reads its OWN weather_daily row, decides on it, and writes only its own
+    // household's plantings (a database-wide wettest-row rule would write every planting in the database). A Space with no row for the day (no coordinates, so nothing was ever
+    // written for it) is skipped as no_weather_row. An unowned Space owns nothing, so it is skipped before any read.
     const perSpace = [];
     let logged = 0;
     for (const s of spaces) {
@@ -1019,18 +973,13 @@ async function logRainEvents(pg, { today, dryRun, event, etHour, spaces = [] }) 
       const d = rainDecision(wrows[0]);
       if (!d.log) { one({ skipped: d.reason, amount_in: d.amountIn }); continue; }
 
-      // ── the once-a-day cap. LOAD-BEARING, not belt-and-braces ────────────────────────────────
-      // resolveRainRun's window is 00:00–05:59 ET and BOTH the nightly (02:00) and intraday-am (05:30)
-      // runs fall inside it — rainLog.test.js pins that overlap on purpose. It also makes a manual
-      // re-run via scripts/rerun-daily-plan.sh safe.
-      // TWO HALVES since BUG-AUTHZLAMBDA-001, because one database-wide "any rain row that day" let one
-      // Space (or one household) suppress every other, and let a run that wrote only some plantings
-      // (GARDEN_HOUSEHOLD_IDS missing) block the run that would have written the rest:
-      //   * here, the day: rain the household HAND-LOGGED in this Space — on a planting, or on a
-      //     container (plant_id NULL) — means the day is already recorded, so the gauge adds nothing.
-      //     A row this writer made carries metadata.precip_source (rainMetadata); a hand-logged one
-      //     does not, the same test readLedgerEvents uses. The owner is the subject's, by the two-arm
-      //     rule, exactly as in the INSERT.
+      // ── the once-a-day cap. LOAD-BEARING, not belt-and-braces ──
+      // resolveRainRun's window is 00:00–05:59 ET and BOTH the nightly (02:00) and intraday-am (05:30) runs fall inside it — rainLog.test.js pins that overlap on purpose. It also
+      // makes a manual re-run via scripts/rerun-daily-plan.sh safe. TWO HALVES, because one database-wide "any rain row that day" would let one Space (or one household) suppress
+      // every other, and let a run that wrote only some plantings (GARDEN_HOUSEHOLD_IDS missing) block the run that would have written the rest:
+      //   * here, the day: rain the household HAND-LOGGED in this Space — on a planting, or on a container (plant_id NULL) — means the day is already recorded, so the gauge adds
+      //     nothing. A row this writer made carries metadata.precip_source (rainMetadata); a hand-logged one does not, the same test readLedgerEvents uses. The owner is the
+      //     subject's, by the two-arm rule, exactly as in the INSERT.
       //   * in the INSERT, the planting: no planting gets a second rain row for the day.
       const { rows: already } = await pg.query(
         `select 1 from event_log e
@@ -1048,27 +997,18 @@ async function logRainEvents(pg, { today, dryRun, event, etHour, spaces = [] }) 
       // Ownership context for the transfer trigger, same as every other writer.
       await pg.query(`select set_config('app.actor_clerk_sub', $1, true)`, [SYSTEM_ACTOR_FALLBACK]);
 
-      // Column list, join shape and NULL semantics mirror lambda/events/index.js's batch INSERT, and
-      // the roof rule mirrors migrations/v4-rainbackfill-001. LEFT JOIN container, never INNER
-      // (BUG-LOGMANYPROJECTLESS-001): a project-less planting must still get its row.
+      // Column list, join shape and NULL semantics mirror lambda/events/index.js's batch INSERT, and the roof rule mirrors migrations/v4-rainbackfill-001. LEFT JOIN container,
+      // never INNER: a project-less planting must still get its row.
       //
-      // OPS-RAININSERTCONTAINERFILTER-001: a planting whose CONTAINER is soft-deleted or archived gets
-      // none. Neither state cascades to the plantings (lambda/projects/index.js sets the container's own
-      // column and nothing else), so gn's filter cannot see it. A row written there is hidden on arrival
-      // (the events feed drops a deleted or archived container's events; the plants API 404s a planting
-      // whose container is deleted) and resurfaces, one per rain day, on restore or unarchive. The
-      // predicate is the anchor re-derivation target's (REDERIVE_CTE, pj there); `ct.id is null` is the
-      // project-less arm. Guarded at write time by rain-live-filter.test.js, which parses it out of this
-      // statement. The v4-rainbackfill-001 backfill predates this and has no container filter.
+      // A planting whose CONTAINER is soft-deleted or archived gets none. Neither state cascades to the plantings (lambda/projects/index.js sets the container's own column and
+      // nothing else), so gn's filter cannot see it. A row written there is hidden on arrival (the events feed drops a deleted or archived container's events; the plants API 404s
+      // a planting whose container is deleted) and resurfaces, one per rain day, on restore or unarchive. The predicate is the anchor re-derivation target's (REDERIVE_CTE, pj
+      // there); `ct.id is null` is the project-less arm. Guarded at write time by rain-live-filter.test.js, which parses it out of this statement.
       //
-      // BUG-RAINONENDEDPLANTINGS-001 (Dave, 2026-09-19): rain goes where the plan looks. The status test
-      // is the plantings query's own, word for word (the ANCHOR vocabulary in
-      // lambda/live-planting-predicate-sync.test.js), so an ended or failed planting stops collecting rain
-      // rows — they only ever reached display surfaces, where a dug crop showed "Next watering" after each
-      // rain. Dormant and every growing status (Harvesting included) are credited as before: a dormant
-      // perennial is still in the ground, and its rain becomes last_water when it is resumed. Existing
-      // rows are left alone. The backfill has no status filter either. rain-live-filter.test.js pins
-      // the set and compares it, status by status, with the plantings query's.
+      // Rain goes where the plan looks: the status test is the plantings query's own, word for word (the ANCHOR vocabulary in lambda/live-planting-predicate-sync.test.js), so an
+      // ended or failed planting stops collecting rain rows (they only ever reached display surfaces, where a dug crop showed "Next watering"). Dormant and every growing status
+      // (Harvesting included) are credited as before: a dormant perennial is still in the ground, and its rain becomes last_water when it is resumed. rain-live-filter.test.js
+      // pins the set and compares it, status by status, with the plantings query's.
       const { rowCount } = await pg.query(
         `insert into event_log
            (project_id, location_id, plant_id, event_type, event_date, is_public,
