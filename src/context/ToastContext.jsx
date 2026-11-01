@@ -1,19 +1,18 @@
 // src/context/ToastContext.jsx
 // Global OPERATIONAL toast layer. App-root provider so ANY route can surface a
-// confirmation or an undo toast that renders anywhere — not bound to one page
-// (previously the log-event undo only rendered on Dashboard via location.state).
+// confirmation or an undo toast that renders anywhere — not bound to one page.
 //
-// ⚠ REWARD-UX BOUNDARY (gardening.md Reward UX Rule V101): this layer is the
+// ⚠ REWARD-UX BOUNDARY (gardening.md Reward UX Rule): this layer is the
 // carve-out class ONLY — confirmations of a task the user explicitly started
 // (a save) + the operational 5s undo. NEVER dispatch rewards/achievements/
 // streaks/XP/critters/milestones here — those deliver as ambient in-context
-// flourish (V101 lists toasts/snackbars/count-up overlays as prohibited reward
+// flourish (the rule lists toasts/snackbars/count-up overlays as prohibited reward
 // channels). Keep this provider operational-only.
 //
-// ── STACK POLICY (2026-09-10) ────────────────────────────────────────────────
-// Toasts were individually `position: fixed` at `toastStackBottom(i)` — a 56px
-// per-index stride — with nothing bounding the queue. On Today's care list, where
-// ONE TAP PER ROW is the primary interaction, four faults compounded:
+// ── STACK POLICY ─────────────────────────────────────────────────────────────
+// On Today's care list, where ONE TAP PER ROW is the primary interaction, a per-toast
+// `position: fixed` layout with a 56px per-index stride and an unbounded queue has four faults
+// that compound:
 //   1. NOTHING CAPPED THE QUEUE. Each tap pushed a 5s undo toast, so walking down
 //      a 14-row water list inside 5s put 14 toasts on screen at once.
 //   2. THE TIMERS NEVER FIRED. Each toast's dismiss timer listed its `onDone` /
@@ -31,7 +30,7 @@
 // same-group coalescing so repeat taps of ONE action collapse into a single toast
 // whose Undo covers every tap in the group. Coalescing is what actually matches
 // the workflow: "Logged Water for 12 plants · Undo" is the true statement, and it
-// is the same shape the bulk "Log all watering" path has always produced.
+// is the same shape the bulk "Log all watering" path produces.
 import React, { createContext, useContext, useState, useCallback, useMemo, useRef } from 'react'
 import { P } from '../lib/constants.js'
 import { Toast } from '../components/forms'
@@ -68,9 +67,9 @@ let _seq = 0
 //
 // LOW-PRIORITY toasts go first, oldest first; only when none is left does the oldest toast of any
 // priority go — which, with no low-priority toast on screen, is exactly the original front-trim.
-// Why a priority exists at all (BUG-TODAYSKIPNOUNDO-001 review): Today's Skip gained an undo toast,
-// and on the shared 3-slot cap a tap sequence like Water, Skip, Feed, Moist inside one 5s window
-// pushed the WATERING Undo off screen — which may be carrying a whole coalesced run. The caller
+// Why a priority exists at all: on the shared 3-slot cap a tap sequence like Water, Skip, Feed,
+// Moist inside one 5s window would push the WATERING Undo off screen — which may be carrying a
+// whole coalesced run. The caller
 // that knows its undo is the cheaper one to lose says so with `priority: 'low'`; this function
 // never learns which feature is which. The cost is carried by the low toast: arriving on a stack
 // already full of normal toasts, it is the one dropped (so that Skip shows no Undo that time).
@@ -107,18 +106,18 @@ export function ToastProvider({ children }) {
     return id
   }, [])
 
-  // `detail` (V4-WATERMATH-001 F0): optional secondary line under the message — a fact ABOUT the
+  // `detail`: optional secondary line under the message — a fact ABOUT the
   // record just written (e.g. the watering amount class the row now carries), so the user can see
   // what was stored while the undo is still on screen. Still operational: it states what happened,
   // never how well it went. NOT a reward channel (see the boundary note at the top of this file).
   //
-  // `group` + `groupMessage` (2026-09-10): opt-in coalescing. Pass a stable `group` key and a
+  // `group` + `groupMessage`: opt-in coalescing. Pass a stable `group` key and a
   // `groupMessage(count) -> string`, and repeat calls arriving while that group's toast is still on
   // screen MERGE into it instead of stacking: the count rises, the message re-renders from
   // groupMessage, the 5s window restarts, and Undo runs every accumulated handler. Callers that
   // omit `group` behave exactly as before — one call, one toast.
   //
-  // `priority: 'low'` (2026-09-24): this toast is the first evicted when the cap is hit — see
+  // `priority: 'low'`: this toast is the first evicted when the cap is hit — see
   // capped(). Omitted => 'normal', i.e. exactly as before. Like the wording, a group's FIRST call
   // owns it: a later merge cannot promote or demote the toast it merges into.
   const showUndo = useCallback(({ message, detail = null, onUndo, duration = 5000, group = null, groupMessage = null, priority = 'normal' }) => {
@@ -161,8 +160,7 @@ export function ToastProvider({ children }) {
           // ONE fixed element for the whole layer. Children are flow items in a flex column, so
           // each sizes to its own wrapped height and `gap` does the spacing — which is exactly why
           // no per-index offset survives here: there is no stride left to get wrong.
-          // zIndex 1200 was the old UndoToast value (the higher of the two the layer used); both
-          // kinds now share one stacking context instead of competing at 1000 vs 1200.
+          // Both toast kinds share this one stacking context (zIndex 1200).
           style={{
             position: 'fixed', bottom: TOAST_BOTTOM, left: 0, right: 0, zIndex: 1200,
             display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8,
@@ -190,23 +188,22 @@ export function ToastProvider({ children }) {
   )
 }
 
-// ── TAP TARGETS (BUG-UNDOTOASTTAPTARGET-001, 2026-09-24) ─────────────────────────────────────────
-// Undo measured 62x28 at Dave's 426x836 (its border box WAS the pill), under Android's 48dp; × was
-// 23x20. A 48px-tall visible button makes a one-line toast 20px taller and a two-line one 14px; on a
-// Water/Skip/Feed stack with long names that measured +42px, one more whole Today row buried under
-// the layer. So each control's BOX is the target and the
-// pill is drawn inside it: the box is TOAST_TAP_TARGET tall, and a negative vertical margin equal to
-// the toast's vertical padding hands the extra back to the layout — the box reaches into the padding
+// ── TAP TARGETS ──────────────────────────────────────────────────────────────────────────────────
+// A visible 48px-tall button (Android's 48dp minimum) would make a one-line toast 20px taller and a
+// two-line one 14px; on a Water/Skip/Feed stack with long names that is +42px, one more whole Today
+// row buried under the layer. So each control's BOX is the target and the pill is drawn inside it:
+// the box is TOAST_TAP_TARGET tall, and a negative vertical margin equal to the toast's vertical
+// padding hands the extra back to the layout — the box reaches into the padding
 // instead of pushing it out. The toast is exactly as tall as before, and a one-line toast is one 48px
 // row that both controls span top to bottom. × keeps its glyph where it was and also takes the toast's
 // right padding, dead space until now, as width. The gap between the two is deliberately NOT spent:
 // a tap that misses Undo must land on nothing rather than on ×, which throws the undo away.
-// Measured before/after by scripts/layout-gate/undo-toast-target.mjs (tests/harness/undotap.*).
+// Measured by scripts/layout-gate/undo-toast-target.mjs (tests/harness/undotap.*).
 const TOAST_TAP_TARGET = T.buttonMinHeight
 const TOAST_PAD_Y = 10
 const TOAST_PAD_RIGHT = 14
 
-// Operational undo toast (mirrors the retired Dashboard-local UndoToast, now global).
+// Operational undo toast.
 function UndoToast({ toast, onUndo, onDismiss }) {
   // onDismiss lives in a ref so the timer depends only on (duration, nonce). As an effect dep it
   // was a fresh closure every render, so each new toast restarted this one's timer — fault 2 in
@@ -248,7 +245,7 @@ function UndoToast({ toast, onUndo, onDismiss }) {
       </button>
       {/* 6px left/right is the UA button padding the glyph always sat in; the right side adds the
           toast's own padding and the negative margin gives it back, so the glyph does not move.
-          minWidth makes the box a full target (BUG-OTHERUNDOTARGETS-001: it was 35.4px wide); the
+          minWidth makes the box a full target; the
           glyph is held at the box's right end, so the extra width opens on the LEFT and the gap to
           Undo stays the row's own. */}
       <button type="button" onClick={onDismiss} aria-label="Dismiss" style={{

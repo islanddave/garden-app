@@ -18,14 +18,13 @@ const DECAY_LABEL = {
 }
 const MODE_LABEL = { ask: 'Question', assert: 'Heads-up' }
 
-// BUG-SILENTFAILSWEEP-001 — names this card's own verb and the state the finding is left in. The
-// card staying put was the entire failure signal, and a card sitting there is what the card does
-// when nothing has happened at all, so "you can retry" needed saying rather than implying.
+// Names this card's own verb and the state the finding is left in. The card staying put would be
+// the only failure signal, and a card sitting there is what it does when nothing has happened at
+// all, so "you can retry" has to be said rather than implied.
 const RESOLVE_FAILED_COPY = "Couldn't mark this resolved — it's still open."
 
 // The DrG finding's source event id is carried in finding_id as `issue:<event_id>` (assemble.js).
-// Parse it for the manual-resolve action rather than adding a contract field (keeps this change
-// off the shared engine contract that the concurrent materialization seam also touches).
+// Parse it for the manual-resolve action rather than adding a field to the shared engine contract.
 function sourceEventId(findingId) {
   return typeof findingId === 'string' && findingId.startsWith('issue:')
     ? findingId.slice('issue:'.length)
@@ -43,7 +42,7 @@ export default function FindingCard({ finding, onResolve, caretaker = null }) {
   // timeline. Reuses PATCH /api/events/:id {resolved:true}. Hidden once resolved and when no handler.
   const eventId = sourceEventId(f.finding_id)
   const canResolve = typeof onResolve === 'function' && !!eventId && f.decay_state !== 'resolved'
-  // V4-TREATLOG-001: "Treated…" opens the treatment form (event_type=doctored) prefilled to this
+  // "Treated…" opens the treatment form (event_type=doctored) prefilled to this
   // planting/project, and resolves this finding once the treatment logs (EventNew reads ?resolve=).
   const canTreat = !!eventId && f.decay_state !== 'resolved'
   const treatHref = (() => {
@@ -62,9 +61,9 @@ export default function FindingCard({ finding, onResolve, caretaker = null }) {
       await onResolve(eventId)
       // success → parent reloads findings and this card unmounts; no toast (Reward-UX: not a reward).
     } catch {
-      // BUG-SILENTFAILSWEEP-001 — staying put IS the right recovery, but on its own it returned the
-      // card to its resting state and said nothing, so "it didn't work" and "you didn't tap it"
-      // looked identical. The message is the difference; the button is still the retry.
+      // Staying put IS the right recovery, but alone it returns the card to its resting state and
+      // says nothing, so "it didn't work" and "you didn't tap it" look identical. The message is
+      // the difference; the button is still the retry.
       setBusy(false)
       setResolveErr(RESOLVE_FAILED_COPY)
     }
@@ -86,7 +85,7 @@ export default function FindingCard({ finding, onResolve, caretaker = null }) {
           {MODE_LABEL[f.assertion_mode] ?? 'Note'}
         </span>
         <span style={{ flex: 1 }} />
-        {/* V4-ASSIGNLENS-002 — per-card caretaker badge, mirroring the Garden tiles. Only present
+        {/* Per-card caretaker badge, mirroring the Garden tiles. Only present
             when the parent surface resolves a caretaker (multi-caretaker household + mixed set);
             null otherwise, so single-caretaker/unassigned/badges-off cards draw nothing. */}
         {caretaker && <CaretakerBadge caretaker={caretaker} size={16} />}

@@ -3,7 +3,7 @@ import { useDailyPlan } from '../../hooks/useDailyPlan.js'
 import { P } from '../../lib/constants.js'
 import { buildReasoningLines } from '../../lib/drgReasoning.js'
 
-// Today's reasoning — Slice 8 DrG read-only rationale ("Why today looks like this"). Assembled
+// Today's reasoning — DrG read-only rationale ("Why today looks like this"). Assembled
 // purely from the daily-plan data via buildReasoningLines (anti-fabrication). No tappable tasks
 // (Today owns actions). Ambient: no reward/celebration. Quiet card; honest no-plan/steady states.
 export default function TodayReasoning() {

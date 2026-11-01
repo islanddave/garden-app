@@ -2,12 +2,10 @@ import { createContext, useContext, useState, useEffect, useCallback } from 'rea
 import { useAuth } from './AuthContext.jsx'
 import { useApiFetch } from '../lib/api.js'
 
-// V3-PERF-FAV-001 — single source of favorite state for the whole app.
-// Replaces the per-FavoriteToggle GET /api/favorites?entity (an N+1 fan-out:
-// one request per card -> 150+ requests on /garden, ~3s tail + connection-pool
-// starvation). The provider fetches the user's full favorites list ONCE (the
-// bulk GET /api/favorites the Favorites page already uses) and serves every
-// toggle from an in-memory Set. Toggles mutate the Set optimistically.
+// Single source of favorite state for the whole app. A per-FavoriteToggle GET would be an N+1
+// fan-out (one request per card on /garden), so the provider fetches the user's full favorites
+// list ONCE (the bulk GET /api/favorites the Favorites page already uses) and serves every toggle
+// from an in-memory Set. Toggles mutate the Set optimistically.
 const DEFAULT = { isFavorite: () => false, setFavorite: () => {}, favoritesLoaded: false }
 const FavoritesContext = createContext(DEFAULT)
 
