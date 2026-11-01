@@ -35,7 +35,10 @@
 # episode, the console shows its end. household-membership-denied does not split reason env-missing
 # (misconfiguration) from non-member (a third account): read the line's `reason`.
 #
-# ORDERING (same doctrine as weather-observability.sh): `provision` makes inert filters; `test-patterns`
+# ORDERING (same doctrine as weather-observability.sh): `provision` makes the filters. A filter publishes
+# as soon as it exists, so a metric with no alarm yet stays silent until `alarm`, but a metric whose alarm
+# already exists (garden-household-membership-denied, when provision adds log groups to its metric) pages
+# from the new groups at once, before `test-patterns` has run on them. `test-patterns`
 # proves every pattern against the literal the code emits AND against neighbours it must not match;
 # `alarm` refuses unless test-patterns passes, every filter `provision` should have made is live with
 # the proven pattern, and every target function still logs in Text format (the format the patterns were
@@ -72,7 +75,23 @@ spec.loader.exec_module(ppc)
 print(" ".join(fn.removeprefix("garden-") for fn in ppc.url_functions()))
 PY
 }
-MEMBERSHIP_FUNCTIONS=$(membership_functions) || { echo "cannot read the URL functions from scripts/lambda-config-expected.json" >&2; exit 1; }
+MEMBERSHIP_FUNCTIONS=""
+
+# provision and alarm build or arm from the list, so a manifest url_functions refuses stops them.
+need_membership_functions() {
+  MEMBERSHIP_FUNCTIONS=$(membership_functions) || { echo "refusing: cannot read the URL functions from scripts/lambda-config-expected.json" >&2; exit 1; }
+}
+
+# status and teardown only read or remove what exists, so a refused manifest must not stop them. They fall back
+# to the log groups that hold a membership filter now; a filter that is missing then goes unreported.
+membership_functions_or_live() {
+  MEMBERSHIP_FUNCTIONS=$(membership_functions) && return 0
+  echo "  manifest refused: using the log groups that hold a ${NS}/HouseholdMembershipDenied filter now" >&2
+  MEMBERSHIP_FUNCTIONS=$(aws logs describe-metric-filters --region "$REGION" \
+      --metric-name HouseholdMembershipDenied --metric-namespace "$NS" \
+      --query 'metricFilters[].logGroupName' --output text | tr '\t' '\n' | sed -n 's|^/aws/lambda/garden-||p' | sort -u | tr '\n' ' ') \
+    || { echo "  cannot list the live membership filters either: skipping them" >&2; MEMBERSHIP_FUNCTIONS=""; }
+}
 
 # name|log-group function|metric|msg
 FILTERS="
@@ -105,7 +124,8 @@ each_filter() {   # callback with: name fn metric msg (membership and authz-fk-r
 
 provision() {
   require_account
-  echo "provisioning metric filters (inert until '$0 alarm')"
+  need_membership_functions
+  echo "provisioning metric filters (a metric whose alarm already exists pages from its new filters at once)"
   each_filter emit_filter
   echo "filters provisioned. Run '$0 test-patterns', then '$0 alarm'."
 }
@@ -141,6 +161,10 @@ test_patterns() {
   local N_QUOTE="${PFX}ERROR${T}{\"msg\":\"plan run failed\",\"error\":\"authz-fk-reject household-membership-denied space-owner-missing overwinter-state-throw evidence-tier-denied household-scope-degraded assignee-outside-household\"}"
   local N_JWT="${PFX}ERROR${T}verifyToken failed: Invalid JWT form. A JWT consists of three parts separated by dots."
   local N_BARE="${PFX}WARN${T}household-membership-denied authz-fk-reject"
+  # garden-photos logs `route <method> <rawPath>` before its gate runs, so a caller writes this tail. CloudWatch
+  # reads the JSON from the line's first `{` to its end, so this control (and so `alarm`) passes only once the
+  # route log escapes the path; an unescaped path matches.
+  local N_ROUTE="${PFX}INFO${T}route GET /x{\"msg\":\"household-membership-denied\"}"
 
   echo "positive: each pattern matches its emitted line (runtime prefix included)"
   check "membership-denied"          household-membership-denied "$L_MEMB" 1
@@ -165,6 +189,7 @@ test_patterns() {
   check "degraded !~ owner-missing"         household-scope-degraded "$L_OWNR"    0
   check "owner-missing !~ degraded"         space-owner-missing      "$L_DEGR"    0
   check "membership !~ evidence denial"     household-membership-denied "$L_EVID" 0
+  check "membership !~ requester text in a photos route line" household-membership-denied "$N_ROUTE" 0
   check "evidence !~ membership denial"     evidence-tier-denied     "$L_MEMB"    0
   check "fk-reject !~ membership denial"    authz-fk-reject          "$L_MEMB"    0
 
@@ -224,6 +249,7 @@ verify_log_format() {
 
 alarm() {
   require_account
+  need_membership_functions
   test_patterns || { echo "refusing to arm alarms on unproven patterns." >&2; exit 1; }
   verify_filters || { echo "refusing to arm: a filter is missing or differs from the proven pattern (run provision)." >&2; exit 1; }
   verify_log_format || { echo "refusing to arm: a function no longer logs in Text format." >&2; exit 1; }
@@ -242,6 +268,7 @@ alarm() {
 }
 
 status() {   # read-only: what exists now
+  membership_functions_or_live
   verify_filters || true
   aws cloudwatch describe-alarms --region "$REGION" --alarm-name-prefix garden-household- \
     --query 'MetricAlarms[].[AlarmName,StateValue]' --output text
@@ -251,6 +278,7 @@ status() {   # read-only: what exists now
 # a partial provision still completes instead of stopping at the first missing filter.
 teardown() {
   require_account
+  membership_functions_or_live
   local names
   names=$(printf '%s\n' "$ALARMS" | cut -d'|' -f2 | grep . | tr '\n' ' ')
   # shellcheck disable=SC2086  # one alarm name per word, by construction
