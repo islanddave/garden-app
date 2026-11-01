@@ -1,4 +1,4 @@
-// Where plants came from (round-1 design): plantings as one stacked bar, plants as a second, joined
+// Where plants came from: plantings as one stacked bar, plants as a second, joined
 // by a ribbon per kind of start, with a key listing both counts.
 import React from 'react'
 import { ChartFrame, Txt } from './ChartFrame.jsx'

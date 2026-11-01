@@ -1,15 +1,10 @@
-// src/lib/imagePipeline.js
-// V4-PHOTOBULK-001 Phase 1 — client-side capture-metadata + resize pipeline.
-//
-// Feeds the columns added by migrations/v4-photobulk-p1/0a-additive-ddl.sql
-// (taken_at, gps_lat, gps_lon, content_hash, file_size_bytes, mime_type, original_filename).
+// Client-side capture-metadata + resize pipeline. Feeds the photo columns taken_at, gps_lat, gps_lon,
+// content_hash, file_size_bytes, mime_type and original_filename.
 //
 // ORDER IS LOAD-BEARING. Three rules, each of which silently destroys data if broken:
 //
 //   1. READ EXIF BEFORE RESIZE. canvas.toBlob() emits a bare JPEG with NO EXIF, so a
-//      resize-then-read pipeline writes taken_at/gps NULL on every row — re-shipping the exact
-//      hole the V4-PHOTOEXIF-001 backfill exists to fill. 698 existing rows have taken_at NULL
-//      for want of this step; do not make it 1400.
+//      resize-then-read pipeline writes taken_at/gps NULL on every row.
 //   2. HASH THE ORIGINAL BYTES, never the resized blob. Canvas JPEG encoding is not bit-identical
 //      across Chrome versions/hardware, so hashing post-resize makes the same photo hash
 //      differently after a browser update -> the (created_by, content_hash) UNIQUE index never
@@ -24,29 +19,25 @@
 //                            already decodes on Chrome's worker pool.
 //   upload             = 3 (see UploadQueueProvider). Blobs are ~900KB by then.
 //
-// Resize bound: 2560px longest edge @ 0.85 (Dave 2026-07-16, overriding spec V100's 1600).
-// S3 holds the ONLY copy — the uploaded file is the permanent ceiling on every future
-// derivative, re-crop and 2x zoom. 1600 bought ~5 extra points of bandwidth reduction (96% vs
-// 91%) for 60% of the pixels, irreversibly. 2560 still meets the spec's own 90-95% headline.
+// Resize bound: 2560px longest edge @ 0.85. S3 holds the ONLY copy, so the uploaded file is the
+// permanent ceiling on every future derivative, re-crop and 2x zoom; a lower bound would discard
+// pixels irreversibly.
 //
-// Non-JPEG passes through untouched: canvas->JPEG turns PNG alpha black, and the corpus is
-// 702 jpg / 2 png. Nothing here ever throws — every failure degrades to "upload the original".
+// Non-JPEG passes through untouched: canvas->JPEG turns PNG alpha black. Nothing here ever throws —
+// every failure degrades to "upload the original".
 
 // The `lite` build, NOT the default full one and NOT `mini`. Verified empirically against the real
 // fixtures rather than taken from the docs:
-//   mini — parses GPS but returns DateTimeOriginal UNDEFINED. It would have silently left taken_at
-//          NULL forever, re-shipping the exact hole V4-PHOTOEXIF-001 exists to fill. Do not use.
+//   mini — parses GPS but returns DateTimeOriginal UNDEFINED. It would silently leave taken_at NULL
+//          forever. Do not use.
 //   lite — DateTimeOriginal + Orientation + GPS + OffsetTimeOriginal all parse, incl. from a
 //          128KB slice. 48K vs full's 76K.
 //
-// LOADED LAZILY (BUG-PHOTOTAKENATNULL-001). It was a static import while this module had no
-// non-test caller, so it cost nothing. Wiring readCaptureMeta into useUploadPhoto put all 45,894
-// bytes of it in the entry chunk (measured on a before/after `vite build`) — the same chunk
-// V4-COLLECTIONSPLIT-001 had just finished shrinking, for a dependency needed only when a photo is
-// actually uploaded. Same shape as critterFactsLoader.js and for the same reason its header gives:
-// a plain import() whose failure branch is a VALUE, never a throw. A cold offline miss resolves
-// null and lands in readCaptureMeta's existing catch, which already yields all-null metadata — so
-// a missing chunk costs the capture time, never the photo.
+// LOADED LAZILY: a static import would put all ~46KB of it in the entry chunk, for a dependency needed
+// only when a photo is actually uploaded. Same shape as critterFactsLoader.js: a plain import() whose
+// failure branch is a VALUE, never a throw. A cold offline miss resolves null and lands in
+// readCaptureMeta's existing catch, which already yields all-null metadata, so a missing chunk costs the
+// capture time, never the photo.
 // Idempotent and concurrency-safe: N simultaneous callers share one import() and one chunk fetch.
 // A FAILED load clears the cache so a later upload (back on signal) can retry.
 let exifrModule = null;
@@ -70,7 +61,6 @@ export const QUALITY = 0.85;
 export const HEADER_BYTES = 131072;
 
 // Seams for jsdom, which has neither createImageBitmap nor canvas encoding.
-// Mirrors the existing __testing__ convention in useUploadPhoto.js.
 const impl = {
   createImageBitmap: (...a) => globalThis.createImageBitmap(...a),
   canvasFactory: (w, h) => {
@@ -83,10 +73,9 @@ const impl = {
 
 const isJpeg = (file) => /^image\/jpe?g$/i.test(file?.type || '');
 
-// A GPS *block* present is meaningless — 63/64 of Dave's photos have one, but only 9/64 carry a
-// real fix; the camera writes the container with location off, leaving null refs and NaN
-// rationals. Validate the VALUES, never the block. (This exact distinction produced a wrong "98%
-// GPS" reading during the V4-PHOTOEXIF-001 probe.)
+// A GPS *block* present is meaningless: the camera writes the container with location off, leaving
+// null refs and NaN rationals, so most photos have a block but no real fix. Validate the VALUES, never
+// the block.
 function cleanCoord(v) {
   if (typeof v !== 'number' || !Number.isFinite(v)) return null;
   if (v === 0) return null;                        // 0/0/0 is "no fix", not the Gulf of Guinea
@@ -109,16 +98,15 @@ export async function readCaptureMeta(file, { headerBytes = HEADER_BYTES } = {})
     // No `pick`: it silently returns nothing on the lite build (verified). It is only an
     // optimization and we already read a bounded slice.
     // translateValues:false: with translation ON, Orientation comes back as the STRING
-    // "Horizontal (normal)" rather than 1 — which silently defeated the numeric check below.
+    // "Horizontal (normal)" rather than 1, which silently defeats the numeric check below.
     const x = await exifr.parse(head, {
       tiff: true, exif: true, gps: true, ifd0: true, translateValues: false,
     });
     if (!x) return empty;   // no EXIF at all -> exifr returns undefined
     return {
       // DateTimeOriginal is zone-less ("2026:06:16 08:56:00"); exifr yields a browser-local Date.
-      // That is right for Dave (one garden, one zone) but IS an assumption. Happily the OnePlus DOES
-      // write OffsetTimeOriginal (EXIF 2.31) — verified "-04:00" on a real file — so it is carried
-      // through here and a consumer can correct the zone rather than trust the browser's.
+      // That is right for one garden in one zone but IS an assumption. OffsetTimeOriginal (EXIF 2.31)
+      // is carried through so a consumer can correct the zone rather than trust the browser's.
       takenAt: x.DateTimeOriginal instanceof Date && !isNaN(x.DateTimeOriginal) ? x.DateTimeOriginal : null,
       tzOffset: x.OffsetTimeOriginal ?? null,
       gpsLat: cleanCoord(x.latitude),
@@ -173,8 +161,8 @@ export async function resizeImage(file, { maxEdge = MAX_EDGE, quality = QUALITY 
   let bitmap = null;
   try {
     // Pass imageOrientation explicitly: the spec default flipped from 'none' to 'from-image' and
-    // we don't guess which a given Chrome build does. Dave's corpus is Orientation=1 across the
-    // board (the OnePlus rotates pixels physically), so this is defence, not a fix.
+    // we don't guess which a given Chrome build does. The phone rotates pixels physically
+    // (Orientation=1), so this is defence, not a fix.
     bitmap = await impl.createImageBitmap(file, { imageOrientation: 'from-image' });
 
     // Size from the DECODED bitmap, never from EXIF ImageWidth/Length: once orientation is

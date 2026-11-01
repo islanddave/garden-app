@@ -1,22 +1,20 @@
-// src/lib/todayV2/chips.js — the redesigned Today's JUMP-BAR chips, as data (V5-TODAYREDESIGN-001 S3; plan-v2
-// §2.4, §2.7, §4 "Jump bar"; §13 Simplify 5). PURE.
+// The redesigned Today's JUMP-BAR chips, as data. PURE.
 //
-// A chip opens its section (a visit overlay, never remembered) and scrolls to it. Numbers
-// sit on the work chips (Protect, Water, Feed, Check) and on Heads-up, whose band already says its count (Today
-// finish plan D-7 / Dave's D16, 2026-10-14); Harvest and Put-Up carry none (Reward UX: no count badge on a
-// harvest or a jar).
-// There is no in-view highlight (Simplify 5). The one state a chip shows is the task filter's: Water, Feed and Check
-// ARE Needs care's task filter (finish plan §3.5, Dave's D17), selected while their task is the filter.
+// A chip opens its section (a visit overlay, never remembered) and scrolls to it. Numbers sit on the
+// work chips (Protect, Water, Feed, Check) and on Heads-up, whose band already says its count; Harvest
+// and Put-Up carry none (Reward UX: no count badge on a harvest or a jar).
+// There is no in-view highlight. The one state a chip shows is the task filter's: Water, Feed and Check
+// ARE Needs care's task filter, selected while their task is the filter.
 //
 // A chip EXISTS when its section is on the page and, for a counted chip, its count is above zero — at the visit's
 // ready point, where the set is HELD for the visit: a held chip stays when its count falls to 0 and reads
-// "Water · done" (a check in place of its number, D16). A chip that goes live later (a section inserted mid-visit)
+// "Water · done" (a check in place of its number). A chip that goes live later (a section inserted mid-visit)
 // takes its slot in the fixed order. Water, Feed and Check all land on Needs care.
 //
-// Icons: since the bar became count-over-label cells (D16) only the uncounted chips draw theirs, in the count's
-// place — the colour `filled` variant Dave approved on the S3b contact sheet (2026-09-29): nav.harvests, nav.putup.
-// The counted chips keep their icon names here (event.brought_inside, action.flag, care.drop, care.feed,
-// event.observation), unused by the bar since D16: a number sits in that place.
+// Icons: the bar is count-over-label cells, so only the uncounted chips draw theirs, in the count's
+// place — the colour `filled` variant: nav.harvests, nav.putup. The counted chips keep their icon names
+// here (event.brought_inside, action.flag, care.drop, care.feed, event.observation), unused by the bar:
+// a number sits in that place.
 export const CHIP_ORDER = ['protect', 'headsup', 'water', 'feed', 'check', 'harvest', 'putup']
 
 export const CHIPS = {
@@ -29,7 +27,7 @@ export const CHIPS = {
   putup: { section: 'putup', label: 'Put-Up', icon: 'nav.putup', counted: false },
 }
 
-// §2.4 — one predicate per task chip, over the page's ACTIVE care rows (buildCareNeeded minus skipped/logged).
+// One predicate per task chip, over the page's ACTIVE care rows (buildCareNeeded minus skipped/logged).
 const TASK_NEEDS = { water: ['water_due', 'no_history'], feed: ['fertilize'], check: ['pest', 'overwintering'] }
 
 export function taskCounts(rows) {
@@ -41,7 +39,7 @@ export function taskCounts(rows) {
 }
 
 // The chips live NOW: section present, and a counted chip above zero. `counts` carries every counted chip's
-// number (protect comes from its slice, S5; absent reads 0).
+// number (protect comes from its slice; absent reads 0).
 export function liveChips(present, counts) {
   const on = new Set(present || [])
   return CHIP_ORDER.filter((c) => on.has(CHIPS[c].section) && (!CHIPS[c].counted || (counts?.[c] || 0) > 0))

@@ -1,8 +1,7 @@
-// Source report card (round-2 design): one row per named source — name and kind, pounds with a bar,
+// Source report card: one row per named source — name and kind, pounds with a bar,
 // then "N plantings · N picked · N lost · seed saved from N" — sources under 2 lb folded behind
 // "N more sources", and a "Seller not recorded" row last. A named source's row carries "Edit", the way
-// in to /sources/:id for any source (before it, only a saved-seed card could reach the edit screen, so a
-// source with no saved lot could never gain its links).
+// in to /sources/:id for any source, so a source with no saved lot can still gain its links.
 import React, { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { v } from '../palette.js'

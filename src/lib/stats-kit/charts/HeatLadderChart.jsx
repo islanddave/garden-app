@@ -1,4 +1,4 @@
-// Heat ladder (round-1 design): the heat tube — one dot per single-plant pepper variety on a log
+// Heat ladder: the heat tube — one dot per single-plant pepper variety on a log
 // Scoville axis, a thermometer whose bulb holds the sweet (0 heat) ones and the hottest named — above
 // the pods picked in each pepper heat band, hottest at the top, with pounds.
 import React from 'react'
@@ -13,7 +13,7 @@ const BAR_X = 118
 const BAR_MAX = 120
 const PITCH = 26
 
-// Tube geometry. The axis always reaches 1.3M SHU (the round-1 axis) and grows if a variety is hotter.
+// Tube geometry. The axis always reaches 1.3M SHU and grows if a variety is hotter.
 const TUBE_X0 = 26
 const TUBE_X1 = 384
 const SHU_AXIS_MAX = 1300000

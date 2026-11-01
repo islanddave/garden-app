@@ -1,17 +1,15 @@
-// src/lib/weatherCueImpressions.js — OPS-CUEINSTRUMENT-001. The weather cue's impression beacon.
+// The weather cue's impression beacon.
 //
-// WHAT THIS BUYS. V5-WXCALLOUTRENDER-001 puts one weather line on Today to find out whether Dave
-// acts on it. Nothing else records that the line was on screen, so without this a cue that was shown
-// and correctly ignored is indistinguishable from a cue that never fired, and every later claim
-// about the surface is unfalsifiable. This module records the exposure; the label is derived later
-// from what was logged that ET day. It is a PRECONDITION of the render, not a follow-up — the app
-// already ran this experiment once with public.ready_impression, lost the instrument to
-// V4-WEIGHQUEUEKILL-001, and the six surviving days are still the only evidence anyone has.
+// WHAT THIS BUYS. Today shows one weather line to find out whether the user acts on it. Nothing else
+// records that the line was on screen, so without this a cue that was shown and correctly ignored is
+// indistinguishable from a cue that never fired, and every later claim about the surface is
+// unfalsifiable. This module records the exposure; the label is derived later from what was logged that
+// ET day. It is a PRECONDITION of the render, not a follow-up.
 //
-// HARD RULE, inherited verbatim from src/lib/uxEvents.js and src/lib/readyImpressions.js: telemetry
-// must NEVER block, delay, or throw into a user flow. sendCueImpression returns a promise that
-// CANNOT reject and is never awaited by its caller. A failed beacon — offline, 500, the migration
-// not yet applied — is invisible to Today, which is the only property here that actually matters.
+// HARD RULE, shared with src/lib/uxEvents.js and src/lib/readyImpressions.js: telemetry must NEVER
+// block, delay, or throw into a user flow. sendCueImpression returns a promise that CANNOT reject and is
+// never awaited by its caller. A failed beacon — offline, 500, the migration not yet applied — is
+// invisible to Today, which is the only property here that actually matters.
 //
 // WHY IT RIDES apiFetch. /api/daily-plan is already in FUNCTION_URLS and resolution is first-match
 // on prefix, so '/api/daily-plan/cue-impressions' lands on lambda/daily-plan-read with no new repo
@@ -50,7 +48,7 @@ export async function sendCueImpression(apiFetch, line, planGeneratedAt = null) 
       body: JSON.stringify({
         cue: line.cue,
         form: line.form,
-        // V5-FROSTTWOMODELS-001 — a cue Today re-worded names its own model (src/lib/tonightLow.js).
+        // A cue Today re-worded names its own model (src/lib/tonightLow.js).
         model_version: line.modelVersion ?? WX_CUE_MODEL_VERSION,
         plan_generated_at: planGeneratedAt ?? null,
       }),

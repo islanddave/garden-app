@@ -1,37 +1,29 @@
-// DRG-WXROLL-001 — intraday weather freshness (client-side). The Today rain figure is otherwise a FROZEN
-// ~2AM snapshot (the nightly daily-plan engine); in showery/convective regimes the amount can move several-
-// fold by midday. This module re-fetches precip LIVE from Open-Meteo with the same field MAPPING as the
-// engine's lambda/daily-plan/index.js fetchPrecip, so the displayed figure can be refreshed to "now" without
-// re-running the engine. DISPLAY ONLY: the watering recommendation stays the server's plan. Open-Meteo is
-// keyless + CORS-enabled.
+// Intraday weather freshness (client-side). The Today rain figure is otherwise a FROZEN snapshot from
+// the nightly daily-plan engine; in showery/convective regimes the amount can move several-fold by
+// midday. This module re-fetches precip LIVE from Open-Meteo with the same field MAPPING as the
+// engine's lambda/daily-plan/index.js fetchPrecip, so the displayed figure can be refreshed to "now"
+// without re-running the engine. DISPLAY ONLY: the watering recommendation stays the server's plan.
+// Open-Meteo is keyless + CORS-enabled.
 //
-// CORRECTED (BUG-RAINFCSTONEMODEL-001, 2026-09-25): this header said "the EXACT same endpoint". It was not —
-// the engine's call asks for ten daily and five hourly fields and four forecast days; this one asks for two
-// and three — and nothing tested the pairing. What IS shared is the model (best_match) and the mapping of
-// the fields below. The day-ahead fields now come from a second, five-model request that the engine makes
-// too (src/lib/rainForecast.js, mirrored and parity-tested against the Lambda copy), so the card and the
+// NOT THE SAME REQUEST AS THE ENGINE'S. The engine asks for more daily and hourly fields and more
+// forecast days than this one. What IS shared is the model (best_match) and the mapping of the fields
+// below. The day-ahead fields come from a second, five-model request that the engine makes too
+// (src/lib/rainForecast.js, mirrored and parity-tested against the Lambda copy), so the card and the
 // callout under it print the same method's figures.
 //
-// CORRECTION (BUG-TODAYWATER-001, 2026-08-03): this comment used to justify display-only by saying a
-// re-run "would clobber per-plant task/done state". That is FALSE and has been since V3-TODAYDONE-001 —
-// `done` is computed at READ time from event_log (lambda/daily-plan-read), not stored on the plan, so
-// regeneration loses no check-offs. The claim was load-bearing: it was the stated reason the engine could
-// not simply be re-run with fresher data, and it blocked the actual fix for a plan that had gone 4x stale
-// by mid-morning. The engine is now regenerated intraday on its own schedule (05:30 / 15:30 ET, see
-// .github/workflows/deploy-lambda.yml). This module stays display-only for a different and still-valid
-// reason: it is a client-side fetch, and the watering DECISION must come from the server so that every
+// Display-only is not because a re-run would clobber task state: `done` is computed at READ time from
+// event_log (lambda/daily-plan-read), not stored on the plan. The engine is regenerated intraday on its
+// own schedule (05:30 / 15:30 ET, .github/workflows/deploy-lambda.yml). This module stays display-only
+// because it is a client-side fetch, and the watering DECISION must come from the server so that every
 // device and every reader agrees on one answer.
 
 import { rainForecastUrl, fromOpenMeteoModels, applyRainForecast } from './rainForecast.js'
 
 const round2 = (n) => (n == null ? null : Math.round((n + Number.EPSILON) * 100) / 100)
 
-// BUG-LIVEWEATHERNUMOR0-001. This was `numOr0`, returning 0 for null, undefined, a string and NaN
-// alike — so a payload with no precipitation in it produced a confident `0.00 in`, and anything
-// keyed on that figure fired HARDEST exactly when the forecast was unavailable. The failure mode was
-// inverted. The asymmetry is what proves it was a defect rather than a choice: precipitation_probability_max
-// two lines below has always been `pop[i] != null ? pop[i] : null`. Absence is not zero; the two
-// fields now say so the same way.
+// Absence is not zero. Coercing a missing value to 0 produces a confident `0.00 in`, and anything keyed
+// on that figure then fires HARDEST exactly when the forecast is unavailable. Matches
+// precipitation_probability_max below, which has always been `pop[i] != null ? pop[i] : null`.
 const numOrNull = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null)
 // A sum is only as known as its least-known term. D-2 + D-1 with one day missing is not "the total
 // so far", it is an understatement that reads like a measurement — the same lie one level up.
@@ -48,11 +40,10 @@ export function OPEN_METEO_PRECIP_URL(lat, lng) {
 // interchangeably). Returns null on a malformed payload (caller falls back to the nightly snapshot).
 //
 // EVERY precipitation field here is NULLABLE, and callers must treat null as "not known" rather than
-// as a number (BUG-LIVEWEATHERNUMOR0-001). A partially-populated `daily` block is a real Open-Meteo
-// response — precipitation_sum can carry nulls at either end of the window — and the old mapping
-// turned each one into 0.00 in. upcoming_precip_in in particular is null whenever D2 is absent,
-// which includes the 4-element payload this function explicitly accepts: D1 + D2 is not knowable
-// from D1 alone.
+// as a number. A partially-populated `daily` block is a real Open-Meteo response — precipitation_sum can
+// carry nulls at either end of the window. upcoming_precip_in in particular is null whenever D2 is
+// absent, which includes the 4-element payload this function explicitly accepts: D1 + D2 is not
+// knowable from D1 alone.
 export function mapOpenMeteoDailyToHydrology(json) {
   const d = json && json.daily
   const ps = d && Array.isArray(d.precipitation_sum) ? d.precipitation_sum : null
@@ -66,8 +57,8 @@ export function mapOpenMeteoDailyToHydrology(json) {
     upcoming_precip_in: round2(sumOrNull(tomorrow, numOrNull(ps[4]))),       // D1 + D2
     tomorrow_precip_in: round2(tomorrow),                                    // D1
     tomorrow_pop: pop[3] != null ? pop[3] : null,
-    // BUG-RAINFCSTONEMODEL-001 (b) — D2 on its own, for the card's following-day line. Same null-not-zero
-    // rule as every field above; the date labels the line ("Sunday") and is Open-Meteo's own ET day.
+    // D2 on its own, for the card's following-day line. Same null-not-zero rule as every field above;
+    // the date labels the line ("Sunday") and is Open-Meteo's own ET day.
     day2_precip_in: round2(numOrNull(ps[4])),                                // D2
     day2_pop: pop[4] != null ? pop[4] : null,
     day2_date: Array.isArray(d.time) && typeof d.time[4] === 'string' ? d.time[4] : null,
@@ -80,9 +71,9 @@ export function mapOpenMeteoDailyToHydrology(json) {
 export async function fetchLiveRain(coords, { fetchImpl, signal } = {}) {
   const f = fetchImpl || (typeof fetch !== 'undefined' ? fetch : null)
   if (!coords || coords.lat == null || coords.lng == null || !f) return null
-  // BUG-RAINFCSTONEMODEL-001 — the five-model day-ahead request runs BESIDE the base one, never instead of it.
-  // It cannot fail the overlay: any failure resolves to null, and the day-ahead fields keep best_match, as
-  // the engine does. It cannot stand in for a failed base either: no base hydrology, no overlay at all.
+  // The five-model day-ahead request runs BESIDE the base one, never instead of it. It cannot fail the
+  // overlay: any failure resolves to null, and the day-ahead fields keep best_match, as the engine does.
+  // It cannot stand in for a failed base either: no base hydrology, no overlay at all.
   const models = fetchModels(f, coords, signal)
   try {
     const res = await f(OPEN_METEO_PRECIP_URL(coords.lat, coords.lng), { signal })

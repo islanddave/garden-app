@@ -1,37 +1,25 @@
-// Daily Plan — watering-can scale (0-3, half steps). Derives the widget-level watering suggestion
+// Watering-can scale (0-3, half steps). Derives the widget-level watering suggestion
 // for Today's two lanes: containers (dry fast; rain under-serves dense/covered bags) and in-ground
 // beds (hold moisture; benefit from rain). 0 = don't water · 1 = light · 2 = normal · 3 = deep soak,
 // rounded to nearest 0.5. Intentionally COARSE: a glanceable widget cue, NOT per-plant cadence (that
-// lives in the per-task rows).
+// lives in the per-task rows). DrG (drgReasoning.js) is the WHY surface, Today the ACTION surface.
 //
-// V4-WATERWHY-002 (2026-07-16) — the wateringReason() explanation generator and its railWords/inHg
-// helpers were REMOVED from this module along with the "Why?" lane expander, by Dave's call. DrG
-// remains the WHY surface (drgReasoning.js), Today the ACTION surface. To restore, see v3.49.0.
-//
-// ── BUG-TODAYWATER-001 (2026-08-12) — THE "LOCKED v1" MARKER IS GONE, DELIBERATELY ──────────────
-// This module was marked "LOCKED v1" and carried its own private thresholds: it zeroed both lanes at
-// `recent + today_precip_in >= 0.8` and zeroed beds on `today_precip_in >= 0.3`, with NO probability
-// gate anywhere. The daily-plan engine, computing the very list rendered two components below this
-// widget, suppressed at 1.0" and only at PoP >= 60. Nobody owned keeping them consistent, so twice
-// they straddled the same number and Today printed "All set — no watering needed today." directly
-// above a full watering list:
-//
-//   2026-08-03 nightly   0.98" @ PoP 84 -> widget 0.98 >= 0.8 zeroed; engine 0.98 < 1.0 listed ~200
-//   2026-08-08 02:01 EDT 0.02 + 0.97 @ PoP 28 -> widget 0.99 >= 0.8 zeroed; engine 0.99 < 1.0, 78 listed
-//
-// "Locked" is what caused this: it froze one of two models that had to move together. The lock is
-// replaced by a stronger constraint — the thresholds are no longer HERE at all. They are imported
-// from lambda/daily-plan/wateringThresholds.json, the same file the engine requires, and
+// ── THE THRESHOLDS ARE NOT HERE ──────────────────────────────────────────────────────────────────
+// This module once carried its own private thresholds, separate from the daily-plan engine's, and
+// the two straddled the same number: Today printed "All set — no watering needed today." directly
+// above a full watering list. Nobody owned keeping two models consistent, and marking one "locked"
+// only froze one of two models that had to move together. So the thresholds are imported from
+// lambda/daily-plan/wateringThresholds.json, the same file the engine requires, and
 // wateringModelParity.test.js fails if either side reintroduces a private copy. A number can still be
 // tuned; it can no longer be tuned in one model only.
 //
-// Two behavioural changes, both Dave's call, both toward the engine and toward watering:
+// Two rules follow, both toward the engine and toward watering:
 //
 //  1. HARMONIZED TO THE ENGINE. The engine is the more conservative model and it wins. Suppression is
-//     now the engine's three branches — soak (measured actuals >= SOAK_CAP_IN), incoming (already wet
+//     the engine's three branches — soak (measured actuals >= SOAK_CAP_IN), incoming (already wet
 //     AND >= SOAK_FCST_QPF_IN more coming at >= SOAK_FCST_POP_PCT), today (that same bar applied to
-//     the still-expected part of today). The probability gate is the substantive addition: a bare
-//     amount with a 28% chance attached is not a reason to tell someone their garden is fine.
+//     the still-expected part of today). The probability gate matters: a bare amount with a 28%
+//     chance attached is not a reason to tell someone their garden is fine.
 //
 //  2. CONTAINERS ARE EXEMPT FROM FORECAST-BASED SUPPRESSION, ENTIRELY. A pot catches rain only over
 //     its own footprint and a mature canopy sheds water away from it, so a forecast inch does not
@@ -41,11 +29,9 @@
 //     draining bag costs nothing, while a false SKIP in August aborts flowers within 24h and locks in
 //     blossom-end rot that shows up two weeks later. Under-watering is the expensive direction.
 //
-// Net effect on the lanes: strictly less suppression than before (1.0" measured vs 0.8" part-
-// forecast; a PoP gate where there was none). Both changes move the widget toward saying "water",
-// which is both the agronomically safe direction and the direction that stops it contradicting the
-// list. The headline's absolute "All set" sentence carries a separate belt-and-braces guard in
-// WeatherWidget.headlineFor — divergence is now hard, and if it ever recurs it cannot be silent.
+// Both rules move the widget toward saying "water", the agronomically safe direction and the one that
+// stops it contradicting the list. The headline's absolute "All set" sentence carries a separate
+// belt-and-braces guard in WeatherWidget.headlineFor, so a divergence cannot be silent.
 
 import THRESHOLDS from '../../lambda/daily-plan/wateringThresholds.json'
 
@@ -64,20 +50,19 @@ export function measuredWater(hydrology = {}) {
 }
 
 // The STILL-EXPECTED part of today. `??` not `||`: a real 0 remaining must not fall back to the day
-// total. Mirrors the engine's todayForecastIn(). Since BUG-RAINACTUAL-001, today_precip_in is
-// measured + still-expected, so the measured share is counted once (above) and never re-gated here.
+// total. Mirrors the engine's todayForecastIn(). today_precip_in is measured + still-expected, so the
+// measured share is counted once (above) and never re-gated here.
 export function todayForecastIn(hydrology = {}) {
   return hydrology.today_remaining_in ?? hydrology.today_precip_in ?? 0;
 }
 
-// BUG-RAINBEDWAITCONFLICT-001 (Dave, 2026-09-28: "let beds wait") — tomorrow's rain defers a DRY bed.
-// Mirrors the engine's 'incoming_dry' branch, which since this change prod runs for every in-ground
-// planting not transplanted in the last three weeks (generatePlan deferDryBedsEnabled; handler.js). Same bars as the wet-media branch, but a null
-// PoP fails CLOSED toward watering: a dry bed is not deferred on an amount with no confidence attached.
-// A missing recent_precip_in bails, as the engine's windowPrecip does. Containers never read this — a
-// bag's top catches too little of a forecast inch (Decision 3 above). The one client-side copy of the
-// rule: the beds lane below, CareNeeded's bulk-water exclusion (careNeeded.bedWaitActive) and the parity
-// sweep all go through it.
+// Tomorrow's rain defers a DRY bed. Mirrors the engine's 'incoming_dry' branch, which runs for every
+// in-ground planting not transplanted in the last three weeks (generatePlan deferDryBedsEnabled;
+// handler.js). Same bars as the wet-media branch, but a null PoP fails CLOSED toward watering: a dry bed
+// is not deferred on an amount with no confidence attached. A missing recent_precip_in bails, as the
+// engine's windowPrecip does. Containers never read this — a bag's top catches too little of a forecast
+// inch (rule 2 above). The one client-side copy of the rule: the beds lane below, CareNeeded's
+// bulk-water exclusion (careNeeded.bedWaitActive) and the parity sweep all go through it.
 export function bedsWaitForRain(hydrology = {}) {
   if (hydrology.recent_precip_in == null) return false;
   const tmrwIn = hydrology.tomorrow_precip_in;
@@ -93,10 +78,10 @@ export function computeWateringScale(hydrology = {}, weather = {}) {
   const measured = measuredWater(hydrology);
   const todayFcst = todayForecastIn(hydrology);
   const todayPop = hydrology.today_pop;
-  // `tomorrow_precip_in` ONLY. The old `?? upcoming_precip_in` fallback was a silent divergence of its
-  // own: the engine's incoming branch reads tomorrow_precip_in and nothing else, so a plan carrying
-  // `upcoming` but not `tomorrow` could hold the beds here while the engine watered them. The plan
-  // payload emits tomorrow_precip_in unconditionally (engine.js generatePlan), so nothing is lost.
+  // `tomorrow_precip_in` ONLY. A `?? upcoming_precip_in` fallback would diverge silently: the engine's
+  // incoming branch reads tomorrow_precip_in and nothing else, so a plan carrying `upcoming` but not
+  // `tomorrow` could hold the beds here while the engine watered them. The plan payload emits
+  // tomorrow_precip_in unconditionally (engine.js generatePlan).
   const tmrwIn = hydrology.tomorrow_precip_in;
   const tmrwPop = hydrology.tomorrow_pop;
   // Missing precip means we know nothing, so we suppress nothing — the engine's windowPrecip returns
@@ -108,11 +93,10 @@ export function computeWateringScale(hydrology = {}, weather = {}) {
   // reads either the measured half or the forecast half, never the sum, so one event can never
   // satisfy both a wet floor and a more-coming bar.
   const soaked = !noData && measured >= SOAK_CAP_IN;
-  // BUG-RAINFORECASTCREDIT-001 residual (mirrors engine.js saturationSuppressed): the "already wet"
-  // prerequisite reads MEASURED water, not `measured + todayFcst`. It was the one bar in this module
-  // still reading the sum, which is what let today's unelapsed hourly forecast pose as wetness and
-  // then skip the beds on a second forecast. Both sides moved in the same commit; the parity sweep
-  // in wateringModelParity.test.js fails on a one-sided edit.
+  // The "already wet" prerequisite reads MEASURED water, not `measured + todayFcst` (mirrors engine.js
+  // saturationSuppressed): summing would let today's unelapsed hourly forecast pose as wetness and then
+  // skip the beds on a second forecast. Both sides move together; the parity sweep in
+  // wateringModelParity.test.js fails on a one-sided edit.
   // A null tomorrow PoP is permissive (matches the engine): tomorrow gets re-evaluated overnight
   // before anyone acts on it.
   const incoming = !noData && measured >= SOAK_WET_FLOOR_IN
@@ -120,7 +104,7 @@ export function computeWateringScale(hydrology = {}, weather = {}) {
     && (tmrwPop == null || tmrwPop >= SOAK_FCST_POP_PCT);
   // A null TODAY PoP fails CLOSED toward watering (also matches the engine): fetchPrecip sets
   // today_pop:null whenever Open-Meteo omits it, and unknown probability is a data problem, not a
-  // certainty. This is the gate whose absence produced 08-08's "All set" at 28%.
+  // certainty.
   const todaySkip = !noData && todayFcst != null && todayFcst >= SOAK_FCST_QPF_IN
     && todayPop != null && todayPop >= SOAK_FCST_POP_PCT;
 

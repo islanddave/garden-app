@@ -1,19 +1,17 @@
-// src/lib/waterDepth.js
-// V4-WATERMATH-001 F0 (capture) — the water-amount CLASS vocabulary, in ONE place.
+// The water-amount CLASS vocabulary, in ONE place.
 //
-// CONTRACT with the events Lambda (W-F0-LAMBDA, sibling lane). The class rides in event
-// metadata, NOT in quantity_numeric: that column is structurally harvest-only (544/544 live
-// rows are harvest) and a dimensionless class code there would collide with future real
-// gallons. Categories also survive a magnitude retune of the ledger math; recorded numerics
+// CONTRACT with the events Lambda. The class rides in event metadata, NOT in quantity_numeric: that
+// column is structurally harvest-only and a dimensionless class code there would collide with future
+// real gallons. Categories also survive a magnitude retune of the ledger math; recorded numerics
 // would not. Canon: watering-cadence-math-design-V100 Part 3.
 //
 //   metadata.water_depth         'light' | 'normal' | 'deep'
 //   metadata.water_depth_source  'user' | 'default'
 //
-// `water_depth_source` is the honesty channel and the whole point of the instrumentation
-// gate (Part 3: "if <5% of waterings carry a user-set depth at 30 days, the deep-bank
-// magnitudes are declared unfeedable"). A row written by the preselected default MUST say
-// so, or the annotation rate reads 100% on day one and the gate can never fire.
+// `water_depth_source` is the honesty channel and the whole point of the instrumentation gate (Part 3:
+// "if <5% of waterings carry a user-set depth at 30 days, the deep-bank magnitudes are declared
+// unfeedable"). A row written by the preselected default MUST say so, or the annotation rate reads
+// 100% on day one and the gate can never fire.
 //
 // Chip copy is deliberately RELATIVE to the planting's own need ("what it needed"), never
 // absolute volume — an honest Light pass on a lettuce flat logs as Normal, so shallow-rooted
@@ -34,12 +32,11 @@ export const WATER_DEPTH_DEFAULT = WATER_DEPTH_NORMAL
 export const WATER_DEPTH_SOURCE_USER = 'user'
 export const WATER_DEPTH_SOURCE_DEFAULT = 'default'
 
-// V4-ICON-001 (done). The amount class was encoded as a REPEATED glyph, so what the user counts is
-// the tier — that is a count channel, not a colour one, and it survives greyscale and forced-colors
-// (SC 1.4.1). It stays a count: the field is now `dropCount` and WaterDepthChips renders that many
-// <Icon name="care.drop">. Kept as a number rather than a pre-built string so this module stays
-// JSX-free and the two render sites (the chip group, and LogMany's compact per-row chip) cannot
-// drift into showing different numbers of drops for one class.
+// The amount class is encoded as a REPEATED glyph, so what the user counts is the tier — a count
+// channel, not a colour one, which survives greyscale and forced-colors (SC 1.4.1). The field is
+// `dropCount` and WaterDepthChips renders that many <Icon name="care.drop">. Kept as a number rather
+// than a pre-built string so this module stays JSX-free and the two render sites (the chip group, and
+// LogMany's compact per-row chip) cannot drift into showing different numbers of drops for one class.
 export const WATER_DEPTH_CHIPS = [
   { value: WATER_DEPTH_LIGHT,  dropCount: 1, label: 'Light',  anchor: 'a quick pass' },
   { value: WATER_DEPTH_NORMAL, dropCount: 2, label: 'Normal', anchor: 'what it needed' },

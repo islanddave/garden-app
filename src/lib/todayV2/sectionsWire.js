@@ -1,5 +1,5 @@
-// src/lib/todayV2/sectionsWire.js — what the redesigned Today SENDS to the server for its remembered
-// open/closed state, and what it does with the answer (V5-TODAYREDESIGN-001 S7; plan-v2 §2.1, §13 MF1). PURE.
+// What the redesigned Today SENDS to the server for its remembered open/closed state, and what it does
+// with the answer. PURE.
 //
 // THE WIRE: PATCH /api/notifications/prefs, body { today_sections: { v:1, <section>: entry, … } }, ALONE. The
 // critter Lambda merges it PER TOP-LEVEL KEY (stored || incoming): a section this body carries replaces that
@@ -29,7 +29,7 @@ const plainObject = (x) => x != null && typeof x === 'object' && !Array.isArray(
 export const wireKeyOk = (k) => SECTION_KEYS.includes(k) || HH_KEY_RE.test(k)
 
 // Exactly {open, at} or {open:false, at, ack:{t?, r?}} — an ack records a close made while a trigger held the
-// section open (MF1); its date is the entry's own `at`.
+// section open; its date is the entry's own `at`.
 export function wireEntryOk(e) {
   if (!plainObject(e)) return false
   if (Object.keys(e).some((k) => k !== 'open' && k !== 'at' && k !== 'ack')) return false

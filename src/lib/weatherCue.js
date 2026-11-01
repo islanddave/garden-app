@@ -1,41 +1,35 @@
-// src/lib/weatherCue.js — V5-WXCALLOUTRENDER-001. The display model for the daily weather cue.
+// The display model for the daily weather cue.
 //
 // THE ENGINE IS NOT REWRITTEN AND ITS THRESHOLDS ARE NOT TOUCHED. lambda/daily-plan/engine.js
 // computeCallout already decides WHICH cue fires: priority-ordered, one cue per day, an explicit
-// silence branch, and it fired on 34 of 77 archived days (44% fire / 56% silent). It has had zero
-// client consumers since it was written. The gap was never the reasoning — it was the render. This
-// module does exactly one thing to the engine's output: it decides how the cue is WORDED.
+// silence branch. The gap was never the reasoning, it was the render. This module does exactly one thing
+// to the engine's output: it decides how the cue is WORDED.
 //
 // ─────────────────────────────────────────────────────────────────────────────────────────────────
-// WHY THREE OF THE FIVE RULES ARE RE-WORDED INTO CHECK-FORM
+// WHY THREE OF THE SIX RULES ARE RE-WORDED INTO CHECK-FORM
 //
-// Three of computeCallout's five rules are imperative ("cover or bring peppers & tomatoes in"). On
-// 4 of 34 archived cue-days the cue FIRST EXISTED at the 15:30 run — i.e. after the action window
-// had closed — on a surface Dave reads at 08:00. Shipping those unchanged ships a line that is
-// sometimes stale and always commanding, which is precisely how a reader learns to discount a
-// surface. Check-form ("did this get done?", "worth checking X") reads correctly whether the window
-// is still open or already past, so it costs nothing on the days the cue is timely and stops
-// lying on the days it is not.
+// Three of computeCallout's rules are imperative ("cover or bring peppers & tomatoes in"), but some cues
+// first exist at the 15:30 run, after the action window has closed, on a surface read at 08:00.
+// Shipping those unchanged ships a line that is sometimes stale and always commanding, which is how a
+// reader learns to discount a surface. Check-form ("did this get done?", "worth checking X") reads
+// correctly whether the window is still open or already past.
 //
-// freeze and cold are EXEMPT and stay imperative. Both key on tonight's low, which is a forward
-// statement about a night that has not happened yet at any hour Dave reads this — so unlike the
-// other three they are not stale at 08:00, and softening "cover the peppers" into a question would
-// weaken the one cue whose cost of inaction is a dead plant.
-// V5-CHILLBAND-001 (2026-10-13) added a sixth rule, `cool` (a 45-50°F low between May 1 and Oct 31). It is
-// exempt for the same reason, and for one more: its action half is the engine's SEASON words, which a
-// fixed check clause would discard.
+// freeze, cold and cool are EXEMPT and stay imperative. They key on tonight's low, a forward statement
+// about a night that has not happened at any hour this is read, so they are not stale at 08:00, and
+// softening "cover the peppers" into a question would weaken the cue whose cost of inaction is a dead
+// plant. For `cool` (a 45-50°F low between May 1 and Oct 31) there is one more reason: its action half
+// is the engine's SEASON words, which a fixed check clause would discard.
 //
 // THE CONDITION HALF IS THE ENGINE'S, VERBATIM. Every cue string is "<condition> — <action>". The
-// condition half carries the engine's numbers (including the probability-weighted rain figure
-// DRG-WXPROB-001 computes) and is passed through untouched; only the action half is replaced. It is
-// NOT re-derived client-side from plan.weather/plan.hydrology: re-deriving would duplicate engine
-// arithmetic in a second place and let the two drift, which is the failure mode BUG-TODAYWATER-001
-// already produced once on this screen.
-// ONE EXCEPTION, OUTSIDE THIS MODULE (V5-FROSTTWOMODELS-001): on a night the frost line names as
-// tonight, Today hands this module a freeze/cold callout re-worded at the one low it prints for the
-// night (src/lib/tonightLow.js agreeCallout — a copy of the engine's two branches, swept against the
-// REAL computeCallout by tonightLow.test.js). Such a callout carries `modelVersion`, and buildCueLine
-// passes it through so the impression is partitioned by the model that produced the words.
+// condition half carries the engine's numbers (including the rain amount and chance) and is passed
+// through untouched; only the action half is replaced. It is NOT re-derived client-side from
+// plan.weather/plan.hydrology: re-deriving would duplicate engine arithmetic in a second place and let
+// the two drift.
+// ONE EXCEPTION, OUTSIDE THIS MODULE: on a night the frost line names as tonight, Today hands this
+// module a freeze/cold callout re-worded at the one low it prints for the night (src/lib/tonightLow.js
+// agreeCallout — a copy of the engine's two branches, swept against the REAL computeCallout by
+// tonightLow.test.js). Such a callout carries `modelVersion`, and buildCueLine passes it through so the
+// impression is partitioned by the model that produced the words.
 //
 // AND IT FAILS CLOSED. If a check-form cue's text does not carry the separator, this module returns
 // null and the line does not render at all, rather than falling back to the imperative string. A
@@ -43,25 +37,24 @@
 // not a quiet reversion. weatherCue.test.js runs the REAL computeCallout output through here so an
 // engine copy change reds a test instead of silently darkening the cue.
 //
-// NO THRESHOLD LIVES HERE, AND NONE MAY. The crucible established that PoP is skilful at this site
-// (POD 0.727, FAR 0.11, BSS +0.589 at the >0.10in event) while forecast AMOUNT is not (FAR 0.61),
-// so any gate must key on probability. This module gates on nothing at all — it takes the cue the
-// engine chose and words it — which is the only way to be certain it introduces no amount-keyed
-// threshold. (The engine's own rain gate is a conjunction of amount and PoP; changing it is
-// engine work, deliberately out of scope here.)
+// NO THRESHOLD LIVES HERE, AND NONE MAY. Forecast PROBABILITY is skilful at this site while forecast
+// AMOUNT is not, so any gate must key on probability. This module gates on nothing at all — it takes
+// the cue the engine chose and words it — which is the only way to be certain it introduces no
+// amount-keyed threshold. (The engine's own rain gate is a conjunction of amount and PoP; changing it
+// is engine work.)
 
 /** Mirrored server-side by lambda/daily-plan-read/cue-impression.js, pinned in lockstep by its test.
  *  Bump when the WORDING changes, not when the engine's gates do — this constant partitions
  *  impressions by the model that produced the line the reader saw. */
-// v2 (BUG-RAINFCSTONEMODEL-001, 2026-09-25): the rain cue's condition half now prints the amount and the
-// chance side by side (`0.58" rain tomorrow (100% chance)`) instead of amount x PoP, from a five-model forecast.
-// v3 (V5-CHILLBAND-001, 2026-10-13): a sixth cue, `cool` (45-50°F, season words), and the cold cue's heading
-// reads "Cold night" with fall words from Aug 15 to Oct 31.
+// v2: the rain cue's condition half prints the amount and the chance side by side
+// (`0.58" rain tomorrow (100% chance)`) instead of amount x PoP.
+// v3: a sixth cue, `cool` (45-50°F, season words), and the cold cue's heading reads "Cold night" with
+// fall words from Aug 15 to Oct 31.
 export const WX_CUE_MODEL_VERSION = 'wxcue-v3'
 
 /** engine.js computeCallout's six icons -> the form each renders in. Closed set: a cue not named
  *  here renders nothing, so a seventh engine rule cannot ship an un-reviewed wording by inheritance.
- *  V5-CHILLBAND-001: `cool` is imperative because its action half is the engine's season words (cover
+ *  `cool` is imperative because its action half is the engine's season words (cover
  *  young plants in spring, pick what is coloring in fall); a check clause is one fixed string and would
  *  throw the season away. Like freeze and cold it keys on tonight's low, so it is not stale at 08:00. */
 export const CUE_FORM = {
@@ -81,7 +74,7 @@ export const CHECK_CLAUSE = {
   wet: 'worth checking the soil before watering anything outdoors.',
 }
 
-/** The engine's own separator between the condition and the action halves (engine.js:970-984). */
+/** The engine's own separator between the condition and the action halves (engine.js computeCallout). */
 export const CUE_SEPARATOR = ' — '
 
 /**
@@ -89,8 +82,8 @@ export const CUE_SEPARATOR = ' — '
  *
  * Returns { cue, form, text }. `cue` is the engine's rule name and is what the impression row
  * records — the icon field is a rule identity here, not a glyph.
- * V5-FROSTTWOMODELS-001: plus `modelVersion`, ONLY when the callout carries one as a non-empty string
- * (a cue Today re-worded, src/lib/tonightLow.js). An engine callout has none, and its line is the
+ * `modelVersion` is added ONLY when the callout carries one as a non-empty string (a cue Today
+ * re-worded, src/lib/tonightLow.js). An engine callout has none, and its line is the
  * same three keys as before.
  */
 export function buildCueLine(callout) {

@@ -1,9 +1,9 @@
-// triggers.js — what may open a section of the redesigned Today by itself (V5-TODAYREDESIGN-001; plan-v2 §3,
-// Dave's D5, §13 MF1). PURE. Evaluated ONCE, at the visit's ready point (openAtStart, called by TodayV2's
-// start()); the result is a visit overlay, never saved to Layer 1 (§2.1). S4 built the Needs care half; S5 adds
-// Protect tonight and Heads-up, the one ack rule all three share, and the one evaluation.
+// What may open a section of the redesigned Today by itself. PURE. Evaluated ONCE, at the visit's ready
+// point (openAtStart, called by TodayV2's start()); the result is a visit overlay, never saved to
+// Layer 1. This file holds the Needs care, Protect tonight and Heads-up triggers, the one ack rule all
+// three share, and the one evaluation.
 //
-// NEEDS CARE (D5 "urgent watering" — routine watering NEVER opens it). Reasons, over the ACTIVE rows:
+// NEEDS CARE ("urgent watering" — routine watering NEVER opens it). Reasons, over the ACTIVE rows:
 //   never  an active never-watered (no_history) row;
 //   hot    the plan's day is hot (plan.weather.hot, the engine's highToday ≥ 88°F) AND an active water row is
 //          a container (in_ground false);
@@ -11,7 +11,7 @@
 //          engine's SMALL_VESSEL_TYPES, by /api/plants container_type; a failed /api/plants means false).
 // A STALE plan (served from the offline cache, or not dated today) opens nothing.
 //
-// MF1 — the ack is DATE-SCOPED. Closing Needs care while a trigger holds it open records
+// THE ACK is DATE-SCOPED. Closing Needs care while a trigger holds it open records
 // {open:false, at:<plan_date>, ack:{r}}: that close holds for the rest of that plan day, and only a NEW
 // reason type re-opens it the same day. An ack dated another day, or a close with no ack, holds nothing.
 // `r` is one reason type ('small') or, when several fired together, a list of them.
@@ -42,14 +42,14 @@ export function careTrigger(reasons, { stale = false } = {}) {
   return { r: types.length === 1 ? types[0] : types }
 }
 
-// ── THE ONE ACK RULE (MF1), shared by every section a trigger can open ─────────────────────────────────────
+// ── THE ONE ACK RULE, shared by every section a trigger can open ───────────────────────────────────────────
 // A trigger descriptor is {t} (a Protect TIER) or {r} (a reason type, or a list of them: Needs care's
 // never / hot / small, Heads-up's window / deadline). A close made while it held the section open stores it as
 // the section's Layer 1 ack: {open:false, at:<plan_date>, ack:{t?, r?}}. The ack holds only while `at` is the
 // plan day; the same day, the trigger re-opens the section only when it ESCALATES — a higher tier than the
 // ack's (chill < frost < hardfreeze), or a reason type the ack does not name. No ack, an ack dated another day,
 // or an open entry: the trigger opens.
-// S7's validator must accept exactly this: `ack` absent or an object; `ack.t` ∈ TIER_RANK's keys; `ack.r` one
+// The Layer 1 validator (lambda/critter/validators.js) must accept exactly this: `ack` absent or an object; `ack.t` ∈ TIER_RANK's keys; `ack.r` one
 // string or an array of strings, each ∈ CARE_REASONS ∪ HEADSUP_REASONS (below).
 export const TIER_RANK = { chill: 1, frost: 2, hardfreeze: 3 }
 const typesOf = (r) => new Set([].concat(r ?? []).filter((x) => typeof x === 'string'))
@@ -67,12 +67,12 @@ export function reopens(trigger, entry, planDate) {
 }
 
 // Does the trigger open Needs care this visit, given its Layer 1 entry ({open, at, ack?}) for plan_date?
-// (S4's name, kept: the one ack rule above.)
+// (The one ack rule above.)
 export function careOpens(trigger, entry, planDate) {
   return reopens(trigger, entry, planDate)
 }
 
-// ── PROTECT TONIGHT (D5 "frost nights") ────────────────────────────────────────────────────────────────────
+// ── PROTECT TONIGHT (frost nights) ─────────────────────────────────────────────────────────────────────────
 // Protect exists when there is ≥ 1 active cold row (the engine's cold cards: level bring_in / optional / protect,
 // engine.js coldFor). Its TIER, from tonight's low — the ONE low Today prints (agreedTonightLow when a frost line
 // names tonight, else the plan low; never the watering scale):
@@ -83,7 +83,7 @@ export function careOpens(trigger, entry, planDate) {
 //               a threshold imminent send and a warmed, retired advisory name nothing), or a `bring_in` card;
 //   chill       a `protect` card (a tender planting at or under its own threshold);
 //   none        `optional` cards only (40–44°F flowering nightshades): never opens.
-// CHILL opens only on a protect planting's FIRST night on this device (today-seen, device-local, §11.1 C3): the
+// CHILL opens only on a protect planting's FIRST night on this device (today-seen, device-local): the
 // tier stands, but the trigger needs one protect planting first seen on the plan day or never seen. A stale plan
 // opens nothing.
 export const HARD_FREEZE_LOW_F = 33
@@ -134,7 +134,7 @@ export function protectThreshold(text) {
   return m ? Number(m[1]) : null
 }
 
-// ── HEADS-UP (D5 "storage deadlines") ────────────────────────────────────────────────────────────────────
+// ── HEADS-UP (storage deadlines) ───────────────────────────────────────────────────────────────────────────
 // Opens on the FIRST day a lifting window opens (`window`) and on the last DEADLINE_DAYS days before its deadline,
 // the deadline day included (`deadline`). Reads /api/plants and the DEVICE date (StorageDeadlineAlert's
 // storageDeadlineGroups, whose groups carry checkFromISO / deadlineISO / daysUntil), never the plan — so a stale

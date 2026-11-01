@@ -1,29 +1,25 @@
-// src/lib/leafWetnessLine.js — V5-LEAFWETNESS-001.
-//
 // Reads the foliar infection-window cue off the stored daily_plan payload. Pure: no fetch, no clock,
 // no DOM.
 //
-// WORDED HERE, unlike droughtLine.js which passes a server-worded sentence through. That module's
-// reason for single-sourcing is specific and does not apply: the drought sentence is worded once by
-// droughtSignal.gardenDroughtNote for THREE surfaces (per-plant note, garden line, CloudWatch), and
-// Dave has a standing ruling on its exact phrasing. This cue has one surface and no server-side
-// wording function, so a second wording site does not exist to drift against. Follows
-// frostAlertLine.js's precedent instead.
+// WORDED HERE, unlike droughtLine.js which passes a server-worded sentence through. That module
+// single-sources because the drought sentence is worded once by droughtSignal.gardenDroughtNote for
+// THREE surfaces (per-plant note, garden line, CloudWatch) and its phrasing is a standing ruling. This
+// cue has one surface and no server-side wording function, so no second wording site exists to drift
+// against. Follows frostAlertLine.js's precedent instead.
 //
 // THE WORDING CARRIES TWO HONESTY CONSTRAINTS, both load-bearing rather than stylistic:
 //
-// 1. IT IS A SCOUTING PROMPT, NEVER A PREDICTION. `loss_cause` is populated on exactly ONE plant in
-//    the whole database, so there is no disease-observation record to score this cue against — it
-//    ships unfalsifiable. Language that asserts infection ("blight risk high", "your tomatoes will")
-//    would be claiming an accuracy nobody has measured. Every sentence below tells him to go and
-//    LOOK, which is true regardless of whether the cue is well-tuned.
+// 1. IT IS A SCOUTING PROMPT, NEVER A PREDICTION. There is next to no disease-observation record
+//    (`loss_cause`) to score this cue against, so it is unfalsifiable. Language that asserts infection
+//    ("blight risk high", "your tomatoes will") would claim an accuracy nobody has measured. Every
+//    sentence below tells the reader to go and LOOK, which is true however well the cue is tuned.
 // 2. IT IS MODELLED, AND IT UNDER-WARNS. precipitation_hours is Open-Meteo's grid cell, not the
 //    on-site gauge, and it misses DEW entirely — dew dominates September leaf wetness at this site,
 //    so a clear cool night that is peak Septoria weather scores bone dry. The count is a FLOOR. The
 //    word "modelled" stays in the sentence for that reason; it is not hedging for its own sake.
 //
 // NEVER RENDER A COUNT BESIDE RAINFALL. precip_hours and precip_in are separate instruments that
-// contradict on real days (2026-09-02: gauge 1.12 in over 0 modelled hours). This line therefore
+// contradict on real days (a gauge reading 1.12 in over 0 modelled hours). This line therefore
 // states hours-wet alone and never pairs it with a depth.
 
 // Plain-language crop families, not a database read. These are the susceptible families the cue is
@@ -33,10 +29,10 @@ const SCOUT_TARGETS = 'tomatoes, peppers and basil';
 
 function plural(n, one, many) { return n === 1 ? one : many; }
 
-// THE SENTENCES (Today finish plan §3.2, 2026-10-14: the forecast half read "1 day ahead look like…"). Each
-// agrees with its count, and each keeps "modelled" (constraint 2). `planDate` (optional, the plan's YYYY-MM-DD)
-// lets the forecast half say "Tomorrow" when the only wet day ahead is the day after the plan's — the engine's
-// window reaches three days out, so without the date, or for any other day, the line counts the days instead.
+// THE SENTENCES. Each agrees with its count, and each keeps "modelled" (constraint 2). `planDate`
+// (optional, the plan's YYYY-MM-DD) lets the forecast half say "Tomorrow" when the only wet day ahead
+// is the day after the plan's — the engine's window reaches three days out, so without the date, or for
+// any other day, the line counts the days instead.
 function dayAfter(ymd) {
   if (typeof ymd !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return null;
   const d = new Date(`${ymd}T12:00:00Z`);

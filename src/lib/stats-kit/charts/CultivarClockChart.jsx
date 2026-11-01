@@ -1,4 +1,4 @@
-// Each cultivar's heat clock (round-2 design): one bar per planting from planting out to first pick in
+// Each cultivar's heat clock: one bar per planting from planting out to first pick in
 // heat units, with the crop's typical (median) value as a dashed gold line. Drawn once for tomatoes
 // and once for peppers; pepper bars take their heat band's colour.
 import React from 'react'

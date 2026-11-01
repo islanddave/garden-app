@@ -1,30 +1,26 @@
-// src/lib/handedness.js — V4-HANDEDNESSCONTROLS-001 (BD-054). Which hand works the phone.
+// Which hand works the phone.
 //
-// THIS IS A SAFETY SETTING, NOT A COSMETIC ONE. Dave's weigh-in ergonomics: the RIGHT hand moves
-// fruit onto the scale and the LEFT hand logs. Every two-control row in this app was laid out on
-// the unstated assumption of a right thumb — HarvestWatchBand.jsx:323-327 says so in as many words
-// ("'Log harvest' takes the right-hand natural thumb zone and 'Not yet' the harder-to-reach left").
-// Worked left-handed that reasoning INVERTS: the control under the thumb becomes "Not yet", which
-// writes suppressed_until = observed_on + 10 days and can cost 20 days of invisibility on a system
-// running 11.8% calibration. A stray thumb tap stops landing on navigation and starts landing on
+// THIS IS A SAFETY SETTING, NOT A COSMETIC ONE. The weigh-in ergonomics: the RIGHT hand moves fruit
+// onto the scale and the LEFT hand logs. Every two-control row in this app was laid out on the
+// unstated assumption of a right thumb (HarvestWatchBand.jsx: "'Log harvest' takes the right-hand
+// natural thumb zone and 'Not yet' the harder-to-reach left"). Worked left-handed that reasoning
+// INVERTS: the control under the thumb becomes "Not yet", which writes a suppression window and can
+// cost many days of invisibility. A stray thumb tap stops landing on navigation and starts landing on
 // the destructive control. That is the defect this preference exists to close.
 //
-// A SETTING, NOT A CONSTANT — Dave's instruction, verbatim: "I want a setting if at all possible.
-// My usage may easily change based on setup/kitchen space." So nothing here hardcodes 'left'.
+// A SETTING, NOT A CONSTANT: usage changes with setup and kitchen space, so nothing here hardcodes 'left'.
 //
-// DEFAULT IS 'right', AND THAT DEFAULT IS LOAD-BEARING. Every wired surface renders byte-identically
-// to its pre-change output while the value is unset, so this lands as a provable no-op for anyone
-// who never opens the setting — including Jen, and including the pinned oracles on those surfaces.
+// DEFAULT IS 'right', AND THAT DEFAULT IS LOAD-BEARING. Every wired surface renders byte-identically to
+// its output before the setting existed while the value is unset, so it is a provable no-op for anyone
+// who never opens the setting, including the pinned oracles on those surfaces.
 //
-// STORAGE. localStorage is the SYNCHRONOUS layer only, exactly as whatsNew.js and ScopeChecklist
-// use theirs: a layout that resolves on the first frame cannot flicker its controls into place
-// while a prefs GET is in flight, and a control that MOVES after first paint is a worse version of
-// the same mis-tap hazard. The per-user cross-device layer is user_notification_prefs.handedness
-// (see src/hooks/useHandedness.js) — the store this app already has, not a second one.
+// STORAGE. localStorage is the SYNCHRONOUS layer only, as whatsNew.js and ScopeChecklist use theirs: a
+// layout that resolves on the first frame cannot flicker its controls into place while a prefs GET is
+// in flight, and a control that MOVES after first paint is a worse version of the same mis-tap hazard.
+// The per-user cross-device layer is user_notification_prefs.handedness (src/hooks/useHandedness.js).
 //
-// try/catch per the house convention (cropLogLedger.readStore, clientPrefs.clearClientPrefs): an
-// unavailable or throwing localStorage degrades to the default hand, never to an error on a render
-// path. A private-mode browser gets right-handed layout, which is what it gets today.
+// try/catch per the house convention: an unavailable or throwing localStorage degrades to the default
+// hand, never to an error on a render path. A private-mode browser gets right-handed layout.
 
 export const HANDS = ['right', 'left']
 export const DEFAULT_HAND = 'right'

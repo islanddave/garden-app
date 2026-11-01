@@ -1,4 +1,4 @@
-// Season ribbon (round-1 design): one column per day — the day's temperature band (above 90°F in
+// Season ribbon: one column per day — the day's temperature band (above 90°F in
 // rust), rain hanging from a sky line, one tick per day each kind of care happened — with pins for
 // first sowing, first set-out, the hottest and the wettest day.
 import React from 'react'

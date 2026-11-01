@@ -1,4 +1,4 @@
-// Best pepper in each heat band (round-2 design): one row per band, a dot per single-plant pepper at
+// Best pepper in each heat band: one row per band, a dot per single-plant pepper at
 // its pod count, the band leader ringed and named. Plants with no pods logged are grey ticks at zero.
 import React from 'react'
 import { ChartFrame, Txt, Line, Dot, XAxis } from './ChartFrame.jsx'

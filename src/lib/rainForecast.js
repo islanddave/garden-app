@@ -1,4 +1,4 @@
-// BUG-RAINFCSTONEMODEL-001 — CLIENT MIRROR of lambda/daily-plan/rainForecast.js: tomorrow's and the day
+// CLIENT MIRROR of lambda/daily-plan/rainForecast.js: tomorrow's and the day
 // after's rain from five weather models (amount = their mean, chance = the share forecasting measurable rain),
 // replacing Open-Meteo best_match for those fields only. The evidence and every rule are in the Lambda file's
 // header; read it there, not here.
