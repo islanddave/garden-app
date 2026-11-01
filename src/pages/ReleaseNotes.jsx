@@ -1,20 +1,17 @@
-// V3-RELEASENOTES-001 — Release Notes tab. Reads /releases.json (a static asset shipped
-// with the SPA, newest-first) and renders the latest 10 releases as plain-language cards.
-// releases.json is updated on every prod push by scripts/add-release.mjs (run as part of
-// the mandatory version bump), so this surface auto-updates without touching the deploy YAML.
+// Release Notes tab. Reads /releases.json (a static asset shipped with the SPA, newest-first) and
+// renders the latest 10 releases as plain-language cards. scripts/add-release.mjs updates it on
+// every prod push, so this surface needs no deploy YAML change.
 import React, { useEffect, useState } from 'react'
 import { P } from '../lib/constants.js'
 import { writeSeen } from '../lib/whatsNew.js'
 import { trackRequest } from '../lib/netActivity.js'
 
-// Pure + testable: newest-first list -> the most recent n entries.
 export function latestReleases(list, n = 10) {
   return Array.isArray(list) ? list.slice(0, n) : []
 }
 
-// BUG-RELNOTES-001: the fetch is bounded so a hung network path shows the error state (with a
-// retry) instead of "Loading…" forever — an unbounded fetch here never settles on a stalled CDN
-// connection and the page looks dead with no diagnostic.
+// The fetch is bounded so a hung network path shows the error state (with a retry) instead of
+// "Loading…" forever; an unbounded fetch never settles on a stalled CDN connection.
 export const RELEASES_FETCH_TIMEOUT_MS = 10000
 
 export default function ReleaseNotes() {
@@ -28,16 +25,16 @@ export default function ReleaseNotes() {
     const timer = controller ? setTimeout(() => controller.abort(), RELEASES_FETCH_TIMEOUT_MS) : null
     setErr(null)
     setReleases(null)
-    // BUG-DETAILPAGESCARRYSCROLL-001: this page's content is a plain fetch, not an API call, so it reports
-    // itself to the page-scroll manager's in-flight count (src/lib/netActivity.js) — a Back restore waits
-    // for it rather than taking the loading line as the page's final height.
+    // A plain fetch, not an API call, so it reports itself to the page-scroll manager's in-flight
+    // count (src/lib/netActivity.js): a Back restore waits for it instead of taking the loading line
+    // as the page's final height.
     trackRequest(fetch('/releases.json', { cache: 'no-cache', signal: controller ? controller.signal : undefined })
       .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
       .then(d => {
         if (!on) return
         setReleases(latestReleases(d, 10))
-        // V4-WHATSNEW-001: viewing this page marks the newest release seen (clears the ambient dot,
-        // cross-instance via the SEEN_EVENT). localStorage-only; cross-device sync = V4-WHATSNEW-002.
+        // Viewing this page marks the newest release seen, which clears the ambient dot across
+        // instances via SEEN_EVENT. localStorage only.
         const newest = Array.isArray(d) && d[0] && d[0].version ? d[0].version : null
         writeSeen(newest)
       })

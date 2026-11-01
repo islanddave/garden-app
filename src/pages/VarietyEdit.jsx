@@ -1,6 +1,4 @@
-// VarietyEdit — route host for V4-EDITCOMPLETE-001 V3.
-// Loads one cultivar by id and hands it to VarietyEditor, which owns the fields and the patch.
-// Gives useVarieties.updateVariety its first caller since VARIETY-REF Session 2.
+// Route host for the variety form. Loads one cultivar by id and hands it to VarietyEditor, which owns the fields and the patch.
 import React, { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'

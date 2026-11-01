@@ -1,16 +1,13 @@
-// src/pages/VoiceDebug.jsx — BUG-VOICEDUPE-002 device-truth surface.
+// Device-truth surface for voice dictation. Dave taps the toggle, dictates ONE known phrase on his
+// Android phone, comes back here, and copies the raw SpeechRecognition event sequence: ground truth
+// about what Chrome actually dispatches.
 //
-// Dave taps the toggle, dictates ONE known phrase on his Android phone, comes back here, and copies
-// the raw SpeechRecognition event sequence. That sequence is ground truth about what Chrome actually
-// dispatches — the thing BUG-VOICEDUPE-001 shipped without and consequently got wrong.
-//
-// GATING follows the GardenActivity convention (src/pages/GardenActivity.jsx): an UNLINKED
-// /admin/* route behind <Protected>, Jen-invisible — no nav link, not in settings, not in help,
-// not in onboarding. GardenActivity additionally renders a placard on a server 403 because it
-// fetches OTHER users' aggregate metrics; this page has no server call at all. Everything it shows
-// is Dave's own browser's localStorage, written by his own dictation on his own device, so there is
-// no cross-user surface for a server allowlist to protect. Deliberately no toast, no modal, no
-// celebration — this is a diagnostic (Reward UX V100 §8), not a reward surface.
+// Gating follows the GardenActivity convention (src/pages/GardenActivity.jsx): an unlinked /admin/*
+// route behind <Protected>, with no nav link, settings entry, help or onboarding mention. GardenActivity
+// also renders a placard on a server 403 because it fetches other users' aggregate metrics; this page
+// has no server call at all. Everything it shows is that browser's own localStorage, so there is no
+// cross-user surface for a server allowlist to protect. No toast, modal or celebration: it is a
+// diagnostic, not a reward surface.
 //
 // Mobile-first: single column, 16px controls, the log in its own scroll container so the page body
 // never scrolls sideways at ~390px.
@@ -97,11 +94,9 @@ export default function VoiceDebug() {
         style={{ marginTop: 16, paddingLeft: 20, color: P.mid, fontSize: '0.88rem', lineHeight: 1.6 }}
       >
         <li>Turn capture ON, then tap <strong>Clear</strong> so the log holds one run only.</li>
-        {/* TWO SURFACES, because the recorder now covers both and they answer different questions.
-            The Notes path is BUG-VOICEDUPE — one phrase, one field, does the transcript double.
-            Harvest by voice is BUG-VOICECOUNTSPLIT — a whole run, where the question is WHERE the
-            session boundaries fell, which is only visible across several utterances. Sending Dave
-            to Notes for a count problem would capture the wrong screen entirely. */}
+        {/* Two surfaces, because the recorder covers both and they answer different questions: Notes shows
+            whether a single dictated phrase doubles in one field; Harvest by voice shows where session
+            boundaries fell, which is only visible across several utterances. */}
         <li>For a <strong>dictation</strong> problem: go to <strong>Log an event</strong> and
             dictate one known phrase into Notes — say it once, normally, then stop the mic.</li>
         <li>For a <strong>Harvest by voice</strong> problem: run a normal harvest — crop, count,
@@ -139,13 +134,11 @@ export default function VoiceDebug() {
         }}
       />
 
-      {/* V5-HARVESTVOICEFLOW-001 (BD-068) — the continuous-mode probe. Same purpose as the log
-          above and the same reason for living on THIS route: a question about what Chrome actually
-          does on Dave's Android can only be settled by his Android. The section above answers "what
-          did the recogniser emit for one dictated phrase"; this one answers "does the recogniser
-          stay alive across several, and how much speech is lost when it does not" — which is the
-          question a hands-free harvest flow stands or falls on. Investigation instrument, not a
-          feature: nothing outside this unlinked admin route renders it. */}
+      {/* The continuous-mode probe. It lives on this route for the same reason as the log above: what
+          Chrome does on Dave's Android can only be settled by his Android. The log answers "what did the
+          recogniser emit for one dictated phrase"; this answers "does the recogniser stay alive across
+          several, and how much speech is lost when it does not". Nothing outside this unlinked admin
+          route renders it. */}
       <ContinuousVoiceProbe />
     </div>
   )

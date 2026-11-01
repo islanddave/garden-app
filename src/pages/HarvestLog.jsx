@@ -1,34 +1,23 @@
-// src/pages/HarvestLog.jsx
-// V5-HARVESTONEDOOR-001 — ONE door for logging a harvest, with a selector for which way.
+// The one door for logging a harvest, with a selector for which way: the voice flow (/log/voice) or
+// the weigh-in session (/log?session=harvest). The header circle, the Harvests page and the
+// installed-PWA shortcut all land here.
 //
-// WHY. Harvest had two logging surfaces reachable from two unrelated places: the voice flow at
-// /log/voice, sitting as the fifth row of the ＋ sheet, and the weigh-in session at
-// /log?session=harvest, reachable from the header circle, the Harvests page and the installed-PWA
-// shortcut. Nothing on either surface mentioned the other, so which one you got depended on which
-// door you happened to use. Dave 2026-09-03: combine them into one page with a selector, defaulting
-// to voice, "and ensure any menu/quick shortcuts go to this combined page like weigh in session is
-// now."
+// This page owns no harvest logic. It is a shell: a title, a selector, and whichever surface the
+// selector names. Both surfaces keep their own behaviour untouched, because the voice flow carries
+// hard-won failure handling (wake lock, cue-refusal accounting, the one-breath resolver) and the
+// weigh-in session carries the ledger and per-row undo.
 //
-// This page owns NO harvest logic. It is a shell: a title, a selector, and whichever surface the
-// selector names. Both surfaces keep their own behaviour byte-for-byte — that is deliberate, because
-// the voice flow carries a lot of hard-won failure handling (wake lock, cue-refusal accounting, the
-// one-breath resolver) and the weigh-in session carries the ledger and per-row undo. Merging their
-// internals would have put all of that at risk to save a wrapper.
+// Default is voice and it is NOT remembered; `?mode=manual` selects the other one. A remembered
+// last choice would quietly defeat the voice default after one manual use, so the default is
+// re-asserted on every arrival and switching costs one tap.
 //
-// DEFAULT IS VOICE, AND IT IS NOT REMEMBERED. `?mode=manual` selects the other one. A remembered
-// last-choice would quietly defeat "default to the by voice version" the first time he used the
-// manual form once, so the default is re-asserted on every arrival and switching costs one tap.
+// Only the active mode is mounted. Switching unmounts the other, and VoiceHarvest's unmount effect
+// releases the recogniser, the wake lock and the mic token. Mounting both and hiding one would keep
+// two live fetch sets and a live recogniser behind a hidden div. Switching therefore costs the
+// in-progress state of the surface you leave, as navigating between the two pages always did.
 //
-// ONLY THE ACTIVE MODE IS MOUNTED. Switching unmounts the other, which is safe and checked:
-// VoiceHarvest's unmount effect releases the recogniser, the wake lock and the mic token
-// (VoiceHarvest.jsx:1250). Mounting both and hiding one would keep two live fetch sets and, worse,
-// a mounted recogniser behind a hidden div. Switching therefore costs the in-progress state of the
-// surface you leave — exactly as navigating between the two pages does today, so this is not a new
-// loss.
-//
-// THE URL IS THE STATE, and mode changes use replace: Dave is on Android where Back is the primary
-// gesture, and a push per toggle would make Back walk him through his own indecision instead of
-// leaving the page.
+// The URL is the state, and mode changes use replace: on Android Back is the primary gesture, and a
+// push per toggle would make Back walk through the toggles instead of leaving the page.
 import React, { useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import SegmentedControl from '../components/forms/SegmentedControl.jsx'
@@ -78,9 +67,8 @@ export default function HarvestLog () {
         </div>
       </div>
 
-      {/* `embedded` drops VoiceHarvest's own <h1> and intro paragraph — this shell supplies the
-          title, and two headings stacked is the thing that made the first draft look bolted
-          together. Everything else on that page is untouched. */}
+      {/* `embedded` drops VoiceHarvest's own <h1> and intro paragraph: this shell supplies the title,
+          and two stacked headings look bolted together. */}
       {mode === 'voice'
         ? <VoiceHarvest embedded />
         : <EventNew harvestSession />}
