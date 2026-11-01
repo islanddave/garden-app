@@ -62,7 +62,7 @@ export { lotMeasure, labelCandidates }
 //
 // IMPORTED, not redeclared: seedStages.js is a leaf module with no imports of its own, so taking the
 // array from there costs nothing and removes the drift surface (a fourth declaration of one DB CHECK)
-// rather than guarding it.
+// rather than guarding it; src/__tests__/seedStageVocabulary.test.js fails if this page redeclares it.
 const STAGES = SEED_STAGES
 const STAGE_META = {
   fermenting: { label: 'Fermenting', sub: 'Wet-process seed sitting in its own juice' },
