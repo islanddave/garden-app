@@ -1,23 +1,19 @@
 'use strict';
-// DRG-TODAY-001 — AWS Lambda ENTRYPOINT for the overnight Daily Plan generator. STAGED, HELD at dev.
-// Mirrors lambda/xp-reconcile: Secrets Manager -> Neon, EventBridge nightly, DRY_RUN-gated, no Fn URL.
-// Pure plan logic is in ./handler (run) + ./engine; the real HTTP fetchers live here (injected into run).
-// ⚠️ GATE-0 before first non-dry run: validate the NWS forecast parsing + zippopotam + Open-Meteo daily
-//    field names/indices against LIVE responses. The daily index assumption [D-2,D-1,D0,D1,D2,D3] (past_days=2,
-//    forecast_days=4 since V4-FROST-001 G5) must hold. Confirm @neondatabase/serverless Pool .query() shape
-//    matches handler's pg. openmeteo-indices.test.js guards the indexing against drift.
+// Lambda entrypoint for the overnight Daily Plan generator (EventBridge nightly, DRY_RUN-gated, no Fn URL).
+// Pure plan logic is in ./handler (run) + ./engine; the real HTTP fetchers live here and are injected into run.
+// Trap: the Open-Meteo daily index map [D-2,D-1,D0,D1,D2,D3] (past_days=2, forecast_days=4) must hold;
+// openmeteo-indices.test.js guards the indexing against drift.
 const { SecretsManagerClient, GetSecretValueCommand } = require('@aws-sdk/client-secrets-manager');
-const { SNSClient, PublishCommand } = require('@aws-sdk/client-sns'); // V4-FROST-001 F3 delivery channel (D1/D3)
-// Written for Lambda nodejs20, which had NO global WebSocket (nodejs22 since v5.2.1 has one; Pool still uses ws). The pinned @neondatabase/serverless@^0.10.0 neon() http client has
-// NO .query(text,params) method (that was added in 1.x), and Pool needs an explicit WebSocket constructor.
-// Fix: Pool + ws via neonConfig.webSocketConstructor. Pool.query(text,params)->{rows} matches handler's pg
-// contract. Both failure modes caught by live DRY_RUN invokes; this combo validated against prod. (busy-brave-hamilton)
+const { SNSClient, PublishCommand } = require('@aws-sdk/client-sns');
+// Pool + ws via neonConfig.webSocketConstructor: the pinned @neondatabase/serverless@^0.10.0 neon() http client has
+// no .query(text,params) method, and Pool needs an explicit WebSocket constructor. Pool.query(text,params)->{rows}
+// is the pg contract handler.run expects.
 const { Pool, neonConfig } = require('@neondatabase/serverless');
 const ws = require('ws');
 neonConfig.webSocketConstructor = ws;
 const { run, resolveInvokeOptions } = require('./handler');
-const { stationConfig } = require('./station'); // DRG-WXSTATION-001
-const rainForecast = require('./rainForecast'); // BUG-RAINFCSTONEMODEL-001
+const { stationConfig } = require('./station');
+const rainForecast = require('./rainForecast');
 
 const SECRET_NAME = process.env.SECRET_NAME || 'garden-app/secrets';
 let _secrets;
@@ -30,11 +26,8 @@ async function getSecrets() {
 }
 
 const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
-// V4-WATERMATH-001 F1 — ET0 needs a third decimal and round2 would destroy the signal it carries.
-// Reference ET at this site runs ~0.15-0.25 in/day, so two decimals quantise the entire useful range
-// into about ten buckets: the live 2026-08-10/11 pair (0.186 and 0.193) both collapse to 0.19. The
-// ledger's demand term is a RATIO of ET0 to a monthly reference, so that rounding is not cosmetic —
-// it injects a few percent of error into every day's demand before any modelling happens.
+// ET0 needs a third decimal: it runs ~0.15-0.25 in/day, so round2 quantises the useful range into about ten buckets
+// and injects a few percent of error into the ledger's ET0-to-monthly-reference demand ratio.
 const round3 = (n) => Math.round((n + Number.EPSILON) * 1000) / 1000;
 
 // ET calendar date — plan_date must be the LOCAL day even when the cron fires after UTC midnight.
@@ -44,37 +37,22 @@ function todayET() {
   }).format(new Date());
 }
 
-// V4-FROST-001 G3 — the ET hour is the ONLY way to tell the three daily runs apart: all three EventBridge
-// targets invoke this function with an empty detail (verified in AWS 2026-08-04, no Input on any target).
-// hourCycle h23 so midnight is 0, not 24. Consumed by frostEval.resolveFrostRun, which is pure.
+// The ET hour is the only way to tell the three daily runs apart: all three EventBridge targets invoke this function
+// with an empty detail. hourCycle h23 so midnight is 0, not 24. Consumed by frostEval.resolveFrostRun, which is pure.
 function hourET() {
   return Number(new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/New_York', hour: '2-digit', hourCycle: 'h23',
   }).format(new Date()));
 }
 
-// V4-FROST-001 F3 — SNS delivery (D1 channel, D3 separate topic). ARNs are env-overridable; the defaults
-// are the live topics in us-east-1 (the account id already appears in .github/workflows, it is not a secret).
-// DELIBERATELY NOT wrapped in try/catch, unlike every other fetcher in this file: design §3-7 makes a
-// swallowed frost publish the one failure this feature cannot have. handler.run catches it, logs at ERROR,
-// finishes writing the plan, then throws so garden-daily-plan-errors (Errors > 0) pages.
-//
-// BUG-FROSTTOPICDEFAULT-001 (2026-09-07): this default was `garden-frost-alerts`, WHICH DOES NOT EXIST.
-// `aws sns list-topics` returns exactly two topics in the account — garden-alerts and garden-ops-alerts —
-// so the comment above ("the defaults are the live topics") was false for this one line, which is how it
-// survived review. Nothing was broken in practice only because the live garden-daily-plan env sets
-// FROST_TOPIC_ARN to garden-ops-alerts; that override was the sole thing standing between us and
-// `Topic does not exist` on every frost publish. The D3 "separate topic" intent was never realised —
-// frost and ops both resolve to garden-ops-alerts, which is where Dave's CONFIRMED email subscription
-// lives (rehearsed end-to-end 2026-09-07, email received). The default now matches reality, so removing
-// the env var degrades to a topic that still reaches him rather than to one that throws.
-//
-// Why this could not be caught: scripts/lambda-config-expected.json declared FROST_TOPIC_ARN with the
-// `true` sentinel — MUST BE PRESENT, ANY VALUE — so the drift guard checked presence and never the value.
-// Anyone "tidying" the live env to match the old code default would have killed frost alerting with the
-// guard still green, and it would have failed at first use: the night of the first frost. Now declared as
-// an exact string, per that manifest's own rule that a value which must not drift is a reviewable repo
-// change. Do not put the sentinel back.
+// SNS delivery (frost channel, separate ops topic). ARNs are env-overridable; the defaults must name topics that exist
+// in us-east-1 (the account id already appears in .github/workflows, it is not a secret).
+// DELIBERATELY NOT wrapped in try/catch, unlike every other fetcher in this file: a swallowed frost publish is the one
+// failure this feature cannot have. handler.run catches it, logs at ERROR, finishes writing the plan, then throws so
+// garden-daily-plan-errors (Errors > 0) pages.
+// Trap: both defaults are garden-ops-alerts, the topic with the confirmed email subscription; a default naming a topic
+// that does not exist fails only at the first frost. scripts/lambda-config-expected.json declares FROST_TOPIC_ARN as an
+// exact string, not the `true` any-value sentinel, so the drift guard checks the value. Do not put the sentinel back.
 const FROST_TOPIC_ARN = process.env.FROST_TOPIC_ARN || 'arn:aws:sns:us-east-1:769788341849:garden-ops-alerts';
 const OPS_TOPIC_ARN = process.env.OPS_TOPIC_ARN || 'arn:aws:sns:us-east-1:769788341849:garden-ops-alerts';
 let _sns;
@@ -87,10 +65,9 @@ async function publishAlert({ topic, subject, message }) {
 }
 
 // zip -> {lat,lng} (public, no key). Upstream caches to spaces.weather_lat/lng.
-// DRG-NIGHTLYTIMEOUT-001: every external fetch below is bounded (AbortSignal.timeout) so a hung
-// upstream can never eat the Lambda budget; each caller degrades to null on failure (never crashes
-// the run). The DB Pool is deliberately UNBOUNDED — the Neon cold-resume stall must be waited out
-// (aborting the connect just converts slow success into failure); the 120s fn timeout covers it.
+// Every external fetch below is bounded (AbortSignal.timeout) so a hung upstream cannot eat the Lambda budget, and each
+// caller degrades to null on failure. The DB Pool is deliberately UNBOUNDED: the Neon cold-resume stall must be waited
+// out (aborting the connect turns a slow success into a failure); the 120s fn timeout covers it.
 async function geocodeZip(zip) {
   const r = await fetch(`https://api.zippopotam.us/us/${encodeURIComponent(zip)}`, { signal: AbortSignal.timeout(4000) });
   if (!r.ok) throw new Error(`geocodeZip ${zip} -> ${r.status}`);
@@ -131,89 +108,29 @@ async function fetchNWS(lat, lng) {
 // Wrapped in try/catch: network failures should not crash the entire run — hydrology degrades gracefully to null.
 async function fetchPrecip(lat, lng) {
   try {
-    // V4-FROST-001 G5: temperature_2m_min added to a call already being made, and forecast_days 3 -> 4 so
-    // the §3-3 48–72h advisory tier can actually see 3 future nights (D1,D2,D3). Both changes are strictly
-    // APPENDING: with past_days=2 the daily arrays stay [D-2,D-1,D0,D1,D2,(D3)], so every existing index
-    // below (ps[0..4], pop[2..3]) means exactly what it meant before. Guarded by openmeteo-indices.test.js.
-    // BUG-RAINACTUAL-001 H5: `hourly=precipitation` is appended to THE SAME call (one request, not two).
-    // `hourly` is a SEPARATE response object from `daily`, so this cannot shift ps[]/pop[]/tmin[] by even one
-    // slot — the same append-only discipline G5 used, and openmeteo-indices.test.js pins both halves.
-    // V4-WATERMATH-001 F1: et0_fao_evapotranspiration + temperature_2m_max APPENDED AT THE END of the
-    // `daily=` list — the same append-only discipline G5 and H5 used, for the same reason. past_days is
-    // what sets D0's offset, and the list order is what sets nothing at all PROVIDED nothing is inserted
-    // ahead of an existing field; every index below (ps[0..4], pop[2..3], tmin[3..5]) therefore still
-    // means exactly the day it meant before. Inserting mid-list instead would have shifted nothing in
-    // JS (these are named arrays, not one flat vector) but WOULD have broken the reviewer's ability to
-    // reason about the URL the way this file's whole comment history teaches them to — and the archive
-    // backfill, which reads the SAME field names out of a DIFFERENT endpoint, does depend on the order
-    // matching. openmeteo-indices.test.js pins the list prefix and the append.
+    // Append-only: a new `daily=` field goes at the END of that list and a new `hourly=` field at the end of its list.
+    // past_days sets D0's offset, so every index below (ps[0..4], pop[2..3], tmin[3..5]) keeps its meaning only while
+    // nothing is inserted ahead of an existing field; the archive backfill (scripts/backfill-weather-daily.mjs) reads the
+    // same names in the same order. `hourly` is a separate response object, so appending there cannot shift `daily`.
+    // openmeteo-indices.test.js pins the list prefix and the append.
     //
-    // UNITS ARE NOT ASSUMED — verified against the live endpoint at this Space's coordinates on
-    // 2026-08-12: daily_units reported et0_fao_evapotranspiration = "inch" (it honours
-    // precipitation_unit, which is why no mm->in conversion appears anywhere below) and
-    // temperature_2m_max = "°F". The weather_daily columns are named et0_in / tmax_f accordingly.
+    // Units are not assumed and nothing here converts: precipitation_unit=inch also governs ET0 (no mm->in anywhere),
+    // wind_speed_unit=mph the wind fields, temperature_unit=fahrenheit the temperatures. The two duration fields
+    // (daylight_duration, sunshine_duration) are stored in SECONDS exactly as served; divide at the point of display.
     //
-    // WHY temperature_2m_max IS HERE AT ALL, given the ledger design names only ET0: weather_daily.tmax_f
-    // feeds F2's continuous fabric-bag heat ramp (1.1 + 0.25 x ramp(Tmax, 80->90°F)), and NOTHING ELSE IN
-    // THIS RUN FETCHES A DAILY MAX. NWS supplies highToday, which is TODAY's forecast high — the writer
-    // persists COMPLETED days, so today's high is the wrong day by construction. Without this append
-    // tmax_f would be NULL on every row ever written and the bag ramp would have no input.
-    // V5-WXBACKFILLVARS-001 — five more daily quantities APPENDED AT THE END of the `daily=` list,
-    // under exactly the discipline G5/H5/F1 established above and for the same reason: past_days is
-    // what sets D0's offset, so every index below (ps[0..4], pop[2..3], tmin[3..5]) still means the
-    // day it always meant. Nothing is inserted ahead of an existing field, and the archive backfill's
-    // list is kept in the same order — openmeteo-indices.test.js pins both.
-    //
-    // UNITS ARE NOT ASSUMED. Verified against the live endpoint at this Space's coordinates on
-    // 2026-09-07: daily_units reported daylight_duration = "s", sunshine_duration = "s",
-    // shortwave_radiation_sum = "MJ/m²", wind_speed_10m_max = "mp/h" (it honours wind_speed_unit,
-    // which is the only new URL parameter here) and precipitation_hours = "h". The weather_daily
-    // columns are named daylight_s / sunshine_s / solar_mj_m2 / wind_max_mph / precip_hours to carry
-    // those units, and NOTHING here converts: the two duration fields are stored in SECONDS exactly
-    // as served, because a seconds->hours divide in the writer is a silent 3600x waiting for the one
-    // consumer that forgets it. Divide at the point of display.
-    //
-    // wind_speed_unit=mph is a NEW parameter and it is scoped to wind alone — temperature_unit and
-    // precipitation_unit already govern every other field and are untouched. No existing value moves.
-    // V5-RADIATIVEFROST-001 — three quantities APPENDED to the `hourly=` list: dew_point_2m,
-    // cloud_cover, wind_speed_10m. This is the SAFEST append in this function's history and for a
-    // structural reason: `hourly` is a SEPARATE response object from `daily`, so it cannot shift
-    // ps[]/pop[]/tmin[] by even one slot, exactly as BUG-RAINACTUAL-001 H5 argued when it appended
-    // `hourly=precipitation`. The `daily=` list is UNTOUCHED here — deliberately, because the archive
-    // backfill mirrors that list field-for-field and the two must stay readable against each other.
-    //
-    // UNITS ARE NOT ASSUMED. Verified against the live endpoint at this Space's coordinates on
-    // 2026-09-08: hourly_units reported dew_point_2m = "°F" (it honours temperature_unit),
-    // cloud_cover = "%", wind_speed_10m = "mp/h" (it honours wind_speed_unit). Sample row
-    // 2026-09-08T02:00 -> 54.3°F / 45.5°F dewpoint / 4% cloud / 1.6 mph. NOTHING below converts.
-    //
-    // WHY THESE THREE: they are the classical inputs to radiative frost and NONE of them was fetched
-    // anywhere in this system before now. The frost path evaluated one grid-forecast number against a
-    // fixed trip point, and a grid cell cannot represent radiational frost at this site — the
-    // documented ERA5 error is ~+8F on sub-32F minima, missing ~62% of real frost nights
-    // (src/lib/sowEngine.js:63-68). See lambda/daily-plan/radiativeFrost.js for what is derived.
-    // BUG-FROSTADVISORYNIGHTWORDING-001 — temperature_2m APPENDED LAST to the `hourly=` list, same discipline
-    // and same structural argument as the three above: `hourly` is a separate response object, so nothing in
-    // `daily` moves. It says WHICH NIGHT the advisory's civil-day minimum belongs to (frostEval.locateNight):
-    // the daily figure alone cannot, because a civil day holds the end of one night and the start of the next.
-    // UNITS ARE NOT ASSUMED. Verified against the live endpoint at this Space's coordinates on 2026-09-18:
-    // hourly_units reported temperature_2m = "°F" (it honours temperature_unit), 144 stamps (6 x 24), and the
-    // daily temperature_2m_min equalled the minimum of that local day's hourly temperature_2m on 6 of 6 days.
+    // temperature_2m_max is here because weather_daily.tmax_f feeds the fabric-bag heat ramp and nothing else in this run
+    // fetches a daily max (NWS highToday is today's forecast; the writer persists COMPLETED days).
+    // dew_point_2m, cloud_cover and wind_speed_10m are the radiative-frost inputs (see radiativeFrost.js): a grid-cell
+    // forecast cannot represent radiational frost and misses most real frost nights at this site. hourly temperature_2m
+    // tells frostEval.locateNight which night an advisory's civil-day minimum belongs to.
     const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}` +
       `&daily=precipitation_sum,precipitation_probability_max,temperature_2m_min,et0_fao_evapotranspiration,temperature_2m_max,daylight_duration,sunshine_duration,shortwave_radiation_sum,wind_speed_10m_max,precipitation_hours&hourly=precipitation,dew_point_2m,cloud_cover,wind_speed_10m,temperature_2m&temperature_unit=fahrenheit&precipitation_unit=inch&wind_speed_unit=mph&timezone=America/New_York&past_days=2&forecast_days=4`;
-    // BUG-FETCHPRECIPZERO-001 — an Open-Meteo ERROR is JSON, so `.json()` succeeds on it. Measured live
-    // 2026-09-18: an invalid daily variable answers HTTP 400 with {"error":true,"reason":"Cannot initialize
-    // ForecastVariableDaily from invalid String value ..."} — no `daily`, no `hourly`. With neither r.ok nor
-    // the block checked, that body mapped to a NON-null hydrology whose four rain fields were fabricated
-    // zeros (the `|| 0` defaults below, now gone), hydrologyStatus reported the data complete, and nothing
-    // was logged: 2026-09-02 19:30Z had exactly this shape (no WARN, no weather-daily-write, no_hourly).
-    // Both cases now THROW into the catch below, so they take the same path an HTML 503 always took —
-    // the existing WARN, then null, which every consumer already handles as "Open-Meteo down" (see
-    // station.mergeStationHydrology's null base and engine.hydrologyStatus's incomplete flag). A body with
-    // no `daily` block is refused whole rather than mapped field by field: every rain field, PoP, low,
-    // ET0, Tmax, the wetness window and settled_days derive from it, and a non-null hydrology carrying
-    // none of them is the shape that let 09-02 read as healthy. Partial DAILY data is still kept below,
-    // field by field. The reason is capped: it is Open-Meteo's free text and can echo a parameter.
+    // An Open-Meteo ERROR is JSON, so `.json()` succeeds on it (an invalid variable answers HTTP 400 with
+    // {"error":true,"reason":...} and no `daily`). A non-ok status and a body with no `daily` block both THROW into the
+    // catch below, taking the path an HTML 503 always took: a WARN, then null, which every consumer reads as "Open-Meteo
+    // down" (station.mergeStationHydrology's null base, engine.hydrologyStatus's incomplete flag). Mapping such a body
+    // field by field would produce a non-null hydrology of fabricated zeros that reports complete. Partial DAILY data is
+    // still kept below, field by field. The reason is capped: it is Open-Meteo's free text and can echo a parameter.
     const r = await fetch(url, { signal: AbortSignal.timeout(6000) });
     const reasonOf = (b) => (b && typeof b.reason === 'string' ? `: ${b.reason.slice(0, 200)}` : '');
     if (!r.ok) {
@@ -234,95 +151,68 @@ async function fetchPrecip(lat, lng) {
     const windmax = (j.daily && j.daily.wind_speed_10m_max) || [];      // same indexing as ps
     const preciph = (j.daily && j.daily.precipitation_hours) || [];     // same indexing as ps
     const times = (j.daily && j.daily.time) || [];
-    // BUG-FETCHPRECIPZERO-001 — the rain amounts take the null-never-0 rule every other field in this
-    // return already follows. 0 in. is a real dry day, so an absent entry must not read as one: the
-    // `|| 0` form did exactly that. Same semantics as the client mirror, src/lib/liveWeather.js
-    // (BUG-LIVEWEATHERNUMOR0-001), including the sum rule — D-2 + D-1 with one day missing is an
-    // understatement that reads like a measurement, so a sum is null unless every term is known.
-    // round2 is guarded because round2(null) is 0. A healthy body has all six entries finite
-    // (measured 2026-09-18, past days included), so healthy runs are byte-identical.
+    // Rain amounts take the null-never-0 rule: 0 in. is a real dry day, so an absent entry must not read as one. Same
+    // semantics as the client mirror, src/lib/liveWeather.js, including the sum rule: a sum is null unless every term is
+    // known (D-2 + D-1 with one day missing would read like a measurement). round2 is guarded because round2(null) is 0.
     const numOrNull = (v) => (Number.isFinite(v) ? v : null);
     const sumOrNull = (...vs) => (vs.some((v) => v == null) ? null : vs.reduce((a, v) => a + v, 0));
     const round2OrNull = (v) => (v == null ? null : round2(v));
     const tomorrow = numOrNull(ps[3]);
-    // Absence is NEVER coerced to a temperature: a missing entry stays null so evalAdvisory skips it
-    // rather than reading it as 0°F. Same rule as yesterday_precip_actual_in below.
+    // Absence is NEVER coerced to a temperature: a missing entry stays null so evalAdvisory skips it rather than
+    // reading it as 0°F.
     const lowOrNull = (v) => (Number.isFinite(v) ? v : null);
     return {
-      // V4-FROST-001 §3-3 Tier 1 — the D1..D3 forecast-low window + its date labels, read by handler's frost
-      // evaluation. V5-TODAYFROSTWARMEDADVISORY-001: engine.generatePlan also stores both, verbatim, in the plan's
-      // hydrology while FROST_ALERT_ENABLED is on, so Today can see this run's second-model low for an advisory's
-      // night; with the flag off neither field enters the stored plan payload (flag-OFF byte-parity holds).
+      // The D1..D3 forecast-low window and its date labels, read by handler's frost evaluation. While FROST_ALERT_ENABLED
+      // is on, engine.generatePlan also stores both in the plan's hydrology; with the flag off neither enters the stored
+      // plan (flag-OFF byte-parity holds).
       forecast_lows: [lowOrNull(tmin[3]), lowOrNull(tmin[4]), lowOrNull(tmin[5])],
       forecast_dates: [times[3] || null, times[4] || null, times[5] || null],
       recent_precip_in: round2OrNull(sumOrNull(numOrNull(ps[0]), numOrNull(ps[1]))),   // D-2 + D-1
-      today_precip_in: round2OrNull(numOrNull(ps[2])),       // D0 — rain falling TODAY (was fetched but dropped; DRG-WX-TODAY-FIX)
+      today_precip_in: round2OrNull(numOrNull(ps[2])),       // D0 — rain falling TODAY
       today_pop: pop[2] != null ? pop[2] : null,
       upcoming_precip_in: round2OrNull(sumOrNull(tomorrow, numOrNull(ps[4]))),        // D1 + D2
       tomorrow_precip_in: round2OrNull(tomorrow),
       tomorrow_pop: pop[3] != null ? pop[3] : null,
-      // D+2's PROBABILITY. `pop[4]` has been in every response this Lambda has ever parsed and was never
-      // read, which is the whole reason `upcoming_precip_in` (D1+D2, two lines up) gates nothing: the
-      // suppression design bars everything on a PoP, so an unprobabilised amount is structurally unusable
-      // however much rain it claims. Extracted now so the two-day horizon can be reasoned about at all.
-      // Same null-not-zero convention as its siblings — a missing probability must never read as 0%.
+      // D+2's PROBABILITY, so the two-day horizon (upcoming_precip_in, D1+D2) can be gated: the suppression design bars
+      // everything on a PoP, and an unprobabilised amount is unusable. Null-not-zero: a missing probability must never
+      // read as 0%.
       upcoming_pop: pop[4] != null ? pop[4] : null,
-      // BUG-RAINFCSTONEMODEL-001 (b) — D2 on its own, with the date that labels it, for Today's following-day
-      // rain line ("1.72″ Sunday · 82% chance"). The same D2 that upcoming_precip_in already sums and whose
-      // probability is upcoming_pop; named for the card so the card never has to subtract D1 back out.
-      // Display only: no watering decision reads these.
+      // D2 on its own, with its date, for Today's following-day rain line, so the card never has to subtract D1 back out
+      // of upcoming_precip_in. Display only: no watering decision reads these.
       day2_precip_in: round2OrNull(numOrNull(ps[4])),
       day2_pop: pop[4] != null ? pop[4] : null,
       day2_date: typeof times[4] === 'string' ? times[4] : null,
-      // BUG-TODAYWATER-001 actuals backfill: D-1 OBSERVED rain as its own field — recent_precip_in is the
-      // D-2+D-1 SUM, so what actually fell on a given day was unrecoverable BY CONSTRUCTION, which made a
-      // busted today-forecast undetectable after the fact. Consumed ONLY by handler.backfillYesterdayActual
-      // (written onto YESTERDAY's plan row); engine.generatePlan copies named hydrology keys, so this never
-      // enters the current day's stored plan (byte-parity safe). null, NEVER 0, when Open-Meteo omits the
-      // value — absence of data must not be recorded as "no rain fell".
+      // D-1 OBSERVED rain on its own: recent_precip_in is the D-2+D-1 sum, so a busted forecast was unrecoverable after the
+      // fact. Consumed ONLY by handler.backfillYesterdayActual (onto YESTERDAY's plan row); engine.generatePlan copies
+      // hydrology by NAMED key, so this never enters the current day's stored plan (byte-parity safe). null, NEVER 0, when
+      // Open-Meteo omits the value: absence of data must not be recorded as "no rain fell".
       yesterday_precip_actual_in: Number.isFinite(ps[1]) ? round2(ps[1]) : null,
-      // V4-WATERMATH-001 F2 — D0's live forecast ET0 + Tmax (index 2, same [D-2,D-1,D0,...] daily
-      // indexing as ps/pop/tmin above; no URL change — both fields are already fetched for
-      // settled_days). Canon Part 4: "Today's demand at any run uses the live forecast ET0 from the
-      // existing fetch (D0 index) — full-day value, conservative in the safe direction." weather_daily
-      // holds COMPLETED days only, so without these keys today's demand would always degrade to the
-      // 1.0 branch. Engine copies hydrology by NAMED key -> flag-OFF byte-parity holds; null (never
-      // 0) on absence, same rule as every field above.
+      // D0's live forecast ET0 + Tmax (daily index 2; no URL change). weather_daily holds COMPLETED days only, so without
+      // these today's ledger demand would always degrade to the 1.0 branch. Engine copies hydrology by NAMED key, so
+      // flag-OFF byte-parity holds; null (never 0) on absence.
       today_et0_in: Number.isFinite(et0[2]) ? round3(et0[2]) : null,
       today_tmax_f: Number.isFinite(tmax[2]) ? round2(tmax[2]) : null,
-      // V5-LEAFWETNESS-001 — the D-2..D+3 wetness window, lifted from arrays ALREADY fetched on this
-      // ungated path. No URL change, no DB read, no flag: `precipitation_hours` has been in the daily
-      // request since 2026-09-07 and was consumed at exactly one site (settled_days), which excludes
-      // D0 — so today's and all three forecast days' values were fetched and discarded every run.
-      //
-      // Carried as a SERIES rather than a D0 scalar because the cue is about runs of wet days, and
-      // because the forecast half is only reachable here: weather_daily stores completed days only,
-      // has no future rows, and by design never holds today. Same null discipline as every field
-      // above — an absent hour count is null, never 0, because 0 hours is a real dry day.
+      // The D-2..D+3 wetness window, from arrays already fetched. A SERIES rather than a D0 scalar because the cue is about
+      // runs of wet days, and the forecast half is only reachable here (weather_daily stores completed days only).
+      // An absent hour count is null, never 0: 0 hours is a real dry day.
       wetness_window: times.map((t, i) => ({
         date: t,
         precip_hours: Number.isFinite(preciph[i]) ? round2(preciph[i]) : null,
         tmax_f: Number.isFinite(tmax[i]) ? round2(tmax[i]) : null,
         tmin_f: Number.isFinite(tmin[i]) ? round2(tmin[i]) : null,
       })).filter((d) => d.date),
-      // BUG-RAINACTUAL-001 H5 — the hour-resolution forecast, carried VERBATIM (local ISO timestamps + the tz
-      // they are expressed in) so station.remainingHourlyIn can scope "still to come" to the hours that have
-      // not elapsed. Passed through untransformed on purpose: the date-string matching in that helper is what
-      // makes the window DST-safe and immune to the hourly array starting on a different day than the daily
-      // one. null (never []) when Open-Meteo omits it, so the merge falls back to the whole-day behaviour and
-      // labels it, rather than reading "no more rain coming".
+      // The hour-resolution forecast, carried VERBATIM (local ISO timestamps + their timezone) so station.remainingHourlyIn
+      // can scope "still to come" to the hours not yet elapsed. Untransformed on purpose: its date-string matching is what
+      // keeps the window DST-safe. null (never []) when omitted, so the merge falls back to whole-day behaviour and labels
+      // it, rather than reading "no more rain coming".
       hourly_precip: (j.hourly && Array.isArray(j.hourly.time) && Array.isArray(j.hourly.precipitation))
         ? { time: j.hourly.time, precipitation: j.hourly.precipitation, timezone: j.timezone || null }
         : null,
-      // V5-RADIATIVEFROST-001 — the three radiative-frost inputs, carried VERBATIM alongside their
-      // local ISO timestamps so radiativeFrost.nightsFrom can bucket them into 18:00->08:00 overnight
-      // windows by string arithmetic (the DST-safe method station.remainingHourlyIn already uses).
-      // Passed through untransformed on purpose, for the same reason hourly_precip is.
-      //
-      // null (never {}, never []) when Open-Meteo omits any of them, so a missing block degrades to
-      // "no radiative signal" -> existing frost behaviour, rather than to a night that reads as 0%
-      // cloud and 0 mph wind. That coercion would not merely be wrong here: 0/0 is the EXACT positive
-      // case this feature looks for, so it would manufacture the trip it is supposed to detect.
+      // The three radiative-frost inputs, carried VERBATIM with their local ISO timestamps so radiativeFrost.nightsFrom can
+      // bucket them into 18:00->08:00 windows by string arithmetic (DST-safe, like hourly_precip).
+      // null (never {} or []) when any is omitted: a missing block must degrade to "no radiative signal", not to a night
+      // reading 0% cloud and 0 mph wind. 0/0 is the EXACT positive case this feature looks for, so coercing would
+      // manufacture the trip it is supposed to detect.
       hourly_frost: (j.hourly && Array.isArray(j.hourly.time) && Array.isArray(j.hourly.dew_point_2m)
         && Array.isArray(j.hourly.cloud_cover) && Array.isArray(j.hourly.wind_speed_10m))
         ? {
@@ -333,45 +223,29 @@ async function fetchPrecip(lat, lng) {
           timezone: j.timezone || null,
         }
         : null,
-      // BUG-FROSTADVISORYNIGHTWORDING-001 — the hourly temperature, carried VERBATIM with its local stamps so
-      // frostEval.locateNight can find the hour of the advisory day's minimum by string arithmetic (the same
-      // DST-safe method as hourly_frost). Its OWN key, guarded on its OWN array, deliberately NOT folded into
-      // hourly_frost: that block is null unless all three radiative arrays arrive, and a missing dewpoint must
-      // not cost the advisory its night. null (never {}) when absent -> the advisory names the base-rate night.
+      // The hourly temperature, VERBATIM with its local stamps, so frostEval.locateNight can find the hour of the advisory
+      // day's minimum. Its OWN key, guarded on its OWN array, deliberately NOT folded into hourly_frost (null unless all
+      // three radiative arrays arrive): a missing dewpoint must not cost the advisory its night. null (never {}) when
+      // absent -> the advisory names the base-rate night.
       hourly_temp: (j.hourly && Array.isArray(j.hourly.time) && Array.isArray(j.hourly.temperature_2m))
         ? { time: j.hourly.time, temperature_2m: j.hourly.temperature_2m, timezone: j.timezone || null }
         : null,
-      // V4-WATERMATH-001 F1 — the COMPLETED days in this response, as the rows weather_daily will hold.
-      // Indices 0 and 1 are D-2 and D-1; index 2 is D0, which is deliberately EXCLUDED. Today is still
-      // accumulating, and the write discipline in design Part 4 is explicit that intraday runs must never
-      // persist a partial day — a 15:30 partial total written as the day's actual would silently corrupt
-      // every later recompute that reads it back, and nothing downstream could tell it apart from a real
-      // dry day. `date` is Open-Meteo's own local (America/New_York) day label, which is the ET civil day
-      // weather_daily.date is contracted to be; deriving it from the fetch clock instead would put the row
-      // on the wrong day whenever a run straddles midnight.
-      //
-      // precip_in here is the RAW model value, never the gauge. The gauge merge for D-1 happens later in
-      // station.mergeStationHydrology and lands on the top-level yesterday_precip_actual_in key; the writer
-      // (handler.writeWeatherDaily) prefers that merged value and only falls back to this one. Keeping the
-      // raw figure separate is what lets the writer label precip_source honestly instead of guessing.
-      //
-      // These keys ride on the hydrology bag but never reach the stored plan: engine.generatePlan copies
-      // hydrology by NAMED key, so flag-OFF byte-parity holds, as it does for yesterday_precip_actual_in.
-      // (The D1..D3 lows are no longer an example of this: since V5-TODAYFROSTWARMEDADVISORY-001,
-      // generatePlan copies them into the stored plan while the frost alert is on.)
+      // The COMPLETED days in this response, as the rows weather_daily will hold. Indices 0 and 1 are D-2 and D-1; index 2
+      // (D0) is deliberately EXCLUDED: intraday runs must never persist a partial day, which reads back as a real dry day.
+      // `date` is Open-Meteo's own America/New_York day label, the civil day weather_daily is contracted to hold; deriving
+      // it from the fetch clock would misplace the row when a run straddles midnight.
+      // precip_in is the RAW model value, never the gauge: the D-1 gauge merge happens in station.mergeStationHydrology and
+      // lands on yesterday_precip_actual_in, which handler.writeWeatherDaily prefers, so precip_source stays honest.
+      // These keys ride on the hydrology bag but never reach the stored plan: engine.generatePlan copies by NAMED key.
       settled_days: [0, 1].map((i) => ({
         date: times[i] || null,
         et0_in: Number.isFinite(et0[i]) ? round3(et0[i]) : null,
         tmax_f: Number.isFinite(tmax[i]) ? round2(tmax[i]) : null,
         tmin_f: Number.isFinite(tmin[i]) ? round2(tmin[i]) : null,
-        // null, NEVER 0 — absence of data must not be recorded as "no rain fell". Same rule as
-        // yesterday_precip_actual_in above, and the same reason: 0 is real data here.
+        // null, NEVER 0 — absence of data must not be recorded as "no rain fell".
         precip_in: Number.isFinite(ps[i]) ? round2(ps[i]) : null,
-        // V5-WXBACKFILLVARS-001. Same null-never-0 rule, and it bites hardest here: 0 sunshine
-        // seconds is a real overcast day and 0 precipitation_hours is a real dry one, so coercing an
-        // absent value would be indistinguishable from a measurement. round2 is the endpoint's own
-        // resolution for all five (52498.66 s, 7267.21 s, 5.81 MJ/m², 9.3 mph, 17.0 h on 2026-05-14),
-        // so it loses nothing — unlike ET0, which needs round3 because its useful range is 0.15-0.25.
+        // Same null-never-0 rule: 0 sunshine seconds is a real overcast day and 0 precipitation_hours a real dry one.
+        // round2 is the endpoint's own resolution for these five, so it loses nothing (ET0 needs round3).
         daylight_s: Number.isFinite(daylight[i]) ? round2(daylight[i]) : null,
         sunshine_s: Number.isFinite(sunshine[i]) ? round2(sunshine[i]) : null,
         solar_mj_m2: Number.isFinite(solar[i]) ? round2(solar[i]) : null,
@@ -385,11 +259,11 @@ async function fetchPrecip(lat, lng) {
   }
 }
 
-// BUG-RAINFCSTONEMODEL-001 — tomorrow's and the day after's rain from five models (see rainForecast.js for the
-// evidence). Its OWN request, deliberately never folded into fetchPrecip's URL: `models=` there suffixes every
-// daily and hourly key or, with one model, moves the frost lows. Placed after fetchPrecip and named without its
-// prefix because the source-text harnesses (openmeteo-indices, fetchprecip-errorbody, nightly-timeout) cut
-// fetchPrecip out by name. Any failure returns null, and the run keeps best_match for every day-ahead field.
+// Tomorrow's and the day after's rain from five models (see rainForecast.js). Its OWN request, deliberately never folded
+// into fetchPrecip's URL: `models=` there suffixes every daily and hourly key or, with one model, moves the frost lows.
+// Placed after fetchPrecip and named without its prefix because the source-text harnesses (openmeteo-indices,
+// fetchprecip-errorbody, nightly-timeout) cut fetchPrecip out by name. Any failure returns null, and the run keeps
+// best_match for every day-ahead field.
 async function fetchRainForecast(lat, lng, today) {
   try {
     const r = await fetch(rainForecast.rainForecastUrl(lat, lng), { signal: AbortSignal.timeout(6000) });
@@ -403,9 +277,9 @@ async function fetchRainForecast(lat, lng, today) {
   }
 }
 
-// DRG-WXSTATION-001 — on-site AmbientWeather WS-2902. Read lazily + fully guarded so a missing/broken AWN
-// secret or a station outage NEVER empties the nightly plan (V200 B6): any failure returns null and the run
-// falls back to Open-Meteo/NWS. Kept in a SEPARATE secret (garden-app/awn-keys) from the NEON/CLERK blob.
+// On-site AmbientWeather station. Read lazily and fully guarded: a missing or broken AWN secret or a station outage must
+// NEVER empty the nightly plan, so any failure returns null and the run falls back to Open-Meteo/NWS. Kept in a SEPARATE
+// secret (garden-app/awn-keys) from the NEON/CLERK blob.
 const AWN_SECRET_NAME = process.env.AWN_SECRET_NAME || 'garden-app/awn-keys';
 let _awn; // cache: object {apiKey,appKey} or null (resolved once); undefined = not yet read
 async function getAwnKeys() {
@@ -422,7 +296,7 @@ async function getAwnKeys() {
   return _awn;
 }
 async function awnGet(url) {
-  const r = await fetch(url, { signal: AbortSignal.timeout(8000) }); // < 30s Lambda ceiling (verified nodejs20; nodejs22 since v5.2.1; no VPC)
+  const r = await fetch(url, { signal: AbortSignal.timeout(8000) }); // under the 30s Lambda ceiling
   if (!r.ok) throw new Error(`AWN ${r.status}`);
   return r.json();
 }
@@ -459,14 +333,12 @@ async function fetchStation() {
 }
 
 exports.handler = async (event) => {
-  // A0.2-EVENT-OVERRIDES sentinel — scripts/rerun-daily-plan.sh greps the DEPLOYED zip's index.js for
-  // this exact marker before ANY invoke (older deploys ignored the payload entirely, so a "dry" invoke
-  // against them would really run env-live). Do not rename/remove. Override semantics are fail-safe-only:
-  // see handler.resolveInvokeOptions — the payload can force DRY or override the date, never force live.
-  // A0.4-FLAG-OVERRIDES sentinel — dry-run-ONLY engine-flag overrides for the V4-WATERMATH-001 F2
-  // shadow/parity replay (event.flagOverrides, whitelisted + strict-boolean, hard-rejected on any
-  // live run by handler.resolveInvokeOptions). The wrapper preflight-greps the deployed zip for this
-  // marker before any --flag-overrides invoke, same pattern as A0.2/A0.3. Do not rename/remove.
+  // A0.2-EVENT-OVERRIDES sentinel — scripts/rerun-daily-plan.sh greps the DEPLOYED zip's index.js for this exact marker
+  // before ANY invoke. Do not rename/remove. Overrides are fail-safe-only (handler.resolveInvokeOptions): the payload can
+  // force DRY or override the date, never force live.
+  // A0.4-FLAG-OVERRIDES sentinel — dry-run-ONLY engine-flag overrides (event.flagOverrides, whitelisted + strict-boolean,
+  // hard-rejected on any live run by handler.resolveInvokeOptions). The wrapper greps the deployed zip for this marker
+  // before any --flag-overrides invoke. Do not rename/remove.
   const { dryRun, today, ping, flagOverrides } = resolveInvokeOptions(event, {
     envDryRun: process.env.DRY_RUN, todayDefault: todayET(),
   });
@@ -474,25 +346,19 @@ exports.handler = async (event) => {
   const started = Date.now();
   const { NEON_DATABASE_URL } = await getSecrets();
   const pool = new Pool({ connectionString: NEON_DATABASE_URL });
-  // BUG-DAILYPLANCONNDROP-001 — the pool re-emits an IDLE client's connection loss as a pool 'error' event
-  // (pg-pool's idleListener, after it has already discarded that client). With no listener Node throws it as
-  // an Uncaught Exception and the runtime kills the invocation: 2026-09-19 21:00Z and 2026-09-20 12:00Z, Neon
-  // closed the pooler WebSocket (code 1000) while the run sat between queries (both runs found the compute
-  // awake, db-ready 361/540 ms; both retries a minute later waited 2022/1440 ms for it to resume). Nothing
-  // is lost when an idle client drops: the next pool.query opens a fresh connection. A query that fails —
-  // in flight, or on that reconnect — still rejects into the catch below, so a real outage still fails the
-  // invocation, retries and pages.
-  // Message and code ONLY: the error carries `client`, whose config holds the DSN with its password, and the
-  // runtime's uncaught-exception logger wrote exactly that to CloudWatch both times.
+  // The pool re-emits an IDLE client's connection loss as a pool 'error' event; with no listener Node throws it as an
+  // uncaught exception and the runtime kills the invocation (Neon closes idle pooler sockets). Nothing is lost when an
+  // idle client drops: the next pool.query opens a fresh connection, and a query that fails still rejects into the
+  // catch below, so a real outage still fails the invocation, retries and pages.
+  // Log message and code ONLY: the error carries `client`, whose config holds the DSN with its password.
   pool.on('error', (err) => {
     console.warn(JSON.stringify({ msg: 'db-pool-idle-error', error: err && err.message, code: (err && err.code) || null, ms: Date.now() - started }));
   });
   try {
     const res = await run({ pg: pool, today, dryRun, flagOverrides, geocodeZip, fetchNWS, fetchPrecip, fetchRainForecast, fetchStation, publishAlert, etHour: hourET(), event });
     console.log(JSON.stringify({ msg: 'daily-plan', today, dryRun, rows: res.rows, ms: Date.now() - started }));
-    // A0.3-DRY-PLANS sentinel — DRY responses carry the computed plans so scripts/rerun-daily-plan.sh
-    // --diff can compare a zero-write replay against the stored rows (it preflight-greps the deployed zip
-    // for this marker, same pattern as A0.2). LIVE responses stay lean; EventBridge nightly is unchanged.
+    // A0.3-DRY-PLANS sentinel — DRY responses carry the computed plans so scripts/rerun-daily-plan.sh --diff can compare
+    // a zero-write replay against the stored rows (it greps the deployed zip for this marker). LIVE responses stay lean.
     return { ok: true, today, dryRun, rows: res.rows, ...(dryRun ? { plans: res.plans } : {}) };
   } catch (e) {
     console.error(JSON.stringify({ msg: 'daily-plan ERROR', today, dryRun, error: e.message }));
