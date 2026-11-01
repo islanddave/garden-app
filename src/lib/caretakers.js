@@ -1,4 +1,4 @@
-// src/lib/caretakers.js — V4-ASSIGNLENS-001 shared caretaker/assignee helpers.
+// src/lib/caretakers.js — shared caretaker/assignee helpers.
 // The "effective caretaker" of a planting is its own assignee_user_id, else the parent project's
 // assignee_user_id, else null (unassigned). System/bot subs resolve to null so they never
 // masquerade as a human caretaker. Pure + unit-tested; consumed by Garden, DrG, and Today lenses.
@@ -7,10 +7,9 @@ import { P } from './constants.js'
 // Stable warm hues for non-self caretakers; the current user always reads P.green ("you").
 const OTHER_HUES = [P.terra, '#c9a84c', '#6b8fb5', '#a86b9c']
 
-// What we call a signed-in human whose display_name did not resolve. Exported because it is the
-// ONE answer to that question in the app: BUG-JENGREETEDDAVE-001 found the Dashboard greeting
-// answering it with the literal 'Dave', which turns a missing name into a false claim about WHICH
-// of the two users is holding the phone. A neutral noun cannot be wrong about that.
+// What we call a signed-in human whose display_name did not resolve. Exported because it is the ONE
+// answer to that question in the app: answering with a literal first name turns a missing name into a
+// false claim about WHICH of the users is holding the phone. A neutral noun cannot be wrong about that.
 export const NEUTRAL_CARETAKER_NAME = 'Gardener'
 
 export function buildProjectsById(projects) {
@@ -31,7 +30,7 @@ export function effectiveAssignee(planting, projectsById, systemSubs = null) {
   return sub
 }
 
-// members: [{ id, display_name }] (useMembers; email dropped 0A.6 — never rendered here).
+// members: [{ id, display_name }] (useMembers; email is not carried).
 // Returns Map<sub, { id, name, short, initial, color, isMe }>.
 export function buildCaretakerMap(members, meId) {
   const map = new Map()

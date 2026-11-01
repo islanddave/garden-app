@@ -1,9 +1,7 @@
-// src/lib/parseSowProfile.js — V4-SEEDINV-001 shared parsing lib.
-// Pure ESM, zero dependencies, plain-node compatible (imported by
-// migrations/v4-seedinv-001/0b-load-seeds.mjs as well as the frontend).
-// Converts seed-load-dataset packets into plant_varieties column values
-// (packetToVarietyCols) and inventory_items insert payloads
-// (packetToInventoryPayload).
+// src/lib/parseSowProfile.js — shared parsing lib. Pure ESM, zero dependencies, plain-node compatible
+// (imported by migrations/v4-seedinv-001/0b-load-seeds.mjs as well as the frontend).
+// Converts seed-load-dataset packets into plant_varieties column values (packetToVarietyCols) and
+// inventory_items insert payloads (packetToInventoryPayload).
 
 /** Live crop_types enum whitelist. 'other' and null guesses are omitted. */
 export const CROP_TYPE_SLUGS = Object.freeze([
@@ -19,13 +17,12 @@ export const CROP_TYPE_SLUGS = Object.freeze([
   'tradescantia', 'vietnamese_coriander', 'watermelon', 'wineberry', 'winter_squash'
 ]);
 
-// ── V4-CROPGUESS-001 — crop-guess cross-check (croptype-mistyping-20260721 Pending 1) ────────
-// THE DEFECT CLASS (L-286): `crop_type_slug_guess` is LLM-authored per packet. When no correct crop
-// type existed, the guess settled for the nearest VALID neighbour — Radicchio (Cichorium intybus)
-// -> `endive` (C. endivia), Chervil (Anthriscus cerefolium) -> `parsley` (Petroselinum crispum),
-// Borage (Borago officinalis) -> `basil` (Ocimum basilicum). Every existing guard passed, because
-// they all ask "is this slug in the catalog?" and none asks "does it match the packet's own crop
-// name?". A test had even ENSHRINED the radicchio case.
+// ── Crop-guess cross-check ───────────────────────────────────────────────────────────────────
+// THE DEFECT CLASS: `crop_type_slug_guess` is LLM-authored per packet. When no correct crop type
+// existed, the guess settled for the nearest VALID neighbour — Radicchio (Cichorium intybus) -> `endive`
+// (C. endivia), Chervil (Anthriscus cerefolium) -> `parsley` (Petroselinum crispum), Borage (Borago
+// officinalis) -> `basil` (Ocimum basilicum). Every catalog guard passed, because they all ask "is this
+// slug in the catalog?" and none asks "does it match the packet's own crop name?".
 //
 // NOT COSMETIC: crop_types carries BEHAVIOUR — harvest_habit, repeat_interval_days and
 // loss_horizon_hours all ride the slug. Radicchio inherited endive's cut_and_come_again/10d when
@@ -49,25 +46,21 @@ function bareSlug(s) {
 
 /** Packet `crop` -> comparable slug. Comma-head ("Pepper, Chile" -> pepper) and parentheticals
  *  ("Potato (true seed)" -> potato) are formatting, not disagreement, so they are normalised away
- *  BEFORE comparison — that alone removes 2 of the false alarms the original detector produced.
+ *  BEFORE comparison.
  *
- *  BUT the comma-head rule had a hole, and it hid two live defects of the very class this detector
- *  exists to catch (found 20260804). "Squash, Winter" and "Onion, Bunching" are the SAME inverted
- *  form as "Winter Squash" and "Bunching Onion" — a catalog listing convention, not a subtype. The
- *  head-only rule threw away the one word that discriminates the crop type, so both slugified to
- *  the parent (`squash`, `onion`), matched their parent guess, and resolved 'match'. Neon disagreed
- *  with both: Waltham Butternut is `winter_squash` and Tokyo Long White is `bunching_onion` in
- *  prod. A re-load would have handed the butternut summer squash's repeat/2-day cadence — exactly
- *  the L-286 failure, passing the gate built to stop it. A shipped test already asserts the
- *  uninverted spelling flags (`pk('Winter Squash','squash')` -> unresolved); this closes the comma
- *  spelling of the same statement.
+ *  Exception: "Squash, Winter" and "Onion, Bunching" are the SAME inverted form as "Winter Squash"
+ *  and "Bunching Onion" — a catalog listing convention, not a subtype. A head-only rule throws away
+ *  the one word that discriminates the crop type, so both would slugify to the parent (`squash`,
+ *  `onion`), match a parent guess, and resolve 'match', handing a butternut the summer squash's
+ *  repeat/2-day cadence: the failure this detector exists to stop. (The uninverted spelling already
+ *  flags: `pk('Winter Squash','squash')` -> unresolved; this closes the comma spelling of the same
+ *  statement.)
  *
  *  The inversion is applied ONLY when the recombined form is itself a LIVE crop type. That guard is
  *  what keeps it from becoming the "widen the normaliser until mismatches vanish" move the corpus
- *  gate forbids: it can only ever make the detector see MORE, never less. Every other comma crop in
- *  both datasets is unaffected — 'chile_pepper', 'bulb_onion', 'romaine_lettuce', 'cherry_tomato',
- *  'holy_basil', 'summer_squash', 'bush_bean' are none of them crop types, so those all still fall
- *  back to the head exactly as before. */
+ *  gate forbids: it can only ever make the detector see MORE, never less. Every other comma crop
+ *  ('chile_pepper', 'bulb_onion', 'romaine_lettuce', 'cherry_tomato', 'holy_basil', 'summer_squash',
+ *  'bush_bean') is not a crop type, so those still fall back to the head. */
 export function slugifyCropName(crop) {
   if (crop == null) return '';
   const parts = String(crop).split(',');
@@ -81,30 +74,23 @@ export function slugifyCropName(crop) {
 
 /**
  * Reviewed synonyms: slugified crop name -> accepted crop_type_slug. Every entry is a HUMAN
- * decision recorded with its reason. Seeded from a re-run of the measured audit over both seed
- * datasets (179 packets). Adding an entry here is the ONLY sanctioned way to accept a mismatch.
+ * decision recorded with its reason. Adding an entry here is the ONLY sanctioned way to accept a
+ * mismatch.
  *
- * NOTE (rewritten 20260804 — the previous text was STALE and read as licence for the exact defect
- * the entry below now prevents). It said pumpkin was "accepted because `squash` is the only
- * available target TODAY". That has not been true since V4-CROPSPLIT-001 shipped `winter_squash`
- * (harvest_habit 'single'), and the entry it annotated had already been corrected to winter_squash
- * while the comment still described the debt. `crop_types.squash` is display_name 'Summer Squash'
- * and carries harvest_habit=repeat / repeat_interval_days=2 / loss_horizon_hours=36; `winter_squash`
- * carries 'single' with neither. There is no remaining squash debt here — a pumpkin routed to
- * `squash` is now simply wrong, and it is wrong twice over, because `ripenessCues.js` gives
- * `squash` "press a thumbnail into the rind — it should pierce easily", which is the INVERSE of the
- * winter-squash test. Verified in Neon 20260804: Howden, Cinderella and Waltham Butternut are all
- * `winter_squash`.
+ * Pumpkin maps to `winter_squash`, not `squash`: `crop_types.squash` is display_name 'Summer Squash'
+ * and carries harvest_habit=repeat / repeat_interval_days=2 / loss_horizon_hours=36, whereas
+ * `winter_squash` carries 'single' with neither. A pumpkin routed to `squash` is wrong twice over,
+ * because `ripenessCues.js` gives `squash` "press a thumbnail into the rind — it should pierce
+ * easily", which is the INVERSE of the winter-squash test.
  */
 export const CROP_GUESS_SYNONYMS = Object.freeze({
   collards: 'collard',           // plural of the same crop; the catalog slug is singular
-  pumpkin: 'winter_squash',      // V4-CROPSPLIT-001: winter_squash now EXISTS. Pumpkins ARE winter
-                                 // squash: zero behavioural columns differ, and the label
-                                 // cross-cuts species (Howden C. pepo, Cinderella C. maxima).
-  scallion: 'bunching_onion',    // V4-CROPSPLIT-001; mirrors validate.js COUPLED_CROP_SYNONYMS.
+  pumpkin: 'winter_squash',      // Pumpkins ARE winter squash: zero behavioural columns differ, and the
+                                 // label cross-cuts species (Howden C. pepo, Cinderella C. maxima).
+  scallion: 'bunching_onion',    // Mirrors validate.js COUPLED_CROP_SYNONYMS.
   green_onion: 'bunching_onion', // Without these a 'Scallion' packet resolves UNRESOLVED, since
                                  // the slugified crop no longer equals any live guess.
-  broccoli_raab: 'broccoli',     // Rapini, Brassica rapa Ruvo. OPEN judgment call (Dave), not a defect
+  broccoli_raab: 'broccoli',     // Rapini, Brassica rapa Ruvo. OPEN judgment call, not a defect
   chinese_broccoli: 'broccoli',  // Kailaan, B. oleracea Alboglabra — same species as broccoli
 });
 
@@ -262,21 +248,21 @@ export function packetToVarietyCols(packet, opts = {}) {
     species: null,
   };
   const guess = packet.crop_type_slug_guess;
-  // V4-SEEDLOAD-001 fix: gate crop_type_slug on the LIVE crop_types catalog when the caller
-  // supplies it (opts.validSlugs — a Set or array of slugs read from the crop_types table),
-  // falling back to the static CROP_TYPE_SLUGS list for callers without DB access. The static
-  // list drifted behind crop_types (carrot, radish, four_o_clock, … were absent), so valid slugs
-  // were dropped to null and the loaded varieties vanished from the by-type (faceted) views.
+  // Gate crop_type_slug on the LIVE crop_types catalog when the caller supplies it (opts.validSlugs —
+  // a Set or array of slugs read from the crop_types table), falling back to the static
+  // CROP_TYPE_SLUGS list for callers without DB access. The static list can drift behind crop_types,
+  // which drops valid slugs to null and makes the loaded varieties vanish from the by-type (faceted)
+  // views.
   const valid = opts.validSlugs;
   const slugOk = valid
     ? (valid instanceof Set ? valid.has(guess) : valid.includes(guess))
     : CROP_TYPE_SLUGS.includes(guess);
-  // V4-CROPGUESS-001. Validity and CORRECTNESS are different questions and the catalog check only
-  // answers the first — `endive` was a perfectly valid slug for a radicchio packet. crossCheck is
-  // OPT-IN (default off) so this cannot silently change what already-run loaders bind; a caller
-  // passing crossCheck:true gets `crop_type_slug: null` plus a `crop_guess` verdict to surface in
-  // its dry-run decision table. Unresolved means UNKNOWN — never approximate to the nearest valid
-  // neighbour, which is the exact move that produced the defect.
+  // Validity and CORRECTNESS are different questions and the catalog check only answers the first —
+  // `endive` is a perfectly valid slug for a radicchio packet. crossCheck is OPT-IN (default off) so
+  // this cannot silently change what already-run loaders bind; a caller passing crossCheck:true gets
+  // `crop_type_slug: null` plus a `crop_guess` verdict to surface in its dry-run decision table.
+  // Unresolved means UNKNOWN — never approximate to the nearest valid neighbour, which is the exact
+  // move that produced the defect.
   const check = checkCropGuess(packet, opts);
   const crossCheckBlocks = opts.crossCheck === true && check.status === 'unresolved';
   if (opts.crossCheck === true) out.crop_guess = check;

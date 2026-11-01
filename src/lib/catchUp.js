@@ -1,13 +1,12 @@
-// catchUp.js — V5-PLANTSTARTDATES-001. The pure half of /plants/catch-up: who is listed, which
-// months a picker offers, which day a month is stored as, and the exact PUT body. No React, so every
-// rule here is testable without rendering the page.
+// catchUp.js — The pure half of /plants/catch-up: who is listed, which months a picker offers, which
+// day a month is stored as, and the exact PUT body. No React, so every rule here is testable without
+// rendering the page.
 //
 // WHY THE PAGE EXISTS. Plantings added in a hurry carry no start date at all, and a planting with
 // neither a sown date nor a planted-out date cannot say when anything went in — on its own detail
-// page, in the maturity estimate, or on the public website (eight published plantings at authoring:
-// King of the North, Purple Tiger, Biquinho Yellow F1, Emerald Green, Piquin, Palmetto Punch,
-// Sweet Chocolate, Black Krim). Most of those dates are recoverable to the month from memory or
-// from the photos, which is the precision this page asks for and the precision it records.
+// page, in the maturity estimate, or on the public website. Most of those dates are recoverable to the
+// month from memory or from the photos, which is the precision this page asks for and the precision it
+// records.
 import { growYearOfDayKey } from './growYear.js'
 import { etDay } from './harvestSummary.js'
 import { buildLocationGroupedList, SORT_ALPHA } from './projectTree.js'
@@ -81,7 +80,7 @@ export function outBeforeSown(draft) {
 
 // The PUT body: ONLY the chosen date(s), each with its *_approx = true. Nothing else rides along —
 // the Lambda's PUT is a COALESCE partial update, so an absent key leaves that column untouched, and
-// the BUG-SOWNAPPROXORPHAN-001 guard there drops any flag sent without its date.
+// it drops any flag sent without its date.
 export function catchUpBody(draft, today) {
   const body = {}
   if (draft?.sown) {

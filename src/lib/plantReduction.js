@@ -1,5 +1,5 @@
-// src/lib/plantReduction.js
-// V4-LOSSUI-001 — the client half of the plant-reduction contract V4-LOSSEVENT-001 shipped.
+// src/lib/plantReduction.js — the client half of the plant-reduction contract (loss and giveaway
+// events; server side is lambda/events/validators.js validateReduction).
 //
 // PURE, and in src/lib/ deliberately: vitest.config.ts's coverage.include covers src/lib/** but not
 // src/pages/**, so a validator living inside EventNew.jsx would be invisible to the coverage
@@ -7,19 +7,19 @@
 //
 // WHAT THIS MIRRORS, AND WHAT IT DELIBERATELY DOES NOT.
 //
-// It mirrors the two REQUIREDNESS rules from lambda/events/validators.js validateReduction: an
-// integer quantity of at least 1, and a reason drawn from the vocabulary for that event type. Those
-// are mirrored because the server answers them with a 400 whose message friendlyError() flattens to
-// "Something didn't look right" — useless beside a form with two empty fields. Refusing before the
-// POST puts the message next to the field it is about.
+// It mirrors the two REQUIREDNESS rules from validateReduction: an integer quantity of at least 1, and
+// a reason drawn from the vocabulary for that event type. Those are mirrored because the server answers
+// them with a 400 whose message friendlyError() flattens to "Something didn't look right" — useless
+// beside a form with two empty fields. Refusing before the POST puts the message next to the field it
+// is about.
 //
-// It does NOT mirror the over-reduction refusal. "7 against 5 remaining" is answered by a 409 from
-// the events Lambda (code REDUCTION_EXCEEDS_REMAINING) and that is the ONLY authority on it: the
-// client's idea of how many are left comes from a plants list fetched at mount, which a second
-// device — or Dave's own earlier reduction in another tab — can have moved since. Pre-refusing on
-// that number would block a legitimate save on stale data, and CLAMPING to it is expressly what
-// V4-LOSSEVENT-001 refused (a clamped row is indistinguishable from a correct one afterwards). The
-// remaining count is rendered as INFORMATION beside the field; the refusal is the server's.
+// It does NOT mirror the over-reduction refusal. "7 against 5 remaining" is answered by a 409 from the
+// events Lambda (code REDUCTION_EXCEEDS_REMAINING) and that is the ONLY authority on it: the client's
+// idea of how many are left comes from a plants list fetched at mount, which a second device — or an
+// earlier reduction in another tab — can have moved since. Pre-refusing on that number would block a
+// legitimate save on stale data, and CLAMPING to it is refused by the server contract (a clamped row is
+// indistinguishable from a correct one afterwards). The remaining count is rendered as INFORMATION
+// beside the field; the refusal is the server's.
 import {
   LOSS_EVENT_TYPE,
   GIVEAWAY_EVENT_TYPE,
@@ -39,8 +39,8 @@ export const REDUCTION_REASON_ERRORS = {
   [GIVEAWAY_EVENT_TYPE]: 'Pick where they went.',
 }
 
-// Every lookup here canonicalises (V5-LOSSTOKEN-001), so a legacy `failed` / `given_away` restored from
-// an old draft or deep link behaves exactly like the new token.
+// Every lookup here canonicalises, so a legacy `failed` / `given_away` restored from an old draft or
+// deep link behaves exactly like the new token.
 export function reductionReasonError(eventType) {
   return REDUCTION_REASON_ERRORS[canonicalEventType(eventType)] ?? 'Pick a reason.'
 }

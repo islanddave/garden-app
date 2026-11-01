@@ -1,26 +1,25 @@
 import { PLANT_STATUSES, statusLabel } from './constants.js'
 
-// Shared project/planting tree utilities for the Garden tab (Increment 1, post-V2 UX overhaul).
-// Garden unifies Projects + Plants into one nested accordion: projects form a parent/child
-// tree (parent_project_id), and each project's plantings hang under it as leaf rows.
-// Frontend-only — composes /api/projects + /api/plants (both already fetched elsewhere).
+// Shared project/planting tree utilities for the Garden tab. Garden unifies Projects + Plants into one
+// nested accordion: projects form a parent/child tree (parent_project_id), and each project's
+// plantings hang under it as leaf rows. Frontend-only — composes /api/projects + /api/plants (both
+// already fetched elsewhere).
 //
-// buildDisplayList: lifted verbatim from ProjectList.jsx so the project ordering/indent
-// stays identical across surfaces. buildGardenTree: nests plantings under their owning
-// project for the unified accordion. Disclosure state persists in localStorage (production
-// PWA — the artifact-only localStorage ban does not apply here).
+// buildDisplayList: lifted verbatim from ProjectList.jsx so the project ordering/indent stays
+// identical across surfaces. buildGardenTree: nests plantings under their owning project for the
+// unified accordion. Disclosure state persists in localStorage.
 
-// V3-ORDER-001 (Lane C / PR1): numeric-aware, null-safe, case-insensitive name comparator.
-// localeCompare with numeric:true gives natural ordering — "Bed 2" before "Bed 10" — and
-// sensitivity:'base' folds case/accents so "apple" and "Apple" sort together. Null/undefined
-// names sort as empty string (stable at the front) so a nameless row never throws.
+// Numeric-aware, null-safe, case-insensitive name comparator. localeCompare with numeric:true gives
+// natural ordering — "Bed 2" before "Bed 10" — and sensitivity:'base' folds case/accents so "apple"
+// and "Apple" sort together. Null/undefined names sort as empty string (stable at the front) so a
+// nameless row never throws.
 export function byName(a, b) {
   return (a?.name || '').localeCompare(b?.name || '', undefined, { numeric: true, sensitivity: 'base' })
 }
 
-// BUG-ORDER-001: recency comparator — most-recently-active first. Prefers the
-// server-computed last_activity_at (max event date), else updated_at, else
-// created_at. Missing/equal keys -> 0 so a stable sort preserves server order.
+// Recency comparator — most-recently-active first. Prefers the server-computed last_activity_at (max
+// event date), else updated_at, else created_at. Missing/equal keys -> 0 so a stable sort preserves
+// server order.
 function recencyKey(x) {
   const t = Date.parse(x?.last_activity_at || x?.updated_at || x?.created_at || '')
   return Number.isNaN(t) ? 0 : t
@@ -29,36 +28,32 @@ export function byRecency(a, b) {
   return recencyKey(b) - recencyKey(a)
 }
 
-// Sort orders. 'alpha' = byName (case-insensitive, numeric-aware) — the DEFAULT.
-// 'recency' = most-recently-active first (last_activity_at from the server; created_at fallback).
-// OWNER OVERRIDE (Dave, 2026-06-04): alphabetical is the default per Dave's explicit decision,
-// overriding the Crucible's recency-default (V002 §5 / V3-ORDER-001). This restores Dave's
-// original ss1-screenshot intent. Recency remains available and persists one tap away via the
-// SortToggle. Do NOT revert to a recency default without a fresh owner decision.
+// Sort orders. 'alpha' = byName (case-insensitive, numeric-aware) — the DEFAULT, by owner decision
+// over a recency default. 'recency' = most-recently-active first (last_activity_at from the server;
+// created_at fallback), one tap away and persisted via the SortToggle. Do NOT revert to a recency
+// default without a fresh owner decision.
 export const SORT_RECENCY = 'recency'
 export const SORT_ALPHA = 'alpha'
 
-// V4-CAPTURE-002: synthetic node id for the "No project" bucket that collects project-less plantings
-// (container_id NULL). Not a real project — TreeNode renders it inert (no detail link / favorite / badge).
+// Synthetic node id for the "No project" bucket that collects project-less plantings (container_id
+// NULL). Not a real project — TreeNode renders it inert (no detail link / favorite / badge).
 export const NO_PROJECT_ID = '__noproject__'
 
-// Return a NEW array sorted by name when order==='alpha'; otherwise return the input untouched
-// (preserves server/recency order without copying). Null-safe.
+// Return a NEW array sorted by name when order==='alpha', otherwise a NEW array sorted
+// most-recently-active first. Null-safe.
 export function applyNameSort(arr, order) {
   const list = arr || []
   if (order === SORT_ALPHA) return [...list].sort(byName)
-  // BUG-ORDER-001: recency = most-recently-active first; stable sort preserves
-  // server order when activity timestamps are equal/absent.
+  // Stable sort: server order is preserved when activity timestamps are equal/absent.
   return [...list].sort(byRecency)
 }
 
 // Depth-ordered flat list: root projects first, each followed immediately by its descendants.
 // Orphaned children (parent missing/deleted) render as roots. (Verbatim from ProjectList.jsx.)
-// V3-ORDER-001: `order` ('recency'|'alpha') sorts roots + each childrenOf[] level when 'alpha';
-// default is now 'alpha' (owner override 2026-06-04). 'recency' preserves server order.
+// `order` ('alpha'|'recency') orders roots + each childrenOf[] level; default 'alpha'.
 export function buildDisplayList(projects, order = SORT_ALPHA) {
-  // V3-ARCHIVE-001: archived projects never render in active surfaces (defence-in-depth;
-  // the /api/projects list already excludes them, this also covers optimistic local state).
+  // Archived projects never render in active surfaces (defence-in-depth; the /api/projects list
+  // already excludes them, this also covers optimistic local state).
   const list = (projects || []).filter(p => p && !p.archived_at)
   const byId = {}
   list.forEach(p => { byId[p.id] = p })
@@ -99,10 +94,10 @@ export function groupPlantingsByProjectId(plants) {
 }
 
 // Nested tree: each node = { project, depth, children: [node...], plantings: [planting...] }.
-// children are sub-projects; plantings are this project's leaf rows. Used by the accordion,
-// which renders children + plantings only when the node is expanded.
+// children are sub-projects; plantings are this project's leaf rows. Used by the accordion, which
+// renders children + plantings only when the node is expanded.
 export function buildGardenTree(projects, plants, order = SORT_ALPHA) {
-  // V3-ARCHIVE-001: drop archived projects AND archived plantings from the active tree.
+  // Drop archived projects AND archived plantings from the active tree.
   const list = (projects || []).filter(p => p && !p.archived_at)
   const byId = {}
   list.forEach(p => { byId[p.id] = p })
@@ -121,8 +116,7 @@ export function buildGardenTree(projects, plants, order = SORT_ALPHA) {
 
   const livePlants = (plants || []).filter(pl => pl && !pl.archived_at)
   const plantingsBy = groupPlantingsByProjectId(livePlants)
-  // V3-ORDER-001: when order==='alpha', sort sub-projects (every depth) AND each project's
-  // plantings; default 'recency' leaves both in server order (no copy, original behavior).
+  // `order` sorts sub-projects (every depth) AND each project's plantings (see applyNameSort).
   function build(p, depth) {
     return {
       project: p,
@@ -132,10 +126,10 @@ export function buildGardenTree(projects, plants, order = SORT_ALPHA) {
     }
   }
   const nodes = applyNameSort(roots, order).map(r => build(r, 0))
-  // V4-CAPTURE-002: project-less plantings (container_id NULL — photo-first capture, "V4 tagging will
-  // re-home later") were invisible in the by-project tree because they hang under no project node.
-  // Collect them (null project_id OR a project_id with no live project) into a synthetic "No project"
-  // bucket appended after the real roots so they surface and can be opened/re-homed.
+  // Project-less plantings (container_id NULL, e.g. photo-first capture awaiting a home) hang under no
+  // project node and were invisible in the by-project tree. Collect them (null project_id OR a
+  // project_id with no live project) into a synthetic "No project" bucket appended after the real
+  // roots so they surface and can be opened/re-homed.
   const orphans = livePlants.filter(pl => pl.project_id == null || !byId[pl.project_id])
   if (orphans.length) {
     nodes.push({
@@ -153,11 +147,9 @@ export function nodeHasChildren(node) {
   return (node.children && node.children.length > 0) || (node.plantings && node.plantings.length > 0)
 }
 
-// ─── V4-GARDENIA-001: faceted group-by (ADDITIVE; buildGardenTree/buildDisplayList are
-//     untouched and remain golden-gated to parity hash 8a3d78f098e55ff2) ──────────────────
-//     That gate is `npm run parity:garden-render` (scripts/parity/garden-render-golden.mjs),
-//     wired in ci.yml. Named here because until 2026-08-26 this comment asserted a gate that
-//     nothing executed — the oracle existed only in the gardening-docs repo.
+// ─── Faceted group-by (ADDITIVE; buildGardenTree/buildDisplayList are untouched and remain
+//     golden-gated by `npm run parity:garden-render` (scripts/parity/garden-render-golden.mjs),
+//     wired in ci.yml) ──────────────────────────────────────────────────────────────────────────
 export const UNSORTED_SLUG = '__unsorted__'
 
 // Flatten a planting's bulk entity-tags entry { direct, projected } into one tag list.
@@ -167,22 +159,21 @@ export function tagsForPlanting(tagMap, plantingId) {
   return [...(e.direct || []), ...(e.projected || [])]
 }
 
-// V4-HEATSORT-001 / V4-DETSORT-001 / V4-DAYLEN-001 — canonical group ORDER for the classification
-// facets (V4-CLASSIFY-001). Alphabetical is nonsensical for these (Heat -> Hot, Medium, Mild, Sweet);
-// each has a real semantic order. A facet listed here sorts its groups by slug index; any facet NOT
-// listed (type, lifecycle tags, location, group, freeform) keeps the alpha default. Unknown/future
-// slugs sort AFTER all known values (alpha among themselves); the no-value "Unsorted" group stays
-// dead last (appended below). Slugs mirror lambda/tags/crop-derive.js (HEAT_BANDS + *_LABELS); the
-// determinacy + day_length orders are horticulturally-locked (compact->sprawling; photoperiod
-// continuum south->north with day-neutral off-axis last).
+// Canonical group ORDER for the classification facets. Alphabetical is nonsensical for these
+// (Heat -> Hot, Medium, Mild, Sweet); each has a real semantic order. A facet listed here sorts its
+// groups by slug index; any facet NOT listed (type, lifecycle tags, location, group, freeform) keeps
+// the alpha default. Unknown/future slugs sort AFTER all known values (alpha among themselves); the
+// no-value "Unsorted" group stays dead last (appended below). Slugs mirror lambda/tags/crop-derive.js
+// (HEAT_BANDS + *_LABELS); the determinacy + day_length orders are horticulturally-locked
+// (compact->sprawling; photoperiod continuum south->north with day-neutral off-axis last).
 export const FACET_VALUE_ORDER = {
   heat: ['sweet', 'mild', 'medium', 'hot', 'very_hot', 'superhot'],
   determinacy: ['dwarf', 'determinate', 'semi_determinate', 'indeterminate'],
   day_length: ['short_day', 'intermediate', 'long_day', 'day_neutral'],
   allium_type: ['bulbing', 'bunching'],
   basil_use: ['culinary', 'thai', 'tulsi'],
-  // V4-BEANFACET-001. bean_habit compact->sprawling (mirrors determinacy); bean_use young->mature
-  // harvest stage with dual last; bean_type Phaseolus group, then Vigna, then Vicia/Glycine.
+  // bean_habit compact->sprawling (mirrors determinacy); bean_use young->mature harvest stage with
+  // dual last; bean_type Phaseolus group, then Vigna, then Vicia/Glycine.
   bean_type: ['common', 'runner', 'lima', 'yardlong', 'cowpea', 'fava', 'soybean'],
   bean_habit: ['bush', 'half_runner', 'pole'],
   bean_use: ['snap', 'shell', 'dry', 'dual_purpose'],
@@ -232,17 +223,16 @@ export function buildTagGroupedList(plantings, tagMap, facet, order = SORT_ALPHA
   return out
 }
 
-// V4-GARDENLOCFILTER-001: group by PHYSICAL LOCATION. Structural, not tag-based — reads
-// garden_node.location_id directly, same posture as crop_type/status, so it needs no entity_tag rows
-// (there are zero 'location'-facet tags in prod and none are planned). `locations` = GET /api/locations
-// rows ({id, name, parent_id, sort_order}).
+// Group by PHYSICAL LOCATION. Structural, not tag-based — reads garden_node.location_id directly, same
+// posture as crop_type/status, so it needs no entity_tag rows. `locations` = GET /api/locations rows
+// ({id, name, parent_id, sort_order}).
 //
-// Owner decisions baked in (Dave 2026-08-05):
+// Behaviour:
 //   • NESTED — groups emit depth-first parent-then-children, each carrying `depth` so the renderer can
 //     indent (zone -> area/rack -> shelf). A parent holds only its OWN direct plantings; children are
-//     separate groups, because a zone like Drive has 9 of its own plus two child areas.
+//     separate groups.
 //   • EMPTY LOCATIONS ARE EMITTED (count 0). An empty shelf is a place to fill, not noise.
-//   • No location_id -> the shared trailing Unsorted bucket, which Dave edits from.
+//   • No location_id -> the shared trailing Unsorted bucket.
 //
 // Robustness: a planting whose location_id names a missing/deleted location would otherwise vanish from
 // the view entirely (silent data loss in a grouping is worse than a wrong bucket), so those fall through
@@ -320,11 +310,10 @@ export function saveExpanded(set) {
   } catch (_e) { /* non-fatal: disclosure persistence is best-effort */ }
 }
 
-// V4-NAVSTATE-001: the FACETED/grouped Garden view (groupBy !== 'none') tracked its expanded
-// sections in component-local state, so a drill-in + back remount reset every section to collapsed
-// (the "back button collapses the tree" bug). Persist it per-browser, mirroring loadExpanded/
-// saveExpanded. Keyed separately (groups are tag-facet slugs, not project ids). Default = empty
-// Set (collapsed-first — same ADHD-overwhelm posture as the by-project tree).
+// The FACETED/grouped Garden view (groupBy !== 'none') persists its expanded sections per-browser, so
+// a drill-in + back remount does not reset every section to collapsed. Mirrors loadExpanded/
+// saveExpanded. Keyed separately (groups are tag-facet slugs, not project ids). Default = empty Set
+// (collapsed-first — same ADHD-overwhelm posture as the by-project tree).
 const GROUPS_LS_KEY = 'garden.groupsExpanded.v1'
 
 export function loadGroupsExpanded() {
@@ -344,13 +333,11 @@ export function saveGroupsExpanded(set) {
   } catch (_e) { /* non-fatal: disclosure persistence is best-effort */ }
 }
 
-// ── V3-ORDER-001 persisted sort-order toggle ───────────────────────────────────
-// TRACKED EXPEDIENT (V002 §5 + Cross-Device State Principle): persistence lives in localStorage,
-// so the chosen sort order is per-device, NOT cross-device. The cross-device-preferred home is a
-// per-user server preference; deferring that here keeps Lane C frontend-only. FOLLOW-UP (V4):
-// migrate this toggle to a server/per-user pref so a sort choice on phone carries to desktop.
-// Mirrors loadExpanded/saveExpanded: best-effort, never throws. Default (nothing stored) = ALPHA
-// per the owner override (Dave, 2026-06-04); returns RECENCY only when localStorage explicitly
+// ── Persisted sort-order toggle ────────────────────────────────────────────────
+// TRACKED EXPEDIENT: persistence lives in localStorage, so the chosen sort order is per-device, NOT
+// cross-device. The cross-device-preferred home is a per-user server preference; migrate this toggle
+// there so a sort choice on phone carries to desktop. Mirrors loadExpanded/saveExpanded: best-effort,
+// never throws. Default (nothing stored) = ALPHA; returns RECENCY only when localStorage explicitly
 // holds the recency value. Any other/missing/corrupt value falls back to the alpha default.
 const SORT_LS_KEY = 'garden.sortOrder.v1'
 
@@ -370,9 +357,9 @@ export function saveSortOrder(order) {
   } catch (_e) { /* non-fatal: sort-order persistence is best-effort */ }
 }
 
-// V4-GARDENIA-001: persisted active group-by facet ('none' = legacy by-project tree).
-// Per-browser localStorage like sort/expanded; cross-device server-state is tracked tech-debt
-// (Cross-Device State Principle) under V4-GARDENIA-PREFS follow-up.
+// Persisted active group-by facet ('none' = legacy by-project tree). Per-browser localStorage like
+// sort/expanded; the server copy (garden_group_by) is reconciled through the pending-choice record
+// below and gardenGroupBy.js.
 const GROUPBY_KEY = 'garden.groupBy.v1'
 export function loadGroupBy() {
   try { return localStorage.getItem(GROUPBY_KEY) || 'none' } catch { return 'none' }
@@ -381,16 +368,17 @@ export function saveGroupBy(value) {
   try { localStorage.setItem(GROUPBY_KEY, value) } catch { /* private mode / quota — non-fatal */ }
 }
 
-// BUG-GARDENGROUPBYRESET-001 — a group-by choice the server has not confirmed yet. Written BEFORE its PATCH
-// goes out and removed only by that PATCH's confirmation (sendGroupByChoice in gardenGroupBy.js), so a save
-// lost to a dead zone or an app close is re-sent by the next Garden mount instead of being overwritten there
-// by the server's older value. Stamped with WHOSE choice it is (the Clerk sub), as NavPrefsContext stamps its
-// pending pins: on a shared phone, one person's unsent choice must never be PATCHed onto the next person's
-// row with their token. A record for anyone else reads as nothing pending.
+// A group-by choice the server has not confirmed yet. Written BEFORE its PATCH goes out and removed
+// only by that PATCH's confirmation (sendGroupByChoice in gardenGroupBy.js), so a save lost to a dead
+// zone or an app close is re-sent by the next Garden mount instead of being overwritten there by the
+// server's older value. Stamped with WHOSE choice it is (the Clerk sub), as NavPrefsContext stamps its
+// pending pins: on a shared phone, one person's unsent choice must never be PATCHed onto the next
+// person's row with their token. A record for anyone else reads as nothing pending.
 //
-// It also carries WHEN the choice was made (`at`, epoch ms; rimpact #8). A mark left for days on a secondary or
-// shared device must not go out over a newer choice confirmed elsewhere: past GROUPBY_PENDING_MAX_AGE_MS
-// (gardenGroupBy.js) it yields to a differing server value instead. A record with no `at` has no known age.
+// It also carries WHEN the choice was made (`at`, epoch ms). A mark left for days on a secondary or
+// shared device must not go out over a newer choice confirmed elsewhere: past
+// GROUPBY_PENDING_MAX_AGE_MS (gardenGroupBy.js) it yields to a differing server value instead. A
+// record with no `at` has no known age.
 const GROUPBY_PENDING_KEY = 'garden.groupBy.pending'
 export function loadGroupByPendingRecord(user) {
   try {
@@ -410,20 +398,20 @@ export function clearGroupByPending(user, value) {
   try { if (loadGroupByPending(user) === value) localStorage.removeItem(GROUPBY_PENDING_KEY) } catch { /* non-fatal */ }
 }
 
-// ONE-TIME, per person on this device. No build before this one could get these values onto the server — the
-// client refused 'crop_type' (Type) and the Lambda refused the bean facets — so one of them stored locally by an
-// earlier build is by construction a choice that was never confirmed. Marking it pending keeps it through the
-// first Garden mount after the update, where the server's older value would otherwise overwrite it one last
-// time. The checked flag makes this a single pass: after it, a stored 'crop_type' may be a confirmed choice
-// or another device's, and must be treated like any other value.
+// ONE-TIME, per person on this device. Earlier builds could not get these values onto the server (the
+// client refused 'crop_type' (Type) and the Lambda refused the bean facets), so one of them stored
+// locally by such a build is by construction a choice that was never confirmed. Marking it pending
+// keeps it through the first Garden mount after the update, where the server's older value would
+// otherwise overwrite it one last time. The checked flag makes this a single pass: after it, a stored
+// 'crop_type' may be a confirmed choice or another device's, and must be treated like any other value.
 //
-// `server` is the signed-in person's garden_group_by from a FRESH read (Garden never runs the pass on a cached
-// or pre-save body, so one of those cannot spend it). QA MINOR 6: it marks ONLY when that value is set and
-// differs from the stored one — the only case in which the first mount could flip the grouping. That keeps a
-// shared phone from sending one person's old Type onto another person's row: Jen's row is unset, so a Type Dave
-// left on a phone she opens first stays that phone's own grouping and is never PATCHed as hers. And the flag is
-// keyed by the Clerk sub (rimpact #2), so her visit does not spend the pass for him: when he opens Garden there
-// afterwards, his old Type is still kept over his row's Lifecycle.
+// `server` is the signed-in person's garden_group_by from a FRESH read (Garden never runs the pass on
+// a cached or pre-save body, so one of those cannot spend it). It marks ONLY when that value is set
+// and differs from the stored one — the only case in which the first mount could flip the grouping.
+// That keeps a shared phone from sending one person's old Type onto another person's row whose value
+// is unset. And the flag is keyed by the Clerk sub, so one person's visit does not spend the pass for
+// another: when the first person later opens Garden there, their old Type is still kept over the
+// row's value.
 const GROUPBY_LEGACY_UNSENDABLE = ['crop_type', 'bean_type', 'bean_habit', 'bean_use']
 const GROUPBY_LEGACY_CHECKED_KEY = 'garden.groupBy.legacyChecked'   // + ':<Clerk sub>'
 export function markLegacyGroupByPending(user, server) {
@@ -439,10 +427,10 @@ export function markLegacyGroupByPending(user, server) {
 }
 
 
-// V4: group plantings by lifecycle STAGE (plant.status: seed->seedling->...->ended). Not a tag
-// facet — status is a first-class plant field. Groups order by PLANT_STATUSES (the canonical
-// lifecycle order), labelled via statusLabel(); the group `facet` is 'status' so headers color
-// through getStatusColors. Status-less plantings fall into an "Unstaged" group.
+// Group plantings by lifecycle STAGE (plant.status: seed->seedling->...->ended). Not a tag facet —
+// status is a first-class plant field. Groups order by PLANT_STATUSES (the canonical lifecycle
+// order), labelled via statusLabel(); the group `facet` is 'status' so headers color through
+// getStatusColors. Status-less plantings fall into an "Unstaged" group.
 function buildStatusGroupedList(live, order) {
   const groups = new Map()
   const unsorted = []
@@ -464,21 +452,20 @@ function buildStatusGroupedList(live, order) {
   return out
 }
 
-// V4-PROJHIDE-001: title-case a crop_type_slug for display ('sweet-potato' -> 'Sweet Potato',
-// 'pepper' -> 'Pepper'). The /api/plants variety_ref carries only the slug (no display name), so the
-// label is derived here. Split on -/_/space so multi-word slugs read naturally.
+// Title-case a crop_type_slug for display ('sweet-potato' -> 'Sweet Potato', 'pepper' -> 'Pepper').
+// The /api/plants variety_ref carries only the slug (no display name), so the label is derived here.
+// Split on -/_/space so multi-word slugs read naturally.
 export function cropTypeLabel(slug) {
   return String(slug || '').split(/[-_ ]+/).filter(Boolean)
     .map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
 }
 
-// V4-PROJHIDE-001: group plantings by CROP TYPE (tomato, pepper, tomatillo...) — the user-facing
-// organizing axis once projects are hidden. Crop type comes from the planting's cultivar join
-// (variety_ref.crop_type_slug on /api/plants), NOT the entity-tags 'type' facet, which is unpopulated
-// in prod (2 smoke rows). A planting belongs to exactly ONE crop type (single-membership, unlike tag
-// facets); those with no resolved crop type fall into a trailing "Other" group. Groups sort alpha by
-// label (no semantic order for crops); "Other" is always last. Dispatched from buildTagGroupedList
-// when facet === 'crop_type'.
+// Group plantings by CROP TYPE (tomato, pepper, tomatillo...) — the user-facing organizing axis once
+// projects are hidden. Crop type comes from the planting's cultivar join (variety_ref.crop_type_slug
+// on /api/plants), NOT the entity-tags 'type' facet, which is unpopulated in prod. A planting belongs
+// to exactly ONE crop type (single-membership, unlike tag facets); those with no resolved crop type
+// fall into a trailing "Other" group. Groups sort alpha by label (no semantic order for crops);
+// "Other" is always last. Dispatched from buildTagGroupedList when facet === 'crop_type'.
 function buildCropTypeGroupedList(live, order) {
   const groups = new Map()
   const other = []

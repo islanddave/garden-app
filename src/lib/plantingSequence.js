@@ -1,13 +1,13 @@
 // src/lib/plantingSequence.js
-// PLANTING-PAGER — in-memory, cross-route paging sequence for the planting detail view.
+// In-memory, cross-route paging sequence for the planting detail view.
 //
-// Mirrors the module-scoped nav-state idiom already used in Garden.jsx (lastSubtab /
-// lastGardenScrollY): captured when a planting is opened from a Garden GROUP (a project-tree node
-// or a facet group like Type→Peppers) and read by PlantingDetail to render a group-bounded
-// prev/next pager. Deliberately NOT persisted — a hard refresh or an entry from Search / Favorites
-// / ProjectDetail / a lineage link leaves no sequence, so the pager simply doesn't render (the
-// page stays fully functional). This is why the sequence must be captured at tap-time: a planting
-// can belong to MULTIPLE facet groups, so its "siblings" are ambiguous from the URL alone.
+// Mirrors the module-scoped nav-state idiom used in Garden.jsx (lastGardenScrollY): captured when a
+// planting is opened from a Garden GROUP (a project-tree node or a facet group like Type→Peppers) and
+// read by PlantingDetail to render a group-bounded prev/next pager. Deliberately NOT persisted — a hard
+// refresh or an entry from Search / Favorites / ProjectDetail / a lineage link leaves no sequence, so
+// the pager simply doesn't render (the page stays fully functional). This is why the sequence must be
+// captured at tap-time: a planting can belong to MULTIPLE facet groups, so its "siblings" are
+// ambiguous from the URL alone.
 //
 // Item shape: { projectId, plantingId, name }. Each item carries its OWN projectId because facet
 // groups mix projects and the detail route (/projects/:id/plantings/:plantingId) + its ownership

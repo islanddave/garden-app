@@ -1,10 +1,9 @@
-// W-RESTORE — the API paths for the "Recently deleted" surface, in ONE place.
+// The API paths for the "Recently deleted" surface, in ONE place.
 //
-// WHY A MODULE FOR TWO STRINGS. Earlier the same day, a component and its test each declared the
-// same private route literal, so the UI shipped pointing at an endpoint the server does not serve —
-// with 33 tests green, because the test was asserting the component's own typo back at itself. A
-// literal that appears twice is not a contract; it is two guesses that happen to agree.
-//
+// WHY A MODULE FOR TWO STRINGS. When a component and its test each declare the same private route
+// literal, the UI can ship pointing at an endpoint the server does not serve with every test green,
+// because the test asserts the component's own typo back at itself. A literal that appears twice is
+// not a contract; it is two guesses that happen to agree.
 // These constants are the single spelling. RecentlyDeleted.jsx imports them, and
 // deletedPhotos.contract.test.js proves them against the TWO surfaces that actually decide whether a
 // request lands: the real route matchers in lambda/photos/index.js, and the real resolveUrl prefix

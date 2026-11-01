@@ -1,20 +1,16 @@
-// src/lib/seedsRoutes.js — V5-SEEDSTAB-001. The ONE spelling of every URL into the Seeds page.
+// src/lib/seedsRoutes.js — The ONE spelling of every URL into the Seeds page.
 //
-// WHY A MODULE AND NOT CONSTANTS ON THE PAGE. Before this, /sow and /seeds/saved were hand-typed in
-// twelve places across seven files and the add-a-packet URL was spelled three different ways.
-// Retargeting each of those to a hand-written '/seeds?view=…' would have scattered them again on the
-// day they were consolidated. Every door, both legacy redirects and the page itself build their URLs
-// here. HarvestLog.jsx exports its path constants from the page, which works there because nothing
-// in the shell imports it; this one is imported by BottomNav, Today's lead, SaveSeedSheet and the
-// inventory pages, so it is a LEAF (no React, no page import) to keep the Seeds page out of their
-// modules.
+// WHY A MODULE AND NOT CONSTANTS ON THE PAGE. Every door, both legacy redirects and the page itself
+// build their URLs here, so a hand-written '/seeds?view=…' cannot scatter them again. HarvestLog.jsx
+// exports its path constants from the page, which works there because nothing in the shell imports it;
+// this one is imported by BottomNav, Today's lead, SaveSeedSheet and the inventory pages, so it is a
+// LEAF (no React, no page import) to keep the Seeds page out of their modules.
 import { overlayBackgroundOf } from './pageEntry.js'
 
 export const SEEDS_PATH = '/seeds'
 
-// Lifecycle order, which is also the order of the view switch: acquire it, save your own, sow it —
-// the order Inventory's seed chips already used. "Saved seeds" and "Sow now" are Dave's own names for
-// the two pages this replaces; "My seeds" is ours for his "inventory seeds".
+// Lifecycle order, which is also the order of the view switch: acquire it, save your own, sow it — the
+// order Inventory's seed chips use.
 export const SEEDS_VIEWS = [
   { value: 'mine',  label: 'My seeds' },
   { value: 'saved', label: 'Saved seeds' },
@@ -72,18 +68,18 @@ export function seedsReturnFromHistory() {
   try { return seedsReturnOf(window.history?.state?.usr) } catch { return null }
 }
 
-// BUG-SEEDSRETURNUNDEROVERLAY-001 — that answer for a page's whole visit, as a function the page calls
-// when it LEAVES. A page that mounts on its own entry gets what was read at mount, for good.
+// That answer for a page's whole visit, as a function the page calls when it LEAVES. A page that
+// mounts on its own entry gets what was read at mount, for good.
 //
-// A page that mounts UNDER a route overlay has not arrived on its own entry: Search -> a result -> Back
-// re-opens Search over a re-mounted page (as does a reload with an overlay up), and history is standing
-// on the OVERLAY's entry, which no Seeds door wrote. Read there, the answer was always null, so Cancel
-// pushed a second Seeds page above the one that opened this one. Whether Back leads to Seeds depends on
-// how that overlay closes, and that is not decided until it does (planOverlayClose, OverlayContext.jsx):
-// a walk — the X, or the system Back — lands on the page's own entry; a replace puts a NEW entry above
-// it, and Back from that one is this same page again. So such a page reads the entry it is standing on
-// when it leaves: its own carries what the Seeds door attached, the replace's carries none (unchanged
-// from before), and nothing here has to predict the close.
+// A page that mounts UNDER a route overlay has not arrived on its own entry: Search -> a result ->
+// Back re-opens Search over a re-mounted page (as does a reload with an overlay up), and history is
+// standing on the OVERLAY's entry, which no Seeds door wrote. Read there, the answer is always null, so
+// Cancel would push a second Seeds page above the one that opened this one. Whether Back leads to
+// Seeds depends on how that overlay closes, and that is not decided until it does (planOverlayClose,
+// OverlayContext.jsx): a walk — the X, or the system Back — lands on the page's own entry; a replace
+// puts a NEW entry above it, and Back from that one is this same page again. So such a page reads the
+// entry it is standing on when it leaves: its own carries what the Seeds door attached, the replace's
+// carries none, and nothing here has to predict the close.
 export function seedsReturnReader() {
   let state = null
   try { state = window.history.state } catch { /* an opaque origin: no entry to read */ }
@@ -92,11 +88,10 @@ export function seedsReturnReader() {
   return () => arrivedFrom
 }
 
-// BUG-SEEDLOTOPENSATFORM-001 — an EDIT door's arrival hint for a lot's page, carried beside
-// seedsReturnState's field. A lot's page opens at its top unless the door was an edit action for one
-// part of it (Dave: the top "is desired behavior when not going directly from an edit option of some
-// sort"); such a door names that part here, and the page brings it into sight once the lot has loaded.
-// One-shot, like `?lot=`: the page acts on it only on a fresh history entry, never on a Back to one.
+// An EDIT door's arrival hint for a lot's page, carried beside seedsReturnState's field. A lot's page
+// opens at its top unless the door was an edit action for one part of it; such a door names that part
+// here, and the page brings it into sight once the lot has loaded. One-shot, like `?lot=`: the page
+// acts on it only on a fresh history entry, never on a Back to one.
 export const LOT_SECTION_KEY = 'lotSection'
 // The lot page's "Saved from" card: which plant the seed was saved from.
 export const LOT_SECTION_SOURCE_PLANT = 'source-plant'
