@@ -23,7 +23,7 @@ export function ChartFrame({ height, label, testId, children }) {
 const TONE = { ink: 'ink', key: 'ink', body: 'ink-2', muted: 'ink-3' }
 
 // A card-coloured outline painted under each glyph, so a label that a reference line, gridline or
-// bar end runs through stays legible (the 426px render showed "typical" lines striking through values).
+// bar end runs through stays legible.
 // paint-order rides as an attribute, not in `style`: jsdom's CSSStyleDeclaration drops the property it
 // does not know, so a style-only halo serialises (and renders from a DOM dump) as a stroke OVER the text.
 const HALO = { stroke: v('card'), strokeWidth: 5, strokeLinejoin: 'round' }
@@ -87,7 +87,7 @@ export function Dot({ x, y, r, fill, stroke, hollow }) {
   )
 }
 
-// Rect-list -> one path `d` (the round-1 ribbon draws hundreds of day columns as one path per colour).
+// Rect-list -> one path `d` (the ribbon draws hundreds of day columns as one path per colour).
 export function rectsPath(rects) {
   let d = ''
   for (const r of rects) {

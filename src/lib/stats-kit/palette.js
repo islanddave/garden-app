@@ -1,11 +1,11 @@
 // stats-kit/palette — every colour the Season stats page draws with, as CSS custom properties.
 //
 // Charts and cards reference `var(--gs-*)` only; the page root sets the values (statsThemeVars). The
-// light set is the app's own P tokens where one exists, and the approved round-1/round-2 chart hues
-// (_mainsync13_20260928/T-stats/gen/page.css) for the chart-only colours P has no name for (heat
-// bands, crop and care-kind hues). The dark set is the same design's dark palette.
+// light set is the app's own P tokens where one exists, and fixed chart hues for the chart-only colours
+// P has no name for (heat bands, crop and care-kind hues). The dark set is the same design's dark
+// palette.
 //
-// The app has no dark theme today (nothing in src reads prefers-color-scheme or sets a theme), so the
+// The app has no dark theme (nothing in src reads prefers-color-scheme or sets a theme), so the
 // page picks dark only when <html data-theme="dark"> is set — inert until the app grows a theme
 // switch, and then these charts follow it without a second pass. Going dark on prefers-color-scheme
 // alone would paint one dark page inside a light app.

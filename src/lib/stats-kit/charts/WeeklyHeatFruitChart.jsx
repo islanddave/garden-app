@@ -1,4 +1,4 @@
-// Heat in, fruit out (round-2 design, the ribbon's weekly layer): heat units a week rise above the
+// Heat in, fruit out (the ribbon's weekly layer): heat units a week rise above the
 // centre line, tomato fruit and pepper pods picked hang below it, and the number of nights under 55°F
 // sits over each week in blue. A bracket spans the hottest week to the week with the most tomatoes.
 import React from 'react'
@@ -79,7 +79,7 @@ export default function WeeklyHeatFruitChart({ section }) {
         </g>
       ))}
       <Line x1={LEFT} y1={MID} x2={RIGHT} y2={MID} stroke={v('ink-3')} />
-      {/* Under the month row, not beside the centre line: at 426px the legend sat on the first pick bars. */}
+      {/* Under the month row, not beside the centre line: at phone width the legend would sit on the first pick bars. */}
       <Txt x={LEFT} y={L.height - 4} tone="muted">
         picked: <tspan style={{ fill: v('tomato'), fontWeight: 600 }}>tomatoes</tspan> · <tspan style={{ fill: v('pepper'), fontWeight: 600 }}>peppers</tspan>
       </Txt>

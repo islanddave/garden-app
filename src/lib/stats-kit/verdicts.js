@@ -1,5 +1,5 @@
 // stats-kit/verdicts — the sentence at the top of each Season stats card and its "Limits" line, written
-// here from the section's meta + series. The server sends numbers and limit CODES only (plan D4).
+// here from the section's meta + series. The server sends numbers and limit CODES only.
 //
 // Plain words: no jargon, no status words ("failed", "dead", "harvested"); a planting that did not
 // make it is "lost" (house rule: events never speak in status words). A limit code this file has no

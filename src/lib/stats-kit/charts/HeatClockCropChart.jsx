@@ -1,4 +1,4 @@
-// Heat clock by crop (round-1 design): heat units banked since the weather record starts, rising
+// Heat clock by crop: heat units banked since the weather record starts, rising
 // through the summer, with a dot where each crop's first pick came in. The series gives each crop's
 // banked heat at its first pick, so the dots themselves trace the curve. Labels are placed greedily
 // left or right of their dot and dropped where they would collide; every crop is in the table.

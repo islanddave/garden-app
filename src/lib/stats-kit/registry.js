@@ -1,5 +1,5 @@
 // stats-kit/registry — section id -> how Season stats draws it. The server's envelope is keyed by
-// section id (plan D4); the page walks STATS_SECTION_ORDER and asks getRenderer(id) for each. An id
+// section id; the page walks STATS_SECTION_ORDER and asks getRenderer(id) for each. An id
 // with no entry here renders nothing — a section the server adds before this client knows it is
 // skipped, never shown raw.
 //

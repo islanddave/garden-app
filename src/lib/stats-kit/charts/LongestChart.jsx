@@ -1,4 +1,4 @@
-// The longest-giving plants (round-2 design): each planting's picking window as a pale bar, a tick for
+// The longest-giving plants: each planting's picking window as a pale bar, a tick for
 // every day it was picked, and an arrow where it is still picking. Right edge: window length in days.
 import React from 'react'
 import { ChartFrame, Txt, Line, Rect } from './ChartFrame.jsx'

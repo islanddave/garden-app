@@ -1,4 +1,4 @@
-// September tomatoes came in smaller (round-2 design): each cultivar's September fruit weight divided
+// September tomatoes came in smaller: each cultivar's September fruit weight divided
 // by its August one, as a bar from the 1× centre line — rust when smaller, sage when it held or grew —
 // with "114 → 75 g" on the right.
 import React from 'react'

@@ -1,4 +1,4 @@
-// Tomato keep list (round-2 design): single-plant tomatoes ranked by pounds picked, as lollipops,
+// Tomato keep list: single-plant tomatoes ranked by pounds picked, as lollipops,
 // against the typical plant (dashed gold). Colour carries the server's verdict — grow again (sage),
 // fine (grey), rethink (rust) — and a hollow head marks a plant that came in late or was rescued (flag late_aug: rescued OR entered on/after Aug 1).
 import React from 'react'
