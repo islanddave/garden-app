@@ -1,26 +1,23 @@
-// Put-Up release 1b — "Put it up" and "Undo that put-up": the request rules and the write PLAN.
+// "Put it up" and "Undo that put-up": the request rules and the write PLAN.
 //
 // V4 "Put it up (the missing link)": one sheet, one atomic keyed write, repeatable ("More to put up
-// later") or final ("Put it up and finish"). This module is PURE — no driver, no clock except what the
-// caller passes — so every rule below is executed by putUp.test.js. kitchenRoutes.js owns the one
-// statement that carries the plan; the plan is shaped as parallel column arrays for that statement's
-// unnest()s, so what is decided here is exactly what is bound there.
+// later") or final ("Put it up and finish"). PURE: no driver, no clock except what the caller passes, so
+// every rule is executed by putUp.test.js. kitchenRoutes.js owns the one statement that carries the plan;
+// the plan is shaped as parallel column arrays for that statement's unnest()s, so what is decided here is
+// exactly what is bound there.
 //
 // What the plan decides, per V4:
-//   * the sitting's When → the put_up stage row's entered_at + entered_precision; "Not sure" stores no
-//     date ('unknown') on the stage row, and each jar stores the resolved EARLIEST date (the batch's
-//     latest dated event, passed in by the route) with preserved_at_approx and precision 'after';
-//   * per row: count, container, size (quantity_value is the TOTAL contents: count × size — v4-putup-001
-//     "package_count = # of containers, distinct from quantity_value = total"), place, name (default: the
-//     batch label, which also names an 'Other'), Raw / In oil / texture / pH, discard-by;
-//   * discard-by per row: typed (a date, or "none" = his "no date"), else the engine (resolveJarUseBy)
-//     from the method, the place's kind, the row's facts and the jar date's precision;
+//   * the sitting's When -> the put_up stage row's entered_at + entered_precision; "Not sure" stores no
+//     date ('unknown') on the stage row, and each jar stores the resolved EARLIEST date (the batch's latest
+//     dated event, passed in by the route) with preserved_at_approx and precision 'after';
+//   * per row: count, container, size (quantity_value is the TOTAL contents: count x size, per v4-putup-001
+//     "package_count = # of containers"), place, name (default: the batch label, which also names an
+//     'Other'), Raw / In oil / texture / pH, discard-by;
+//   * discard-by per row: typed (a date, or "none"), else the engine (resolveJarUseBy) from the method, the
+//     place's kind, the row's facts and the jar date's precision;
 //   * the lines: sitting lines (put_up_stage_id only) and each row's own (output_id = that row's jar);
 //   * ids are minted here (the caller's crypto.randomUUID), so a line can name its jar inside the one
 //     statement without a round trip; a retry mints new ones and is caught by the stage row's key.
-//
-// Release F (lane L2b) extends this with draw lines, mash_in_g and the row heat estimate; nothing here
-// assumes they are absent beyond refusing a line kind 1b does not write.
 import { VALID_METHODS } from './jarRules.js';
 import {
   JAR_TEXTURES, JAR_TEXTURE_METHODS, normalizeJarText, normalizeJarUnit, isJarDate,
@@ -35,19 +32,17 @@ const isUuid = (v) => typeof v === 'string' && UUID_RE.test(v);
 const isObj = (v) => v != null && typeof v === 'object' && !Array.isArray(v);
 
 export const PUT_UP_PLACE_KINDS = ['deep_freezer', 'fridge_freezer', 'fridge', 'pantry', 'cold_storage', 'other'];
-// The When chips (V4 Appendix B: Today · Yesterday · Earlier… · Not sure) store one of these on the
-// stage row. 'after' is a preservation_log word only; the stage row says 'unknown' for Not sure.
+// The When chips (V4 Appendix B) store one of these on the stage row. 'after' is a preservation_log word
+// only; the stage row says 'unknown' for Not sure.
 export const PUT_UP_WHEN_PRECISIONS = ['exact', 'hour', 'day', 'week', 'month', 'season', 'year', 'unknown'];
 // Dated precisions that are NOT an estimate: the jar's preserved_at_approx is false for these.
 const PRECISE = new Set(['exact', 'hour', 'day']);
 export const PUT_UP_MAX_ROWS = 20;
 export const PUT_UP_MAX_LINES = 40;
 
-// ── validation ──────────────────────────────────────────────────────────────────────────────────
-// Release F: an "added at the end" line is a full F line (06 §3.6, HS-I3) — a pick, a planting, a draw
-// ("8 g from the frozen reaper bag") or typed — validated by the same rules as What went in
-// (kitchenLines.js), except that its sitting and row are the SERVER's (it names the jars this very
-// statement creates), and its key is optional (the sitting's key is the event's).
+// Validation. An "added at the end" line is a full F line (06 §3.6) validated by the same rules as What went
+// in (kitchenLines.js), except that its sitting and row are the SERVER's (it names the jars this statement
+// creates) and its key is optional (the sitting's key is the event's).
 function lineError(line, where) {
   if (isObj(line) && (line.put_up_stage_id != null || line.output_id != null)) {
     return `${where}: a line added here belongs to this bottling — send no put_up_stage_id or output_id`;
@@ -56,8 +51,8 @@ function lineError(line, where) {
   if (isObj(line) && ['salt_pct', 'salt_base', 'base_g', 'salt_method', 'base_from'].some((k) => line[k] != null)) {
     return `${where}: salt facts go on a line in What went in, not on a bottling`;
   }
-  // B′ release 3: a bought item from the Pantry is a What went in line; a bottling's INSERT carries no
-  // pantry_item_id, so it is refused here rather than stored as a nameless 'pantry' line.
+  // A bought item from the Pantry is a What went in line; a bottling's INSERT carries no pantry_item_id, so
+  // it is refused here rather than stored as a nameless 'pantry' line.
   if (isObj(line) && (line.input_kind === 'pantry' || line.pantry_item_id != null)) {
     return `${where}: a bought item goes in What went in, not on a bottling`;
   }
@@ -127,7 +122,7 @@ export function validatePutUp(body) {
       if (!JAR_TEXTURES.includes(row.texture)) return `${where}: texture must be one of: ${JAR_TEXTURES.join(', ')}`;
       if (!JAR_TEXTURE_METHODS.includes(body.method)) return `${where}: texture only applies to a dried food`;
     }
-    // Release F: the row's own heat estimate (typed, 06 §2.4) and "Cooked after blending?".
+    // The row's own heat estimate (typed, 06 §2.4) and "Cooked after blending?".
     if (row.shu_est_low != null || row.shu_est_high != null) {
       const lo = row.shu_est_low;
       const hi = row.shu_est_high;
@@ -181,10 +176,9 @@ export function putUpPlaceIds(body) {
   return [...new Set(body.rows.map((r) => r.place?.id).filter((v) => v != null))];
 }
 
-// ── the plan ────────────────────────────────────────────────────────────────────────────────────
-// ctx: { batchLabel, notSureDay (YYYY-MM-DD, required when when.precision is 'unknown'),
-//        placeKinds: {id → kind}, newId: () => uuid,
-//        recipe (release 4): the batch's recipe keeps line {keeps_n, keeps_unit, keeps_storage_kind} | null }
+// The plan. ctx: { batchLabel, notSureDay (YYYY-MM-DD, required when when.precision is 'unknown'),
+//   placeKinds: {id -> kind}, newId: () => uuid,
+//   recipe: the batch's recipe keeps line {keeps_n, keeps_unit, keeps_storage_kind} | null }
 export function planPutUp(body, ctx) {
   const notSure = body.when.precision === 'unknown';
   const whenIso = notSure ? null
@@ -210,9 +204,9 @@ export function planPutUp(body, ctx) {
   const jars = [];
   const lines = [];
   let ordinal = 0;
-  // ctx.prepared: the F line rows lineRoutes.prepareLines resolved (ids, labels, plant_id, draws), in
-  // body order — sitting lines first, then each row's. Without it (the pure tests) a typed line is
-  // planned from its body alone.
+  // ctx.prepared: the line rows lineRoutes.prepareLines resolved (ids, labels, plant_id, draws), in body
+  // order: sitting lines first, then each row's. Without it (the pure tests) a typed line is planned from
+  // its body alone.
   const prepared = ctx.prepared ?? null;
   let k = 0;
   const lineRow = (line, outputId) => ({
@@ -226,7 +220,7 @@ export function planPutUp(body, ctx) {
     const kind = place == null ? null : (place.id != null ? (ctx.placeKinds[place.id] ?? null) : place.kind);
     const count = Number(row.count);
     const hasSize = row.size_value != null;
-    // Release 4 (V4 §3.1): typed > recipe (only when this jar's storage kind is the recipe's keeps storage
+    // Discard-by (V4 §3.1): typed > recipe (only when this jar's storage kind is the recipe's keeps storage
     // kind; ctx.recipe is the batch's recipe, household-loaded by the route) > the engine > none.
     const useBy = row.discard_by === 'none' ? { use_by_target: null, use_by_basis: 'typed' }
       : row.discard_by != null ? { use_by_target: row.discard_by, use_by_basis: 'typed' }
@@ -300,7 +294,7 @@ export function putUpColumns(plan) {
     jar: Object.fromEntries(['id', 'label', 'container_label', 'quantity_value', 'quantity_unit', 'package_count',
       'place_id', 'place_kind', 'place_label', 'use_by_target', 'use_by_basis', 'is_raw', 'in_oil', 'texture',
       'ph_reading', 'ph_read_at', 'shu_est_low', 'shu_est_high', 'shu_est_basis', 'cooked'].map((k) => [k, col(plan.jars, k)])),
-    // The F line columns (kitchenLines.js LINE_COLUMNS) — the same arrays the keyed line POST binds.
+    // The line columns (kitchenLines.js LINE_COLUMNS): the same arrays the keyed line POST binds.
     line: lineColumns(plan.lines),
     place: { kind: col(plan.new_places, 'kind'), label: col(plan.new_places, 'label') },
   };
@@ -317,11 +311,10 @@ export function putUpInUse(jarIds) {
   };
 }
 
-// The refusal Undo gives a put_up row that wrote no jars of its own — How it was made →'s sitting
+// The refusal Undo gives a put_up row that wrote no jars of its own: How it was made's sitting
 // (batchBuilderRoutes.js fromJars links jars that existed before the batch by batch_id only, never
 // put_up_stage_id). Voiding it would reopen the batch with those jars still linked. Every sitting Put it up
-// writes has at least one jar (validatePutUp: rows non-empty, count ≥ 1; "Finished — none kept" writes no
-// put_up row), so this refuses nothing Put it up can produce.
+// writes has at least one jar (validatePutUp), so this refuses nothing Put it up can produce.
 export const NOTHING_PUT_UP_HERE = {
   error: "This batch was pieced together from jars you'd already logged — there's nothing to undo here. Remove the batch instead.",
   code: 'nothing_put_up_here',

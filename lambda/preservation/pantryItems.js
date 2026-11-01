@@ -1,15 +1,14 @@
-// Put-Up release 2 (B′) — the Pantry's pure rules: the pantry_item body rules, the item projection, the
-// one household loader for a body-settable pantry_item_id, and the ONE row shape GET /api/pantry emits
-// for a put-up and for a pantry item (V4 §2.5, §4.3, §5.1 row "2"; the pinned B′ cross-lane contract).
+// The Pantry's pure rules (V4 §2.5, §4.3, §5.1 row "2"): the pantry_item body rules, the item projection,
+// the one household loader for a body-settable pantry_item_id, and the ONE row shape GET /api/pantry emits
+// for a put-up and for a pantry item.
 //
-// PURE apart from loadPantryItems (which takes `sql`): no clock read inside — `now` is passed in — and no
+// PURE apart from loadPantryItems (which takes `sql`): no clock read inside (`now` is passed in) and no
 // neon/clerk/aws import, so pantryRoutes.js, lineRoutes.js and their tests can import it.
 //
-// DATES (V4 §3). A pantry item's discard date is TYPED ONLY: nothing here derives one, and the basis a
-// row reports for an item is 'typed' or nothing. A put-up's date and basis are read as STORED — the
-// engine (shelfLife.js) wrote them at create/move/correction and a read never re-derives (§3.4 "a rule
-// change never rewrites a stored date"). The status is classifyUseBy's (useBy.js), mapped to words the
-// contract names: ok | soon | past.
+// Dates (V4 §3): a pantry item's discard date is TYPED ONLY; nothing here derives one, and the basis
+// reported for an item is 'typed' or nothing. A put-up's date and basis are read as STORED (the engine,
+// shelfLife.js, wrote them; a read never re-derives, §3.4). The status is classifyUseBy's (useBy.js),
+// mapped to ok | soon | past.
 import { KITCHEN_UUID_RE, KITCHEN_UNITS, MASS_G, isMassUnit, normalizeText } from './kitchenBatch.js';
 import { JAR_PRECISIONS, JAR_LABEL_MAX, isJarDate } from './jarRules.js';
 import { classifyUseBy } from './useBy.js';
@@ -20,7 +19,7 @@ const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 const isObj = (v) => v != null && typeof v === 'object' && !Array.isArray(v);
 export const isUuid = (v) => typeof v === 'string' && KITCHEN_UUID_RE.test(v);
 
-// storage_location.kind (chk_storage_location_kind) — the same list jarRoutes.js binds for a new place.
+// storage_location.kind (chk_storage_location_kind), the same list jarRoutes.js binds for a new place.
 export const PANTRY_PLACE_KINDS = ['deep_freezer', 'fridge_freezer', 'fridge', 'pantry', 'cold_storage', 'other'];
 // The §3.6 vocabulary (chk_pantry_item_acquired_precision), the same words as a jar's.
 export const PANTRY_PRECISIONS = JAR_PRECISIONS;
@@ -33,19 +32,18 @@ export const ITEM_CREATE_KEYS = [
   'quantity_value', 'quantity_unit', 'source_kind', 'source_label',
 ];
 // The PATCH presence-sentinel allowlist. acquired_at and acquired_precision travel together; so do
-// quantity_value and quantity_unit (null, null clears the amount) and source_kind and source_label
-// (null, null un-chooses the source). plant_id is not here: a PATCH cannot change the planting.
-// crop_type_slug (BUG-PUTUPREPLAYDROPSEDIT-001): the crop a typed name resolved to, or null for none. It is
-// here so a name corrected after a create whose answer was lost can take its crop along (the client PATCHes
-// the item a replayed create answers with). On an item tied to a planting the crop is the planting's, and
-// pantryRoutes.js refuses the key (PLANTING_CROP_REFUSAL).
+// quantity_value and quantity_unit (null, null clears the amount) and source_kind and source_label (null,
+// null un-chooses the source). plant_id is not here: a PATCH cannot change the planting. crop_type_slug is
+// the crop a typed name resolved to, or null for none, so a name corrected after a create whose answer was
+// lost can take its crop along (the client PATCHes the item a replayed create answers with); on an item
+// tied to a planting the crop is the planting's and pantryRoutes.js refuses the key (PLANTING_CROP_REFUSAL).
 export const ITEM_PATCH_KEYS = [
   'name', 'storage_location_id', 'acquired_at', 'acquired_precision', 'use_by_target', 'notes', 'used_up_at',
   'quantity_value', 'quantity_unit', 'source_kind', 'source_label', 'crop_type_slug',
 ];
 export const PLANTING_CROP_REFUSAL = 'This came from one of your plantings, so its crop is that planting\'s. It cannot be changed here.';
 
-// A DATE column leaves as the calendar day it is — jarRules.js calendarDay's rule, restated (it is
+// A DATE column leaves as the calendar day it is (jarRules.js calendarDay's rule, restated: it is
 // module-private there): the driver hands a DATE back as a Date at local midnight in the Lambda's zone.
 export function ymd(v) {
   if (v == null) return null;
@@ -95,20 +93,19 @@ function notesError(v) {
   return v != null && typeof v !== 'string' ? 'notes must be text' : null;
 }
 
-// quantity_value + quantity_unit — the amount AS LOGGED (chk_pantry_item_quantity_pairing, _quantity_value,
-// _quantity_unit). A number and its unit together, or neither. NOT stock: an item has no count and no
-// remaining, nothing decrements this pair, and no row reports it as what is left. The unit is one of the 25
-// KITCHEN_UNITS — never JAR_UNITS, whose ten plurals exist only for rows the shipped jar picker wrote.
-// The column is numeric(10,2): the value is rounded to two places HERE and the rounded number is what the
+// quantity_value + quantity_unit: the amount AS LOGGED (chk_pantry_item_quantity_pairing, _quantity_value,
+// _quantity_unit). A number and its unit together, or neither. NOT stock: an item has no count or
+// remaining, nothing decrements this pair, and no row reports it as what is left. The unit is one of the
+// 25 KITCHEN_UNITS, never JAR_UNITS (whose plurals exist only for rows the shipped jar picker wrote). The
+// column is numeric(10,2): the value is rounded to two places HERE and the rounded number is what the
 // route binds, so this rule and the CHECK judge the same number (0.004 is 0.00 and is refused; 100000000
 // would be a 22003 and is refused).
 export const ITEM_AMOUNT_MAX = 99999999.99;
 const ITEM_AMOUNT_MAX_HUNDREDTHS = 9999999999n;
 
-// A positive number in hundredths, rounded half up ON ITS DECIMAL TEXT — the rounding numeric(10,2) gives the
-// text the driver sends, and the one the door's own parseAmount does (2.345 is 2.35; binary arithmetic says
-// 2.34). null when the text is not plain digits: a negative, or an exponent form (below 0.000001, or 1e21
-// and up).
+// A positive number in hundredths, rounded half up ON ITS DECIMAL TEXT (the rounding numeric(10,2) gives
+// the text the driver sends, and the door's own parseAmount does: 2.345 is 2.35; binary arithmetic says
+// 2.34). null when the text is not plain digits: a negative, or an exponent form.
 function hundredthsOf(value) {
   const m = /^(\d+)(?:\.(\d+))?$/.exec(String(value));
   if (!m) return null;
@@ -135,12 +132,12 @@ export function amountOf(body) {
   return { quantity_value: Number(h) / 100, quantity_unit: unit };
 }
 
-// source_kind + source_label — where it came from, the put-up's eight words (chk_pantry_item_source_kind,
+// source_kind + source_label: where it came from, the put-up's eight words (chk_pantry_item_source_kind,
 // _source_other, _source_label_nonblank, _source_label_len, _source_label_kind, _source_plant). A name with
-// no source is refused; 'other' needs a name; a blank name is stored as none; our garden never carries a name
-// (the put-up create's rule). `plantId` is the planting the item is tied to, when the caller knows it: the
-// create passes the body's. A PATCH cannot (plant_id is stored, not sent), so there the CHECK decides and
-// pantryRoutes.js answers it in the same words.
+// no source is refused; 'other' needs a name; a blank name is stored as none; our garden never carries a
+// name (the put-up create's rule). `plantId` is the planting the item is tied to when the caller knows it
+// (the create passes the body's); a PATCH cannot (plant_id is stored, not sent), so there the CHECK decides
+// and pantryRoutes.js answers it in the same words.
 export const PLANTING_SOURCE_REFUSAL = 'This came from one of your plantings, so it is from the garden. It cannot have another source.';
 export function sourceOf(body, plantId = null) {
   const kind = body.source_kind ?? null;
@@ -268,10 +265,9 @@ function placeOf(r) {
   return { id: r.storage_location_id, label: r.place_label ?? null, kind: r.place_kind ?? null };
 }
 
-// ── the household loader (V4 §5.3: every body-settable FK has one) ──────────────────────────────────
-// Contract, same as household.js / lineRoutes.js: rows on success, nothing on ANY failure (foreign,
-// malformed, absent), so a caller answers a foreign id with the same 400 as a malformed one. An item comes
-// back even when soft-deleted — "That was removed" is a household fact, never a foreign one.
+// The household loader (V4 §5.3). Contract, as household.js / lineRoutes.js: rows on success, nothing on
+// ANY failure, so a foreign id gets the same 400 as a malformed one. An item comes back even when
+// soft-deleted: "That was removed" is a household fact, never a foreign one.
 export async function loadPantryItems(sql, ids, householdIds) {
   const clean = [...new Set((ids ?? []).filter(isUuid))];
   if (!clean.length) return [];
@@ -283,7 +279,7 @@ export async function loadPantryItems(sql, ids, householdIds) {
   `;
 }
 
-// ── GET /api/pantry — the ONE row shape (the pinned contract) ──────────────────────────────────────
+// GET /api/pantry: the ONE row shape.
 export const PANTRY_GROUPS = ['place', 'kind'];
 // Catch-all buckets sort after every named group (the whats-put-up precedent).
 export const NO_PLACE = 'no_place';
@@ -315,10 +311,9 @@ export function jarName(r) {
     ?? normalizeText(r.crop_display_name) ?? normalizeText(r.method_other_text) ?? 'Put-up';
 }
 
-// Where it came from (the contract's where_from). A put-up: the vendor or farm stand it was bought from
-// (source_label, set only when the source is not our garden), else the planting it came from. A pantry
-// item: the planting a "Fresh, as picked" item keeps, else its stored source (itemWhereFrom below). Notes
-// are free text and are never read as a source.
+// Where it came from. A put-up: the vendor or farm stand (source_label, set only when the source is not
+// our garden), else the planting. A pantry item: the planting a "Fresh, as picked" item keeps, else its
+// stored source (itemWhereFrom). Notes are free text and never read as a source.
 function whereFrom(r) {
   return normalizeText(r.source_label) ?? (r.plant_id ? plantingLabel(r) : null);
 }
@@ -390,15 +385,15 @@ export function itemRow(r, group, now) {
     plant_id: r.plant_id ?? null,
     crop_type_slug: r.crop_type_slug ?? null,
     batch_id: null,
-    // THE AMOUNT IS AS LOGGED: an item stays stock_mode 'item' with no count and no grams, whatever its
-    // unit. Nothing decrements quantity_value, so it is never reported as what is left.
+    // THE AMOUNT IS AS LOGGED: an item stays stock_mode 'item' with no count or grams, whatever its unit;
+    // nothing decrements quantity_value.
     stock_mode: 'item',
     count_left: null,
     count_made: null,
     grams_left: null,
     ...storedFour(r),
     method: null,
-    // Typed only (V4 §4.3): a date is his, so its basis is 'typed'; no date is no basis and no status.
+    // Typed only (V4 §4.3): a date is the user's, so its basis is 'typed'; no date is no basis and no status.
     discard: date == null ? { date: null, basis: null, status: null } : discardOf(date, 'typed', r.acquired_at, now),
     acquired_at: ymd(r.acquired_at),
     acquired_precision: r.acquired_precision ?? null,
