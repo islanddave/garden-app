@@ -1645,42 +1645,31 @@ async function run({ pg, today, dryRun = true,geocodeZip, fetchNWS, fetchPrecip,
           space: spaceId, plan_date: today, run: frostRun.slot, plantings: kept, sent: spaceSent.length }));
       }
     }
-    // V4-WATERMATH-001 F2 — the F1 seam is CONSUMED now: weatherDaily + the per-planting event
-    // window + the run instant feed the ledger fold, all behind waterLedgerEnabled. enabled is
-    // ANDed with `ledgerEvents != null` so a failed event-window read degrades the run to flag-OFF
-    // (a fold against a falsely-empty window would over-due every planting — see readLedgerEvents).
+    // The weatherDaily seam + the per-planting event window + the run instant feed the ledger fold, all behind waterLedgerEnabled. enabled is ANDed with `ledgerEvents != null` so a failed
+    // event-window read degrades the run to flag-OFF (a fold against a falsely-empty window would over-due every planting — see readLedgerEvents).
     const plan = generatePlan({ plantings: rows, cadence, fertModel, today, weather: wxBySpace[spaceId], hydrology: hyBySpace[spaceId], weatherDaily: wxDailyBySpace[spaceId], ownerFallback: ownerBySpace[spaceId] || null,rainCreditEnabled, rainMaxDaysEnabled, todayAwareEnabled, measuredCreditEnabled, deferDryEnabled, deferDryBedsEnabled, soonAwareEnabled,
       waterLedgerEnabled: waterLedgerEnabled && ledgerEvents != null, eventsByPlant: ledgerEvents, nowMs: Date.now(),
       droughtState: droughtBySpace[spaceId] || null,
-      // BUG-INGROUNDOFFSEASONSILENT-001 — engine.coldFor drops an in-ground bring-in card only while the
-      // frost alert can publish, so the kill switch above must travel with the plan, not stay handler-local.
+      // engine.coldFor drops an in-ground bring-in card only while the frost alert can publish, so the kill switch above must travel with the plan, not stay handler-local.
       frostAlertEnabled, frostCoverage: coverage });
-    // V5-DROUGHTSPACE-001 — the garden-wide line, computed ONCE per Space and written onto every user's
-    // row in it. null on every day the signal does not fire, which is what keeps the key absent.
+    // The garden-wide line, computed ONCE per Space and written onto every user's row in it. null on every day the signal does not fire, which keeps the key absent.
     const gardenDrought = drought.gardenDrought(droughtBySpace[spaceId] || null);
     let frostDecision = null;
     if (frostRun.evaluate) {
       const hy = hyBySpace[spaceId] || null;
       frostDecision = frost.decision;
-      // §3-8 — emitted on EVERY evaluation, alert or not. This log is also the 2026 corpus for the 2027
-      // learned microclimate offset (G4): nightly station minimum vs NWS forecast low.
-      // OPS-SPACEALERTSREADLOG-001 — `space_sent` is how many of this Space's sends today the per-Space read
-      // returned before this run (readSpaceAlertsSent). A number proves the read ran on this evaluation; null
-      // means it was not attempted (flag off). A failed read also reads 0 here, and logs the WARN that
-      // scripts/weather-observability.sh meters (FrostDedupReadFailed).
+      // §3-8 — emitted on EVERY evaluation, alert or not. This log is also the 2026 corpus for the 2027 learned microclimate offset (G4): nightly station minimum vs NWS forecast low.
+      // `space_sent` is how many of this Space's sends today the per-Space read returned before this run (readSpaceAlertsSent). A number proves the read ran on this evaluation; null means it was
+      // not attempted (flag off). A failed read also reads 0 here, and logs the WARN that scripts/weather-observability.sh meters (FrostDedupReadFailed).
       console.log(JSON.stringify({ msg: 'frost-eval', space: spaceId, plan_date: today, run: frostRun.slot,
         enabled: frostAlertEnabled, dry_run: dryRun, season: frostSeason, alert: frostDecision.alert,
         degraded: frostDecision.degraded, dedup_key: frostDecision.dedupKey,
         space_sent: frostAlertEnabled ? spaceSent.length : null, ...frostDecision.observability }));
-      // §3-7 loud degradation: inside frost season, a missing tonightLow is NOT "no frost tonight". Silence
-      // must never be indistinguishable from safety. Routed to garden-ops-alerts, not the frost topic.
-      // BUG-DEGRADEDALERTDEDUPE-001 — this email and its advisory twin below send ONLY from the first evaluating
-      // run of the ET day (frostRun.firstOfDay, 14:00 ET), the stateless once-per-day cap the station alerts use:
-      // frostPublished forgets between runs, so a fetch that stayed down all afternoon sent from each of the four
-      // evaluating runs. Owner decision 2026-10-11, cost accepted: a failure that starts after the 14:00 run sends
-      // no email that day. The later runs log the skip (and frost-eval above still carries `degraded`), so it is
-      // in the logs. The cap is on these two emails only: the frost warning itself is published in the per-user
-      // loop below and never reads firstOfDay.
+      // §3-7 loud degradation: inside frost season, a missing tonightLow is NOT "no frost tonight". Silence must never be indistinguishable from safety. Routed to garden-ops-alerts, not the frost
+      // topic. This email and its advisory twin below send ONLY from the first evaluating run of the ET day (frostRun.firstOfDay, 14:00 ET), the stateless once-per-day cap the station alerts use:
+      // frostPublished forgets between runs, so a fetch that stayed down all afternoon would send from each of the four evaluating runs. Cost accepted: a failure that starts after the 14:00 run
+      // sends no email that day; the later runs log the skip (and frost-eval above still carries `degraded`). The cap is on these two emails only: the frost warning itself is published in the
+      // per-user loop below and never reads firstOfDay.
       if (frostDecision.degradedAlert && frostAlertEnabled && !dryRun && publishAlert) {
         const dk = `${spaceId}|${today}|frost_eval_degraded`;
         if (!frostRun.firstOfDay) {
@@ -1699,10 +1688,8 @@ async function run({ pg, today, dryRun = true,geocodeZip, fetchNWS, fetchPrecip,
           }
         }
       }
-      // BUG-HYDROLOGYNULLSILENT-001 — the advisory tier's twin of the block above: no usable D1..D3 lows in
-      // season means the 48-72 h warning could not be evaluated, which must not read as "no frost ahead".
-      // Same gate (the once-a-day cap included), same dedup store, per Space like frost_eval_degraded, own key so
-      // each tier is named.
+      // The advisory tier's twin of the block above: no usable D1..D3 lows in season means the 48-72 h warning could not be evaluated, which must not read as "no frost ahead". Same gate (the
+      // once-a-day cap included), same dedup store, per Space like frost_eval_degraded, own key so each tier is named.
       if (frostDecision.advisoryDegradedAlert && frostAlertEnabled && !dryRun && publishAlert) {
         const dk = `${spaceId}|${today}|frost_advisory_degraded`;
         if (!frostRun.firstOfDay) {
@@ -1726,16 +1713,12 @@ async function run({ pg, today, dryRun = true,geocodeZip, fetchNWS, fetchPrecip,
           }
         }
       }
-      // BUG-STATIONDEGRADESILENT-001 — the station_unbound ops alert. Keyed per RUN, not per Space, because the
-      // station is account-level — a multi-Space run still sends exactly one. Failure collected and thrown after
-      // the plan is durable, like every publish here.
-      // V5-STATIONHEALTHYEAR-001 — the three station-health alerts are YEAR-ROUND (no frostSeason) with no flag
-      // of their own and none borrowed (no frostAlertEnabled; see where it is read), and they send ONLY from the
-      // first evaluating run of the ET day (frostRun.firstOfDay, 14:00 ET). That is the stateless once-per-day
-      // cap: frostPublished forgets between runs, so a fault that holds all afternoon used to send from each of
-      // the four evaluating runs (BUG-DEGRADEDALERTDEDUPE-001), and year-round that would have been a winter of
-      // them. The frost-degrade blocks above take the same cap since 2026-10-11 and are otherwise unchanged: still
-      // frost-season, still behind FROST_ALERT_ENABLED, still per Space.
+      // The station_unbound ops alert. Keyed per RUN, not per Space, because the station is account-level — a multi-Space run still sends exactly one. Failure collected and thrown after the plan is
+      // durable, like every publish here.
+      // The three station-health alerts are YEAR-ROUND (no frostSeason) with no flag of their own and none borrowed (no frostAlertEnabled; see where it is read), and they send ONLY from the first
+      // evaluating run of the ET day (frostRun.firstOfDay, 14:00 ET): the stateless once-per-day cap. frostPublished forgets between runs, so a fault that holds all afternoon would send from each of
+      // the four evaluating runs, and year-round that would be a winter of them. The frost-degrade blocks above take the same cap and are otherwise unchanged: still frost-season, still behind
+      // FROST_ALERT_ENABLED, still per Space.
       if (stationUnbound && frostRun.firstOfDay && !dryRun && publishAlert) {
         const dk = `station|${today}|station_unbound`;
         if (!frostPublished.has(dk)) {
@@ -1758,9 +1741,8 @@ async function run({ pg, today, dryRun = true,geocodeZip, fetchNWS, fetchPrecip,
           }
         }
       }
-      // BUG-STATIONSTALESILENT-001 — station_stale, the sibling of the block above: same gate, same dedup store,
-      // keyed per RUN for the same reason. Its own key and subject rather than a wider station_unbound because
-      // the remedy differs: stale is the console or WiFi at the house; unbound is config, AWN keys or coordinates.
+      // station_stale, the sibling of the block above: same gate, same dedup store, keyed per RUN for the same reason. Its own key and subject rather than a wider station_unbound because the remedy
+      // differs: stale is the console or WiFi at the house; unbound is config, AWN keys or coordinates.
       if (stationStale && frostRun.firstOfDay && !dryRun && publishAlert) {
         const dk = `station|${today}|station_stale`;
         if (!frostPublished.has(dk)) {
@@ -1778,9 +1760,8 @@ async function run({ pg, today, dryRun = true,geocodeZip, fetchNWS, fetchPrecip,
           }
         }
       }
-      // V5-STATIONHEALTHYEAR-001 — station_array_silent, the third sibling: the console is online but the outdoor
-      // array went quiet. Same gate and store, keyed per RUN. Own key and subject because the remedy is out at the
-      // ARRAY (batteries first, then range or a dead array), not the console, the WiFi or the config.
+      // station_array_silent, the third sibling: the console is online but the outdoor array went quiet. Same gate and store, keyed per RUN. Own key and subject because the remedy is out at the ARRAY
+      // (batteries first, then range or a dead array), not the console, the WiFi or the config.
       if (stationArraySilent && frostRun.firstOfDay && !dryRun && publishAlert) {
         const dk = `station|${today}|station_array_silent`;
         if (!frostPublished.has(dk)) {
@@ -1812,63 +1793,41 @@ async function run({ pg, today, dryRun = true,geocodeZip, fetchNWS, fetchPrecip,
         }
       }
     }
-    const spaceNew = [];   // BUG-FROSTDUPTWOUSERS-001 — this invocation's sends for this Space, for the users after the sender
+    const spaceNew = [];   // this invocation's sends for this Space, for the users after the sender
     for (const [user_id, userPlan] of Object.entries(plan.users)) {
-      // hydrology rides along for the A0.3-DRY-PLANS dry-replay diff (rerun-daily-plan.sh --diff needs the
-      // decision inputs, not just the verdicts). Additive: live-path consumers read res.rows only.
+      // hydrology rides along for the A0.3-DRY-PLANS dry-replay diff (rerun-daily-plan.sh --diff needs the decision inputs, not just the verdicts). Additive: live-path consumers read res.rows only.
       plans.push({ space_id: spaceId, user_id, plan: userPlan, weather: plan.weather, hydrology: plan.hydrology });
       if (!dryRun) {
-        // BUG-TODAYWATER-001 / intraday regeneration — carry a bounded audit trail of what EARLIER runs of
-        // the same day believed. The row is upserted on (user_id, plan_date) (there is a UNIQUE index), so
-        // without this a re-run silently destroys the snapshot it replaced — and the one question this
-        // change makes urgent is exactly "what did the 02:00 run think, and did that forecast arrive?"
-        // Deliberately NOT a schema change: kept inside `items` as an additive key, so no DDL, no touching
-        // the UNIQUE constraint, no reader impact (every reader selects named keys), and no
-        // PLAN_SCHEMA_VERSION bump — that literal is pinned by three readers which deploy in one unordered
-        // wave, so bumping it opens a mismatch window. Hydrology + counts only, capped at PRIOR_RUNS_MAX:
-        // enough to reconstruct the decision, small enough that a day of re-runs cannot bloat the row.
+        // Carry a bounded audit trail of what EARLIER runs of the same day believed. The row is upserted on (user_id, plan_date) (UNIQUE index), so without this a re-run silently destroys the snapshot
+        // it replaced — and "what did the 02:00 run think, and did that forecast arrive?" is the question this answers. Deliberately NOT a schema change: kept inside `items` as an additive key, so no
+        // DDL, no reader impact (every reader selects named keys), and no PLAN_SCHEMA_VERSION bump — that literal is pinned by three readers which deploy in one unordered wave, so bumping it opens a
+        // mismatch window. Hydrology + counts only, capped at PRIOR_RUNS_MAX: enough to reconstruct the decision, small enough that a day of re-runs cannot bloat the row.
         const priorRuns = await readPriorRuns(pg, user_id, today);
-        // V4-FROST-001 F3 §3-5 — read the dedup store, publish, THEN persist. Publishing before the write
-        // is deliberate: recording "sent" for a publish that never happened would silently suppress the
-        // real alert on the next pass, which is the exact failure mode §3-7 forbids.
-        // Carried forward even on a non-evaluating run so an earlier pm send is never wiped by a re-run.
+        // Read the dedup store, publish, THEN persist. Publishing before the write is deliberate: recording "sent" for a publish that never happened would silently suppress the real alert on the next
+        // pass, which is the exact failure mode §3-7 forbids. Carried forward even on a non-evaluating run so an earlier pm send is never wiped by a re-run.
         let alertsSent = null;
         if (frostAlertEnabled) {
-          // BUG-FROSTDUPTWOUSERS-001 — this row's list plus the Space's (every other row today, and a send made
-          // earlier in this loop), so both gates below see what ANY user's loop sent, and the row is written back
-          // carrying it: the other user's row can no longer read as "nothing sent tonight". Order-independent
-          // within the loop too — a row written before a later user's successful retry is healed by the next run.
+          // This row's list plus the Space's (every other row today, and a send made earlier in this loop), so both gates below see what ANY user's loop sent, and the row is written back carrying it:
+          // the other user's row can no longer read as "nothing sent tonight". Order-independent within the loop too — a row written before a later user's successful retry is healed by the next run.
           alertsSent = mergeAlertsSent(await readAlertsSent(pg, user_id, today), spaceSent, spaceNew);
           const dk = frostDecision && frostDecision.dedupKey;
-          // OPS-PLANHOURLY-001 — two gates now, and they answer different questions. The key answers
-          // "have I sent EXACTLY this?"; escalatesBeyond answers "is this WORSE than anything I have
-          // sent tonight?". Under the 3-run schedule only the first was needed, because the 14:00-17:59
-          // window held exactly one evaluation and a second key implied a real escalation. Hourly puts
-          // four evaluations in that window, where an afternoon of forecast wobble mints new keys that
-          // are not escalations — see frostEval.escalatesBeyond. Dave's ruling: re-check hourly, email
-          // only on worse.
+          // Two gates, answering different questions. The key answers "have I sent EXACTLY this?"; escalatesBeyond answers "is this WORSE than anything I have sent tonight?". The 14:00-17:59 window
+          // holds four hourly evaluations, where an afternoon of forecast wobble mints new keys that are not escalations — see frostEval.escalatesBeyond. Ruling: re-check hourly, email only on worse.
           //
           // Scoped to frost tiers. Heat keeps pure key dedup: its key already admits one send per space
           // per day, and ranking a hot day against a cold night is a category error.
           const escalationGated = frostDecision && frostDecision.tier !== 'heat';
-          // BUG-FROSTESCALATENIGHTMOVE-001 — the key names the PLAN DATE, not the night, so when a later run moves
-          // an advisory's cold night (tomorrow night -> tonight) an unchanged crop set re-mints the same key and the
-          // key gate alone swallowed the earlier night. For an advisory, "exactly this" is the key AND the night;
-          // an imminent key is tonight by construction and heat has no night, so for those the key still is the
-          // whole identity. escalatesBeyond decides whether a moved night is news. The night is read off the facts
-          // this send would store, through the same frostEval.sentNight the next run reads the stored entry with,
-          // so the two cannot disagree.
+          // The key names the PLAN DATE, not the night, so when a later run moves an advisory's cold night (tomorrow night -> tonight) an unchanged crop set re-mints the same key and the key gate alone
+          // swallowed the earlier night. For an advisory, "exactly this" is the key AND the night; an imminent key is tonight by construction and heat has no night, so for those the key still is the whole
+          // identity. escalatesBeyond decides whether a moved night is news. The night is read off the facts this send would store, through the same frostEval.sentNight the next run reads the stored
+          // entry with, so the two cannot disagree.
           //
-          // Pre-promote I1 (mainsync5-20260919) — only a night the hours LOCATED can be a move. Without the hourly
-          // series the advisory's night is a guess (frostEval.locateNight 'base_rate', always the EARLIER night; the
-          // radiative-only fallback 'radiative'), so one run whose Open-Meteo body lacked hourly temperature read as
-          // "the cold moved to tonight": a second email, and Today saying tonight for the rest of the plan date. A
-          // guessed night keeps the gate this rule replaced: the same key is already sent, and only severity and crops
-          // escalate. The next run whose hours locate the minimum decides. What a send stores is unchanged.
+          // Only a night the hours LOCATED can be a move. Without the hourly series the advisory's night is a guess (frostEval.locateNight 'base_rate', always the EARLIER night; the radiative-only
+          // fallback 'radiative'), so one run whose Open-Meteo body lacked hourly temperature read as "the cold moved to tonight": a second email, and Today saying tonight for the rest of the plan date.
+          // A guessed night keeps the older gate: the same key is already sent, and only severity and crops escalate. The next run whose hours locate the minimum decides. What a send stores is unchanged.
           //
-          // BUG-FROSTREHEARSALSWALLOWS-001 — a send made by a FORCED run (a rehearsal) is never "exactly this": both
-          // gates below skip it (frostEval.countsAsSent), so a rehearsal before 14:00 ET can no longer swallow the
-          // real advisory. It is still carried and stored: it is the record of an email that went out.
+          // A send made by a FORCED run (a rehearsal) is never "exactly this": both gates below skip it (frostEval.countsAsSent), so a rehearsal before 14:00 ET cannot swallow the real advisory. It is
+          // still carried and stored: it is the record of an email that went out.
           const facts = frostDecision ? frostWeatherFacts(frostDecision) : {};
           const night = frostDecision ? sentNight({ tier: frostDecision.tier, ...facts }) : null;
           const nightBasis = frostDecision && frostDecision.tier === 'advisory' && frostDecision.advisory
@@ -1886,37 +1845,27 @@ async function run({ pg, today, dryRun = true,geocodeZip, fetchNWS, fetchPrecip,
               try {
                 await publishAlert({ topic: 'frost', subject: frostSubject(frostDecision), message: frostDecision.message });
                 frostPublished.add(dk);
-                // `crops` (OPS-PLANHOURLY-001) is what makes the NEXT run's escalation gate able to
-                // compare per-crop instead of only on the headline level. Omitted when null so the
-                // stored shape is unchanged on the legacy no-breakdown path.
-                // OPS-FROSTREHEARSALMARK-001 — `run` is the slot that sent it: 'intraday-pm' (the schedule) or
-                // 'forced' (event.frostEval, the F5 rehearsal lever, whose trip points may be raised). The
-                // 2026-09-07 rehearsal was stored as key/tier/level/at alone and was read as a real <= 40F night
-                // in four code comments; only CloudWatch (30-day retention) showed run "forced" at 58F. Written on
-                // every send, so an entry without it was stored before this field existed.
-                // BUG-FROSTREHEARSALSWALLOWS-001 — and it is now READ: a 'forced' entry dedups nothing (countsAsSent)
-                // and never renders on Today, so a rehearsal can no longer stand in for the day's real email.
+                // `crops` is what makes the NEXT run's escalation gate able to compare per-crop instead of only on the headline level. Omitted when null so the stored shape is unchanged on the legacy
+                // no-breakdown path.
+                // `run` is the slot that sent it: 'intraday-pm' (the schedule) or 'forced' (event.frostEval, the F5 rehearsal lever, whose trip points may be raised). Written on every send, so an entry
+                // without it was stored before this field existed. It is READ: a 'forced' entry dedups nothing (countsAsSent) and never renders on Today, so a rehearsal cannot stand in for the day's real
+                // email (a rehearsal once read as a real <= 40F night in code comments; only CloudWatch, with 30-day retention, showed run "forced").
                 const entry = { key: dk, tier: frostDecision.tier, level: frostDecision.level, at: new Date().toISOString(), run: frostRun.slot, ...(frostDecision.cropLevels ? { crops: frostDecision.cropLevels } : {}), ...facts };
                 spaceNew.push(entry);
                 alertsSent = [...alertsSent, entry];
                 console.log(JSON.stringify({ msg: 'frost alert PUBLISHED', space: spaceId, user: user_id, dedup_key: dk, tier: frostDecision.tier, level: frostDecision.level }));
               } catch (e) {
-                // §3-7: a swallowed frost alert is the failure mode this feature exists to prevent. Log at
-                // ERROR here, and THROW after the plan writes complete so the invocation is marked failed
-                // and the existing garden-daily-plan-errors CloudWatch alarm (Errors > 0 -> garden-alerts)
-                // surfaces it. Explicitly NOT continue-on-error, unlike integrity-weekly.
+                // §3-7: a swallowed frost alert is the failure mode this feature exists to prevent. Log at ERROR here, and THROW after the plan writes complete so the invocation is marked failed and the
+                // existing garden-daily-plan-errors CloudWatch alarm (Errors > 0 -> garden-alerts) surfaces it. Explicitly NOT continue-on-error, unlike integrity-weekly.
                 console.error(JSON.stringify({ msg: 'frost alert publish FAILED', space: spaceId, user: user_id, dedup_key: dk, error: e?.message }));
                 frostFailures.push({ kind: 'frost_publish_failed', spaceId, userId: user_id, dedupKey: dk, error: e?.message });
               }
             }
           } else if (frostDecision && frostDecision.alert && dk && escalationGated && !worse
                      && !alertsSent.some(sentExactly)) {
-            // OPS-PLANHOURLY-001 — a held alert MUST leave a trace. Without this line "no email
-            // tonight" is indistinguishable from a broken gate, and the difference is a lost frost
-            // warning. Logged at INFO because holding is the designed behaviour, not a fault; the
-            // fields are what you would need to answer "should it have gone out?" after the fact.
-            // BUG-FROSTESCALATENIGHTMOVE-001 — the night is one of those fields now (a night that moved LATER holds).
-            // I1: so is how the advisory's night was known, since a guessed night earlier than every sent one holds too.
+            // A held alert MUST leave a trace. Without this line "no email tonight" is indistinguishable from a broken gate, and the difference is a lost frost warning. Logged at INFO because holding is
+            // the designed behaviour, not a fault; the fields are what you would need to answer "should it have gone out?" after the fact — including the night (a night that moved LATER holds) and how
+            // the advisory's night was known (a guessed night earlier than every sent one holds too).
             console.log(JSON.stringify({ msg: 'frost alert HELD — not an escalation', space: spaceId, user: user_id,
               dedup_key: dk, tier: frostDecision.tier, level: frostDecision.level,
               crops: frostDecision.cropLevels || null, night, night_basis: nightBasis,
@@ -1925,23 +1874,15 @@ async function run({ pg, today, dryRun = true,geocodeZip, fetchNWS, fetchPrecip,
           // Capped here rather than only on a send: the merged list can pass the cap with no send this run.
           alertsSent = alertsSent.slice(-ALERTS_SENT_MAX);
         }
-        // V5-LEAFWETNESS-001 `leaf_wetness`: a GARDEN-level key, same conditional-spread rule. THIS LINE
-        // IS THE WHOLE FEATURE — the row below is an explicit named-key allowlist, not a spread of
-        // `plan`, so a key the engine computes and this literal omits is silently discarded on write and
-        // the Today line can never render. That is precisely how the first cut of this shipped: engine,
-        // component, mount and 16,050 tests all green, and the feature 100% inert. G-PARITY cannot catch
-        // it either — the goldens compare STORED payloads, so a key that never reaches a row leaves them
-        // green for the wrong reason. Caught by the pre-promote pass; guarded now by the end-to-end case
-        // in leafWetnessWiring.test.js, which drives run() and reads the key back off the written row.
+        // `leaf_wetness`: a GARDEN-level key, same conditional-spread rule. THIS LINE IS THE WHOLE FEATURE — the row below is an explicit named-key allowlist, not a spread of `plan`, so a key the
+        // engine computes and this literal omits is silently discarded on write and the Today line can never render (the first cut shipped that way: every test green and the feature 100% inert).
+        // G-PARITY cannot catch it either — the goldens compare STORED payloads, so a key that never reaches a row leaves them green for the wrong reason. Guarded by the end-to-end case in
+        // leafWetnessWiring.test.js, which drives run() and reads the key back off the written row.
         //
-        // V5-DROUGHTSPACE-001 `drought`: a SPACE-level key, spread CONDITIONALLY so a non-firing day
-        // writes a byte-identical row. Both users in a Space get the same object because it is a fact
-        // about the garden, not about a caretaker — which is exactly what makes it one line rather
-        // than a per-plant note. Additive on an existing row, read by name, so PLAN_SCHEMA_VERSION is
-        // NOT bumped: three reader Lambdas pin that literal and deploy in one unordered wave.
+        // `drought`: a SPACE-level key, spread CONDITIONALLY so a non-firing day writes a byte-identical row. Both users in a Space get the same object because it is a fact about the garden, not
+        // about a caretaker. Additive on an existing row, read by name, so PLAN_SCHEMA_VERSION is NOT bumped: three reader Lambdas pin that literal and deploy in one unordered wave.
         //
-        // V5-SPACEISOLATION-001: firstGroupItems returns this literal unchanged unless an earlier Space's group in
-        // this invocation already wrote the user's row, in which case it returns that group's items (see there).
+        // firstGroupItems returns this literal unchanged unless an earlier Space's group in this invocation already wrote the user's row, in which case it returns that group's items (see there).
         const written = firstGroupItems(planWritten, { userId: user_id, planDate: today, spaceId },
           { schema_version: PLAN_SCHEMA_VERSION, weather: { ...plan.weather, hot: plan.hot }, hydrology: (Object.keys(stationProvBySpace[spaceId] || {}).length ? { ...plan.hydrology, station: stationProvBySpace[spaceId] } : plan.hydrology), coords: coordsBySpace[spaceId] ?? null, substrate: userPlan.substrate, counts: userPlan.counts, prior_runs: priorRuns, ...(alertsSent ? { alerts_sent: alertsSent } : {}), ...(gardenDrought ? { drought: gardenDrought } : {}), ...(plan.leaf_wetness ? { leaf_wetness: plan.leaf_wetness } : {}), ...userPlan.tasks });
         await pg.query(
@@ -1949,16 +1890,14 @@ async function run({ pg, today, dryRun = true,geocodeZip, fetchNWS, fetchPrecip,
            values ($1,$2,$3, now())
            on conflict (user_id, plan_date) do update set items=excluded.items, generated_at=now()`,
           [user_id, today, JSON.stringify(written.items)]);
-        // BUG-TODAYWATER-001: record yesterday's observed rain on yesterday's row. Fail-open (returns
-        // false, never throws) and touches ONLY (user_id, prevPlanDate) — today's upsert above is final.
-        // V5-SPACEISOLATION-001: only from the group that kept the row, so a later Space's rain cannot overwrite it.
+        // Record yesterday's observed rain on yesterday's row. Fail-open (returns false, never throws) and touches ONLY (user_id, prevPlanDate) — today's upsert above is final. Only from the group
+        // that kept the row, so a later Space's rain cannot overwrite it.
         if (!written.collision) await backfillYesterdayActual(pg, user_id, today, hyBySpace[spaceId], stationProvBySpace[spaceId]);
       }
     }
   }
-  // V4-RAINAUTOLOG-001 part 2. Placed HERE on purpose: after every plan row is durably written, and
-  // before the frost throw below, so a rain-log problem can never cost the plan and can never mask
-  // a frost publish failure. Fail-open internally; never throws.
+  // Placed HERE on purpose: after every plan row is durably written, and before the frost throw below, so a rain-log problem can never cost the plan and can never mask a frost publish failure.
+  // Fail-open internally; never throws.
   await logRainEvents(pg, { today, dryRun, event, etHour, spaces });
 
   // §3-7 fail LOUD, after every plan row is durably written. The daily plan itself must not be lost to an
