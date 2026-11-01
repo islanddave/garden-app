@@ -1,25 +1,19 @@
 // src/components/PhotoUpload.jsx
-// V2-PHOTO-F1 — thin visual layer over useUploadPhoto.
+// Thin visual layer over useUploadPhoto.
 //
 // Mobile-first. The single reusable photo widget for the whole app.
 //
-// ONE TRIGGER, NEVER THE CAMERA (V4-HIDECAPTURE-001, Dave 2026-08-21: "hide the ability to take a
-// photo from the app, streamline any photo flow (e.g. from Snap) to go straight into choosing a
-// photo. One less tap."). This supersedes the 2026-06-02 camera-unification `mode="both"` design and
-// the 2026-08-17 V4-SNAPCAPTURE-001 ruling, which DEMOTED the camera to a secondary control rather
-// than removing it — demote is not hide, and the demoted control was still rendering.
-//
-// THE `mode`, `capture`, `takeLabel` AND `chooseLabel` PROPS ARE GONE, not defaulted-off. A `capture`
-// prop that still exists is a camera one prop away from returning silently, and "the default is safe"
-// is exactly the shape that let the demoted control survive a ruling meant to remove it. Deleting the
-// API is the only version of this that a future edit cannot quietly undo.
+// ONE TRIGGER, NEVER THE CAMERA. There is no in-app camera affordance: the trigger goes straight to
+// choosing a photo. There are deliberately no `mode`, `capture`, `takeLabel` or `chooseLabel` props
+// — a `capture` prop that still exists is a camera one prop away from returning silently, and
+// deleting the API is the only version a future edit cannot quietly undo.
 //
 // WHAT THIS DOES AND DOES NOT GUARANTEE. It removes every in-app camera affordance and collapses the
-// take-or-choose decision to a single tap — that is the "one less tap". It does NOT and cannot remove
-// the camera from the OS file chooser: with `accept="image/*"` and no `capture`, the browser decides
-// what to offer, and Android Chrome may still list Camera alongside Photos/Files depending on version
-// and whether the Android Photo Picker handles that accept type. Verify on a real device before
-// claiming the camera is unreachable; the app's own surface is all this controls.
+// take-or-choose decision to a single tap. It does NOT and cannot remove the camera from the OS file
+// chooser: with `accept="image/*"` and no `capture`, the browser decides what to offer, and Android
+// Chrome may still list Camera alongside Photos/Files depending on version and whether the Android
+// Photo Picker handles that accept type. Verify on a real device before claiming the camera is
+// unreachable; the app's own surface is all this controls.
 //
 // Props:
 //   keyPrefix     : 'standalone' | 'events' | 'projects' | 'plants' | 'locations' | 'inventory' (default 'standalone')
@@ -37,17 +31,16 @@
 //   onUploadStart / onUploadComplete / onUploadError
 //   disabled      : boolean
 //   buttonStyle   : style override applied to the trigger.
-//   multiple      : default false — V4-PHOTOBULK-001 Track B. See MULTI-ATTACH below.
+//   multiple      : default false. See MULTI-ATTACH below.
 //   maxFiles      : default DEFAULT_MAX_FILES; multi mode only.
 //
-// MULTI-ATTACH (V4-PHOTOBULK-001 S1, design V100 §3 B2/B3). `multiple` lets one picker invocation
-// stage N files, which then upload SERIALLY with per-file status and per-file failure.
+// MULTI-ATTACH. `multiple` lets one picker invocation stage N files, which then upload SERIALLY with
+// per-file status and per-file failure.
 //
 // THE DEFAULT IS THE WHOLE CONTRACT. With `multiple` absent/false this component is byte-identical to
-// what it was: one hidden input WITHOUT a `multiple` attribute, `files?.[0]` semantics, the hook's
+// single mode: one hidden input WITHOUT a `multiple` attribute, `files?.[0]` semantics, the hook's
 // single preview, the hook's single error banner, and `onUploadComplete(photo)` with ONE photo
-// object. Every existing call site passes no `multiple` and is therefore untouched, which is what
-// `PhotoUpload.test.jsx` passing UNMODIFIED proves (§3 B2). Guard both branches when editing here.
+// object. Guard both branches when editing here; `PhotoUpload.test.jsx` pins the single-mode DOM.
 //
 // IN MULTI MODE `onUploadComplete` RECEIVES AN ARRAY — the successfully-uploaded photos, fired once
 // after the queue drains, and not fired at all when every file failed. Callers discriminate with
@@ -56,15 +49,15 @@
 // is the secondary. `onUploadStart` fires ONCE per batch, so a caller that flips a busy bit on start
 // and clears it on complete/error stays balanced.
 //
-// SERIAL, NEVER PARALLEL (§3 X6). Each file's decode/resize/strip peaks at ~50MB of native RGBA for
-// a 4096x3072 original, and Dave is Android-only. `for..of` + `await` is load-bearing, not stylistic
+// SERIAL, NEVER PARALLEL. Each file's decode/resize/strip peaks at ~50MB of native RGBA for
+// a 4096x3072 original, on Android-only devices. `for..of` + `await` is load-bearing, not stylistic
 // — a `Promise.all` here would multiply peak memory by the batch size on exactly the devices where
 // single uploads already stall. useUploadPhoto is a single-file engine with singleton state and one
 // preview ref, which is safe to drive sequentially and is NOT safe to drive concurrently.
 //
 // STAGED OBJECT URLs ARE OURS, NOT THE HOOK'S. The hook holds exactly one preview URL and revokes
 // the previous on every upload, so it cannot back a grid of N thumbnails. Multi mode creates its own
-// URL per staged file and revokes on remove and on unmount (§3 B8's rule, applied here).
+// URL per staged file and revokes on remove and on unmount.
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js';
@@ -73,8 +66,8 @@ import { T } from './forms/formStyles.js';
 import { snapshotPicked } from '../lib/fileSnapshot.js';
 
 // In-context multi-attach is "the handful I just took of this plant", not a camera-roll drain —
-// that is Track A's bulk-select, which has its own cap (MAX_BATCH = 20, server-side). Ten keeps the
-// serial queue's worst case around a minute on a phone uplink and the thumbnail strip on one screen.
+// that is the bulk-select flow, which has its own server-side cap. Ten keeps the serial queue's
+// worst case around a minute on a phone uplink and the thumbnail strip on one screen.
 const DEFAULT_MAX_FILES = 10;
 
 let stagedSeq = 0;
@@ -84,8 +77,6 @@ const DEFAULT_BTN_STYLE = {
   display: 'inline-block',
   padding: T.photo.triggerPad,
   background: P.sage,
-  // P.white is '#ffffff' to the literal '#fff' this replaced — the same computed colour,
-  // so the render is unchanged; only the source of the value moves.
   color: P.white,
   borderRadius: T.photo.radius,
   cursor: 'pointer',
@@ -96,12 +87,11 @@ const DEFAULT_BTN_STYLE = {
   userSelect: 'none',
 };
 
-// BUG-PHOTOUPLOADKBD-001: the single-mode trigger was a <label> wrapping a display:none <input>.
-// display:none takes the input out of the tab order AND the a11y tree, and a <label> has neither a
-// tabindex nor a role, so the control was pointer-only — unreachable by keyboard at all. It is now a
-// real <button> that clicks the hidden input, the pattern both mode has always used. A <button>
-// carries UA form-control defaults a <label> does not (system font, line-height:normal, native
-// chrome); this reset goes UNDER the caller's style so the re-roled trigger renders identically.
+// The trigger is a real <button> that clicks the hidden input: a <label> wrapping a display:none
+// <input> has no tabindex or role and display:none drops the input from the tab order AND the a11y
+// tree, so it would be unreachable by keyboard. A <button> carries UA form-control defaults a
+// <label> does not (system font, line-height:normal, native chrome); this reset goes UNDER the
+// caller's style so the trigger renders as the caller styled it.
 const TRIGGER_RESET = {
   fontFamily: 'inherit',
   fontSize: 'inherit',
@@ -133,23 +123,19 @@ export function PhotoUpload({
   buttonStyle,
   multiple      = false,
   maxFiles      = DEFAULT_MAX_FILES,
-  // V4-PHOTOBULK-001 D4b. Override what the visible TRIGGER does, while leaving the hidden input
-  // mounted and directly drivable. PlantingTile needs exactly this: Dave's ruling is that the card's
-  // camera button opens a batch SHEET rather than the picker, but that card also owes a standing
-  // contract — every rendered row exposes `input#plant-list-photo-<id>` and automated bulk-attach
-  // sessions drive uploads through it (Garden.photoUpload.test.jsx §1). Moving the whole component
-  // into the sheet would satisfy the ruling and silently break the automation, because the input
-  // would only exist while a human had the sheet open.
+  // Override what the visible TRIGGER does, while leaving the hidden input mounted and directly
+  // drivable. PlantingTile needs exactly this: its camera button opens a batch SHEET rather than the
+  // picker, but every rendered row must still expose `input#plant-list-photo-<id>` because automated
+  // bulk-attach sessions drive uploads through it (Garden.photoUpload.test.jsx §1). Moving the whole
+  // component into the sheet would silently break that, since the input would only exist while a
+  // human had the sheet open.
   //
-  // So the input stays where it was and keeps working when driven directly; only the human tap is
-  // redirected. NOT a mode switch on the upload behaviour — everything downstream of a file landing
-  // on that input is unchanged.
+  // Only the human tap is redirected. NOT a mode switch on the upload behaviour — everything
+  // downstream of a file landing on that input is unchanged.
   onTriggerClick = null,
-  // Override the staged strip's height cap. Default null = the two built-in caps below, so every
-  // existing call site is byte-identical. Exists because those caps are constants sized for a CARD
-  // FOOTER, and PlantingPhotoSheet renders the same strip in a fly-up with hundreds of spare pixels
-  // — measured at 390x844 (tests/harness/plantingphotosheet.jsx), the 216px cap left 391px of empty
-  // screen above the sheet while hiding 7 of the 10 staged tiles behind an inner scrollbar.
+  // Override the staged strip's height cap. Default null = the two built-in caps below. Exists
+  // because those caps are sized for a CARD FOOTER, and PlantingPhotoSheet renders the same strip in
+  // a fly-up with hundreds of spare pixels (tests/harness/plantingphotosheet.jsx).
   stripMaxHeight = null,
 }) {
   const { upload, isUploading, error, photo, preview, reset, stage, progress } = useUploadPhoto({ errorMode });
@@ -172,9 +158,9 @@ export function PhotoUpload({
     stagedUrlsRef.current = [];
   }, []);
 
-  // BUG-PHOTOUPLOADHANG-001: name the step, not just "Uploading…" — a stall report can then say
-  // WHERE it stuck ("Uploading… 43%" = the S3 PUT at 43%). stage/progress may be undefined when
-  // the hook is mocked; every branch falls back to the old label.
+  // Name the step, not just "Uploading…" — a stall report can then say WHERE it stuck ("Uploading…
+  // 43%" = the S3 PUT at 43%). stage/progress may be undefined when the hook is mocked; every branch
+  // falls back to the plain label.
   const busyLabel =
     stage === 'preparing' ? 'Preparing…' :
     stage === 'saving' ? 'Saving…' :
@@ -201,7 +187,7 @@ export function PhotoUpload({
     setStageNotice(null);
   }, []);
 
-  // §3 B3 — per-file error isolation. `upload()` resolves `{ error }` and never throws, so a failed
+  // Per-file error isolation. `upload()` resolves `{ error }` and never throws, so a failed
   // file cannot break the loop; the try/catch guards only the callbacks, which are caller code.
   const runQueue = useCallback(async (items) => {
     const uploaded = [];
@@ -245,17 +231,16 @@ export function PhotoUpload({
       );
       if (!accepted.length) return;
 
-      // BUG-PHOTOSTAGEDREAD-001 — copy the bytes out of the picker's handles BEFORE queueing.
-      // runQueue below is serial, so files 2..N are read seconds-to-minutes after the pick; on
-      // Android those handles are reclaimable and the first photo's decode is itself the memory
-      // pressure that reclaims the rest. Measured on prod v4.80.0 from the Photo Library's copy of
-      // this same pattern: 1 of 10 uploaded, 9 failed with Chrome's "could not be read ... after a
-      // reference to a file was acquired". Mechanism in lib/fileSnapshot.js.
+      // Copy the bytes out of the picker's handles BEFORE queueing. runQueue below is serial, so
+      // files 2..N are read seconds-to-minutes after the pick; on Android those handles are
+      // reclaimable and the first photo's decode is itself the memory pressure that reclaims the
+      // rest (Chrome: "could not be read ... after a reference to a file was acquired"). Mechanism
+      // in lib/fileSnapshot.js.
       const { ok, failed, failedNames: names } = await snapshotPicked(accepted);
       if (failed.length) {
         // Folded into the existing notice rather than given its own slot — the cap message and this
-        // one are both "what did not make it into the strip", and two stacked lines in a card footer
-        // is the crowding the strip is already tight for.
+        // one are both "what did not make it into the strip", and a card footer is too tight for two
+        // stacked lines.
         setStageNotice(prev => [
           prev,
           `${failed.length} couldn't be read and ${failed.length === 1 ? 'was' : 'were'} not added` +
@@ -304,10 +289,7 @@ export function PhotoUpload({
   const busy = disabled || isUploading;
 
   // Opens the picker inside the user gesture, which is what makes it open at all on mobile.
-  // V4-HIDECAPTURE-001: takes no argument and touches no `capture` attribute. The previous
-  // tri-state (true = set capture, false = remove, undefined = leave the JSX's static) existed
-  // solely to switch the one hidden input between camera and library; with the camera gone there
-  // is one behaviour, and the input below never carries `capture` in the first place.
+  // Takes no argument and touches no `capture` attribute: the input below never carries one.
   const openPicker = useCallback(() => {
     if (busy) return;
     // The override runs INSTEAD of the picker, never before it — a caller that opened a sheet and
@@ -324,11 +306,9 @@ export function PhotoUpload({
 
   return (
     <div className="photo-upload" data-testid="photo-upload">
-      {/* V4-A11YGATE-001 history: ariaLabel used to sit on the <label>, which has no ARIA role
-          and so dropped it. BUG-PHOTOUPLOADKBD-001 retires the <label> entirely — the name now
-          rides the <button>, whose role can carry it, and which is in the tab order. The input
-          keeps id={resolvedId}: the plant-list-photo-<id> / plant-photo-<id> / project-photo-<id>
-          contract is driven by automated bulk-attach sessions outside the app. */}
+      {/* ariaLabel rides the <button>, whose role can carry it and which is in the tab order. The
+          input keeps id={resolvedId}: the plant-list-photo-<id> / plant-photo-<id> /
+          project-photo-<id> contract is driven by automated bulk-attach sessions outside the app. */}
       <button
         type="button"
         onClick={openPicker}
@@ -339,12 +319,12 @@ export function PhotoUpload({
       >
         {isUploading ? busyLabel : buttonLabel}
       </button>
-      {/* V4-HIDECAPTURE-001: NO `capture` attribute, ever. Its absence is the whole feature, which
-          makes it invisible in a diff and easy to reinstate "for mobile" — the guard against that is
-          PhotoUpload.test.jsx asserting the attribute is absent, not this comment. */}
+      {/* NO `capture` attribute, ever. Its absence is the whole feature, which makes it invisible in
+          a diff and easy to reinstate "for mobile" — the guard against that is PhotoUpload.test.jsx
+          asserting the attribute is absent, not this comment. */}
       {/* `multiple` is rendered ONLY in multi mode — `multiple={false}` would still emit the
-          attribute in some renderers, and the single-mode DOM must be attribute-for-attribute what
-          it was (§3 B2). `undefined` is the only spelling React omits outright. */}
+          attribute in some renderers, and the single-mode DOM must not carry it. `undefined` is
+          the only spelling React omits outright. */}
       <input
         ref={inputRef}
         id={resolvedId}
@@ -360,9 +340,9 @@ export function PhotoUpload({
       />
 
       {/* MULTI-ONLY from here to the end of the block: the staged strip, which REPLACES the hook's
-          single preview and single error banner. §3 B3 requires a per-file surface — one collapsed
-          banner for "2 of 5 failed" is the shape this criterion exists to forbid, because it cannot
-          say WHICH two, and the user's only recovery is to re-pick all five. */}
+          single preview and single error banner. It needs a per-file surface — one collapsed banner
+          for "2 of 5 failed" cannot say WHICH two, and the user's only recovery would be to re-pick
+          all five. */}
       {multiEnabled && stageNotice && (
         <div role="status" data-testid="photo-upload-stage-notice"
              style={{ marginTop: T.photo.gapSm, color: P.mid, fontSize: T.type.base }}>
@@ -372,28 +352,26 @@ export function PhotoUpload({
 
       {multiEnabled && staged.length > 0 && (
         <>
-          {/* HEIGHT-CAPPED. MEASURED AT 390x844 (tests/harness/photostrips.jsx): ten staged files
-              on a PlantingTile grew the CARD to 802px against an 844px viewport and pushed the next
-              planting card to y=905 — completely off screen. One card staging photos ate the whole
-              Garden list. Uncapped, this strip's cost is unbounded in the number of files, on a
-              surface that is a scrolling column of siblings.
+          {/* HEIGHT-CAPPED. Uncapped, this strip's cost is unbounded in the number of files, on a
+              surface that is a scrolling column of siblings: ten staged files on a PlantingTile
+              grew the card past the viewport and pushed the next card off screen
+              (tests/harness/photostrips.jsx, measured at 390x844).
 
-              Two caps because the two modes have different rows: 216px is two rows of 88px tiles;
-              120px is about four compact filename rows, deliberately tighter because that mode
-              renders inside a card footer where every pixel is taken from the card's own content.
-              Scrolling inside keeps every file reachable and makes the cost constant.
+              Two caps because the two modes have different rows: 216px is about two rows of 88px
+              tiles; 120px is about four compact filename rows, tighter because that mode renders
+              inside a card footer. Scrolling inside keeps every file reachable and the cost
+              constant.
 
-              BOTH CAPS ARE CARD-FOOTER CONSTANTS, and `stripMaxHeight` exists because the strip no
-              longer only renders in a card footer. Two things measured at 390x844 in a real browser
+              BOTH CAPS ARE CARD-FOOTER CONSTANTS, and `stripMaxHeight` exists because the strip
+              also renders outside a card footer. Measured in a real browser at 390x844
               (tests/harness/plantingphotosheet.jsx), neither visible to jsdom:
-                • 216 is NOT two rows. A row is 108px — an 88px tile plus its 4px margin and its 16px
-                  status line — so two rows need 224px and the cap slices row 2's "Added" labels
-                  through the middle of the glyphs. Visible with FIVE photos, the ordinary case.
-                • Inside PlantingPhotoSheet the cap is actively harmful: at the 10-file cap it hid 7
-                  tiles behind an inner scrollbar while 391px of the screen sat empty above the
-                  sheet, and in the failure state it hid WHICH files failed — the per-file report
-                  §3 B3 exists to guarantee. That sheet passes 'none' and lets its own panel be the
-                  single scroller, which is what its size="full" was chosen for in the first place. */}
+                • 216 is NOT quite two rows. A row is 108px — an 88px tile plus its 4px margin and
+                  its 16px status line — so two rows need 224px and the cap slices row 2's "Added"
+                  labels through the middle of the glyphs.
+                • Inside PlantingPhotoSheet the cap is actively harmful: it hides tiles behind an
+                  inner scrollbar while the screen sits empty above the sheet, and in the failure
+                  state it hides WHICH files failed. That sheet passes 'none' and lets its own panel
+                  be the single scroller. */}
           <ul
             data-testid="photo-upload-staged"
             style={{ display: 'flex', flexWrap: 'wrap', gap: T.photo.gapSm,
@@ -405,8 +383,8 @@ export function PhotoUpload({
                   style={{ position: 'relative', width: showPreview ? 88 : '100%' }}>
                 {/* `showPreview={false}` callers (PlantingTile's 34px footer circle) get a COMPACT
                     row instead of an 88px tile — a thumbnail grid would wreck that card. The
-                    per-file status and per-file error still render either way, because that is the
-                    part §3 B3 requires; only the picture is optional. */}
+                    per-file status and per-file error still render either way; only the picture is
+                    optional. */}
                 {showPreview ? (
                   <img
                     src={item.url}
@@ -428,8 +406,7 @@ export function PhotoUpload({
                     aria-label={`Remove ${item.file?.name ?? 'photo'}`}
                     data-testid="photo-upload-staged-remove"
                     // T.radiusPill (20) on a 22px box is a circle for all practical purposes; the
-                    // design system carries no 50% token and inventing one for this is a bigger
-                    // change than the control deserves.
+                    // design system carries no 50% token.
                     style={showPreview
                       ? { position: 'absolute', top: 4, right: 4,
                           background: 'rgba(0,0,0,0.55)', color: P.white,
@@ -460,9 +437,9 @@ export function PhotoUpload({
             ))}
           </ul>
           {!isUploading && (
-            /* Measured at 45x18 in a real browser before minHeight — under half the app's own 44px
-               floor (T.tapMinHeight), on the one control that discards a whole batch. The link LOOK
-               is unchanged; only the hit box grows, inline-flex so the text stays centred in it. */
+            /* The link LOOK is small but the hit box meets the app's 44px floor (T.tapMinHeight),
+               on the one control that discards a whole batch; inline-flex keeps the text centred
+               in it. */
             <button type="button" onClick={clearStaged} data-testid="photo-upload-staged-clear"
                     style={{ marginTop: T.photo.gapSm, fontSize: T.photo.linkFont,
                              display: 'inline-flex', alignItems: 'center',
@@ -490,7 +467,7 @@ export function PhotoUpload({
 
       {/* The hook-level banner is single-mode only. In multi mode `error` holds whichever file
           failed LAST, so rendering it here would restate one per-file failure as if it described
-          the batch — the collapsed report §3 B3 forbids. */}
+          the batch. */}
       {!multiEnabled && error && errorMode === 'surface' && (
         <div role="alert" data-testid="photo-upload-error"
              style={{ marginTop: T.photo.gapSm, color: P.photoErrorInk, fontSize: T.type.base }}>

@@ -1,9 +1,9 @@
-// AssigneePicker — PLANT-ASSIGN-001 caretaker assignment control.
+// AssigneePicker — caretaker assignment control.
 // Self-contained: fetches the roster (useMembers, Clerk-backed /api/members) AND persists the change
 // itself (PUT /api/{plants|projects}/{id} { assignee_user_id }), then calls onChanged(newValue) so the
 // parent can keep its local entity state in sync. Keeps page wiring to a single mounted block.
 //
-// Operational surface (Reward-UX V101 §7): plain control, no celebration/streak/badge/interrupt.
+// Operational surface (not a reward surface): plain control, no celebration/streak/badge/interrupt.
 // Inline styles + P palette (the app has no Tailwind). Value "" / null = Unassigned (for a planting that
 // means "inherit from the project", surfaced via the inheritLabel hint).
 //

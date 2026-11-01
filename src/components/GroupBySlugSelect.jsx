@@ -1,23 +1,19 @@
-// V4-FACETSLUG-001 (BD0806-21) — one tappable slug selector for the Garden group-by axis.
+// One tappable slug selector for the Garden group-by axis.
 //
-// WHY: the Garden group-by shipped as GroupByControl, a wrapping chip row with exactly one chip per
-// facet. Live-measured on prod 2026-08-14 that row renders TWELVE chips (crop_type + 9 tag facets
-// present across 277 live plantings + status + location), which wraps into a multi-line scrap heap
-// on the 390px Android reference viewport. One tappable slug replaces the whole row.
+// WHY: a wrapping chip row with one chip per facet (crop_type, every tag facet in use, status,
+// location) runs to a dozen chips and wraps into a multi-line scrap heap on the 390px Android
+// reference viewport. One tappable slug replaces the whole row.
 //
 // PATTERN: deliberately the SAME interaction as the planting-status control
-// (components/planting/StatusPicker.jsx, V4-STATUSTAP-001): a visible face with a transparent native
+// (components/planting/StatusPicker.jsx): a visible face with a transparent native
 // <select> overlaid at inset:0. The native select is a real combobox — TalkBack on Chrome for
 // Android announces the accessible name + current value, opens the platform menu on tap, and walks
 // the options with the platform picker; keyboard gets arrow/type-ahead/Enter for free; focus stays
 // on the select after a choice and after dismissal. Nothing here re-implements a listbox, so there
 // is no ARIA pattern to get wrong.
 //
-// SCOPE: GroupByControl is deliberately NOT modified. It has a second consumer — Today's CareNeeded
-// (the old Today page's components/today/CareNeeded.jsx, removed at V5-TODAYREDESIGN-001 S8c), whose 2-option row is fine as chips and whose suite pins
-// role="group" + the "Group by" accessible name (__tests__/CareNeeded.test.jsx:46). Changing it in
-// place would silently re-skin Today and break a test named after another surface. This is a Garden-
-// only sibling; Today keeps the chip row untouched.
+// SCOPE: GroupByControl (a frozen forms/ primitive) is deliberately NOT modified, so its chip-row
+// markup and regression oracle (forms/FROZEN.md) stay intact. This is a Garden-only sibling.
 import React from 'react'
 import { P, T } from '../lib/tokens.js'
 

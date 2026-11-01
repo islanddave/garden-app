@@ -1,16 +1,11 @@
-// Stage 2: in-garden sprite — MVP-Critter.
-// Canonical spec: revision §1.8 (Session 3 scope), §3.11 (freshness desaturation),
-//                 §3.12 (300ms opacity fade clear), §3.13 (quiet-hours skip landing),
-//                 §3.26 (IntersectionObserver viewport gate),
-//                 §3.29 (D-INV-1 long-press handler).
-// V100 binding: §5 Stage 2 — in-tile reveal, ambient, no overlay/modal/tap-to-claim.
+// In-garden critter sprite: in-tile reveal, ambient, no overlay/modal/tap-to-claim.
 //
 // Behavior:
 //   - IO-gated reveal: defer landing animation until tile scrolls into viewport.
 //   - 3-4s landing animation on first reveal (default 3500ms). Skips in quiet hours.
 //   - After landing: settle to static.
-//   - >24h since earned_at: render with filter: saturate(0.7) per §3.11 (passive time orientation).
-//   - 300ms opacity fade on clear (when critter.viewed_at fires from elsewhere) per §3.12.
+//   - >24h since earned_at: render with filter: saturate(0.7) (passive time orientation).
+//   - 300ms opacity fade on clear.
 //   - Long-press ≥500ms (configurable) fires onLongPress(critter) — caller opens LoveMehPopover.
 //
 // Props:
@@ -20,7 +15,7 @@
 //   onLongPress         — (critter) => void; opens LoveMehPopover anchored to sprite
 //   onIntersect         — (critter) => void; fires once when sprite enters viewport (for actually_seen marking)
 //   spriteSize          — px (default 32)
-//   quiet               — V4-CRITTERQUIET-001: render as an INVISIBLE viewport sentinel (see below)
+//   quiet               — render as an INVISIBLE viewport sentinel (see below)
 //
 // Renders null when critter is null or species not in pool.
 
@@ -70,7 +65,7 @@ export default function CritterSprite({
     }
   }, [isIntersecting, critter, onIntersect])
 
-  // Landing animation timer. Only starts AFTER intersected (defer per §3.26).
+  // Landing animation timer. Only starts AFTER intersected.
   useEffect(() => {
     if (skipLanding) { setLandingComplete(true); return undefined }
     if (!isIntersecting || landingComplete) return undefined
@@ -78,9 +73,9 @@ export default function CritterSprite({
     return () => clearTimeout(t)
   }, [isIntersecting, skipLanding, landingComplete])
 
-  // Fade only on faded_at (the formal end-of-life marker — Dave directive 2026-05-30: sprites
-  // must NOT fade based on viewed_at, which only clears the Stage 3 BottomNav dot. Birds
-  // persist on tiles for the full freshness window for visual accumulation/collection feel).
+  // Fade only on faded_at (the formal end-of-life marker): sprites must NOT fade based on
+  // viewed_at, which only clears the BottomNav dot. Birds persist on tiles for the full freshness
+  // window for a visual accumulation/collection feel.
   useEffect(() => {
     if (critter?.faded_at && !cleared) {
       const t = setTimeout(() => setCleared(true), FADE_MS)
@@ -126,7 +121,7 @@ export default function CritterSprite({
   const species = SPECIES_BY_ID[critter.species_id]
   if (!species) return null
 
-  // V4-CRITTERQUIET-001 — INVISIBLE VIEWPORT SENTINEL.
+  // INVISIBLE VIEWPORT SENTINEL.
   //
   // Read this before "simplifying" it to `if (quiet) return null`. onIntersect is not decorative:
   // Garden.jsx accumulates the ids it fires into seenIdsRef and passes them to markCrittersViewed
@@ -169,7 +164,7 @@ export default function CritterSprite({
     )
   }
 
-  // Freshness: passive time orientation per §3.11.
+  // Freshness: passive time orientation.
   const earnedAtMs = critter.earned_at ? Date.parse(critter.earned_at) : Date.now()
   const isStale = Number.isFinite(earnedAtMs) && (Date.now() - earnedAtMs) > FRESHNESS_THRESHOLD_MS
 

@@ -1,4 +1,4 @@
-// V5-SEEDSTAB-001 — /sow and /seeds/saved, kept alive as redirects into the Seeds page.
+// /sow and /seeds/saved, kept alive as redirects into the Seeds page.
 //
 // Every in-app door now targets /seeds?view=… directly (src/lib/seedsRoutes.js), so these serve only
 // what the app cannot repoint: a bookmark, a tab restored after a deploy, an entry already in the

@@ -1,12 +1,12 @@
 // src/components/WaterDepthChips.jsx
-// V4-WATERMATH-001 F0 — the Light / Normal / Deep amount-class chip row.
+// The Light / Normal / Deep amount-class chip row.
 //
 // Composed from the FROZEN SelectChip primitive (components/forms/FROZEN.md: extend, don't
 // mint a second chip). Deliberately NOT added to the forms barrel: the freeze test pins that
 // export set exactly, and this is a domain widget (a watering vocabulary), not a shared
 // primitive. Imported directly, the same way ScopeChecklist imports SelectChip.
 //
-// Layout: a 3-column grid, not flex-wrap. At 390px (Dave's Chrome/Android width) three
+// Layout: a 3-column grid, not flex-wrap. At 390px (the reference Android width) three
 // `touch` chips demand 3*44 + 2*8 = 148px of min-content, so they sit on ONE line with room
 // to spare; wrapping would double the block height on the fast path this exists to keep fast.
 // `touch` gives the 48px height floor — these are tapped one-handed while holding a hose.
@@ -19,13 +19,13 @@ import Icon from './Icon.jsx'
 import SelectChip from './forms/SelectChip.jsx'
 import { WATER_DEPTH_CHIPS } from '../lib/waterDepth.js'
 
-// V4-ICON-001. The tier's drop row, exported because LogMany's compact per-row override chip draws
+// The tier's drop row, exported because LogMany's compact per-row override chip draws
 // the same thing outside this component — one place decides how many drops a class is worth, so the
 // two surfaces cannot disagree about what "Deep" looks like.
 //
 // `filled` + color={false}, both deliberate. The base care.drop is an OUTLINE, and at the 12-14px
-// these render at its counter closes to under a pixel — it reads as a fuzzy ring, not a drop
-// (compared side by side at 11/12/13/14/16px). The filled variant is solid and stays crisp. Killing
+// these render at its counter closes to under a pixel — it reads as a fuzzy ring, not a drop.
+// The filled variant is solid and stays crisp. Killing
 // the colour pass makes it inherit the chip's ink instead of the authored blue, which is what keeps
 // it legible on the ACTIVE chip, where SelectChip flips to a green fill with white text.
 export function WaterDepthDrops({ count = 0, size = 14 }) {
@@ -42,7 +42,7 @@ export function WaterDepthDrops({ count = 0, size = 14 }) {
 // relax the touch target: `touch` stays on by default in every variant, because a 40px chip is
 // under the WCAG 2.5.5 floor and these are tapped one-handed outdoors on Android. Keeping the two
 // concerns separate is deliberate — SelectChip's own `small` couples them, and reusing that
-// coupling here is how the compact variant would have quietly shipped an undersized target.
+// coupling here would quietly give the compact variant an undersized target.
 export default function WaterDepthChips({
   value,
   onChange,
@@ -76,7 +76,7 @@ export default function WaterDepthChips({
             <WaterDepthDrops count={chip.dropCount} size={small ? 12 : 14} />
             <span>{chip.label}</span>
             {showAnchors && (
-              // The anchor rides ON the chip (canon Part 3), not in a legend below it: a caption
+              // The anchor rides ON the chip, not in a legend below it: a caption
               // the user has to look away to read is a caption they stop reading by week two.
               <span
                 aria-hidden="true"

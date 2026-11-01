@@ -1,8 +1,8 @@
 // src/components/AmbientBandNotice.jsx
-// BUG-READYBANDFETCH-001 — what an ambient Today band renders when it could not ask, as opposed to
-// when it asked and the answer was "nothing". Before this, both were the empty render.
+// What an ambient Today band renders when it could not ask, as opposed to when it asked and the
+// answer was "nothing" (which is the empty render).
 //
-// Reward-UX V102 compliance is the whole design constraint here. This is NOT an error banner: no
+// Reward UX compliance is the whole design constraint here. This is NOT an error banner: no
 // alert colour (P.alert / P.terra are deliberately unused), no icon, no status code, no error text
 // from the server, no count, no urgency framing, no toast/modal/sheet. It is one muted line in the
 // band's own shell, at the band's own position, plus a plain retry affordance — the quietest thing
@@ -14,12 +14,12 @@
 import React from 'react'
 import { P } from '../lib/constants.js'
 
-// V5-TODAYREDESIGN-001 S6 — the words, once: the redesigned Today prints them in a band's section header when
-// that band's fetch failed (plan-v2 §8 S6, "AmbientBandNotice voice"), and this notice prints them in its line.
+// The words, once: Today prints them in a band's section header when that band's fetch failed, and
+// this notice prints them in its line.
 export const COULD_NOT_CHECK = 'Couldn’t check just now'
 
-// `bare` (S6): the line and its retry only — no card, no eyebrow, no aria-label — for a band rendered inside a
-// section that is already its heading (Today V2). Without it, the notice as it always was.
+// `bare`: the line and its retry only — no card, no eyebrow, no aria-label — for a band rendered inside a
+// section that is already its heading (Today V2).
 export default function AmbientBandNotice({ eyebrow, onRetry, bare = false }) {
   return (
     <section

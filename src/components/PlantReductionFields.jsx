@@ -1,5 +1,5 @@
 // src/components/PlantReductionFields.jsx
-// V4-LOSSUI-001 — the REQUIRED capture panel for the two plant-reduction event types.
+// The REQUIRED capture panel for the two plant-reduction event types.
 //
 // WHY IT IS NOT AN EVENT_METADATA_FIELDS ENTRY, which is where a per-type metadata form usually
 // goes in this app: that registry drives the COLLAPSED "More details" disclosure, whose whole
@@ -57,7 +57,7 @@ export default function PlantReductionFields({
   // lib/plantReduction.js for why this never gates the save.
   remaining = null,
 }) {
-  // V5-LOSSTOKEN-001: a legacy `failed` / `given_away` renders the same panel as its new token.
+  // A legacy `failed` / `given_away` renders the same panel as its new token.
   const eventType = canonicalEventType(rawEventType)
   const copy = COPY[eventType]
   const reasons = reductionReasonsFor(eventType)
@@ -106,15 +106,13 @@ export default function PlantReductionFields({
           aria-label={copy.reasonGroup}
           data-testid={`reduction-reasons-${eventType}`}
           // Three columns, not one row and not flex-wrap. The content width available to this grid
-          // at 390px (Dave's Chrome/Android width) is 390 − 32 (EventNew's page padding) − 36
-          // (FormSection's) = 322px. Seven `touch` chips on ONE line demand 7*44 + 6*8 = 356px of
-          // min-content, which is 34px MORE than there is — the harvest row's
-          // BUG-HARVROWOVERFLOW-001 failure exactly, where a grid asking for more than the viewport
-          // scrolled the overlay sideways. Three columns gives 102px per chip, comfortably above the
-          // ~96px min-content of the longest unbreakable word here ("Transplant"), so long labels
-          // wrap to two lines inside their chip instead of forcing the row wider than the screen.
-          // ARITHMETIC, not a measurement: jsdom has no layout engine and no browser tooling was
-          // available in this lane (see the lane report) — worth a real 390px eyeball on device.
+          // at 390px is 390 − 32 (EventNew's page padding) − 36 (FormSection's) = 322px. Seven
+          // `touch` chips on ONE line demand 7*44 + 6*8 = 356px of min-content, which is MORE than
+          // there is, and a grid asking for more than the viewport scrolls the overlay sideways.
+          // Three columns gives 102px per chip, comfortably above the ~96px min-content of the
+          // longest unbreakable word here ("Transplant"), so long labels wrap to two lines inside
+          // their chip instead of forcing the row wider than the screen. ARITHMETIC, not a
+          // measurement: jsdom has no layout engine.
           style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}
         >
           {reasons.map(r => (

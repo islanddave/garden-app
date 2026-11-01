@@ -1,4 +1,4 @@
-// V4-THEME-001 (V200 Pass B) — full-screen photo Lightbox GALLERY primitive (Slice 1).
+// Full-screen photo Lightbox GALLERY primitive.
 //
 // A multi-image gallery: swipe/arrow paging, pinch + double-tap zoom (1x-4x), pan-when-zoomed, swipe-down-to-
 // close, a filmstrip scrubber, captions, and a fully keyboard/button-operable zoom+pan path
@@ -13,10 +13,8 @@
 // Lives OUTSIDE src/components/forms/, so it is not in the no-hex ESLint scope; the literal
 // rgba black backdrop / #fff controls are intentional.
 //
-// NOTE (corrected 2026-08-06): the "Ships DARK / not wired to any consumer" banner that stood here
-// was STALE by several slices. Lightbox is LIVE at two production render sites — PhotosWall.jsx:187
-// and PlantingDetail.jsx:730. It matters because a stale "dead code" header is exactly what makes a
-// live, un-arbitrated full-screen modal get skipped in a registry migration.
+// Lightbox is LIVE (PhotosWall, PlantingDetail and other photo surfaces render it), so it
+// participates in the dismiss registry like every other full-screen modal.
 
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
@@ -80,7 +78,7 @@ export function pinchScale(prevScale, startDist, curDist) {
   return clampScale(prev * (curDist / startDist))
 }
 
-// Euclidean distance between two pointer points - used to derive pinch ratios.
+// Euclidean distance between two pointer points - the basis of pinch ratios.
 export function pointerDistance(a, b) {
   if (!a || !b) return 0
   const dx = (a.x || 0) - (b.x || 0)
@@ -113,21 +111,19 @@ const CONTROL_BTN = {
   padding: 0,
 }
 
-// BUG-TIERLESSPHOTOS-001 — call-site adapter turning ONE gallery slide into the photo shape
-// photoModel understands. The filmstrip renders 52x52 boxes (136.5 device px at Dave's dpr 2.625)
-// and was binding `im.src` — the FULL original, ~4.15 MB median measured on prod — straight into a
-// bare <img>, unwindowed. A 24-photo gallery mounted 24 originals to draw 24 postage stamps.
+// Call-site adapter turning ONE gallery slide into the photo shape photoModel understands. The
+// filmstrip draws small boxes, so it must window a thumb, not bind `im.src` (the FULL original,
+// megabytes each) into a bare <img>: a 24-photo gallery would otherwise mount 24 originals.
 //
-// IT WAS INVISIBLE TO BOTH STATIC GUARDS AND THAT IS WHY IT SURVIVED: noBareViewUrlImg keys on the
-// FIELD NAME in `src={…}` and this one is aliased to `im.src`, and photoPrimitive's clause 2 only
-// bans raw <PhotoImg>. Neither has anything to say about an <img> bound to an alias.
+// The static guards cannot see this: noBareViewUrlImg keys on the FIELD NAME in `src={…}` and
+// `im.src` is aliased, and photoPrimitive's clause 2 only bans raw <PhotoImg>. Neither has anything
+// to say about an <img> bound to an alias.
 //
 // A SLIDE IS NOT A PHOTO ROW, and the callers disagree with each other about the id field —
 // PhotosWall sends `photoId`, PlantingDetail sends `id` — so the remap is explicit rather than
 // `photo={im}`. Getting it wrong points the 900s-presign self-heal at the wrong /view-url/:id.
-// `thumbSrc` is OPTIONAL: a caller with no thumb in hand yields a one-entry [full] chain and renders
-// exactly what it renders today. The MAIN image stays FULL and stays on raw PhotoImg (a thumb there
-// would paint 163 KB at 94vw — PhotoImg.jsx:146).
+// `thumbSrc` is OPTIONAL: a caller with no thumb in hand yields a one-entry [full] chain. The MAIN
+// image stays FULL and stays on raw PhotoImg (a thumb there would paint blurry at 94vw).
 const slidePhoto = (im) => ({
   id: im?.photoId ?? im?.id ?? null,
   view_url: im?.src ?? null,
@@ -147,23 +143,21 @@ export default function Lightbox({
   const len = list.length
   const controlled = typeof onIndexChange === 'function'
 
-  // V4-BACKNAV-001 Slice 1 — join the shared dismiss registry. Lightbox is NOT a Sheet consumer and
-  // never appeared in Sheet.jsx's openStack, so its document keydown below was gated on nothing:
-  // with a Sheet open underneath (PlantingDetail renders both from independent state) ONE Escape
-  // fired BOTH onCloses, and both focus traps ran on the same Tab press with the last focus() call
-  // winning by listener-registration order. Registering at the DIALOG layer puts it above Sheet in
-  // paint order AND in arbitration order, so those now agree. Unregistered (no provider)
-  // everything below is byte-identical to before.
+  // Join the shared dismiss registry. Lightbox is NOT a Sheet consumer and never appears in
+  // Sheet.jsx's openStack, so its document keydown below would otherwise be gated on nothing: with a
+  // Sheet open underneath (PlantingDetail renders both from independent state) ONE Escape would
+  // fire BOTH onCloses, and both focus traps would run on the same Tab press with the last focus()
+  // call winning by listener-registration order. Registering at the DIALOG layer puts it above
+  // Sheet in paint order AND in arbitration order, so those agree. Unregistered (no provider) the
+  // local Escape handler below does the closing.
   const { registered: dismissRegistered, isTopmost } = useDismissable({
     open, onDismiss: onClose, layer: LAYER.DIALOG, armsBack: true,
   })
 
-  // V4-BACKNAV-001 Slice P (extended) — Android Back closes the viewer instead of leaving the page.
-  // Close-in-place: onClose is a pure state flip at both render sites (PlantingDetail, PhotosWall).
-  // DEFERRED, deliberately: when the image is zoomed, Back arguably ought to reset zoom BEFORE
-  // closing (the Android gallery idiom). That is an intra-surface precedence rule, not a dismissal,
-  // and it belongs with the Slice 3 arbiter alongside the other sub-state cases (BottomNav's
-  // two-step sign-out, VarietyPicker's create stages). Today Back matches Escape: it closes.
+  // Android Back closes the viewer instead of leaving the page. Close-in-place: onClose is a pure
+  // state flip at the render sites. Deliberately NOT done: when the image is zoomed, Back could
+  // reset zoom BEFORE closing (the Android gallery idiom). That is an intra-surface precedence rule,
+  // not a dismissal; today Back matches Escape: it closes.
 
   // Uncontrolled internal index, seeded from `index` whenever it changes / on open.
   const [internalIndex, setInternalIndex] = useState(index)
@@ -232,9 +226,9 @@ export default function Lightbox({
     closeBtnRef.current?.focus()
 
     function onKey(e) {
-      // Topmost gate (V4-BACKNAV-001 Slice 1). Registered: the registry owns Escape entirely — this
-      // handler returning is what stops the shipped double-close. It also gates the ARROW keys,
-      // which previously paged the gallery while focus sat inside a Sheet stacked above.
+      // Topmost gate. Registered: the registry owns Escape entirely — this handler returning is what
+      // stops a double-close. It also gates the ARROW keys, which would otherwise page the gallery
+      // while focus sat inside a Sheet stacked above.
       if (dismissRegisteredRef.current) {
         if (!isTopmostRef.current) return
         if (e.key === 'Escape') return          // registry's single listener closes us

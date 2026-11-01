@@ -38,7 +38,7 @@ import { LAYER } from '../lib/dismissLayers.js'
 
 const DEBOUNCE_MS = 250
 
-// V4-CROPTYPE-001 — mirrors the crop_types.default_lifecycle CHECK (and VALID_LIFECYCLE in
+// Mirrors the crop_types.default_lifecycle CHECK (and VALID_LIFECYCLE in
 // lambda/varieties/validate.js). Duplicated rather than imported because src/ must not reach into
 // lambda/; the server re-validates, so a drift here is a 400, never a bad row.
 const LIFECYCLE_OPTIONS = [
@@ -48,21 +48,20 @@ const LIFECYCLE_OPTIONS = [
   ['biennial', 'Biennial'],
 ]
 
-// Max rows rendered in the listbox. Was a hard 50, which SILENTLY truncated: with 398 live
-// varieties the browse list died in the C's, and even crop-scoped `pepper` is 107. Raised, and
-// truncation is now VISIBLE (footer below) so a capped list can never again read as "that's all".
+// Max rows rendered in the listbox. Truncation is VISIBLE (footer below) so a capped list never
+// reads as "that's all"; even a crop-scoped list like `pepper` runs past a hundred rows.
 const MAX_RESULTS = 200
 
-// BUG-VARIETYGENUSUI-001 — mirrors the caps in lambda/varieties/validate.js. Duplicated for the same
-// reason LIFECYCLE_OPTIONS is (src/ must not reach into lambda/); the server re-validates, so a drift
-// here is a 400, never a bad row. Client-side they buy an error the user can fix in place instead of
-// a round-trip that discards the typing.
+// Mirrors the caps in lambda/varieties/validate.js. Duplicated for the same reason LIFECYCLE_OPTIONS
+// is (src/ must not reach into lambda/); the server re-validates, so a drift here is a 400, never a
+// bad row. Client-side they buy an error the user can fix in place instead of a round-trip that
+// discards the typing.
 const GENUS_MAX = 120
 const SPECIES_MAX = 200
 
-// V4-CROPTYPEREACH-001 — crop-chooser row indices. Module scope, not component scope, because the
-// highlight-reset effect below reads them and runs before the component body's own consts would be
-// in scope. Row 0 is the MINT row (see the chooser render for why it moved to the top).
+// Crop-chooser row indices. Module scope, not component scope, because the highlight-reset effect
+// below reads them and runs before the component body's own consts would be in scope. Row 0 is the
+// MINT row (see the chooser render for why it is at the top).
 const NEW_CROP_ROW = 0
 const NO_CROP_ROW = 1
 
@@ -70,15 +69,15 @@ export default function VarietyPicker({
   value = null,
   onChange,
   allowCreate = true,
-  // BUG-VARIETYGENUSUI-001 — Genus/Species inputs on the create stage. Default OFF: this component is
-  // the app's only variety-create surface and is rendered by five hosts, so two unconditional inputs
-  // would land in a Put-Up jar log and a seed-packet transcription as well as the one flow where they
-  // belong. ON only where the user is looking at the plant (PlantForm — the re-key path). The edit
-  // form (forms/VarietyEditor.jsx) has carried both since 2026-08-07; only CREATE was missing them.
+  // Genus/Species inputs on the create stage. Default OFF: this component is the app's only
+  // variety-create surface and several hosts render it, so two unconditional inputs would land in a
+  // Put-Up jar log and a seed-packet transcription as well as the one flow where they belong. ON only
+  // where the user is looking at the plant (PlantForm, the re-key path). The edit form
+  // (forms/VarietyEditor.jsx) already carries both.
   allowIdentity = false,
   speciesFilter,
-  // Optional crop scoping (V4-HARVESTCENTER-001): when set, only varieties of that crop_type_slug
-  // are offered — e.g. Put-Up picks "pepper" so you choose Jalapeño vs Habanero, not all 398.
+  // Optional crop scoping: when set, only varieties of that crop_type_slug are offered — e.g. Put-Up
+  // picks "pepper" so you choose Jalapeño vs Habanero, not every variety.
   // Undefined (every other consumer) = unchanged behaviour.
   cropSlugFilter,
   required = false,
@@ -87,8 +86,8 @@ export default function VarietyPicker({
   id,
 }) {
   const { varieties, loading, error, search, createVariety } = useVarieties()
-  // V4-HANDEDNESSCONTROLS-001 — which edge the ⌨/🎤 slots take. Local-only read: no auth, no
-  // network, resolved synchronously so the slots never move after first paint.
+  // Which edge the ⌨/🎤 slots take. Local-only read: no auth, no network, resolved synchronously so
+  // the slots never move after first paint.
   const hand = useHandedness()
   const { cropTypes, createCropType } = useCropTypes()
   const [query, setQuery] = useState('')
@@ -97,14 +96,12 @@ export default function VarietyPicker({
   const [creating, setCreating] = useState(false)
   const [createErr, setCreateErr] = useState(null)
   const [touched, setTouched] = useState(false)
-  // V4-PLANTTYPE-001: two-stage create. null = picking/creating a variety; 'crop' = the
-  // crop-type chooser shown after the user commits to creating a brand-new variety, so new
-  // varieties get typed at authoring time (controlled crop_types vocab). Optional — a
-  // "No crop type" row keeps creation possible, and an empty vocab skips the stage entirely.
-  // V4-CROPTYPE-001 adds a third stage: 'newcrop' = the inline mint-a-crop-type form, reached from
-  // the last row of the 'crop' stage. Before this, the vocabulary was closed from the app, so a
-  // plant with no matching type could only be saved as "No crop type" — which drops it out of
-  // every type-grouped view (the reason this was reprioritised).
+  // Create stage. null = picking/creating a variety; 'crop' = the crop-type chooser shown after the
+  // user commits to creating a brand-new variety, so new varieties get typed at authoring time
+  // (controlled crop_types vocab). Optional — a "No crop type" row keeps creation possible, and an
+  // empty vocab skips the stage entirely. 'newcrop' = the inline mint-a-crop-type form, reached from
+  // the first row of the 'crop' stage; without it a plant with no matching type could only be saved
+  // as "No crop type", which drops it out of every type-grouped view.
   const [createStage, setCreateStage] = useState(null)
   // Botanical identity for the in-flight create (allowIdentity only). Lives beside the crop chooser
   // rather than on its own stage: picking a crop row IS the commit, so anything the create should
@@ -115,10 +112,9 @@ export default function VarietyPicker({
   const [newCropCategory, setNewCropCategory] = useState('')
   const [newCropLifecycle, setNewCropLifecycle] = useState('')
   const [creatingCrop, setCreatingCrop] = useState(false)
-  // V4-CROPTYPEREACH-001 — type-ahead over the crop-type chooser. The vocabulary reached 141 live
-  // rows, rendered unfiltered in a 280px box, which made the chooser a blind scroll and the mint row
-  // (then LAST) effectively unreachable: Kousa Dogwood was added 2026-08-17 with crop_type_slug NULL
-  // through exactly this stage. Filters display_name / category / slug.
+  // Type-ahead over the crop-type chooser. The vocabulary is well over a hundred rows, too many for
+  // a blind scroll in a short box; typing is how you reach a type. Filters display_name / category /
+  // slug.
   const [cropFilter, setCropFilter] = useState('')
   // null | { message, existing }. `existing` present = the server steered us to a type that
   // already covers this name; the UI offers adopting it rather than treating it as an error.
@@ -135,12 +131,11 @@ export default function VarietyPicker({
   // Mirrors createStage for the deferred blur-close, which runs 150ms later and would otherwise
   // read a stale captured value. See onBlur.
   const createStageRef = useRef(null)
-  // BUG-VARPICKERARIA-001 — was `Math.random()`. aria-activedescendant now points at an option id
-  // derived from this, so it must be stable across renders (random-per-mount already was) AND
-  // deterministic per instance so tests can assert on it. useId gives both. Its ':' delimiters are
-  // legal in an id attribute but NOT in a CSS selector, so they are stripped: the active-option
-  // scroll below resolves through getElementById, and a future querySelector must not silently fail
-  // on a ':' it did not escape. Same treatment as PlantingSelect's listboxId (V4-PICKERA11Y-001).
+  // aria-activedescendant points at an option id derived from this, so it must be stable across
+  // renders AND deterministic per instance so tests can assert on it; useId gives both. Its ':'
+  // delimiters are legal in an id attribute but NOT in a CSS selector, so they are stripped: a future
+  // querySelector must not silently fail on a ':' it did not escape. Same treatment as
+  // PlantingSelect's listboxId.
   const listboxId = `vp-list-${useId().replace(/:/g, '')}`
   // Option identity. Namespaced by listboxId, not a bare `vp-opt-…`, because a page may render more
   // than one picker (AddSeeds, InventoryAdd) — duplicate DOM ids would make aria-activedescendant
@@ -181,17 +176,16 @@ export default function VarietyPicker({
   }, [query, open, search])
 
   // Reset highlight whenever results change or we switch create stage.
-  // V4-CROPTYPEREACH-001: the crop stage lands on "No crop type", NOT on row 0 — row 0 is now the
-  // MINT row, and a blanket reset to 0 would arm a stray Enter to start creating a crop type the
-  // user never asked for. This effect is the authority; it runs after beginCreate's own setHighlight.
-  // BUG-VARIETYPICKERKEYEATEN-001: a LAYOUT effect, so the reset is part of the render that brought
-  // the rows. As a passive effect it ran a tick later, and an Arrow Down pressed inside that tick was
-  // overwritten — the highlight went 0 -> 1 -> 0.
+  // The crop stage lands on "No crop type", NOT on row 0 — row 0 is the MINT row, and a blanket
+  // reset to 0 would arm a stray Enter to start creating a crop type the user never asked for. This
+  // effect is the authority; it runs after beginCreate's own setHighlight.
+  // A LAYOUT effect, so the reset is part of the render that brought the rows: as a passive effect it
+  // ran a tick later, and an Arrow Down pressed inside that tick was overwritten (0 -> 1 -> 0).
   useLayoutEffect(() => {
     setHighlight(createStage === 'crop' ? NO_CROP_ROW : 0)
   }, [varieties, query, createStage])
 
-  // ── V4-PICKERVOICE-001 QA-G3 — voice-transcript server rescue ─────────────
+  // ── Voice-transcript server rescue ────────────────────────────────────────
   // The server ?q= is a strict LIKE, so a spaced transcript ("brandy wine") returns an EMPTY
   // page for a stored "Brandywine" — and an empty list plus a non-empty query renders the
   // create footer, turning one recognizer artifact into a duplicate-variety hazard. Mitigation:
@@ -202,7 +196,7 @@ export default function VarietyPicker({
   // this (pinned in VarietyPickerKeyboard.test.jsx). Only after the rescue also misses does the
   // create footer stand. NOTE the class this cannot rescue: a stored name WITH a space reached
   // by a doubled-letter transcript ("chilli red" -> "Chili Red") fails both forms; the real fix
-  // is normalization in the varieties Lambda — follow-up, not built here.
+  // would be normalization in the varieties Lambda.
   // { raw, collapsed } while a rescue is still permitted for the in-flight voice query; null
   // otherwise. A ref, not state: it must be readable/clearable synchronously from handlers
   // without re-render churn.
@@ -228,15 +222,13 @@ export default function VarietyPicker({
     if (cropSlugFilter) list = list.filter(v => v.crop_type_slug === cropSlugFilter)
     const byName = (a, b) => (a.name || '').localeCompare(b.name || '')
     if (!q) return [...list].sort(byName)
-    // V4-PICKERVOICE-001: voice-forgiving normalization ("sun ray" -> "Sunray", "chilli red" ->
-    // "Chili Red"). Strictly widens the old .toLowerCase().includes() — typed queries keep every
-    // match they had. NOTE: the SERVER ?q= LIKE stays strict, so a spaced transcript can still
-    // return an empty server page; this defensive filter can only be as loose as its input list.
-    // V4-SEARCHCROPTYPE-001 client leg: crop type joins the haystack, so "cucumber" reaches Suyo
-    // Long and "scallion" reaches a bunching_onion variety. This surface is the one client that can
-    // do it on the crop's DISPLAY NAME as well as its slug — cropBySlug is already in hand for
-    // labelling, so no extra request — and doing so is consistent with its own crop chooser below,
-    // which has always filtered types on display_name/category/slug (filteredCropTypes).
+    // Voice-forgiving normalization ("sun ray" -> "Sunray", "chilli red" -> "Chili Red") strictly
+    // widens a plain lowercase includes() — typed queries keep every match they had. NOTE: the
+    // SERVER ?q= LIKE stays strict, so a spaced transcript can still return an empty server page;
+    // this defensive filter can only be as loose as its input list.
+    // Crop type joins the haystack, so "cucumber" reaches Suyo Long and "scallion" reaches a
+    // bunching_onion variety. It matches the crop's DISPLAY NAME as well as its slug (cropBySlug is
+    // already in hand for labelling, so no extra request), consistent with filteredCropTypes below.
     return list.filter(v =>
       looseIncludes(v.name, q) || looseIncludes(v.species, q) || looseIncludes(v.common_name, q) ||
       looseIncludesCropType(v.crop_type_slug, q, cropBySlug[v.crop_type_slug])
@@ -253,11 +245,10 @@ export default function VarietyPicker({
   // total focusable items = filtered.length + (1 if create footer)
   const itemCount = filtered.length + (showCreateFooter ? 1 : 0)
 
-  // V4-CROPTYPEREACH-001 — chooser rows REORDERED. Was: "No crop type", the N types, then the mint
-  // row LAST (index N+1) — at N=141 that put the only way to create a type below a 141-row blind
-  // scroll. Now: row 0 = "New crop type…", row 1 = "No crop type", rows 2..N+1 = the FILTERED types.
-  // The mint is the top row precisely because it is the row you cannot reach any other way; the
-  // types below it are reachable by typing.
+  // Chooser rows: row 0 = "New crop type…", row 1 = "No crop type", rows 2..N+1 = the FILTERED
+  // types. The mint is the top row precisely because it is the row you cannot reach any other way
+  // (at the bottom it would sit below a long blind scroll); the types below it are reachable by
+  // typing.
   const filteredCropTypes = useMemo(() => {
     const q = cropFilter.trim()
     if (!q) return cropTypes
@@ -267,18 +258,16 @@ export default function VarietyPicker({
   }, [cropTypes, cropFilter])
   const cropItemCount = filteredCropTypes.length + 2
 
-  // ── BUG-VARPICKERARIA-001: the combobox contract ──────────────────────────
-  // The input declared aria-expanded/aria-controls unconditionally, but the listbox those point at
-  // renders only in two of the four states below. Closed, disabled, or on the mint-a-crop form the
-  // combobox was telling a screen reader "expanded — the popup is #vp-list-x" while #vp-list-x was
-  // not in the DOM at all: a dangling IDREF, and on the mint form an actively wrong one (a panel IS
-  // up, it is just not a listbox). One derived flag now drives both attributes, so "expanded" and
-  // "here is the popup" can never disagree with what was rendered.
+  // ── The combobox contract ─────────────────────────────────────────────────
+  // The listbox that aria-expanded/aria-controls point at renders only in two of the four states
+  // below. Closed, disabled, or on the mint-a-crop form there is no listbox in the DOM, so declaring
+  // "expanded" would be a dangling IDREF (on the mint form an actively wrong one: a panel IS up, it
+  // is just not a listbox). One derived flag drives both attributes, so "expanded" and "here is the
+  // popup" cannot disagree with what was rendered.
   const listboxOpen = open && !disabled && createStage !== 'newcrop'
 
-  // The other missing half: `highlight` was a background colour and nothing else, so ArrowDown moved
-  // a visual bar no screen reader could observe and never announced a row. Same index, resolved to
-  // the id of the row it highlights, so the visual highlight and aria-activedescendant cannot drift.
+  // `highlight` is also exposed to assistive tech: the same index, resolved to the id of the row it
+  // highlights, so the visual highlight and aria-activedescendant cannot drift.
   // null (attribute ABSENT), never '': an empty aria-activedescendant is itself a dangling reference
   // that reads as "there is an active option, I just cannot find it".
   //
@@ -294,14 +283,14 @@ export default function VarietyPicker({
       return ct ? optionId(`ct-${ct.slug}`) : null
     }
     // A stale highlight can outrun a shrinking list (the results swap under a held arrow key).
-    // Undefined then means "no active option", which is exactly right — see the null contract above.
+    // Undefined then means "no active option" — see the null contract above.
     if (highlight < filtered.length) return filtered[highlight] ? optionId(filtered[highlight].id) : null
     return (showCreateFooter && highlight === filtered.length) ? optionId('create') : null
   }, [listboxOpen, createStage, highlight, filteredCropTypes, filtered, showCreateFooter, optionId])
 
   // APG requires the active descendant be scrolled into view; with focus staying on the input the
   // browser will never do it for us, and both list styles cap their height, so an arrowed-to row
-  // below the fold was announced but invisible. `block: 'nearest'` scrolls the minimum needed —
+  // below the fold would be announced but invisible. `block: 'nearest'` scrolls the minimum needed —
   // 'center' would jump the list under a sighted user's thumb on every ArrowDown. jsdom implements
   // neither scrollIntoView nor layout, hence the optional call.
   useEffect(() => {
@@ -334,7 +323,7 @@ export default function VarietyPicker({
     // Remember the chosen crop so a 409 "Create anyway" re-submits with the same type.
     if (!allowDuplicate) pendingCropRef.current = { slug: cropSlug, lifecycle: cropLifecycle }
     const crop = allowDuplicate ? pendingCropRef.current : { slug: cropSlug, lifecycle: cropLifecycle }
-    // BUG-VARIETYGENUSUI-001. Blank -> the key is OMITTED, never sent as '': the POST binds
+    // Blank -> the key is OMITTED, never sent as '': the POST binds
     // `body.genus ?? null`, so an empty string would store '' in a column whose absence means
     // "unknown" — and validate.js refuses it anyway. Only read when allowIdentity is on, so a host
     // that never renders the inputs cannot ship stale state from a previous mount.
@@ -348,8 +337,7 @@ export default function VarietyPicker({
     setCreateErr(null)
     const payload = { name }
     // A typed species beats the speciesFilter prop: the prop is a LIST SCOPE the host set, the typed
-    // value came from the person holding the plant. No host sets both today (speciesFilter has zero
-    // call sites), so this only fixes the precedence before someone hits it.
+    // value came from the person holding the plant.
     const speciesOut = species || speciesFilter
     if (speciesOut) payload.species = speciesOut
     if (genus) payload.genus = genus
@@ -492,16 +480,12 @@ export default function VarietyPicker({
   // Keep the blur-close ref in step with the stage it guards.
   useEffect(() => { createStageRef.current = createStage }, [createStage])
 
-  // V4-PICKERKB-001 (Dave, device pass 2026-08-02): "do not have it default to text box selected
-  // for keyboard — I'll tap the variety selector, be presented with the choice list, no keyboard.
-  // Find a way then to allow me to activate the keyboard if desired."
-  //
-  // V4-PICKERKB-002: the mechanism minted here is now the SHARED useComboboxInput hook
-  // (lib/comboboxInput.js) so every type-ahead picker behaves identically (Dave consistency
-  // directive 2026-08-03) — this component keeps only the wiring. The hook also adds the 🎤
-  // voice mode (V4-PICKERVOICE-001): final transcript -> query -> the same debounced search +
-  // client filter below. Full rationale (inputMode over blur, the deliberate blur+refocus
-  // dance) lives with the hook.
+  // Opening the picker must not raise the soft keyboard: the choice list shows first and the ⌨
+  // button opts in. The mechanism is the SHARED useComboboxInput hook (lib/comboboxInput.js) so
+  // every type-ahead picker behaves identically — this component keeps only the wiring. The hook
+  // also adds the 🎤 voice mode: final transcript -> query -> the same debounced search + client
+  // filter below. Full rationale (inputMode over blur, the deliberate blur+refocus dance) lives
+  // with the hook.
   const { kbMode, enableKeyboard, isDeliberateBlur, voiceSupported, voiceState, toggleVoice } =
     useComboboxInput({
       open,
@@ -522,7 +506,7 @@ export default function VarietyPicker({
     // A blur we caused ourselves to swap inputMode — leave `open` alone. Checked synchronously
     // rather than inside the timer below, because the flag is cleared long before 150ms elapses.
     if (isDeliberateBlur()) return
-    // V4-CROPTYPEREACH-001 — focus moved to another control INSIDE this picker (the crop-stage
+    // Focus moved to another control INSIDE this picker (the crop-stage
     // filter input, which must take real focus to be typed into). Read from relatedTarget, which is
     // resolved synchronously at blur time; document.activeElement inside the timer would also catch
     // the case where focus never moved at all, and would wedge the dropdown permanently open.
@@ -625,7 +609,7 @@ export default function VarietyPicker({
         autoComplete="off"
       />
 
-      {/* V4-PICKERKB-001 — the explicit "I do want to type" affordance. Only while the list is open
+      {/* The explicit "I do want to type" affordance. Only while the list is open
           and the keyboard is suppressed, so it is present exactly when it is actionable and never
           competes with the chip/Change row of the selected state. onMouseDown preventDefault is the
           same trick the listbox rows use: without it, pressing this button blurs the input and the
@@ -643,7 +627,7 @@ export default function VarietyPicker({
         </button>
       )}
 
-      {/* V4-PICKERVOICE-001 — speak the value instead of typing it. Same focus-preserving
+      {/* Speak the value instead of typing it. Same focus-preserving
           onMouseDown trick as ⌨. Denied mic renders as a quiet disabled state (no modal, no
           toast); every other failure quietly returns to idle — the recovery path is "type". */}
       {showMicBtn && (
@@ -665,7 +649,7 @@ export default function VarietyPicker({
         </button>
       )}
 
-      {/* V4-CROPTYPE-001 — mint-a-crop-type form. Rendered INSTEAD of the listbox (not inside it):
+      {/* Mint-a-crop-type form. Rendered INSTEAD of the listbox (not inside it):
           a role="listbox" may only contain options, so nesting inputs here would be invalid ARIA
           and would break the combobox for screen readers. Deliberately does NOT preventDefault on
           mousedown the way the list does — these fields need to take focus. */}
@@ -760,21 +744,19 @@ export default function VarietyPicker({
         </div>
       )}
 
-      {/* V4-CROPTYPEREACH-001 — the crop chooser is its own anchored PANEL rather than a bare
-          listbox, because it now carries a filter input above the rows and an <input> may not live
-          inside role="listbox". The <ul> becomes a static child, so the panel owns the anchoring
-          and the list keeps its own bounded scrollport. */}
+      {/* The crop chooser is its own anchored PANEL rather than a bare listbox, because it carries a
+          filter input above the rows and an <input> may not live inside role="listbox". The <ul>
+          is a static child, so the panel owns the anchoring and the list keeps its own bounded
+          scrollport. */}
       {open && !disabled && createStage === 'crop' && (
         <div style={cropPanelStyle}>
           <div style={cropHeaderRow} aria-hidden="true">
             Crop type for <strong>"{query.trim()}"</strong>
           </div>
-          {/* BUG-VARIETYGENUSUI-001 — botanical identity, ABOVE the list on purpose. Picking a crop
-              row commits the create, so anything typed below it would never be reached; the same
-              below-the-fold geometry is how Kousa Dogwood landed untyped (see the mint row's note).
-              One two-up row, not two stacked fields: at 390px this panel already carries a header, a
-              filter and a 232px scrollport, and the whole point of the ticket is a control the user
-              can SEE, so a <details> disclosure would re-create the discoverability failure it fixes.
+          {/* Botanical identity, ABOVE the list on purpose. Picking a crop row commits the create,
+              so anything typed below it would never be reached. One two-up row, not two stacked
+              fields: at 390px this panel already carries a header, a filter and a 232px scrollport,
+              and the control must be visible, so a <details> disclosure would hide it again.
               Escape/arrows are deliberately NOT bound here — these are free-text fields, and stealing
               their keys would make the genus box un-typeable. */}
           {allowIdentity && (
@@ -825,9 +807,9 @@ export default function VarietyPicker({
               placeholder={`Filter ${cropTypes.length} crop types…`}
               style={inputStyle(false, false)}
               autoComplete="off"
-              /* Deliberately NOT autoFocus: V4-PICKERKB-001 (Dave, 2026-08-02) — a picker must not
-                 raise the soft keyboard on open. Tapping the field is the opt-in; arrow keys work
-                 from the combobox without ever coming here. */
+              /* Deliberately NOT autoFocus: a picker must not raise the soft keyboard on open.
+                 Tapping the field is the opt-in; arrow keys work from the combobox without ever
+                 coming here. */
             />
           </div>
           <ul
@@ -835,19 +817,15 @@ export default function VarietyPicker({
             role="listbox"
             // The identity row costs ~78px of panel height, so the scrollport gives most of it back:
             // this panel is absolutely positioned under the field on a 390px phone, and letting it
-            // grow by a third would push the crop rows off the bottom on the one host that shows the
-            // row. Neither reachability mechanism is touched — the mint row is still row 0, and the
-            // filter above is still how you reach the other 141.
+            // grow would push the crop rows off the bottom on the one host that shows the row.
             style={allowIdentity ? { ...cropListStyle, maxHeight: 176 } : cropListStyle}
             onMouseDown={e => e.preventDefault() /* keep focus where it is */}
           >
             {/* The mint row is FIRST. It is the only row that cannot be reached any other way —
-                the types below it are reachable by typing in the filter — and at 141 rows it was
-                previously below a blind scroll, which is how Kousa Dogwood landed untyped. */}
+                the types below it are reachable by typing in the filter. */}
             {/* aria-selected means SELECTED, not highlighted — the active row is carried by
                 aria-activedescendant above. Nothing in this chooser is selected yet (picking a row
-                IS the commit), so every row here is false; conflating the two is what left the
-                highlight unannounced. */}
+                IS the commit), so every row here is false. */}
             <li
               id={optionId('newcrop')}
               role="option"
@@ -938,11 +916,10 @@ export default function VarietyPicker({
                       <span style={{ fontWeight: 600, color: P.dark, fontSize: T.type.base }}>
                         {v.name}
                         {cl && <span style={cropTagStyle} title="Crop type">{cl}</span>}
-                        {/* V5-SEEDMULTIPARENT-001 release 2b — a mix the app made sorts directly under
-                            its first component and starts with the same words, so the row says what it
-                            is in text (never by colour alone). The test is blend_key, which only a
-                            mix the app made carries: variety_rank 'blend' is also a bought blend's
-                            (BUG-YOURMIXBOUGHTBLEND-001). */}
+                        {/* A mix the app made sorts directly under its first component and starts with
+                            the same words, so the row says what it is in text (never by colour
+                            alone). The test is blend_key, which only a mix the app made carries:
+                            variety_rank 'blend' is also a bought blend's. */}
                         {SEED_MULTI_PARENT && v.blend_key != null && (
                           <span data-testid="variety-your-mix" style={mixTagStyle}>Your mix</span>
                         )}
@@ -956,8 +933,7 @@ export default function VarietyPicker({
                   </li>
                 )
               })}
-              {/* Truncation is VISIBLE, never silent (the old hard 50-cap just cut the list off
-                  mid-alphabet with no indication). Not a role=option — it is not selectable and
+              {/* Truncation is VISIBLE, never silent. Not a role=option — it is not selectable and
                   must stay out of the listbox's focusable item count. */}
               {!loading && hiddenCount > 0 && (
                 <li role="presentation" style={{ padding: '8px 12px', fontSize: '0.78rem', color: P.mid,
@@ -1018,10 +994,9 @@ export default function VarietyPicker({
 
 // ── ConflictModal ────────────────────────────────────────────────────────────
 function ConflictModal({ query, existing, onUseExisting, onCreateAnyway, onCancel, creating }) {
-  // V4-BACKNAV-001 Slice 2 — mounted-means-open. This modal can open INSIDE an overlay-hosted /log
-  // form, so its previously ungated window keydown meant one Escape cancelled the conflict AND
-  // dismissed the whole overlay. `busy: creating` blocks the dismiss while the create POST is in
-  // flight — a behaviour change, and the safe direction: previously Escape cancelled mid-write.
+  // Mounted-means-open. This modal can open INSIDE an overlay-hosted /log form, so it registers with
+  // the dismiss stack: a bare window keydown would let one Escape cancel the conflict AND dismiss the
+  // whole overlay. `busy: creating` blocks the dismiss while the create POST is in flight.
   const { registered, isTopmost } = useDismissable({ open: true, onDismiss: onCancel, busy: !!creating, layer: LAYER.DIALOG })
 
   // Esc closes (legacy path — only when the registry is not present/enabled)
@@ -1084,8 +1059,8 @@ const inputStyle = (hasErr, disabled) => ({
   minHeight: T.tapMinHeight, // mobile-tap-friendly
 })
 
-// V4-PICKERKB-002: the ⌨/🎤 toggle-button styles moved to lib/comboboxInput.js (shared with
-// PlantingSelect) — slot geometry documented there.
+// The ⌨/🎤 toggle-button styles live in lib/comboboxInput.js (shared with PlantingSelect) — slot
+// geometry documented there.
 
 const listStyle = {
   position: 'absolute',
@@ -1127,7 +1102,7 @@ const createRowStyle = (active, busy) => ({
   minHeight: T.buttonMinHeight,
 })
 
-// V4-CROPTYPEREACH-001 crop-chooser panel: the listbox's anchoring/elevation lifted onto a wrapper
+// Crop-chooser panel: the listbox's anchoring/elevation lifted onto a wrapper
 // so a filter input can sit above the rows without living inside role="listbox". overflow hidden
 // keeps the child <ul>'s scroll from spilling past the rounded corners.
 const cropPanelStyle = {
@@ -1150,9 +1125,9 @@ const cropFilterRow = {
   backgroundColor: P.white,
 }
 
-// BUG-VARIETYGENUSUI-001 — the Genus/Species pair, two-up. Same geometry as the mint panel's
-// Category/Lifecycle row (flex, gap 8) rather than a new pattern, and the same padding as the filter
-// row below it so the two read as one stacked header block.
+// The Genus/Species pair, two-up. Same geometry as the mint panel's Category/Lifecycle row (flex,
+// gap 8), and the same padding as the filter row below it so the two read as one stacked header
+// block.
 const identityRow = {
   display: 'flex',
   gap: 8,
@@ -1173,7 +1148,7 @@ const cropListStyle = {
   overscrollBehavior: 'contain',
 }
 
-// V4-CROPTYPE-001 mint-a-crop-type panel. Same anchoring/elevation as the listbox so it reads as
+// Mint-a-crop-type panel. Same anchoring/elevation as the listbox so it reads as
 // the same surface, but a plain container (no listStyle overflow) since it holds form controls.
 const formPanelStyle = {
   position: 'absolute',
@@ -1228,11 +1203,8 @@ const secondaryButtonStyle = {
 const adoptButtonStyle = {
   marginTop: 8,
   padding: '8px 12px',
-  // BUG-ADOPTTAPFLOOR-001: was a literal 40, under the 44px floor the app enforces everywhere else.
-  // It is a real interactive button, not a chip, so it takes tapMinHeight rather than
-  // chipMinHeight. Left as a literal during the Pass A migration ON PURPOSE — aliasing it to the
-  // chip token would have buried an accessibility finding inside a mechanical rename.
-  // Note T here is src/lib/tokens.js, which RE-EXPORTS the T defined in
+  // A real interactive button, not a chip, so it takes tapMinHeight (the 44px floor) rather than
+  // chipMinHeight. T here is src/lib/tokens.js, which RE-EXPORTS the T defined in
   // components/forms/formStyles.js — one object, not two, so this is the same 44 the Inventory
   // tap-floor test asserts against.
   minHeight: T.tapMinHeight,
@@ -1343,12 +1315,12 @@ const modalCard = {
   boxShadow: '0 12px 40px rgba(0,0,0,0.25)',
   // Mobile-sheet feel: full-width, bottom-anchored on small screens
   marginBottom: 'env(safe-area-inset-bottom, 0)',
-  // V4-KBVIEWPORT-001: the backdrop is `fixed; inset:0; align-items:flex-end` with 16px padding, so
-  // once interactive-widget shrinks the layout viewport this card's content overflows the flex
-  // START edge -- upward, off-screen, with no scroll container anywhere in the chain. The card owns
-  // a text search input, so the keyboard is guaranteed to be open here; without a cap the very
-  // field that opened it becomes unreachable. Cap + scroll, not a bottom-anchor change: keeping
-  // flex-end is what gives this its sheet feel above the keyboard.
+  // The backdrop is `fixed; inset:0; align-items:flex-end` with 16px padding, so once
+  // interactive-widget shrinks the layout viewport this card's content overflows the flex START
+  // edge -- upward, off-screen, with no scroll container anywhere in the chain. The card owns a text
+  // search input, so the keyboard is guaranteed to be open here; without a cap that field becomes
+  // unreachable. Cap + scroll, not a bottom-anchor change: flex-end is what gives this its sheet
+  // feel above the keyboard.
   maxHeight: 'calc(100dvh - 32px)',
   overflowY: 'auto',
 }

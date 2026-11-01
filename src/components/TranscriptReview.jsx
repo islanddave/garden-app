@@ -20,29 +20,28 @@ import { deliverPrompt } from '../lib/sendCapture.js'
 /**
  * src/components/TranscriptReview.jsx
  *
- * Bite 5: per-capture transcript review surface (audio playback, manual textarea,
+ * Per-capture transcript review surface (audio playback, manual textarea,
  *   conditional "Speak it now" live Web Speech CTA, manual save via setTranscript).
- * Bite 6: "Send to Claude" CTA closes the loop — assembles a Rung-1 helper prompt
+ * "Send to Claude" CTA closes the loop — assembles a Rung-1 helper prompt
  *   from the entry (transcript or text) via helperPrompt.assembleFromEntry, then
- *   runs the navigator.share -> clipboard -> manual-copy fallback chain (reused
- *   byte-for-byte from Bite 1's GardenHelper.jsx). On success, captureQueue
- *   markHandedOff(id) is called so the entry transitions out of the unprocessed
- *   queue.
+ *   runs the navigator.share -> clipboard -> manual-copy fallback chain (the same
+ *   one GardenHelper.jsx uses). On success, captureQueue markHandedOff(id) is
+ *   called so the entry transitions out of the unprocessed queue.
  *
- * State machine (6 color-INDEPENDENT values per V100 §7):
+ * State machine (6 color-INDEPENDENT values):
  *   - 'idle'              : not transcribing, textarea editable
  *   - 'transcribing'      : Web Speech live recognition active
  *   - 'transcribed'       : transcript saved to queue (just now)
  *   - 'silent-fallback'   : Web Speech .start() never fired any event
  *   - 'failed'            : Web Speech denied / no-device / no-speech / failed
- *   - 'handed-off'        : Bite 6 — prompt successfully shared or copied to clipboard
+ *   - 'handed-off'        : prompt successfully shared or copied to clipboard
  *
  * Operational surface, not reward. No celebrations / badges / streaks.
  *
  * Props:
  *   entry             (required)  -- the queue record
  *   onTranscriptSaved (optional)  -- fired after a successful setTranscript
- *   onHandedOff       (optional)  -- fired after a successful markHandedOff (Bite 6)
+ *   onHandedOff       (optional)  -- fired after a successful markHandedOff
  *   onError           (optional)  -- fired on captureQueue / share errors with the code
  *   isTranscriptionSupported (optional, test-only) -- inject for deterministic test
  */
@@ -68,7 +67,7 @@ export default function TranscriptReview({
   const [sending,     setSending]     = useState(false)
   const [sendStatus,  setSendStatus]  = useState(null)  // 'shared' | 'copied' | 'manual' | 'error'
 
-  // V4-DIRTYGUARDSWEEP-001 — guard only, no draft stash. The queue entry behind this editor is
+  // Reload guard only, no draft stash. The queue entry behind this editor is
   // already durable in IndexedDB, so the only thing an SW reload can destroy is the UNSAVED EDIT;
   // a per-entry sessionStorage record would add a keyed lifecycle for that narrow slice.
   //
@@ -173,7 +172,7 @@ export default function TranscriptReview({
     let lastVoiceDraft = ''
     liveHandleRef.current = startLiveTranscription({
       languageCode:      'en-US',
-      debugLabel:        'TranscriptReview:speak',   // BUG-VOICEDUPE-002 — names this surface in /admin/voice-debug
+      debugLabel:        'TranscriptReview:speak',   // names this surface in /admin/voice-debug
       startTimeoutMs:    START_TIMEOUT_MS,
       noSpeechTimeoutMs: NO_SPEECH_TIMEOUT_MS,
       onResult: ({ transcript, isFinal }) => {
@@ -214,23 +213,19 @@ export default function TranscriptReview({
         if (finalTranscript && finalTranscript.length > 0) {
           // THIS SURFACE SAVED THE PREFIX, not just displayed it. `onResult` accumulates by
           // APPENDING each isFinal it receives — but transcribe.js deliberately SUPPRESSES the emit
-          // on a REVISED final (the BUG-VOICEDUPE-003 fix: `if (prev !== undefined) continue`), so a
-          // slot Chrome revises never reaches us. Say "231 grams" with an enunciated pause and
-          // Chrome finalises "231" first, then revises that same slot to "231 grams": `accumulated`
-          // holds "231", `finalTranscript` — re-joined from the slots — holds "231 grams".
+          // on a REVISED final (`if (prev !== undefined) continue`), so a slot Chrome revises never
+          // reaches us. Say "231 grams" with an enunciated pause and Chrome finalises "231" first,
+          // then revises that same slot to "231 grams": `accumulated` holds "231", `finalTranscript`
+          // — re-joined from the slots — holds "231 grams". Taking `cur || finalTranscript` would
+          // discard the correction on every revised utterance and `handleSave` would store the
+          // truncated draft: a WRONG SAVED VALUE, not a cosmetic artifact.
           //
-          // The old line was `cur || finalTranscript`. `cur` is truthy exactly when voice wrote
-          // something, so the correction was discarded on every revised utterance and `handleSave`
-          // stored the truncated draft. That is a WRONG SAVED VALUE, not a cosmetic artifact.
+          // Handled HERE rather than in transcribe.js on purpose: emitting revisions would
+          // re-open duplicate text for every consumer that appends, and `transcribe.rawEvents.test.js`
+          // pins that suppression. This file already receives the revised text.
           //
-          // Fixed HERE rather than in transcribe.js on purpose: emitting revisions would re-open
-          // VOICEDUPE-003 for every consumer that appends, and `transcribe.rawEvents.test.js:154`
-          // pins that suppression as shipped behaviour. This file needs no such change — it already
-          // receives the corrected text, it was throwing it away.
-          //
-          // GUARDED, because the old `cur ||` was protecting something real: text the USER typed
-          // must never be clobbered. Only a draft still holding exactly what this session wrote
-          // (final or interim) may be replaced.
+          // GUARDED: text the USER typed must never be clobbered. Only a draft still holding
+          // exactly what this session wrote (final or interim) may be replaced.
           setDraft((cur) => (!cur || cur === lastVoiceDraft ? finalTranscript : cur))
         }
         setState((s) => (s === 'transcribing' ? 'idle' : s))
@@ -246,7 +241,7 @@ export default function TranscriptReview({
   }
 
   /**
-   * Bite 6: Send to Claude. Assembles a Helper Prompt from the entry (or the
+   * Send to Claude. Assembles a Helper Prompt from the entry (or the
    * current draft if the user is composing manually) and runs the share/clipboard
    * fallback chain from Bite 1. On success, marks the queue entry handed_off so
    * the field-capture queue depth drops by one.
@@ -276,7 +271,7 @@ export default function TranscriptReview({
     setSending(true)
     setFeedback(null)
 
-    // Bite 7: the share -> clipboard chain lives in sendCapture.deliverPrompt
+    // The share -> clipboard chain lives in sendCapture.deliverPrompt
     // (shared with FieldCapture's tile-level Send-to-Claude — one copy, no drift).
     const { delivered, deliveredAs } = await deliverPrompt(prompt)
 

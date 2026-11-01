@@ -1,5 +1,5 @@
 // src/components/EndStatusOffer.jsx
-// V4-LOSSUI-001 — the client half of Dave's ruling: "OFFER it. Never automatic."
+// The client half of the rule "OFFER it. Never automatic."
 //
 // The events Lambda returns `plant_reduction` on the 201 when — and ONLY when — the reduction just
 // taken emptied the planting. It carries a `composition` ({harvested, lost, given_away}) and a
@@ -105,9 +105,9 @@ export default function EndStatusOffer({ offer, plantName, onApply, onDismiss })
           onClick={onDismiss}
           disabled={!!applying}
           data-testid="end-status-decline"
-          // A VISIBLE decline, not just the ✕. Dave must be able to say "not yet" without hunting
+          // A VISIBLE decline, not just the ✕. The user must be able to say "not yet" without hunting
           // for a close affordance, and the wording states the consequence rather than naming a
-          // gesture: nothing changes, and the reduction he just logged is already saved.
+          // gesture: nothing changes, and the reduction just logged is already saved.
           style={{
             marginTop: 14, width: '100%', minHeight: 44, background: 'none', border: 'none',
             color: P.mid, fontSize: '0.84rem', fontWeight: 600, cursor: applying ? 'default' : 'pointer',
