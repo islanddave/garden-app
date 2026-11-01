@@ -1,37 +1,31 @@
 'use strict';
-// Daily Plan Engine v3 — pure generator (DRG-TODAY-001). Adds SUBSTRATE-AWARE fertilization:
-// holds feeding while the MG 3-6mo slow-release mix is active, then recommends a specific IN-INVENTORY
-// amendment by crop+stage, sprayer-default for liquids, hard-well-water aware. Per-variety cadence,
-// never-logged-aware, temp-aware, per-variety cold, strict per-user. No I/O; caller passes today/weather/cadence/fertModel.
+// Daily Plan Engine — pure generator. Substrate-aware fertilization: holds feeding while the MG 3-6mo slow-release mix is
+// active, then recommends a specific in-inventory amendment by crop+stage (sprayer-default for liquids, hard-well-water
+// aware). Per-variety cadence, never-logged-aware, temp-aware, per-variety cold, strict per-user.
+// No I/O; the caller passes today/weather/cadence/fertModel.
 const DAY = 86400000;
 const HOT_F = 88;
-// V4-WATERMATH-001 F2 — the Water Ledger fold (flag-gated: CARE_WATER_LEDGER_ENABLED, default OFF).
-// engine requires ledger, NEVER the reverse; shared rain-IA constants are mirrored in ledgerParams
-// and pinned equal by ledger.test.js.
+// Water Ledger fold (flag-gated: CARE_WATER_LEDGER_ENABLED, default OFF). engine requires ledger, NEVER the reverse;
+// shared rain-IA constants are mirrored in ledgerParams and pinned equal by ledger.test.js.
 const ledger = require('./ledger');
 const LP = require('./ledgerParams');
-// V4-TROPICALCOLD-001 — crop-type cold profiles (the bring-indoors fallback beneath the variety table).
+// Crop-type cold profiles (the bring-indoors fallback beneath the variety table).
 const fc = require('./frostClass');
-// V4-OVERWINTER-001 — overwintering as a care_profile ATTRIBUTE (never a plants.status value). Holds a
-// planting out of the summer water/feed cadence and gives it a REDUCED-cadence moisture check instead;
-// the window is a pure function of the date, so the exit needs no writer. See overwinter.js header.
+// Overwintering is a care_profile ATTRIBUTE (never a plants.status value): it holds a planting out of the summer water/feed
+// cadence and gives it a reduced-cadence moisture check. The window is a pure function of the date, so the exit needs no
+// writer. See overwinter.js header.
 const ow = require('./overwinter');
 const lw = require('./leafWetness');
-// V5-LEGACYEXCEPTIONCARE-001 — the drought signal (consecutive days with no >=0.60in deep soak). Read on
-// the dormancy_suppressed arm only, and INERT unless the handler threads a state in: an un-updated caller
-// passes nothing, droughtNote returns null, and the emitted row is byte-identical.
+// The drought signal (consecutive days with no >=0.60in deep soak). Read on the dormancy_suppressed arm only, and INERT unless
+// the handler threads a state in: with none, droughtNote returns null and the emitted row is byte-identical.
 const dr = require('./droughtSignal');
-// DRG-WATERCREDIT-004: fabric grow bags have breathable sidewalls and dry top-to-bottom fast in heat, so a
-// light/moderate rain that would credit a rigid pot or bed does NOT keep a fabric bag wet on a hot day. On
-// days at/above this threshold we withhold rain credit for fabric_bag vessels (outdoor only) so a real
-// watering isn't suppressed. Intentionally LOWER than HOT_F (88, the drought-cadence accelerator): bags lose
-// moisture at more moderate heat than the cadence bump warrants. Scoped to fabric_bag; rigid/in-ground retain credit.
+// Fabric grow bags dry top-to-bottom fast in heat, so a light/moderate rain that would credit a rigid pot or bed does NOT keep
+// a fabric bag wet on a hot day. At/above this threshold rain credit is withheld for fabric_bag vessels (outdoor only).
+// Intentionally LOWER than HOT_F (the drought-cadence accelerator): bags lose moisture at more moderate heat.
 const BAG_HEAT_GATE_F = 85;
-// DRG-WATERRECON-002: canonical version stamped into the stored daily_plan.items jsonb (by handler.js).
-// The dashboard bar (lambda/dashboard/handlers.js) and the Today reader (lambda/daily-plan-read/index.js)
-// assert this value and FAIL LOUD on mismatch — a silent field-rename/shape-drift would otherwise yield an
-// empty/garbage watering verdict. Bump ONLY when the items task-array shape changes, in lockstep with both
-// readers' PLAN_SCHEMA_VERSION literals (pinned by an anti-drift source test).
+// Version stamped into the stored daily_plan.items jsonb (by handler.js). The dashboard bar (lambda/dashboard/handlers.js) and
+// the Today reader (lambda/daily-plan-read/index.js) assert it and FAIL LOUD on mismatch. Bump ONLY when the items task-array
+// shape changes, in lockstep with both readers' PLAN_SCHEMA_VERSION literals (pinned by an anti-drift source test).
 const PLAN_SCHEMA_VERSION = 1;
 
 function daysBetween(today, iso){ if(!iso) return null;
@@ -40,62 +34,36 @@ function daysBetween(today, iso){ if(!iso) return null;
 function weeksSince(today, iso){ const d=daysBetween(today,iso); return d==null?null:Math.floor(d/7); }
 
 function resolveCadence(p, cad){
-  // CARE-CADENCE-001 / BUG-SEEDEDGATE-001: prefer the DB-resolved per-cultivar/leaf profile
-  // (v_resolved_care) when a scope actually CONTRIBUTED A CADENCE KEY; else the bundled
-  // cadence-data-v2.json.
+  // Prefer the DB-resolved per-cultivar/leaf profile (v_resolved_care) when a scope actually CONTRIBUTED A CADENCE KEY; else
+  // the bundled cadence-data-v2.json. seededgate.test.js guards this.
   //
-  // PROVENANCE IS STRUCTURAL, NOT IN-PAYLOAD. The old test was an in-blob `_seeded` marker, and nine
-  // researched cultivar profiles carry a DIFFERENT marker (_source: cowork_care_audit_20260709 on
-  // eight, source: dave_confirmed on Collards), so their intervals were invisible and six live
-  // plantings watered on bundled guesses while their own high-confidence numbers sat unread.
+  // Provenance is structural, not in-payload: p.cadence_scopes is v_resolved_care.cadence_scopes, the scopes that supplied a
+  // NON-NULL water_interval_days{,_container,_inground}. 'system' is deliberately never in it (the house 3-day constant is not
+  // evidence of knowledge), so [] means nothing in the DB knows how often to water this, the bundled fallback runs, and that
+  // empty count IS the DRG-CADENCEFLOOR-001 unresolved signal.
   //
-  // p.cadence_scopes is v_resolved_care.cadence_scopes: the scopes that supplied a NON-NULL
-  // water_interval_days{,_container,_inground}. 'system' is deliberately never in it — the house
-  // 3-day constant is not evidence of knowledge — so [] means "nothing in the DB knows how often to
-  // water this", the bundled fallback runs exactly as before, and that empty count IS the
-  // DRG-CADENCEFLOOR-001 unresolved signal (103 of 249 active plantings on prod, 2026-08-07).
+  // Why not "just delete the _seeded check": v_resolved_care merges system||cultivar||leaf with jsonb `||`, a SHALLOW,
+  // right-wins merge, and most cultivar rows express cadence under the *_container / *_inground names, so the system value is
+  // never shadowed. Every resolved_profile therefore carries a plausible 3-day interval whether or not anyone researched the plant.
   //
-  // WHY NOT "just delete the _seeded check": v_resolved_care merges system||cultivar||leaf with the
-  // jsonb || operator — a SHALLOW, TOP-LEVEL, RIGHT-WINS merge. The system row carries
-  // water_interval_days, and 146 of 159 cultivar rows express cadence under the DIFFERENT key names
-  // *_container / *_inground, so the system value is never shadowed. Every resolved_profile
-  // therefore carries a plausible 3-day interval whether or not anyone researched the plant, and a
-  // system-only row is indistinguishable from a researched one without this signal.
+  // READ cadence_scopes, NEVER resolved_scopes: resolved_scopes says a row EXISTS. A cultivar row with container sizing and
+  // deliberately no watering keys (Collards) would be adopted, land on cad.default and move 2d -> 3d against its author's intent.
   //
-  // READS cadence_scopes, NEVER resolved_scopes. resolved_scopes says a row EXISTS. Verified on prod
-  // 2026-08-07: Collards has resolved_scopes {system,cultivar} and cadence_scopes {} — its cultivar
-  // profile carries container sizing and, by its own _scope_note, DELIBERATELY no watering keys. A
-  // resolved_scopes predicate would adopt it, and because that merged profile has no *_container key
-  // at all it would land on cad.default and move Collards 2d -> 3d against its author's written
-  // intent: a regression shipped inside the fix. That one row is why there are two columns.
-  //
-  // FLAG: the _seeded arm below is the CARE_CADENCE_SCOPES_ENABLED=OFF path ONLY. handler.js nulls
-  // the column on every row when the flag is off, so `cs` is not an array and the legacy marker test
-  // runs -> byte-identical plan. Flag ON does not consult _seeded at all, which is safe because the
-  // 150 seeded cultivar rows are a STRICT SUBSET of the 158 cadence-bearing ones (verified on prod:
-  // zero seeded-but-not-bearing rows), so nothing resolving _via 'db' today stops doing so.
-  //
-  // Array.isArray is also the fail-safe if the driver ever hands text[] back as the raw '{cultivar}'
-  // string: a non-array degrades to the flag-OFF answer, never to a wrong interval.
+  // The _seeded arm below is the CARE_CADENCE_SCOPES_ENABLED=OFF path ONLY: handler.js nulls the column when the flag is off,
+  // so `cs` is not an array and the legacy marker test runs -> byte-identical plan. Array.isArray is also the fail-safe if the
+  // driver hands text[] back as the raw '{cultivar}' string: a non-array degrades to the flag-OFF answer, never to a wrong interval.
   const cs = p && p.cadence_scopes;
   const adopt = Array.isArray(cs) ? cs.length > 0
                                   : !!(p && p.db_cadence && p.db_cadence._seeded); // legacy; flag-OFF only
-  // BUG-FEEDINTERVALZERO-001 — A NON-POSITIVE FEED INTERVAL IS A MISTAKE; THE PLANT'S OWN IS RESTORED HERE.
-  // Owner decision 2026-10-08: "ignore zero, use crop default — the normal interval for that kind of
-  // plant" — NOT "zero means never remind" (that is no_calendar_feed, which fertilizeRec reads first and
-  // which still wins). The view's shallow right-wins merge (above) lets a cultivar 0 OVERWRITE the
-  // system row's 14, so the default is already gone when the profile reaches the engine and cannot be
-  // recovered from p.db_cadence. What replaces it is the first POSITIVE interval on the bundled ladder
-  // (bundledRungs: variety, genus, cad.default) — the same one this planting would climb with no DB
-  // profile at all. Not straight to cad.default: the bundle knows a Lithops feeds every 180 days, and
-  // the global 14 would make it a fortnightly feeder. A rung whose interval is null is stepped over.
-  // ONLY the interval is taken; every other key stays as adopted and _via stays 'db'.
-  // Done on the adopted profile only, because that is the only path a merge can have clobbered: the
-  // bundled rows are positive-or-null by construction and are returned exactly as before.
-  // Scoped to a NUMBER that cannot be a cadence (<=0, NaN). Absent or null stays absent or null — that
-  // is "nobody said", which fertilizeRec already treats as unknown, and filling it would change rows
-  // this ticket is not about. Here rather than in fertilizeRec so the emitted item's `interval`
-  // carries the restored value and daily-plan-read/doneEvents.js prices the same clock the engine used.
+  // A NON-POSITIVE FEED INTERVAL IS A MISTAKE; THE PLANT'S OWN IS RESTORED HERE. Not "zero means never remind": that is
+  // no_calendar_feed, which fertilizeRec reads first and which still wins. The view's shallow right-wins merge lets a cultivar 0
+  // OVERWRITE the system row's 14, so the default is gone by the time the profile reaches the engine. What replaces it is the
+  // first POSITIVE interval on the bundled ladder (bundledRungs: variety, genus, cad.default), not straight cad.default: the
+  // bundle knows a Lithops feeds every 180 days. A rung whose interval is null is stepped over.
+  // ONLY the interval is taken; every other key stays as adopted and _via stays 'db'. Done on the adopted profile only, because
+  // that is the only path a merge can have clobbered. Scoped to a NUMBER that cannot be a cadence (<=0, NaN): absent or null
+  // stays "nobody said", which fertilizeRec already treats as unknown. Here rather than in fertilizeRec so the emitted item's
+  // `interval` carries the restored value and daily-plan-read/doneEvents.js prices the same clock the engine used.
   if(p && p.db_cadence && adopt){
     const iv=p.db_cadence.fertilize_interval_days;
     if(typeof iv==='number' && !(iv>0) && cad){
@@ -106,9 +74,8 @@ function resolveCadence(p, cad){
   }
   return bundledRungs(p, cad)[0];
 }
-// The bundled cadence-data-v2.json ladder for a planting, most specific first: variety (matched on
-// p.variety, then p.name), genus, default. The default rung is always present, so [0] is the bundled
-// resolution; resolveCadence's BUG-FEEDINTERVALZERO-001 arm walks the rest for a usable feed interval.
+// The bundled cadence-data-v2.json ladder for a planting, most specific first: variety (matched on p.variety, then p.name),
+// genus, default. The default rung is always present, so [0] is the bundled resolution.
 function bundledRungs(p, cad){
   const out=[];
   const byV=cad.by_variety||{};
@@ -129,19 +96,12 @@ function feedPhase(wk){
   return 'needs_feed_24wk_plus';
 }
 function isAcidLover(crop){ return /blueberr|vaccinium/i.test(crop||''); }
-// LEAKY BY CONSTRUCTION — KEPT, NOT WIDENED. Measured against prod 2026-09-08: it suppresses 3 of the 9
-// live Mediterranean-herb plantings. The other 6 (Greek Oregano, Oregano, French Tarragon, Russian
-// Tarragon — crop "herb"; Garden Sage — "herb (Salvia officinalis)"; Rosemary — "herb (Salvia
-// rosmarinus)") were carded, because `crop` is uncontrolled free text: 265 cultivar profiles carry 149
-// DISTINCT crop strings and nothing anywhere constrains the vocabulary. Two of those misses sat on the
-// live plan the day this was written, with intervals 30 and 60, cardable via `never`.
-// The obvious repair — match the name+variety surface too, the isCucurbit/isLeek idiom below — was
-// tried against all 271 live plantings: it catches all 6 misses AND newly catches "Creme Sausage"
-// (variety "Banana Creme", crop "tomato") on sau-SAGE, silently never-feeding a heavy feeder. Widening
-// a substring regex over free text buys 6 fixes and an unbounded, unenumerable false-negative class.
-// The real fix is DATA, per-cultivar and explicit: no_calendar_feed:true (feedSuppression, :787), which
-// says the thing this regex is trying to infer. This stays as the legacy net for the 3 it does catch —
-// deleting it would un-suppress them before those rows carry the key.
+// LEAKY BY CONSTRUCTION — KEPT, NOT WIDENED. `crop` is uncontrolled free text (a few hundred cultivar profiles carry ~150
+// distinct crop strings), so this misses most live Mediterranean-herb plantings ("herb", "herb (Salvia officinalis)").
+// Widening it to the name+variety surface (the isCucurbit/isLeek idiom below) was tried against every live planting and newly
+// caught "Creme Sausage" (crop "tomato") on sau-SAGE, silently never-feeding a heavy feeder: a substring regex over free
+// text buys a few fixes and an unbounded false-negative class. The real fix is DATA, per cultivar and explicit:
+// no_calendar_feed:true (see feedSuppression). This stays as the legacy net for the rows it does catch.
 function isMedHerb(crop){ return /oregano|rosemary|sage|thyme|tarragon|lavender/i.test(crop||''); }
 function isHeavyFeeder(crop){ return /pepper|tomato|squash|melon|cucumber|broccoli|cabbage|eggplant|tomatillo/i.test(crop||''); }
 function isLeafy(crop){ return /lettuce|spinach|arugula|chard|endive|basil|kale|parsley/i.test(crop||''); }
@@ -157,20 +117,14 @@ function likelyInGround(p,c){
   return isCucurbit(p,c&&c.crop)||isLeek(p,c&&c.crop);
 }
 
-// BUG-INDOORCADENCE-001 part 2 — the planting's BASE watering interval, before the vessel floor, the
-// heat gate and the caps. A profile may carry water_interval_days_indoor for a plant that summers
-// outside and winters in the House or Stable: its summer number stays right for summer, and spring
-// needs no reset because the indoor value is read only while the planting sits indoors.
-// "Indoors" is ledger.exposureClass === 'indoor' (a covered location: on prod only House, Stable and
-// the indoor shelves are covered, 2026-10-14). An explicit rain_exposed override wins both ways there,
-// so a pot Dave marked rain-exposed keeps its outdoor interval. A non-positive or non-numeric indoor
-// value is ignored, never read as "water every 0 days". A tray-class vessel (ledgerParams TRAY_TYPES:
-// cells, soil blocks, solo cups) ignores it too: the key sits at cultivar scope, so an indoor sowing of
-// the same variety would otherwise inherit an adult pot's 4-7 days, and the legacy chain has no tray cap.
-// Shared by the ordinary branch and the overwinter check, so the ledger fold (_wiBase) and the
-// overwinter base see the same number. v_resolved_care.cadence_scopes does NOT count this key: an
-// indoor value alone does not make a profile "researched", by design, so a profile must still carry
-// a container/inground interval to resolve from the DB.
+// The planting's BASE watering interval, before the vessel floor, the heat gate and the caps. A profile may carry
+// water_interval_days_indoor for a plant that summers outside and winters indoors; it is read only while the planting sits
+// indoors ("indoors" is ledger.exposureClass === 'indoor'; an explicit rain_exposed override wins both ways). A non-positive or
+// non-numeric indoor value is ignored, never read as "water every 0 days". A tray-class vessel (ledgerParams TRAY_TYPES)
+// ignores it too: the key sits at cultivar scope, so an indoor sowing of the same variety would inherit an adult pot's 4-7 days.
+// Shared by the ordinary branch and the overwinter check, so the ledger fold (_wiBase) and the overwinter base see the same
+// number. v_resolved_care.cadence_scopes does NOT count this key: an indoor value alone does not make a profile "researched",
+// so it must still carry a container/inground interval to resolve from the DB.
 function baseWaterInterval(p, c, cad){
   const ind = c.water_interval_days_indoor;
   if(Number.isFinite(ind) && ind>0 && ledger.exposureClass(p)==='indoor'
@@ -180,42 +134,16 @@ function baseWaterInterval(p, c, cad){
     ?? cad.default.water_interval_days_container;
 }
 
-// ── BUG-COLDNAMEMATCHNAG-001 — solanaceous identity for the cold band: genus, then the controlled
-// slug, NEVER free text. ──────────────────────────────────────────────────────────────────────────
-// coldFor's band predicate was `PEPPER_TOMATO.test(c.crop) || PEPPER_TOMATO.test(p.name)`. BOTH arms
-// key on uncontrolled text, and each produced a live false positive on prod (measured 2026-09-17):
-//   * p.name — /pepper/ is a substring of "Peppermint". That planting is Mentha x piperita, outdoors
-//     in the Bag Area, uncovered, hardy, carrying its own DB protect_below_F of 10F. It was told to
-//     come inside below 40F.
-//   * c.crop — free text (see the uncontrolled-crop note at :102-104). "Jaune du Poitou" (genus
-//     Allium ampeloprasum, an IN-GROUND leek) and "Tender Sweet Orange" (genus Citrullus lanatus,
-//     in-ground watermelon) both carry a care-profile crop string reading "pepper", and both matched.
-//     Neither can be carried anywhere.
-// SNAPSHOT, NOT AN INVARIANT — and it drifts, so re-derive before citing it. Counted 2026-09-17
-// against the handler's live-planting filter verbatim (handler.js:1241-1243: deleted_at/archived_at
-// null, status not in ended|failed|dead|archived, project not 'planning' and not archived), 80 rows:
-// solanaceous BY GENUS = 74 (Capsicum 32, Solanum 39 = 38 tomato + 1 eggplant, Physalis 3), plus
-// NULL genus under a controlled solanaceous slug = 6 (pepper 5, tomato 1).
-// TWO CORRECTIONS TO THIS COMMENT'S FIRST DRAFT, both worth keeping as a warning:
-//   (a) it said 88/8, counted over a LOOSER population (status not in ended|failed|dormant, no project
-//       clause). A census is meaningless unless it names the filter it was taken under — these are the
-//       same plants counted two ways, not a disagreement about the garden.
-//   (b) it cited 'the two "Cherry Rescue" tomatoes' as VARIETIES. "Cherry Rescue 1" is a PLANTING
-//       name; its variety is "Cherry". A reviewer searching plant_varieties for it finds nothing and
-//       reasonably concludes the comment is fabricated.
-// The set also MOVES underneath you: "Unknown Sweet Long" sat in the NULL-genus arm when this was
-// first written and left it the same afternoon, because a concurrent session set genus=Capsicum on it.
-// What is STRUCTURALLY true, and is the only thing this vocabulary relies on: genus-then-slug is wider
-// than the old regex on plants that belong in the band (it reaches NULL-genus rows whose names contain
-// neither "pepper" nor "tomato") and narrower on plants that do not (no name or crop string can admit
-// a Mentha or an Allium). That claim needs no counts.
-// WHY A STATED GENUS IS DECISIVE: a genus that is present and not in the set is a REFUSAL, not a miss.
-// Falling through to the slug on a stated genus would re-admit Peppermint (genus Mentha, slug mint)
-// only if mint were slugged solanaceously — it is not — but it would also make the stated field
-// non-decisive, which is the property that makes this fixable at all. Absent genus (8 live rows) is
-// the only case the slug answers.
-// NOT A REGEX. The defect is not that the pattern was too broad; it is that a NAME was used as an
-// identity key. Tightening the pattern would leave the same class of bug one rename away.
+// ── Solanaceous identity for the cold band: genus, then the controlled slug, NEVER free text. ──
+// The old band predicate matched PEPPER_TOMATO against c.crop and p.name, both uncontrolled text, and each produced live
+// false positives: /pepper/ is a substring of "Peppermint" (Mentha, hardy, outdoors; told to come inside below 40F), and
+// free-text care-profile crop strings reading "pepper" matched an in-ground leek and an in-ground watermelon.
+// WHY A STATED GENUS IS DECISIVE: a genus that is present and not in the set is a REFUSAL, not a miss. Falling through to the
+// slug would make the stated field non-decisive, which is the property that makes this fixable at all. Absent genus is the only
+// case the slug answers. The set is wider than the old regex on plants that belong in the band (NULL-genus rows whose names
+// contain neither "pepper" nor "tomato") and narrower on plants that do not (no name or crop string can admit a Mentha or an Allium).
+// NOT A REGEX. The defect is not that the pattern was too broad; it is that a NAME was used as an identity key. Tightening the
+// pattern would leave the same class of bug one rename away.
 const SOLANACEOUS_GENERA = new Set(['Capsicum', 'Solanum', 'Physalis']);
 const SOLANACEOUS_SLUGS  = new Set(['pepper', 'tomato', 'eggplant', 'tomatillo']);
 function isSolanaceous(p){
@@ -223,24 +151,19 @@ function isSolanaceous(p){
   return SOLANACEOUS_SLUGS.has(p.crop_type_slug || '');
 }
 
-// ── DRG-WATERCREDIT-001 — Path B-plus rain credit, V1 2-class (crucible verdict 2026-06-18; Dave 2026-06-21) ──
-// Retire the global 0.3in cutoff. Subtract an initial-abstraction (first-wetting/runoff/canopy loss) then credit
-// the remaining rain over the 2-3 day window the engine already reads (recent D-2..D0), capped at one cadence
-// cycle. Stateless; manual watering resets naturally (dW from event_log); fresh transplants carved out.
-// V1 KEYING = covered-vs-outdoor ONLY. bed-vs-container is NOT in the data (container_type ~unpopulated; a single
-// location mixes beds + bags), so the per-class bed/container split is deferred to V1.1 once a per-planting vessel
-// signal exists. 'covered' (under cover -> never credited) is supplied by the handler (location-derived, Dave-
-// classified). Outdoor uses one conservative shared profile (higher soak-in threshold + short hold) — safe for the
-// container/bag-dominant reality, and a light rain on a deep bed is correctly ~nothing anyway.
+// ── Path B-plus rain credit, V1 2-class ──
+// Subtract an initial abstraction (first-wetting/runoff/canopy loss), then credit the remaining rain over the 2-3 day window the
+// engine already reads (recent D-2..D0), capped at one cadence cycle. Stateless; manual watering resets naturally (dW from
+// event_log); fresh transplants carved out. V1 keys on covered-vs-outdoor ONLY: bed-vs-container is not in the data (one
+// location mixes beds and bags). 'covered' (under cover -> never credited) is supplied by the handler (location-derived).
+// Outdoor uses one conservative shared profile (higher soak-in threshold + short hold).
 const RAIN_IA = { outdoor: 0.25 };   // initial abstraction, inches — single conservative outdoor profile (V1)
 const RAIN_HOLD_DAYS = 1;            // short hold (days) for the shared outdoor default; bed full-cycle hold returns in V1.1
 const TRANSPLANT_CARVEOUT_DAYS = 21; // fresh root ball dries fast even when the bed reads moist -> no rain credit
-// DRG-WATERCREDIT-003 (vessel-aware carve-out, 2026-06-24): the fresh-transplant rain-credit denial applies ONLY to
-// genuinely small root balls (cells, plugs, solo cups, <=4in / <=1qt pots) which dry top-to-bottom in hours so a light
-// rain doesn't reliably reach the root zone. Established LARGE vessels (5-gal fabric bags, troughs, beds, in-ground,
-// barrels) get normal rain credit even when recently transplanted -- a 3-week-old 5-gal bag is not a fresh root ball.
-// Unknown/null vessel within the window FAILS SAFE to small (deny credit -> water it). Container vocab per the DB
-// container_type CHECK; size is free-text (e.g. '5 gal','3 in','6x2 ft','0.5qt').
+// Vessel-aware carve-out: the fresh-transplant rain-credit denial applies ONLY to genuinely small root balls (cells, plugs, solo
+// cups, <=4in / <=1qt pots), which dry top-to-bottom in hours. Established LARGE vessels (5-gal fabric bags, troughs, beds,
+// in-ground, barrels) get normal rain credit even when recently transplanted. Unknown/null vessel within the window FAILS SAFE
+// to small (deny credit -> water it). Container vocab per the DB container_type CHECK; size is free text ('5 gal','3 in','0.5qt').
 const SMALL_VESSEL_TYPES = new Set(['tray_cell','soil_block','solo_cup']);
 const LARGE_VESSEL_TYPES = new Set(['in_ground','raised_bed','trough','whiskey_barrel','window_box','hanging_basket']);
 function vesselSizeSmall(size){
@@ -263,41 +186,26 @@ function isSmallVessel(p){
   if(s!=null) return s;
   return true;                                                         // unknown vessel in carve-out window -> fail safe (deny credit, water it)
 }
-// ── BUG-CADENCESIZE-001 — vessel floor under the watering interval (2026-08-18) ───────────────────
-// The interval derivation below is size-blind: a 6x2 ft trough, a 15-gal whiskey barrel and a 5-gal
-// fabric bag all take the cultivar's single `_container` number, because the data model has one number
-// per cultivar and no way to condition it on the vessel. This raises a FLOOR for vessels whose reservoir
-// makes a 24h cycle indefensible. Floor only, and capped at DAILY_FLOOR_DAYS: it can move wi 1->2 and
-// nothing else, so the worst case it can cause is a one-day delay, never a multi-day one.
+// ── Vessel floor under the watering interval ──
+// The interval derivation is size-blind: a 6x2 ft trough, a 15-gal whiskey barrel and a 5-gal fabric bag all take the
+// cultivar's single `_container` number. This raises a FLOOR for vessels whose reservoir makes a 24h cycle indefensible. Floor
+// only, capped at DAILY_FLOOR_DAYS: it can move wi 1->2 and nothing else, so the worst case is a one-day delay. Not the
+// `_inground` arm: the trough peppers' own `_inground` values are 3-5, a jump on vessels that still have a bottom.
 //
-// NOT the `_inground` arm, which is the obvious-looking alternative. Measured against live prod
-// 2026-08-18, the trough peppers' own `_inground` values are 3-5 — a 3-5x jump on August peppers, on
-// vessels that still have a bottom. A bounded +1 is defensible from the notes; 1->5 is not.
+// FABRIC BAGS ARE EXCLUDED AT EVERY SIZE (a deliberate departure from a plain gallon threshold): their profile notes still say
+// daily at 10 and 20 gal. A bag evaporates through every wall, which is why fabric gets its own evaporative treatment
+// (bagHeatGate) and heat ramp (ledgerParams FABRIC_BAG). Volume does not buy a bag a second day.
 //
-// FABRIC BAGS ARE EXCLUDED AT EVERY SIZE, 10 and 20 gal included, and that is the deliberate departure
-// from a plain gallon threshold. Their profile notes are authored for the bag the planting is actually
-// in and still say daily: "10+ gal bags heavy daily", "1-1.5 gal daily in 10-15 gal bag June", and for
-// the 20-gal Jet Star "1-2 gal am+pm in 85F+ ... check twice daily 85F+". A bag evaporates through every
-// wall and air-prunes, which is why fabric already gets its own evaporative treatment in this engine
-// (bagHeatGate) and its own per-day heat ramp in ledgerParams (FABRIC_BAG). Volume does not buy a bag a
-// second day, and overriding 18 researched notes with a gallon constant would re-commit the very
-// unresearched-constant defect this fix exists to remove.
-//
-// FAIL-SAFE — an unknown vessel never earns the floor, in either direction:
-//   * Reservoir TYPES qualify on the type alone (their size is implied by the type, exactly as ledger's
-//     SIZE_IMPLIED treats them), so a NULL/garbage `container_size` does not weaken them — nothing is
-//     being inferred from an unknown there.
-//   * Every other type must present a PARSED volume >= largeMinGal. NULL, absent, or unparseable leaves
-//     wi exactly where today's engine puts it: still daily, still prompting. That is the same
-//     err-toward-watering direction isSmallVessel and rainTierFor already take on an unknown vessel.
+// FAIL-SAFE — an unknown vessel never earns the floor:
+//   * Reservoir TYPES qualify on the type alone (size implied, as ledger's SIZE_IMPLIED treats them), so a NULL/garbage
+//     `container_size` does not weaken them.
+//   * Every other type must present a PARSED volume >= largeMinGal. NULL, absent or unparseable leaves wi where it was: still
+//     daily, still prompting (the same err-toward-watering direction as isSmallVessel and rainTierFor).
 const DAILY_FLOOR_DAYS = 2;
-// Deep soil masses. Deliberately NOT LARGE_VESSEL_TYPES: that set answers "is this a fresh small root
-// ball?" for the transplant carve-out and so carries hanging_basket + window_box, which are fast-drying
-// and must keep their daily cadence. in_ground/raised_bed normally take the `_inground` arm and never
-// reach this floor; they are listed anyway so the rule is COMPLETE (no reservoir vessel can hold a 1-day
-// cycle) rather than arbitrary, which also closes the documented `_inground`-absent fallthrough where a
-// genus stub with no `_inground` key hands an in-ground bed its 1-day container number. Zero live rows
-// take that path today.
+// Deep soil masses. Deliberately NOT LARGE_VESSEL_TYPES, which answers "is this a fresh small root ball?" for the transplant
+// carve-out and so carries hanging_basket + window_box (fast-drying; they keep a daily cadence). in_ground/raised_bed normally
+// take the `_inground` arm; they are listed anyway so the rule is COMPLETE, which also closes the `_inground`-absent
+// fallthrough where a genus stub hands an in-ground bed its 1-day container number.
 const RESERVOIR_VESSEL_TYPES = new Set(['in_ground','raised_bed','trough','whiskey_barrel']);
 // Rigid, non-breathing pots — they hold their water instead of wicking it out the sides, so a genuinely
 // large one earns the floor. Gated on parsed volume, never on the type alone (most of these are small).
@@ -310,46 +218,24 @@ function dailyFloorFor(p){
   const gal=ledger.parseContainerGal(p&&p.container_size);
   return (gal!=null && gal>=LP.SIZE_BUCKETS.largeMinGal) ? DAILY_FLOOR_DAYS : null;
 }
-// BUG-NOLOCOUTDOOR-001: reads the handler's resolved flag, NOT the raw `covered` boolean.
-// Was `p.covered ? 'none' : 'outdoor'`, which is why a NULL tri-state could not be used directly:
-// NULL is FALSY, so an unknown location would have taken the 'outdoor' branch — the very bug — while
-// frostClass's `=== true` test would have handled the same NULL correctly. A tri-state whose
-// correctness depends on which comparison a given consumer happened to write is a coin flip, so the
-// handler resolves it into two plain booleans and each consumer reads its own.
+// Reads the handler's resolved flag, NOT the raw `covered` boolean: NULL is FALSY, so `p.covered ? 'none' : 'outdoor'` would
+// send an unknown location down the 'outdoor' branch, while frostClass's `=== true` handles the same NULL correctly. The
+// handler resolves the tri-state into plain booleans and each consumer reads its own.
 // rain_exposed_resolved is `state IS FALSE`, so unknown => false => 'none' => never rain-credited.
 function rainClass(p){ return p.rain_exposed_resolved ? 'outdoor' : 'none'; }
 function windowPrecip(hy){
   if(!hy || hy.recent_precip_in==null) return null;                 // missing precip -> no credit (uncertainty handled in hydrologyStatus)
-  // BUG-TODAYWATER-001: this is D-2..D-1 ACTUALS + D0, not "D-2..D0 actuals" as this comment used to claim.
-  // BUG-RAINACTUAL-001 then changed what the D0 term MEANS: with a bound gauge, station.mergeStationHydrology
-  // sets today_precip_in = today_observed_in + today_remaining_in — rain the WS-2902 has already MEASURED plus
-  // the hourly forecast for the hours not yet elapsed — so by the 15:30 run it is essentially the gauge total.
-  // With no station it is still Open-Meteo precipitation_sum[2] read at ~02:01 for a day that has not started
-  // (index.js). So the D0 term is part-measured/part-predicted, in a ratio that moves through the day, and any
-  // gate that must distinguish the two reads today_observed_in / today_remaining_in — never this sum.
+  // D-2..D-1 ACTUALS + D0. The D0 term is part-measured/part-predicted: with a bound gauge, station.mergeStationHydrology sets
+  // today_precip_in = today_observed_in + today_remaining_in; with no station it is Open-Meteo precipitation_sum[2] read before
+  // the day starts. Any gate that must distinguish the two reads today_observed_in / today_remaining_in, never this sum.
   return (hy.recent_precip_in||0) + (hy.today_precip_in||0);
 }
-// BUG-RAINFORECASTCREDIT-001 — the precipitation basis RAIN CREDIT is allowed to spend.
-//
-// windowPrecip's own comment above states the rule this function exists to honour: the D0 term is
-// today_observed_in + today_remaining_in, "part-measured/part-predicted, in a ratio that moves through
-// the day", and "any gate that must distinguish the two reads today_observed_in / today_remaining_in --
-// never this sum." Rain credit is the strongest such gate in the engine: it decides whether a live plant
-// is skipped. It read the sum anyway, so a forecast that never arrived could retire a real watering.
-//
-// Measured 2026-08-23 on prod v4.45.0: 35 plantings skipped while only 0.09" had actually fallen -- 0.13"
-// of the credited 0.22" was still forecast. Worse at the 02:00 run, where index.js reads Open-Meteo
-// precipitation_sum[2] "for a day that has not started": there the D0 term is 100% prediction, and the
-// 02:00 run is the one that builds the morning task list. So the DEFAULT daily experience was the fully
-// forecast case, not the part-measured one.
-//
-// The shape is deliberately identical to saturationSuppressed's soakBasis (:458), which already solved
-// this for the cap under BUG-TODAYWATER-001 -- actuals judge water in the media, forecast is judged
-// separately with its own PoP bars. This makes the credit path consistent with the cap path rather than
-// inventing a second vocabulary. today_observed_in is ABSENT with no bound station, so the term is 0
-// there: no gauge => today contributes no credit, which is the fail-safe direction (canon 20260710 4.3:
-// never suppress a baseline watering cue on unverified rain).
-//
+// The precipitation basis RAIN CREDIT is allowed to spend. windowPrecip's D0 term is part-measured/part-predicted, and rain
+// credit is the strongest gate in the engine (it decides whether a live plant is skipped), so reading the sum let a forecast
+// that never arrived retire a real watering; at the 02:00 run, which builds the morning task list, the D0 term is 100% prediction.
+// The shape matches saturationSuppressed's soakBasis, which solved this for the cap: actuals judge water in the media, forecast
+// is judged separately with its own PoP bars. today_observed_in is ABSENT with no bound station, so the term is 0 there: no
+// gauge => today contributes no credit, the fail-safe direction (never suppress a baseline watering cue on unverified rain).
 // Flag-gated default-OFF so an un-updated caller and every existing fixture stay byte-identical.
 function creditPrecip(hy, measuredOnly){
   if(!hy || hy.recent_precip_in==null) return null;
@@ -365,50 +251,28 @@ function rainCreditDays(cls, wi, hy, measuredOnly=false){
   return { credit_days: Math.min(RAIN_HOLD_DAYS, wi), wp: Math.round(wp*100)/100, eff: Math.round(eff*100)/100 };  // cap at one cycle
 }
 
-// ── DRG-WXWATER-001 coarse-v1 — 3-substrate-tier rain model (flag-gated: CARE_RAIN_CREDIT_ENABLED, default OFF) ──
-// Extends the single-outdoor DRG-WATERCREDIT-001 profile (RAIN_IA.outdoor 0.25 / RAIN_HOLD_DAYS 1) into three
-// substrate tiers keyed on container_type: bigger reservoir => rain persists longer (higher hold) and clears a
-// lower initial-abstraction; small fast-drying vessels => aggressive discount (short hold — a qualifying rain
-// doesn't LAST in a fabric bag). NEW SYMBOLS ONLY: RAIN_IA / RAIN_HOLD_DAYS are left untouched so the flag-OFF
-// path (and watercredit.test.js's RAIN_IA.in_ground===undefined assertion) stays byte-identical. Constants are the
-// agronomy coarse-v1 values (W. MA cool-humid, clay-ish native soil); the flagged uncertain ones are soak-tunable
-// (spec §6/§8 — err toward watering: raise IA, shorten hold, tighten ceiling; in_ground IA is the #1 tune target).
-// BUG-RAINCREDITLIVEPATH-001: fabric_ground ports RAIN_DEPTH_TIER_OVERRIDE's bed-equivalence onto this LIVE
-// flag-OFF-ledger path. Values equal in_ground deliberately (same intent as ledgerParams.RAIN_DEPTH.fabric_ground).
+// ── 3-substrate-tier rain model (flag-gated: CARE_RAIN_CREDIT_ENABLED, default OFF) ──
+// Extends the single-outdoor profile (RAIN_IA.outdoor 0.25 / RAIN_HOLD_DAYS 1) into three substrate tiers keyed on container_type:
+// bigger reservoir => rain persists longer (higher hold) and clears a lower initial abstraction; small fast-drying vessels =>
+// aggressive discount (short hold). NEW SYMBOLS ONLY: RAIN_IA / RAIN_HOLD_DAYS are left untouched so the flag-OFF path (and
+// watercredit.test.js's RAIN_IA.in_ground===undefined assertion) stays byte-identical. The uncertain values are soak-tunable
+// (err toward watering: raise IA, shorten hold; in_ground IA is the #1 tune target).
+// fabric_ground ports RAIN_DEPTH_TIER_OVERRIDE's bed-equivalence onto this live flag-OFF-ledger path; its values equal in_ground
+// deliberately (same intent as ledgerParams.RAIN_DEPTH.fabric_ground).
+// small_fast IA is 0.17, from Dave's observation that a plain quarter inch must bank a day for a rigid pot (need 0.075"/day,
+// so 0.25 - 0.17 = 0.08 >= 0.075; rounded DOWN to the gauge's two-decimal resolution, since 0.18 leaves 0.07 and misses).
+// HOLD stays 1: a quarter inch COUNTS for a rigid pot, it does not last longer.
+// This INVERTS the ordering the tier table was built on: small_fast is now the LOWEST bar, below a 5-gal bag (0.20), the ground
+// (0.20) and a raised bed (0.25). For THIS row the quantity is the rain depth that observably SATISFIES the vessel, not an
+// estimate of what it loses; the reservoir physics lives in HOLD (pot 1 day, bag and ground 3, bed 2). Do not "restore" the
+// ordering by raising this without new observation.
 //
-// BUG-RAINTIERFALLBACK-001 (2026-09-06) — TWO changes, and the second exists to make the first safe.
-//
-// (1) small_fast IA 0.35 -> 0.17. Dave's call, from his own observation: a plain quarter inch of rain must bank a
-//     day for a rigid pot, and it did not. DERIVATION, in the same terms the 0.35 used — need 0.075"/day (his
-//     observed satisfaction figure for a mulched container), so a 0.25" event has to clear IA and still leave a
-//     day: 0.25 - 0.17 = 0.08 >= 0.075. Rounded DOWN to two decimals (the gauge's own resolution) because rounding
-//     UP here would round AWAY from the event he asked to cover — 0.18 leaves 0.07 and misses. HOLD is untouched
-//     at 1: the retune makes a quarter inch COUNT for a rigid pot, it does not make it last longer. Measured
-//     2026-09-06: 0.34" window precip left 49 plantings on the list at `0.34" rain under the 0.35" soak-in
-//     threshold`, i.e. short by 0.01".
-//
-//     WHAT THIS ROW NOW MEANS, because 0.17 INVERTS the ordering the tier table was built on. small_fast is now
-//     the LOWEST bar in the table — a rigid pot clears it before a 5-gal bag (0.20), the ground (0.20) or a
-//     raised bed (0.25) — so a 0.19" rain credits the pots and leaves the beds on the list. Read as
-//     "interception/canopy loss" that is backwards: a small vessel under a canopy sheds MORE, which is exactly
-//     what 0.35 encoded. The resolution is that 0.35 was never measured — it was an assumption — and this number
-//     is: Dave has watched these pots after quarter-inch rains. So for THIS row the quantity is the rain depth
-//     that observably SATISFIES the vessel, not an estimate of what it loses. Put to Dave with the inversion
-//     spelled out (2026-09-06) and confirmed: his observation outranks the model's guess. The reservoir physics
-//     has not gone anywhere — it lives in HOLD, which is untouched and still ordered correctly (pot 1 day, bag
-//     and ground 3, bed 2). Do not "restore" the ordering by raising this back without new observation.
-//
-// (2) An explicit, DERIVED 'unknown' row — because (1) would otherwise have been silently unsafe. Until now
-//     rainTierFor resolved unrecognized/NULL container_type to 'small_fast', and that was fail-safe ONLY while
-//     small_fast happened to hold the strictest values. Nothing enforced the coupling; the comment at the
-//     FAIL-SAFE INVARIANT above simply asserted it and asked the next editor to re-check by hand. Lowering IA to
-//     0.17 breaks it: 'unknown' vessels would have started clearing a LOWER bar than a raised bed (0.25) or the
-//     ground (0.20) — better-than-bed credit for the 8 plantings the engine knows least about, which is the exact
-//     inversion that went live for a few hours on 2026-08-17. Deriving the row from the named tiers (max IA, min
-//     hold, min per-stage ceiling) decouples the two concerns: any tier may now be retuned on its own agronomy
-//     without anyone re-deriving who is strictest. Same shape ledgerParams.RAIN_DEPTH has used since F2.
-//     The _NAMED tables are the tunable surface; the exported tables carry the derived row and are what callers
-//     key. 'unknown' is unreachable from any container_type string (RAIN_VESSEL_TIER has no such value).
+// The explicit, DERIVED 'unknown' row makes that safe: rainTierFor resolves an unrecognized/NULL container_type to it, and it
+// must get the LEAST credit of any tier (max IA, min hold, min per-stage ceiling). Deriving it from the named tiers, rather than
+// assuming small_fast is strictest, lets any tier be retuned on its own agronomy; a lowered small_fast IA would otherwise give
+// unknown vessels better-than-bed credit. Same shape as ledgerParams.RAIN_DEPTH. The _NAMED tables are the tunable surface; the
+// exported tables carry the derived row and are what callers key. 'unknown' is unreachable from any container_type string
+// (RAIN_VESSEL_TIER has no such value).
 const RAIN_TIER_IA_NAMED   = { in_ground: 0.20, intermediate: 0.25, small_fast: 0.17, fabric_ground: 0.20 }; // inches (initial abstraction per tier)
 const RAIN_TIER_HOLD_NAMED = { in_ground: 3,    intermediate: 2,    small_fast: 1,    fabric_ground: 3     }; // max credit days per tier
 const RAIN_TIER_IA   = { ...RAIN_TIER_IA_NAMED,   unknown: Math.max(...Object.values(RAIN_TIER_IA_NAMED)) };
@@ -416,26 +280,17 @@ const RAIN_TIER_HOLD = { ...RAIN_TIER_HOLD_NAMED, unknown: Math.min(...Object.va
 // Vessel -> tier. Covers the full DB container_type CHECK vocab (14 values, verified prod 2026-07-08) + the generic
 // 'pot' used in fixtures. Rigid pots (plastic/terracotta/ceramic/'pot') are small_fast: generic unknown-size pots dry
 // fast; large rigid pots re-tag to trough.
-// FAIL-SAFE INVARIANT (both resolvers below): an unrecognized/NULL container_type must get the LEAST credit of any
-// row in the table being keyed -> water it. That is a property of the TABLE, not of a tier name, and the two tables
-// no longer agree on which row satisfies it:
-//   BOTH tables now satisfy it the SAME way, and neither depends on a tier name any more (BUG-RAINTIERFALLBACK-001,
-//   2026-09-06 — before that date this file's tables relied on small_fast happening to be strictest, with nothing
-//   enforcing it; the note here said "Do not 'fix' it", which was correct for the values of the day and became
-//   wrong the moment small_fast was retuned to 0.17):
-//   RAIN_TIER_IA/HOLD + RAIN_MAX_DAYS (this file, live flag-OFF) -> derived 'unknown' row (max IA, min hold, min
-//     per-stage ceiling across the named tiers); rainTierFor resolves unrecognized/NULL to it.
-//   RAIN_DEPTH (ledgerParams, F2) -> has its OWN explicit 'unknown' row, strictly stricter than every named tier.
-//     rainDepthTierFor exists for that table and resolves unrecognized/NULL to 'unknown', never to a named tier.
-//     (History: for a few hours on 2026-08-17 small_fast was flattened to the in_ground values there, which made
-//     the shared 'small_fast' fallback hand unknown vessels bed-equivalent credit — the exact inversion of this
-//     invariant. small_fast has since been restored; the separate resolver and the explicit unknown row stay,
-//     because the failure was a NAMED ALIAS encoding one day's ordering, not the particular values.)
+// FAIL-SAFE INVARIANT (both resolvers below): an unrecognized/NULL container_type must get the LEAST credit of any row in the
+// table being keyed -> water it. That is a property of the TABLE, not of a tier name, and neither table depends on a tier name:
+//   RAIN_TIER_IA/HOLD + RAIN_MAX_DAYS (this file, live flag-OFF) -> the derived 'unknown' row (max IA, min hold, min per-stage
+//     ceiling across the named tiers); rainTierFor resolves unrecognized/NULL to it.
+//   RAIN_DEPTH (ledgerParams, F2) -> its OWN explicit 'unknown' row, strictly stricter than every named tier; rainDepthTierFor
+//     resolves unrecognized/NULL to 'unknown', never to a named tier.
+//   The failure to avoid is a NAMED ALIAS encoding one day's ordering (a shared 'small_fast' fallback once handed unknown vessels
+//   bed-equivalent credit), so the separate resolver and the explicit unknown row stay.
 // Re-check this comment against BOTH tables whenever either is retuned.
-// BUG-RAINCREDITLIVEPATH-001 (2026-08-18): the tables now BOTH carry a fabric_ground row, so the size-gated
-// fabric_bag divergence is no longer RAIN_DEPTH-only. The fail-safe invariant is unaffected in either direction:
-// fabric_ground is reachable ONLY from an explicitly-typed fabric_bag WITH a parsed size >= 3 gal, never from a
-// fallback, and small_fast remains the strictest row of RAIN_TIER_IA/HOLD/RAIN_MAX_DAYS.
+// Both tables carry a fabric_ground row, reachable ONLY from an explicitly-typed fabric_bag WITH a parsed size >= 3 gal, never
+// from a fallback, so the fail-safe invariant is unaffected.
 const RAIN_VESSEL_TIER = {
   in_ground: 'in_ground',
   raised_bed: 'intermediate', trough: 'intermediate', whiskey_barrel: 'intermediate', window_box: 'intermediate',
@@ -444,28 +299,20 @@ const RAIN_VESSEL_TIER = {
   pot: 'small_fast', other: 'small_fast',
 };
 const FABRIC_GROUND_MIN_GAL = 3;
-// sizeGal is OPTIONAL and is vesselProfile().sizeGal (parsed gallons, or null). Omitted, null or unparseable ->
-// the strict pre-existing row, so every pre-BUG-RAINCREDITLIVEPATH-001 caller and every unsized/unknown vessel
-// keeps today's verdict. Only an explicitly-typed fabric_bag with a parsed size >= FABRIC_GROUND_MIN_GAL moves.
-// Failing to parse a size therefore errs toward WATERING — the same direction vesselProfile.smallVessel takes.
+// sizeGal is OPTIONAL and is vesselProfile().sizeGal (parsed gallons, or null). Omitted, null or unparseable -> the strict row, so
+// every unsized/unknown vessel keeps today's verdict; only an explicitly-typed fabric_bag with a parsed size >= FABRIC_GROUND_MIN_GAL
+// moves. Failing to parse a size therefore errs toward WATERING — the direction vesselProfile.smallVessel takes.
 function rainTierFor(container_type, sizeGal){
   const ct = (container_type||'').toLowerCase();
-  // BUG-RAINTIERFALLBACK-001: was `|| 'small_fast'`. The fallback is now the derived 'unknown' row, so it stays
-  // strictest by construction no matter how the named tiers are retuned. A recognized vessel is unaffected.
+  // The fallback is the derived 'unknown' row, so it stays strictest by construction however the named tiers are retuned.
   const base = RAIN_VESSEL_TIER[ct] || 'unknown';
   if(ct !== 'fabric_bag') return base;
   return (Number.isFinite(sizeGal) && sizeGal >= FABRIC_GROUND_MIN_GAL) ? 'fabric_ground' : base;
 }
-// F2/RAIN_DEPTH sibling of rainTierFor. Still kept separate: the two tables disagree on which row is the fail-safe
-// (RAIN_DEPTH has an explicit 'unknown' row; RAIN_TIER_IA/HOLD does not), so the resolvers cannot share a fallback.
-// Since BUG-RAINCREDITLIVEPATH-001 only ONE divergence remains, and it is the fallback:
-//   1. unrecognized/NULL container_type -> 'unknown' instead of collapsing into 'small_fast' (small_fast IS still
-//      the strictest IA/hold row, so rainTierFor's fallback stays correct; editing it would loosen live verdicts
-//      for every NULL-container planting — ~22 in prod: IA 0.35->0.25, hold 1->2).
-// FORMERLY divergence 2 — fabric_bag -> 'fabric_ground' above sizeGal >= FABRIC_GROUND_MIN_GAL — is now shared by
-// both resolvers and is pinned as shared by ledger.test.js. The evidence for bed-equivalent retention is Dave's
-// 5-10 gal bags: fabric on soil, mulched, clustered. A small bag has the fabric but not the buffer — one live
-// fabric_bag is recorded as "3 in" (parses to 0.06 gal) — and an UNPARSEABLE size is treated the same as a small one.
+// F2/RAIN_DEPTH sibling of rainTierFor, kept separate because RAIN_DEPTH has its own explicit 'unknown' row: unrecognized/NULL
+// container_type -> 'unknown' here. fabric_bag -> 'fabric_ground' above sizeGal >= FABRIC_GROUND_MIN_GAL is shared by both resolvers
+// and pinned as shared by ledger.test.js. The evidence for bed-equivalent retention is 5-10 gal bags (fabric on soil, mulched,
+// clustered); a small bag has the fabric but not the buffer, and an UNPARSEABLE size is treated the same as a small one.
 const RAIN_DEPTH_TIER_OVERRIDE = { fabric_bag: 'fabric_ground' };
 function rainDepthTierFor(container_type, sizeGal){
   const ct = (container_type || '').toLowerCase();
@@ -482,16 +329,13 @@ const RAIN_MAX_DAYS_NAMED = {
   small_fast:   { seedling: 1, vegetative: 2, flowering: 2, fruiting: 1, mature: 2 },
   intermediate: { seedling: 2, vegetative: 3, flowering: 3, fruiting: 2, mature: 4 },
   in_ground:    { seedling: 2, vegetative: 4, flowering: 3, fruiting: 3, mature: 5 },
-  // BUG-RAINCREDITLIVEPATH-001. Inert today (CARE_RAIN_MAXDAYS_ENABLED is absent from the live Lambda env), but
-  // REQUIRED: without it, enabling that flag makes rainMaxDays read RAIN_MAX_DAYS.fabric_ground -> undefined for
-  // every big bag. Mirrors in_ground, matching the tier's IA/hold.
+  // Inert while CARE_RAIN_MAXDAYS_ENABLED is off, but REQUIRED: without it, enabling that flag makes rainMaxDays read
+  // RAIN_MAX_DAYS.fabric_ground -> undefined for every big bag. Mirrors in_ground, matching the tier's IA/hold.
   fabric_ground:{ seedling: 2, vegetative: 4, flowering: 3, fruiting: 3, mature: 5 },
 };
-// BUG-RAINTIERFALLBACK-001: the third table rainTierFor's fallback keys, so it needs the same derived row or the
-// new 'unknown' tier reads undefined here — the identical defect the fabric_ground note above records. Per-stage
-// MIN across the named tiers = the tightest ceiling at every stage, so an unknown vessel re-surfaces for a
-// moisture check soonest. Derived per stage, not copied from small_fast: copying would re-create the named-alias
-// coupling this change exists to remove.
+// The third table rainTierFor's fallback keys, so it needs the same derived 'unknown' row or that tier reads undefined here.
+// Per-stage MIN across the named tiers = the tightest ceiling at every stage, so an unknown vessel re-surfaces for a moisture check
+// soonest. Derived per stage, not copied from small_fast: copying would re-create the named-alias coupling.
 const RAIN_MAX_DAYS_STAGES = ['seedling','vegetative','flowering','fruiting','mature'];
 const RAIN_MAX_DAYS = {
   ...RAIN_MAX_DAYS_NAMED,
@@ -504,19 +348,13 @@ function rainStageFor(status){ const s=(status||'').toLowerCase();
   if(s==='flowering') return 'flowering';
   if(s==='fruiting'||s==='fruit_set') return 'fruiting';
   return 'mature'; }   // active/harvested/mature/unknown -> mature (loosest column, still capped)
-// BUG-WATERIDENTITYFREETEXT-001 — the Solanaceae half of the -1 arm keys on isSolanaceous(p), the SAME predicate
-// as coldFor's band (genus when stated, else the controlled slug, never free text). It was a pepper/tomato regex
-// on the care-profile crop STRING, so the two identities disagreed both ways: a leek (genus Allium) and a
-// watermelon (Citrullus) whose crop strings contained "pepper" matched it, and a Capsicum known by genus under
-// a generic crop string did not. `p` is a trailing param so the 3-arg calls keep working; omitted, there is no
-// identity and the arm stays off — the same answer isSolanaceous gives for absent genus + absent slug.
-// Population: isSolanaceous also admits potato (Solanum) and every Physalis. Wanted for potato — even moisture
-// from tuber initiation (~first flowers) through bulking is what prevents growth cracks and hollow heart.
-// INERT IN PROD: the one caller (generatePlanForUser's ceiling clamp) is gated on CARE_RAIN_MAXDAYS_ENABLED,
-// absent from garden-daily-plan (scripts/lambda-config-expected.json declares it null). Snapshot 2026-09-18 over
-// the handler's live filter: 210 plantings, both predicates select the same 80, no live potato — so this closes
-// the gap before a flip and moves nobody today. isLeafy and isMedHerb below are still free text, and a med-herb
-// crop string still pre-empts this arm.
+// The Solanaceae half of the -1 arm keys on isSolanaceous(p), the SAME predicate as coldFor's band (genus when stated, else the
+// controlled slug, never free text), so the two identities cannot disagree. `p` is a trailing param so the 3-arg calls keep working;
+// omitted, there is no identity and the arm stays off. isSolanaceous also admits potato (Solanum) and every Physalis; wanted for
+// potato, where even moisture from tuber initiation through bulking prevents growth cracks and hollow heart.
+// Inert unless CARE_RAIN_MAXDAYS_ENABLED is on (the one caller, generatePlanForUser's ceiling clamp, is gated on it;
+// scripts/lambda-config-expected.json declares it null). isLeafy and isMedHerb below are still free text, and a med-herb crop
+// string still pre-empts this arm.
 function rainMaxDays(tier, status, crop, p){
   const stage=rainStageFor(status);
   const base=(RAIN_MAX_DAYS[tier]||RAIN_MAX_DAYS.unknown)[stage];
@@ -535,100 +373,57 @@ function rainCreditDaysTiered(tier, wi, hy, measuredOnly=false){
   if(eff<=0) return null;
   return { credit_days: Math.min(hold, wi), wp: Math.round(wp*100)/100, eff: Math.round(eff*100)/100, tier }; }
 
-// BUG-HEATDEMOTETOTAL-001 — the >=85F fabric-bag rule was a DENIAL, not the demotion it was documented
-// as. The call site read `(freshTransplant||bagHeatGate) ? null`, so an outdoor bag that had EARNED the
-// full fabric_ground credit got zero at any rain depth. Measured on this engine, 5-gal bag / 0.5" window
-// rain / wi=3, under the LIVE prod config (CARE_RAIN_CREDIT_ENABLED=true): 84F -> 3 credit-days,
-// 85F -> 0, 90F -> 0. A 3-day cliff across 1°F, on a gridded tmax carrying +-2-3F of error.
-// The demotion is a SCALAR on the earned credit, floored — both numbers named in ledgerParams
-// (bagHeatSoftenFactor was declared for this path and, until now, read by nothing). The floor is what
-// keeps this a demotion under a future retune; see the ledgerParams block for why that is structural
-// rather than fussy. Returns the rc unchanged when nothing was earned — a gate that fires on no credit
-// has nothing to withhold, and the caller's note must not claim otherwise.
-// SEPARATE from the ledger path's rule: that one is ledger.demoteDepth's one-class walk, whose
-// flip-time replacement is deliberately deferred by crucible verdict C5. Do not fold the two.
+// The >=85F fabric-bag rule is a DEMOTION, not a denial: a bag that EARNED the full fabric_ground credit must not drop to zero at
+// any rain depth (a denial made a 3-day cliff across 1°F, on a gridded tmax carrying +-2-3F of error). The demotion is a SCALAR on
+// the earned credit, floored — both numbers named in ledgerParams; the floor is what keeps this a demotion under a future retune.
+// Returns the rc unchanged when nothing was earned: a gate that fires on no credit has nothing to withhold, and the caller's note
+// must not claim otherwise.
+// SEPARATE from the ledger path's rule (ledger.demoteDepth's one-class walk, whose replacement is deliberately deferred by crucible
+// verdict C5). Do not fold the two.
 function bagHeatDemoteCredit(rc){
   if(!rc) return rc;
   const d=Math.max(LP.RAIN_DAY.bagHeatMinCreditDays, Math.floor(rc.credit_days*LP.RAIN_DAY.bagHeatSoftenFactor));
   return { ...rc, credit_days: d, bag_heat_from: rc.credit_days }; }
 
-// ── DRG-WXSATCAP-001 heavy-soak saturation cap (FLAG-INDEPENDENT; Dave-approved constants 2026-07-30) ──
-// Over-watering already-saturated media (esp. fabric bags with no drying window) drives anoxia / root rot =
-// NON-recoverable, so in the heavy-soak regime the safe error inverts to "skip". Applies to ALL outdoor vessels
-// UNIFORMLY: rain depth saturates media regardless of vessel, and container_type is ~unpopulated so a
-// vessel-agnostic gate is the only design robust to the dominant NULL case (NULL is outdoor -> suppressed ->
-// fails safe). covered/indoor never got the rain -> exempt. Independent of CARE_RAIN_CREDIT_ENABLED so the
-// eventual credit-ON flip cannot bypass it. Recovery is automatic as the 72h windowPrecip decays (no counter).
-// BUG-TODAYWATER-001 (2026-08-12) — these four moved OUT of this file. They are now required from
-// wateringThresholds.json, which src/lib/wateringScale.js (the WeatherWidget headline on Today)
-// imports from this same path. Until this change the widget owned a private, unharmonized copy —
-// 0.8" with no probability gate at all — so on 2026-08-03 (0.98") and 2026-08-08 (0.99") the two
-// models straddled the same number and Today printed "All set — no watering needed today." above a
-// full watering list. The file lives in THIS directory because deploy-lambda.yml packages it with
-// `zip -r .`, so the engine's copy ships with no workflow change; the client bundles it at build.
-// Values are unchanged — this is a re-homing, not a retune. src/lib/wateringModelParity.test.js
-// fails if either module reintroduces a literal.
+// ── Heavy-soak saturation cap (FLAG-INDEPENDENT) ──
+// Over-watering already-saturated media (esp. fabric bags with no drying window) drives anoxia / root rot = NON-recoverable, so in
+// the heavy-soak regime the safe error inverts to "skip". Applies to ALL outdoor vessels UNIFORMLY: rain depth saturates media
+// regardless of vessel, and container_type is sparsely populated, so a vessel-agnostic gate is the only design robust to the dominant
+// NULL case (NULL is outdoor -> suppressed -> fails safe). covered/indoor never got the rain -> exempt. Independent of
+// CARE_RAIN_CREDIT_ENABLED so the credit-ON flip cannot bypass it. Recovery is automatic as the 72h windowPrecip decays.
+// The thresholds below live in wateringThresholds.json, shared with src/lib/wateringScale.js (the WeatherWidget headline on Today),
+// so the two models cannot straddle one number and print "All set" above a full watering list. The file lives in THIS directory
+// because deploy-lambda.yml packages it with `zip -r .`; the client bundles it at build. src/lib/wateringModelParity.test.js fails
+// if either module reintroduces a literal.
 const SOAK_THRESHOLDS = require('./wateringThresholds.json');
 const SOAK_CAP_IN = SOAK_THRESHOLDS.SOAK_CAP_IN;                 // >= this over the 72h windowPrecip -> suppress outdoor watering
 const SOAK_WET_FLOOR_IN = SOAK_THRESHOLDS.SOAK_WET_FLOOR_IN;     // "already moist" prerequisite for the incoming-rain trigger
 const SOAK_FCST_QPF_IN = SOAK_THRESHOLDS.SOAK_FCST_QPF_IN;       // incoming 24h amount that counts
 const SOAK_FCST_POP_PCT = SOAK_THRESHOLDS.SOAK_FCST_POP_PCT;     // min PoP for an incoming-rain skip
-// BUG-SOAKBAR-001 (2026-08-12) — was 2.0", now DERIVED. The cost asymmetry below is real and unchanged;
-// what was wrong is that 2.0" was picked to express it rather than computed, so it asserted that a small
-// vessel needs 2" of rain to bank one day of water. It does not, and Dave's own observation says so:
-// his containers are VERY happy on 0.075"/day, mulched, and he inspects them daily.
-//
-// DERIVATION (every input is either Dave-observed or already shipped in this file):
+// DERIVED, not picked: the bar for acting on a FORECAST for a small vessel, written as arithmetic so it can be re-checked.
 //   need    0.075"/day  — Dave-observed satisfaction figure for a mulched container.
-//   loss    0.17"       — RAIN_TIER_IA.small_fast above: this engine's OWN initial abstraction for a
-//                         small fast-drying vessel ("first-wetting/runoff/canopy loss"). It is LIVE in
-//                         prod (CARE_RAIN_CREDIT_ENABLED=true), so this borrows a number already in
-//                         force rather than inventing a second, disagreeing one. It is also where the
-//                         "canopy sheds water away" physics is already priced in — counting that effect
-//                         again here would be double-charging it.
+//   loss    0.17"       — RAIN_TIER_IA.small_fast above: this engine's own initial abstraction for a small fast-drying vessel
+//                         (live under CARE_RAIN_CREDIT_ENABLED). It already prices the "canopy sheds water" physics; counting
+//                         that effect again here would double-charge it.
 //   => a container banks a full day only once rain clears 0.17 + 0.075 = 0.245".
-//   haircut 0.47        — this branch acts on a FORECAST, not a gauge, which is the one thing that
-//                         distinguishes it from the soak branch. Measured against 56 days of this
-//                         season's own prior_runs, the worst realized/forecast ratio on a day that
-//                         cleared the PoP gate was 0.47 (2026-06-22: 1.42" forecast, 0.67" delivered).
-//   => 0.245 / 0.47 = 0.5213", rounded UP to 0.53" — a safety bar must round toward watering, and 0.52
-//      banks 0.0744" against a 0.075" need. Two decimals is the gauge's own resolution; more would be
-//      false precision on a 4-sample haircut. At this bar even the season's worst bust still leaves the
-//      container its full day's water. Note 0.53 clears the SOAK_FCST_QPF_IN floor (0.50) by only 0.03":
-//      the band this bar needs to stay inside is now narrow, so a further cut to the loss term would
-//      collapse it into dead code — soakcontainer.test.js's "stays strictly above the qualifying gate"
-//      is what makes that impossible to land quietly.
+//   haircut 0.47        — this branch acts on a FORECAST, not a gauge. The worst realized/forecast ratio on a day that cleared
+//                         the PoP gate over 56 days of prior_runs was 0.47 (1.42" forecast, 0.67" delivered).
+//   => 0.245 / 0.47 = 0.5213", rounded UP to 0.53": a safety bar must round toward watering (0.52 banks 0.0744" against a 0.075"
+//      need). Two decimals is the gauge's resolution; more would be false precision on a 4-sample haircut.
+// Decision on record: lowering the loss term (0.35 -> 0.17) moved this bar from 0.91" to 0.53", a real widening of FORECAST-based
+// suppression for containers ("skip the pots, rain is coming"), the one direction the cost asymmetry below argues against. If a
+// busted forecast ever dries a pot, THIS is the line to revisit; the honest fix is to decouple the two terms (a gauge reading is a
+// fact, a forecast is a guess), not to re-raise the measured-credit IA, which answers a different question.
+// soakcontainer.test.js executes the derivation, so the constant cannot drift from its inputs, and its "stays strictly above the
+// qualifying gate" assertion keeps it from collapsing into dead code.
 //
-// RETUNED 2026-09-06 (BUG-RAINTIERFALLBACK-001, was 0.91"). Nothing about the physics or the cost
-// asymmetry below changed — only the loss term, which Dave lowered 0.35 -> 0.17 on his own observation
-// that a plain quarter inch must count for a rigid pot. This bar is DERIVED from that term, so it
-// follows arithmetically; the executable derivation test caught the divergence the moment the term
-// moved (it read `banked` 0.2577 against a "< 2x need" ceiling of 0.15) rather than letting 0.91 sit on
-// silently as a number nothing justified any more. Dave was shown the consequence and chose to let it
-// follow: the app is now quicker to say "skip the pots, rain is coming" — it acts at a 0.53" forecast
-// where it used to need 0.91". That is a real widening of FORECAST-based suppression for containers,
-// and it is the one direction the note below argues against, so it is recorded here as a decision
-// rather than a derivation artefact. If a busted forecast ever dries a pot, THIS is the line to revisit
-// — and the honest fix would be to decouple the two terms (a gauge reading is a fact, a forecast is a
-// guess), not to re-raise the measured-credit IA, which is answering a different question.
+// Designing to the worst bust is deliberate: a false WATER on a free-draining vessel costs nothing, while a false SKIP above 85F
+// aborts pepper/tomato flowers within 24h and locks in blossom-end-rot 2-3 weeks later (Ca is transpiration-delivered, so the damage
+// is invisible when caused and irreversible when it shows).
 //
-// Only the WORST observed bust pushes the answer this high — the mean ratio (0.93) would put it at 0.46",
-// under the 0.5" floor below. Designing to the worst case is deliberate: a false WATER on a free-draining
-// vessel costs nothing, while a false SKIP above 85F aborts pepper/tomato flowers within 24h and locks in
-// blossom-end-rot in fruit ripening 2-3 weeks later (Ca is transpiration-delivered, so the damage is
-// invisible when caused and irreversible when it shows).
-//
-// FLOOR: todayQualifies() below already gates on `q >= SOAK_FCST_QPF_IN` (0.5"), so any value <= 0.5 makes
-// this constant dead code and silently collapses containers onto the bed bar. The meaningful domain is
-// strictly (0.5, inf). 0.91 is interior to the (0.74, 1.42] band in which season behaviour is identical, so
-// the choice is robust to a haircut estimate anywhere in [0.30, 0.57] — the precision is not load-bearing.
-//
-// MEASURED BLAST RADIUS: none this season. Replaying all 56 nightly runs through saturationSuppressed,
-// 2.0 -> 0.91 changes zero days, because soak/incoming claim the wet days first and only 4 days all season
-// clear todayQualifies at all. See soakcontainer.test.js. That is the honest result: this constant is
-// near-inert at ANY value above 0.74", and the reason the rule feels pointless is the PoP+0.5" gate and
-// the branch ordering, NOT this number. Lowering it below 0.74" to force it to fire would be fitting to a
-// single observed day (2026-07-07, 0.74") and would breach the derivation above.
+// FLOOR: todayQualifies() gates on `q >= SOAK_FCST_QPF_IN` (0.5"), so any value <= 0.5 makes this constant dead code and silently
+// collapses containers onto the bed bar. The meaningful domain is strictly (0.5, inf). It is near-inert at any value above ~0.74"
+// because of the PoP+0.5" gate and the branch ordering; lowering it to force it to fire would be fitting to a single observed day.
 const SOAK_TODAY_SMALL_IN = SOAK_THRESHOLDS.SOAK_TODAY_SMALL_IN; // today-forecast bar for small vessels (bags/pots/cells)
 const SOON_QPF_IN = SOAK_THRESHOLDS.SOON_QPF_IN;                 // near-term (next few hours) amount that counts — 'soon' branch
 // The sat_kinds that rest on a FORECAST rather than on measured water. Membership decides subordination to
@@ -636,12 +431,9 @@ const SOON_QPF_IN = SOAK_THRESHOLDS.SOON_QPF_IN;                 // near-term (n
 // forgets to enrol here silently gains the right to starve a fresh transplant, so this is the one place to add it.
 const FORECAST_SAT_KINDS = new Set(['today', 'incoming_dry', 'soon']);
 
-// ONE reason string per sat_kind, in one place. This ternary previously lived inline and IDENTICALLY in
-// both rain_skipped push sites (the ledger leg and the legacy leg), with a trailing `else` that assumed
-// 'incoming' — so adding a kind would have printed "rain incoming on already-wet media" over a DRY
-// deferral in both, which is not a cosmetic error: that sentence is the user's only explanation for why
-// a thirsty plant was skipped, and it would have asserted the opposite of the reason. Unknown kinds now
-// degrade to a truthful generic rather than to a confident wrong one.
+// ONE reason string per sat_kind, in one place. It is the user's only explanation for why a thirsty plant was skipped, so an unknown
+// kind must degrade to a truthful generic rather than assert the opposite reason (an inline ternary whose trailing `else` assumed
+// 'incoming' would have printed "rain incoming on already-wet media" over a DRY deferral).
 const popSuffix = (pop) => (pop == null ? '' : ` @ ${pop}%`);
 function satReason(sat){
   switch(sat && sat.kind){
@@ -659,23 +451,19 @@ function satReason(sat){
       return `Skip — rain expected${popSuffix(sat && sat.pop)}`;
   }
 }
-// Returns { wp, kind:'soak'|'incoming', fq?, pop? } when an outdoor planting must NOT be watered (media
-// saturated, or wet with more rain imminent = no drying window), else null. Pure fn of hydrology + exposure.
-// BUG-TODAYWATER-001 — "is meaningful rain forecast for TODAY?" Deliberately reuses SOAK_FCST_QPF_IN and
-// SOAK_FCST_POP_PCT, the already-approved bar for "incoming rain counts as a reason to skip", so this
-// introduces no new agronomic judgement — it applies an existing bar to a horizon that was never checked.
+// Returns { wp, kind:'soak'|'incoming'|..., fq?, pop? } when an outdoor planting must NOT be watered (media saturated, or wet with more
+// rain imminent = no drying window), else null. Pure fn of hydrology + exposure.
+// The 'today' branch asks "is meaningful rain forecast for TODAY?" with the already-approved SOAK_FCST_QPF_IN / SOAK_FCST_POP_PCT bar,
+// so it applies an existing bar to a horizon rather than adding a new agronomic judgement.
 //
-// FAIL-CLOSED ON A NULL PoP, unlike the tomorrow branch below (`pop==null ||`). That permissiveness is
-// tolerable for tomorrow, where a missing probability still gets re-evaluated overnight before anyone acts.
-// For TODAY it would mean suppressing every outdoor planting on an amount with no probability attached at
-// all — and `fetchPrecip` sets today_pop:null whenever Open-Meteo omits it, so this is a real path, not a
-// theoretical one. Unknown probability means a data problem, not a certainty; the engine's own convention
-// elsewhere (isSmallVessel, rainTierFor) is that unknown fails safe toward WATERING.
+// FAIL-CLOSED ON A NULL PoP, unlike the tomorrow branch below (`pop==null ||`). A missing tomorrow probability is re-evaluated
+// overnight before anyone acts; for TODAY it would suppress every outdoor planting on an amount with no probability attached
+// (fetchPrecip sets today_pop:null whenever Open-Meteo omits it), and the engine's convention (isSmallVessel, rainTierFor) is that
+// unknown fails safe toward WATERING.
 //
-// BUG-TODAYWATER-001 2nd pass — WHAT THIS GATES. A PoP is a probability that rain WILL fall; it is meaningless
-// applied to rain that already HAS. Since BUG-RAINACTUAL-001 today_precip_in is measured + still-expected, so
-// gating it whole made a fail-closed PoP veto water already in the ground. This now reads the still-expected
-// part only; the measured part is judged by the soak cap, which is the branch that owns water in the media.
+// WHAT THIS GATES: a PoP is a probability that rain WILL fall; it is meaningless applied to rain that already HAS. today_precip_in is
+// measured + still-expected, so gating it whole let a fail-closed PoP veto water already in the ground. This reads the still-expected
+// part only (todayForecastIn); the measured part is judged by the soak cap, which owns water in the media.
 function todayForecastIn(hy){ return hy.today_remaining_in ?? hy.today_precip_in; }  // ?? not ||: a real 0 remaining must not fall back to the day total
 function todayQualifies(hy){
   if(!hy) return false;
@@ -690,102 +478,66 @@ function saturationSuppressed(rcls, hy, opts){
   const wp = windowPrecip(hy); if(wp==null) return null;
   const wpR = Math.round(wp*100)/100;
   const todayAware = !!(opts && opts.todayAware);
-  // Both default FALSE, so an un-updated caller — and every existing fixture and parity golden — is
-  // byte-identical. See the two branches at the bottom of this function.
+  // Both default FALSE, so an un-updated caller — and every existing fixture and parity golden — is byte-identical.
   const deferDry = !!(opts && opts.deferDry);
   const soonAware = !!(opts && opts.soonAware);
-  // BUG-TODAYWATER-001 — DISJOINT TERMS. windowPrecip is `recent + today`, and `today` is a FORECAST, so
-  // the soak cap has always been part-prediction. Left that way, any forecast >= SOAK_CAP_IN trips SOAK
-  // before the today branch is reached — which would make the small-vessel bar below dead code AND let a
-  // busted forecast suppress a fabric bag through the one branch that outranks the heat gate. So when
-  // today-awareness is on, soak judges ACTUALS ONLY and the forecast is judged below, where it has its own
-  // bars and is subordinate to the fast-dry carve-outs. Flag OFF keeps the original basis exactly, so the
-  // shipped behaviour and every existing fixture are untouched until the flag is flipped.
-  //
-  // BUG-TODAYWATER-001 2nd pass — "ACTUALS" MUST INCLUDE TODAY'S GAUGE. recent_precip_in alone was right only
-  // while the D0 term was purely a pre-dawn forecast; BUG-RAINACTUAL-001 made today_precip_in gauge-driven
-  // (observed + unelapsed hourly), so reading recent alone dropped physically MEASURED rain out of the
-  // saturation cap and then re-gated it behind a PoP — a category error that inverts the cap's whole purpose
-  // (a 1.5" measured soak at 45% PoP watered 157 of Dave's plantings instead of 19). today_observed_in is
-  // ABSENT with no bound station, so this term is 0 there and the flag-ON no-gauge path is unchanged.
+  // DISJOINT TERMS. windowPrecip is `recent + today`, and `today` is a FORECAST, so the soak cap is part-prediction. Left that way, any
+  // forecast >= SOAK_CAP_IN trips SOAK before the today branch is reached, making the small-vessel bar dead code and letting a busted
+  // forecast suppress a fabric bag through the one branch that outranks the heat gate. So with today-awareness on, soak judges ACTUALS
+  // ONLY and the forecast is judged below, with its own bars, subordinate to the fast-dry carve-outs. Flag OFF keeps the original basis.
+  // "ACTUALS" MUST INCLUDE TODAY'S GAUGE: today_precip_in is gauge-driven (observed + unelapsed hourly), so reading recent alone dropped
+  // physically MEASURED rain out of the cap and re-gated it behind a PoP, inverting the cap's purpose. today_observed_in is ABSENT with
+  // no bound station, so this term is 0 there and the flag-ON no-gauge path is unchanged.
   const soakBasis = todayAware ? ((hy.recent_precip_in || 0) + (hy.today_observed_in || 0)) : wp;
   if(soakBasis >= SOAK_CAP_IN) return { wp: Math.round(soakBasis*100)/100, kind: 'soak' };
   const fq = hy && hy.tomorrow_precip_in, pop = hy && hy.tomorrow_pop;
-  // BUG-RAINFORECASTCREDIT-001 residual: the "already wet" prerequisite reads soakBasis, the same
-  // MEASURED term the soak cap above judges — not windowPrecip. "Already wet" is a claim about water
-  // in the media right now, and windowPrecip's D0 half is today's unelapsed hourly FORECAST, so the
-  // old form let rain that has not fallen satisfy a wetness floor and then skip the planting on a
-  // second forecast (tomorrow's). It also re-introduced, on this one line, exactly the double-count
-  // the today branch below is written to avoid. Reports the basis it actually judged, as the soak
-  // branch does — sat_wp is the forensic field for "did we skip on a forecast that busted?" and a
-  // number no bar was applied to cannot answer it. todayAware OFF -> soakBasis === wp, so the
-  // flag-OFF path (condition AND payload) is byte-identical.
+  // The "already wet" prerequisite reads soakBasis, the same MEASURED term the soak cap judges, not windowPrecip: "already wet" is a
+  // claim about water in the media right now, and windowPrecip's D0 half is today's unelapsed hourly FORECAST, so the old form let
+  // rain that has not fallen satisfy the wetness floor and then skip on a second forecast (tomorrow's). It reports the basis it
+  // actually judged: sat_wp is the forensic field for "did we skip on a forecast that busted?". todayAware OFF -> soakBasis === wp,
+  // so the flag-OFF path (condition AND payload) is byte-identical.
   if(soakBasis >= SOAK_WET_FLOOR_IN && fq!=null && fq >= SOAK_FCST_QPF_IN && (pop==null || pop >= SOAK_FCST_POP_PCT))
     return { wp: Math.round(soakBasis*100)/100, fq, pop, kind: 'incoming' };
-  // TODAY. Ordered LAST so it can never pre-empt the two branches that act on water already in the media —
-  // and evaluated against the raw forecast, NOT windowPrecip, so today is never counted twice (windowPrecip
-  // already contains today_precip_in; using it here would let one 0.6" event satisfy both a "0.5 already
-  // wet" floor and a "0.5 more coming" bar, silently halving SOAK_CAP_IN).
-  // BUG-TODAYWATER-001 2nd pass: judged against todayForecastIn — the STILL-EXPECTED part — so the gauge's
-  // measured share is counted once, in soakBasis above, and never a second time here under a PoP. fq reports
-  // the same number the bar was applied to; reporting the day total would make "did we skip on a forecast
-  // that busted?" unanswerable, which is the one question this row exists to answer.
+  // TODAY. Ordered LAST so it can never pre-empt the two branches that act on water already in the media, and evaluated against the
+  // raw forecast, NOT windowPrecip, so today is never counted twice (one 0.6" event would otherwise satisfy both the "0.5 already
+  // wet" floor and the "0.5 more coming" bar, silently halving SOAK_CAP_IN). Judged against todayForecastIn, the STILL-EXPECTED
+  // part, so the gauge's measured share is counted once, in soakBasis; fq reports the number the bar was applied to.
   if(todayAware && todayQualifies(hy)){
     const bar = (opts.smallVessel ? SOAK_TODAY_SMALL_IN : SOAK_FCST_QPF_IN);
     const tf = todayForecastIn(hy);
     if(tf >= bar)
       return { wp: wpR, fq: tf, pop: hy.today_pop, kind: 'today' };
   }
-  // ── 'incoming_dry' — Dave's actual question, and the one case the branches above refuse ─────────────
+  // ── 'incoming_dry' — the same judgement as 'incoming' without its wetness precondition ──
+  // "Should we give a moderate soak today when we expect an inch tomorrow?" 'incoming' declines to fire for a DRY planting (its
+  // `soakBasis >= SOAK_WET_FLOOR_IN` prerequisite), which is exactly that scenario, so this applies the same bars without the
+  // precondition: not a new agronomic bar.
   //
-  // "If we need 0.5+ right now, but tomorrow we expect an inch, should we really give a moderate soak
-  // today to get even more tomorrow?" (2026-09-13). The 'incoming' branch above is that rule EXCEPT for
-  // its `soakBasis >= SOAK_WET_FLOOR_IN` prerequisite — and Dave's scenario is by construction a DRY
-  // planting, which is exactly the state in which that branch declines to fire. So this is the same
-  // judgement applied without the wetness precondition, not a new agronomic bar.
-  //
-  // THE BARS ARE DELIBERATELY UNCHANGED at SOAK_FCST_QPF_IN / SOAK_FCST_POP_PCT. Backtested 2026-09-14
-  // against 85 days of this season's own stored plans (daily_plan tomorrow_precip_in/_pop joined to what
-  // weather_daily later recorded): at 0.50"/60% the gate fires 9 times with ZERO busts (median actual
-  // 1.04"), and tightening to 0.75"/80% only drops it to 4 fires, also zero busts. There was no evidence
-  // for inventing a stricter constant, and the today-branch header above states the principle — reusing an
-  // approved bar introduces no new agronomic judgement. Caveat, recorded honestly: 9 firings over one
-  // summer is thin, and PoP calibration shifts by season. Revisit with a full year.
+  // THE BARS ARE DELIBERATELY UNCHANGED at SOAK_FCST_QPF_IN / SOAK_FCST_POP_PCT. Backtested over 85 days of stored plans, 0.50"/60%
+  // fired 9 times with zero busts and 0.75"/80% fired 4 times, also zero busts: no evidence for a stricter constant. Caveat: 9 firings
+  // over one summer is thin and PoP calibration shifts by season; revisit with a full year.
   //
   // TWO THINGS DO CHANGE for the dry case, because they are wrong here rather than merely permissive:
+  //  1. FAIL CLOSED ON A NULL PoP. 'incoming' accepts `pop==null` because an already-wet planting can wait for the overnight
+  //     re-evaluation; a DRY planting cannot, so a missing probability must not defer it. Follows todayQualifies and the engine's
+  //     convention that unknown fails safe toward WATERING.
+  //  2. SUBORDINATE TO THE FAST-DRY CARVE-OUTS (see _satApplies): like 'today', this yields to freshTransplant and bagHeatGate. A
+  //     forecast busts; a fresh transplant in a hot fabric bag does not get a second chance.
   //
-  //  1. FAIL CLOSED ON A NULL PoP. 'incoming' accepts `pop==null` — justified in its own comment because
-  //     an already-wet planting can wait for the overnight re-evaluation. A DRY planting cannot: a missing
-  //     probability would defer it on an amount with no confidence attached at all. This follows
-  //     todayQualifies, and the engine's standing convention that unknown fails safe toward WATERING.
-  //  2. SUBORDINATE TO THE FAST-DRY CARVE-OUTS. See _satApplies below: like 'today' and unlike 'incoming',
-  //     this yields to freshTransplant and bagHeatGate. A forecast busts; a fresh transplant in a hot
-  //     fabric bag does not get a second chance.
-  //
-  // Flag-gated and OFF by default, so this ships inert and Dave flips it when he is ready — the same
-  // shape every comparable change in this engine used (CARE_TODAY_AWARE_ENABLED, CARE_RAIN_CREDIT_ENABLED).
-  // Reports its own basis in `wp` so "did we skip on a forecast that busted?" stays answerable, and carries
-  // a DISTINCT sat_kind so it can never be confused with the wet-media branch in the stored payload.
+  // Flag-gated, OFF by default (the shape CARE_TODAY_AWARE_ENABLED and CARE_RAIN_CREDIT_ENABLED used). Reports its own basis in `wp`
+  // and carries a DISTINCT sat_kind, so "did we skip on a forecast that busted?" stays answerable and it is never confused with the
+  // wet-media branch in the stored payload.
   if(deferDry && fq!=null && fq >= SOAK_FCST_QPF_IN && pop!=null && pop >= SOAK_FCST_POP_PCT)
     return { wp: Math.round(soakBasis*100)/100, fq, pop, kind: 'incoming_dry' };
-  // ── 'soon' — "in the next few hours, is it going to give us another quarter inch?" ──────────────────
-  //
-  // Ordered LAST because it is the narrowest claim: it only fires on what the other branches missed. The
-  // rest-of-day sum the 'today' branch judges cannot answer this question at 07:00, when it is reporting
-  // seventeen hours of possibility; today_next_in is the same hourly grid bounded to the next few hours
-  // (station.NEAR_TERM_WINDOW_H), so a concentrated shower that is genuinely imminent clears this bar while
-  // a day's worth of scattered maybes does not.
-  //
-  // SOON_QPF_IN is 0.25 because that is the number Dave named, and it happens to be defensible: it clears
-  // every per-tier initial abstraction in RAIN_TIER_IA (0.17-0.25), so a quarter inch actually does
-  // something for every vessel he owns rather than merely wetting the surface.
-  //
-  // This is the LOWEST-RISK of the forecast branches and it is worth saying why, because the bar looks
-  // loose next to the others: the horizon is ~3 hours, not 36, and the plan now regenerates HOURLY. A bust
-  // is visible and corrected within the hour, with most of the watering day still ahead. At three runs a
-  // day this branch would have been indefensible; it is only reasonable as a consequence of
-  // OPS-PLANHOURLY-001. today_pop is a DAILY maximum probability, so it is used only as a sanity floor on
-  // the day being rainy at all — the hourly amount is doing the real work.
+  // ── 'soon' — "in the next few hours, is it going to give us another quarter inch?" ──
+  // Ordered LAST because it is the narrowest claim: it only fires on what the other branches missed. The rest-of-day sum the 'today'
+  // branch judges cannot answer this at 07:00; today_next_in is the same hourly grid bounded to the next few hours
+  // (station.NEAR_TERM_WINDOW_H), so a concentrated imminent shower clears this bar and a day of scattered maybes does not.
+  // SOON_QPF_IN is 0.25: it clears every per-tier initial abstraction in RAIN_TIER_IA (0.17-0.25), so a quarter inch does something
+  // for every vessel rather than wetting the surface.
+  // This is the LOWEST-RISK forecast branch though the bar looks loose: the horizon is ~3 hours and the plan regenerates HOURLY, so a
+  // bust is corrected within the hour with most of the watering day still ahead; at three runs a day it would be indefensible.
+  // today_pop is a DAILY maximum probability, so it is only a sanity floor on the day being rainy at all.
   if(soonAware){
     const soon = hy && hy.today_next_in, tPop = hy && hy.today_pop;
     if(soon!=null && soon >= SOON_QPF_IN && tPop!=null && tPop >= SOAK_FCST_POP_PCT)
@@ -796,24 +548,15 @@ function saturationSuppressed(rcls, hy, opts){
 
 // Returns a fertilize recommendation object IF one is warranted now, else null. Substrate-aware.
 function fertilizeRec(p, c, fm, today){
-  // BUG-CAREFEEDINHERIT-001 — profile-declared never-feed. FIRST, ahead of the phase gate.
-  //
-  // NO INTERVAL VALUE CAN EXPRESS "NEVER FEED", so this had to be a branch. `never` at :672 cards any
-  // planting with no feed history whatever `iv` says, and the recency gate at :651 only holds a card
-  // DOWN once a feed exists — so the largest interval anyone can write still produces the first card.
-  // Measured live 2026-09-08: prod carded "Greek Oregano" (interval 30) and "Oregano" (interval 60)
-  // that same day, both never=true. A cultivar author reaching for 365 or 9999 is writing a number the
-  // engine cannot read as a refusal.
-  //
-  // WHY THE KEY, not an omitted interval: v_resolved_care merges system||cultivar||leaf with the jsonb
-  // || operator — shallow, top-level, right-wins — and the system row carries fertilize_interval_days:14.
-  // A cultivar row that OMITS the key therefore silently INHERITS 14 (51 cultivar rows / 52 live
-  // plantings on prod). Omission is not expressible either; only a key that is READ can refuse.
-  //
-  // Mirrors the shipped no_calendar_water arm (feedSuppression, :787, below waterSuppression). AHEAD of
-  // the phase gate at :622 deliberately, for two reasons: never-feed is a property of the plant, not of
-  // its substrate age; and a guard sitting behind a gate that already returns null for all five
-  // ticket plantings (they are in establishment_0_2wk) is a guard no test can see fail.
+  // Profile-declared never-feed, FIRST, ahead of the phase gate. NO INTERVAL VALUE CAN EXPRESS "NEVER FEED": `never` (below) cards any
+  // planting with no feed history whatever `iv` says, and the recency gate only holds a card down once a feed exists, so the largest
+  // interval anyone can write still produces the first card.
+  // WHY THE KEY, not an omitted interval: v_resolved_care merges system||cultivar||leaf with jsonb `||` (shallow, right-wins) and the
+  // system row carries fertilize_interval_days:14, so a cultivar row that OMITS the key silently INHERITS 14. Only a key that is READ
+  // can refuse.
+  // Mirrors the no_calendar_water arm (feedSuppression, below waterSuppression). AHEAD of the phase gate deliberately: never-feed is a
+  // property of the plant, not of its substrate age, and a guard sitting behind a gate that already returns null for the plantings it
+  // protects is a guard no test can see fail.
   if(feedSuppression(p,c)) return null;
   const wk=weeksSince(today, p.substrate_start);
   const phase=feedPhase(wk);
@@ -822,133 +565,81 @@ function fertilizeRec(p, c, fm, today){
   if(phase==='establishment_0_2wk' || phase==='mg_active_3_12wk' || phase==='unknown') return null;
   // Tapering / spent: feed heavy feeders, or anything past its cadence interval with a fert history.
   const dF=daysBetween(today,p.last_fert);
-  // A NON-POSITIVE INTERVAL IS NOT A CADENCE — it is normalized to null (unknown), never carried.
-  // fertilize_interval_days:0 read as "feed every day", the inverse of any plausible intent: the
-  // recency gate below needs dF<0 and can never fire, and `due` is dF>=0 which is true the moment the
-  // plant is fed at all, so the card returns every morning. Prod carries exactly one such row (Lithops,
-  // 0) and it is the Lithops class — the no_calendar_water/growth_gated profile whose author was
-  // plainly reaching for "no calendar feeding", not "daily". The engine does NOT read 0 as that
-  // refusal: an overloaded numeric sentinel is what made this ambiguous in the first place, and
-  // no_calendar_feed now says it in words. Not invented here either — daily-plan-read/doneEvents.js:93
-  // already refuses to price a cadence it cannot use (`if (!(iv > 0)) return false;`), so this makes
-  // the engine agree with its own downstream reader instead of emitting a number that reader discards.
+  // A NON-POSITIVE INTERVAL IS NOT A CADENCE — it is normalized to null (unknown), never carried. fertilize_interval_days:0 read as "feed
+  // every day": the recency gate below needs dF<0 and can never fire, and `due` (dF>=0) is true the moment the plant is fed at all, so
+  // the card returns every morning. The engine does NOT read 0 as "no calendar feeding": an overloaded numeric sentinel is what made this
+  // ambiguous, and no_calendar_feed now says it in words. This also agrees with the downstream reader, daily-plan-read/doneEvents.js,
+  // which refuses to price a cadence it cannot use (`if (!(iv > 0)) return false;`).
   // NaN falls out for free (typeof NaN === 'number', NaN > 0 is false).
-  // BUG-FEEDINTERVALZERO-001: on the plan path resolveCadence now restores the default before `c`
-  // gets here, so this is the backstop for a `c` built any other way, not the Lithops row's outcome.
+  // On the plan path resolveCadence restores the default before `c` gets here, so this is the backstop for a `c` built any other way.
   const _ivRaw=(typeof c.fertilize_interval_days==='number')?c.fertilize_interval_days:null;
   const iv=(_ivRaw!=null && _ivRaw>0)?_ivRaw:null;
-  // BUG-FEEDRECENCY-001 — RECENCY GATE, ahead of every qualifying branch below.
-  //
-  // `due` was only ever ONE of three ORed reasons to recommend a feed. The other two — a heavy feeder
-  // in flower/fruit, and needs_feed_24wk_plus — carried NO recency check at all, so a planting that
-  // matched either was recommended EVERY DAY regardless of when it was last fed. Measured live:
-  // Armageddon (super hot pepper, fruiting, wk13) sat on the feed list 2026-08-22..25 with its last
-  // feed 6-9 days old against a 17-day Capsicum interval, and re-appeared the morning after Dave fed
-  // it. A card that returns the day after you act on it is the affordance-extinction pattern the
+  // RECENCY GATE, ahead of every qualifying branch below. `due` is only ONE of three ORed reasons to recommend a feed: a heavy feeder in
+  // flower/fruit and needs_feed_24wk_plus carry no recency check, so a planting matching either would be recommended EVERY DAY
+  // regardless of when it was last fed. A card that returns the day after you act on it is the affordance-extinction pattern the
   // watering canon (V100 §"Pre-F2 interim snooze semantics") already forbids on the water arm.
-  //
-  // Gated on a KNOWN interval AND a KNOWN last feed, deliberately. dF==null means "never fed" and
-  // still falls through to the branches below — that no-history case is exactly what they exist for,
-  // and suppressing it would be the dangerous direction (silence about a plant that needs feeding).
+  // Gated on a KNOWN interval AND a KNOWN last feed, deliberately: dF==null means "never fed" and still falls through, because
+  // suppressing that case would be the dangerous direction (silence about a plant that needs feeding).
   if(dF!=null && iv!=null && dF<iv) return null;
   const due = (dF!=null && iv!=null && dF>=iv);
-  // BUG-FEEDCARDSZERO-001 — "never fed" is a qualifying reason in its OWN right.
-  //
-  // The recency gate above deliberately lets dF==null fall through, on the stated grounds that the
-  // no-history case "is exactly what [the branches below] exist for". It was not: every disjunct on
-  // the next line is unsatisfiable for a never-fed planting that is not a heavy feeder in flower or
-  // fruit. `due` needs a last-feed date by construction, and needs_feed_24wk_plus needs 24 weeks of
-  // substrate history the database does not yet have — the oldest substrate_start on prod is
-  // 2026-05-12, its own inception, so that arm was unreachable for EVERY row until 2026-10-27. The
-  // passthrough opened onto a closed door: measured on prod 2026-09-03, all 46 never-fed live
-  // plantings produced no card, and forward-simulating that same set to 2026-10-01 and 2026-10-20
-  // produced none either. Silence about a plant that has never been fed is the exact direction
-  // :539's comment calls the dangerous one.
-  //
-  // Scoped by what has already run above, not by a new condition: anything reaching this line
-  // cleared the phase gate at :522, so it is in mg_tapering_13_24wk or beyond — past the window in
-  // which the mix is doing the feeding, which is the phase fertilization-model.json marks
-  // `feed: begin_light`. It cannot become a nag either, because the card clears on the CADENCE axis
-  // (feed's axis, deliberately not water's day axis): the moment a feed is logged dF stops being
-  // null, `never` goes false, and :539 holds the card down for the next `iv` days.
+  // "Never fed" is a qualifying reason in its OWN right. The recency gate above lets dF==null fall through, but every other disjunct below
+  // is unsatisfiable for a never-fed planting that is not a heavy feeder in flower or fruit: `due` needs a last-feed date by construction,
+  // and needs_feed_24wk_plus needs 24 weeks of substrate history that may not exist yet. Silence about a plant that has never been fed is
+  // the dangerous direction.
+  // Scoped by what has already run above: anything reaching this line cleared the phase gate, so it is in mg_tapering_13_24wk or beyond,
+  // past the window in which the mix is doing the feeding (fertilization-model.json marks it `feed: begin_light`). It cannot become a
+  // nag: the card clears on the CADENCE axis (feed's axis, not water's day axis), so once a feed is logged dF stops being null, `never`
+  // goes false, and the recency gate holds the card down for the next `iv` days.
   const never = (dF==null);
   const heavy=isHeavyFeeder(c.crop);
   if(!(due || never || (heavy && ['flowering','fruiting'].includes(p.status)) || (phase==='needs_feed_24wk_plus'))) return null;
-  if(isMedHerb(c.crop)) return null;            // Mediterranean herbs: never force-feed (leaky — see :112)
+  if(isMedHerb(c.crop)) return null;            // Mediterranean herbs: never force-feed (leaky; see isMedHerb)
   // pick amendment by crop/stage
   let rec;
   if(isAcidLover(c.crop)) rec={item:'acidic fertilizer (Holly-Tone — NOT in inventory; acquire)', apply:'top-dress; use rainwater', note:'acid-lover; hard well water raises pH'};
   else if(heavy || ['flowering','fruiting'].includes(p.status)) rec={item:am.fruiting_feed.item, apply:am.fruiting_feed.apply, alt:am.kelp.item+' (sprayer)'};
   else if(isLeafy(c.crop)) rec={item:am.veg_feed.item, apply:am.veg_feed.apply};
   else rec={item:am.castings.item, apply:am.castings.apply};
-  // `interval` = this row's OWN feeding cadence, mirroring the water rows' `interval` (each row
-  // carries the clock it is judged against). BUG-BACKDATEDFEED-001 needs it on the item: the read-time
-  // check-off is cadence-aware for feeding, and daily-plan-read cannot re-resolve cadence itself.
+  // `interval` = this row's OWN feeding cadence, mirroring the water rows' `interval` (each row carries the clock it is judged against).
+  // The read-time check-off is cadence-aware for feeding, and daily-plan-read cannot re-resolve cadence itself.
   //
-  // SPA safety — stated precisely, because the first version of this comment got the mechanism wrong
-  // and a reviewer caught it. careNeeded.js consults `interval` at THREE sites, not two:
-  //   :57  needReason  — inside `case 'water_due':`            → gated on need
-  //   :90  needTier    — inside `if (need === 'water_due')`    → gated on need
-  //   :128 buildCareNeeded — computed for EVERY need, feeding two uses:
-  //          reasonRedundant → gated on need
-  //          overdueBy       → NOT gated on need
-  // So the "both consumers are gated" claim was false. The change is safe anyway, for two INDEPENDENT
-  // reasons: (1) fertilizeRec emits no `overdue_by`, so overdueBy's `typeof … === 'number'` arm is
-  // already false for a feed row and the `daily` term cannot change its result; (2) isDailyCadence is
-  // `=== 1` and the minimum fertilize_interval_days in cadence-data-v2.json is 7 (distribution:
-  // 7×5, 10, 14×98, 17, 18×2, 19, 20, 21×42, 28×11, 29, 30×39, 42×3, 45×4, 55, 60×5, 75, 90×4, 180).
-  //
-  // That redundancy is worth naming rather than enjoying: it makes a careNeeded test asserting
-  // `overdueBy === null` VACUOUS — verified by mutation, the assertion stays green with the `daily`
-  // term deleted. If you ever add a 1-day feed cadence, or widen isDailyCadence past `=== 1`, reason
-  // (2) dies and only (1) is holding — so check overdueBy against a feed row that actually carries
-  // `overdue_by` before assuming the suite would have told you.
-  // `never` on the item for the same reason the water rows carry one: an overdue card and a
-  // never-fed card are the same shape and mean different things, and only the engine can still tell
-  // them apart. Additive key, so PLAN_SCHEMA_VERSION is deliberately NOT bumped (readers select
-  // named keys; doneEvents.fedWithinInterval reads only `id` and `interval` and is untouched).
+  // SPA safety: careNeeded.js consults `interval` at three sites: needReason and needTier (both gated on need) and buildCareNeeded, which
+  // computes it for EVERY need and feeds reasonRedundant (gated) and overdueBy (NOT gated). The change is safe for two INDEPENDENT
+  // reasons: (1) fertilizeRec emits no `overdue_by`, so overdueBy's `typeof … === 'number'` arm is already false for a feed row; (2)
+  // isDailyCadence is `=== 1` and the minimum fertilize_interval_days in cadence-data-v2.json is 7.
+  // Trap: that redundancy makes a careNeeded test asserting `overdueBy === null` VACUOUS (verified by mutation). If you add a 1-day feed
+  // cadence, or widen isDailyCadence past `=== 1`, reason (2) dies and only (1) holds, so check overdueBy against a feed row that
+  // actually carries `overdue_by` first.
+  // `never` on the item for the same reason the water rows carry one: an overdue card and a never-fed card are the same shape and mean
+  // different things, and only the engine can tell them apart. Additive key, so PLAN_SCHEMA_VERSION is deliberately NOT bumped (readers
+  // select named keys; doneEvents.fedWithinInterval reads only `id` and `interval`).
   return {id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,in_ground:isHeavyFeeder(c.crop)&&false,status:p.status,weeks_since_pot:wk,phase,interval:iv,never,...rec};
 }
 
 function coldFor(p, cad, low, frostAlertEnabled=false, frostCoverage=null){
   if(low==null) return null;
   const c=resolveCadence(p,cad);
-  // BUG-COLDNAMEMATCHNAG-001 — the already-indoors check is HOISTED above the solanaceous band.
-  // It used to sit below it (at the old :840, now the second call site removed), so a planting the
-  // band caught could never be silenced by doing the one thing its card asked. Verified against the
-  // SHIPPED engine before the fix: Peppermint with brought_inside logged on 2026-09-16 still returned
-  // {level:'bring_in'} at a 38F low, while Pink Fittonia — which reaches the check because it takes the
-  // profile path below — correctly returned null. That differential is the whole bug.
-  // Hoisting can only ever SUPPRESS a card, never create one, so it cannot widen alert volume; and it
-  // now covers both paths identically, which is what the V4-TROPICALCOLD-001 note below always claimed.
+  // The already-indoors check is HOISTED above the solanaceous band: below it, a planting the band caught could never be silenced by doing
+  // the one thing its card asked (a Peppermint with brought_inside logged still returned bring_in at 38F while a profile-path plant
+  // returned null). Hoisting can only SUPPRESS a card, never create one, and it covers both paths identically.
   if(broughtInside(p)) return null;
-  // V5-COLDCARDREACHABLE-001 (heated) — a planting whose location is HEATED is already where every
-  // level of this card would send it. `heated_resolved` is locations.heated off the planting's location,
-  // else its project's (handler.js; migrations/v5-locheated-001), and is deliberately NOT `covered`: the
-  // Stable is covered and UNHEATED and holds more live plantings than the House (Dave 2026-09-17), so
-  // a covered test would silence the population this card exists for. Strict `=== true`: absent or
-  // NULL (an un-located planting, an older caller) means NOT heated, which fails toward a card.
+  // A planting whose location is HEATED is already where every level of this card would send it. `heated_resolved` is locations.heated off
+  // the planting's location, else its project's (handler.js), and is deliberately NOT `covered`: the Stable is covered and UNHEATED and
+  // holds more live plantings than the House, so a covered test would silence the population this card exists for.
+  // Strict `=== true`: absent or NULL (un-located planting, older caller) means NOT heated, which fails toward a card.
   if(p.heated_resolved===true) return null;
-  // V5-COLDCARDREACHABLE-001 (in-ground) — "bring it inside" cannot be done to a plant in the ground
-  // (18 of 61 protect cards 09-01..09-17; also potato, which the genus key put in the band), so an
-  // in-ground planting relies on the frost ALERT, which counts in-ground plantings and tells Dave to cover
-  // them. Only the two BRING-IN levels are dropped; `optional` ("protect flowering plant") can be done in
-  // the ground.
-  // BUG-INGROUNDOFFSEASONSILENT-001 — and only while that alert can SEND. With FROST_ALERT_ENABLED off (the
-  // F6 kill switch, handler.js) nothing publishes, and dropping the card left an in-ground tender planting
-  // with no cold message on either channel. The handler passes its own flag in; absent means OFF, which
-  // fails toward a card. Deliberately NOT gated on frost season: isFrostSeason gates only the DEGRADED alert
-  // and station_unbound, and the frost alert itself publishes all year (run() on 2027-05-10, 35F: "FROST
-  // PROTECT TONIGHT … potatoes (2)"), so a season gate would put the unactionable card back beside it.
-  // BUG-INGROUND39FSLIVER-001 — and only when the alert actually NAMES this planting for this forecast. The
-  // check used to be class-only ("a kind the alert ever names": not hardy, not heated), so the card also
-  // dropped on nights the alert stayed silent: NWS 39F with Open-Meteo D1 42F trips neither the imminent tier
-  // (<= 38 on NWS) nor the advisory (<= 40 on Open-Meteo), and an in-ground potato got no card and no email.
-  // frostCoverage is frostEval.frostCoverage over the handler's OWN frost decision for this Space and run, so
-  // it cannot drift from the email. The card drops only when the planting reads 'named', or 'above_band' —
-  // the low is above its crop's frost band, where the alert is silent by design and Dave accepted the
-  // 41-50F in-ground gap (2026-09-17). 'unnamed', no entry (hardy by class, heated, not in the exposure) and
-  // no coverage at all (an older caller, or the handler could not evaluate) all keep the card.
+  // "Bring it inside" cannot be done to a plant in the ground, so an in-ground planting relies on the frost ALERT, which counts in-ground
+  // plantings and tells Dave to cover them. Only the two BRING-IN levels are dropped; `optional` can be done in the ground.
+  // Only while that alert can SEND: with FROST_ALERT_ENABLED off (the F6 kill switch, handler.js) nothing publishes, so dropping the card
+  // would leave an in-ground tender planting with no cold message on either channel. The handler passes its flag in; absent means OFF,
+  // which fails toward a card. Deliberately NOT gated on frost season: the frost alert publishes all year, so a season gate would put the
+  // unactionable card back beside it.
+  // And only when the alert actually NAMES this planting for this forecast: a class-only check also dropped the card on nights the alert
+  // stayed silent (NWS 39F with Open-Meteo D1 42F trips neither tier). frostCoverage is frostEval.frostCoverage over the handler's OWN frost
+  // decision for this Space and run, so it cannot drift from the email. The card drops only when the planting reads 'named', or
+  // 'above_band' (the low is above its crop's frost band, where the alert is silent by design and the 41-50F in-ground gap is accepted).
+  // 'unnamed', no entry (hardy by class, heated, not in the exposure) and no coverage at all (an older caller, or the handler could not
+  // evaluate) all keep the card.
   const _cov=frostCoverage&&typeof frostCoverage.get==='function' ? frostCoverage.get(p.id) : undefined;
   const _inGroundAlerted=frostAlertEnabled===true&&likelyInGround(p,c)&&(_cov==='named'||_cov==='above_band');
   if(isSolanaceous(p)){
@@ -956,34 +647,17 @@ function coldFor(p, cad, low, frostAlertEnabled=false, frostCoverage=null){
     if(low<45) return ['flowering','fruiting'].includes(p.status) ? {level:'optional', text:`optional: protect flowering plant (low ${low}°F)`} : null;
     return null;
   }
-  // BUG-COLDCARDDISCARD-001 — a free-text `/houseplant|succulent|cactus/i.test(c.crop)` early return
-  // stood here and is REMOVED, not re-keyed. It shipped with this file (2026-06-17), two months before
-  // V4-TROPICALCOLD-001 authored COLD_BY_CROP_TYPE, so it discarded the thresholds that item was written
-  // FOR. Measured on prod 2026-09-08: all 18 live plantings it matched returned null at EVERY temperature,
-  // 12 of them carrying an explicit protect_below_F — 6 from the DB profile (Fittonia ×3 at 55/60/60,
-  // Pothos 50, Tradescantia ×2 at 45) and 6 from the crop-type fallback (Jade 45, Christmas Cactus 45,
-  // Echeveria ×2 / Haworthia / Lithops at 40). Not hypothetical: observed tmin was 45.6°F on 2026-09-07
-  // and 53.4°F on 09-06, under four of those numbers on both nights. (11 change behaviour today; Christmas
-  // Cactus is status='dormant' and drops at :861 before this function runs.)
-  // It keyed on `crop`, which is uncontrolled free text (see :102-104), so the SAME crop_type_slug got
-  // opposite protection on wording alone — `Neon Pothos` (no crop match -> slug `pothos` -> 50°F) protected,
-  // `Pothos` (crop "houseplant", same slug, same 50°F) never.
-  // NOT re-expressed on crop_type_slug, because there is nothing left for it to do: the resolution below
-  // already returns null for every planting with no protect_below_F. Verified on prod — the 6 branch-mates
-  // with no threshold on any surface (Gymnocalycium, Copper Stonecrop, Golden Sedum, Graptosedum, Love's
-  // Fire, Pachyphytum; slugs cactus/sedum/succulent, deliberately unmapped in frostClass.UNCERTAIN_SLUGS)
-  // stay silent through the profile path, so removing this widens protection to exactly the plants that
-  // already carried a number and to nobody else. A slug-keyed restatement would be the redundant second
-  // guard :1096-1099 argues against: mutate either and the other holds, and no test can watch one fail.
-  // The nightly-nag mitigation V4-TROPICALCOLD-001 calls a precondition of correctness is the
-  // broughtInside check, which as of BUG-COLDNAMEMATCHNAG-001 sits at the TOP of this function and so
-  // covers these 12 and the solanaceous band identically. Its rationale, kept here where it was argued:
-  // `done` (doneEvents.js) only retires a task for the CALENDAR DAY, so without it the card returns
-  // every night the low is under the threshold, all winter, for a plant already on the windowsill —
-  // the nightly nag the 2026-08-07 band decision rejected. brought_inside/brought_outside are existing
-  // logged event types and are a true toggle: the plant is indoors iff the LATER of the two is
-  // brought_inside. Unknown (neither ever logged) means outdoors, which is the fail-safe direction —
-  // it warns about a plant that is already in rather than staying silent about one that is out.
+  // No free-text `/houseplant|succulent|cactus/i.test(c.crop)` early return here, deliberately: it discarded the protect_below_F thresholds
+  // the crop-type table (COLD_BY_CROP_TYPE) was written for, so houseplants with an explicit threshold returned null at EVERY temperature.
+  // It also keyed on `crop`, uncontrolled free text, so the SAME crop_type_slug got opposite protection on wording alone (`Neon Pothos`
+  // protected, `Pothos` never). Not re-expressed on crop_type_slug either: the resolution below already returns null for every planting
+  // with no protect_below_F, so a slug-keyed restatement would be the redundant second guard that frostClass argues against (mutate
+  // either and the other holds, so no test can watch one fail).
+  // The nightly-nag mitigation is the broughtInside check at the TOP of this function. `done` (doneEvents.js) only retires a task for the
+  // CALENDAR DAY, so without it the card returns every night the low is under the threshold, all winter, for a plant already on the
+  // windowsill. brought_inside/brought_outside are a true toggle: the plant is indoors iff the LATER of the two is brought_inside. Unknown
+  // (neither ever logged) means outdoors, the fail-safe direction: it warns about a plant that is already in rather than staying silent
+  // about one that is out.
   // Cold-profile resolution, most specific first. Variety/genus/DB (`c.cold`) stays authoritative;
   // the crop-type table is the FALLBACK beneath it, never an override. Ginger, and every other
   // tropical with no hand-authored variety row, reaches a profile only via this second tier.
@@ -1002,24 +676,18 @@ function broughtInside(p){
   return !out || in_>=out;
 }
 
-// ── DRG-NOCALWATER-001 — dormancy/growth-cycle watering suppression ──
-// Some care profiles (Lithops-class succulents) mark watering as NOT calendar-drivable: no_calendar_water:true
-// and/or water_rule:'growth_gated'. Until this gate existed NOTHING read those signals, and the nightly plan
-// issued interval watering for a summer-dormant Lithops (watering during dormancy rots it — the plant died).
-// Sources checked IN ORDER: the resolved cadence `c` AND the raw DB profile p.db_cadence. The raw read is
-// load-bearing, not belt-and-braces: resolveCadence adopts db_cadence only when a scope CONTRIBUTED A CADENCE
-// KEY (cadence_scopes; `_seeded` on the flag-OFF path), and a profile can declare suppression while carrying
-// no watering interval at all — cadence_scopes = [] -> bundled fallback -> a c-only check would drop the
-// signal through the exact path that caused the original loss. BUG-SEEDEDGATE-001 narrows which profiles are
-// adopted but does NOT make this raw read dead: the Lithops class is exactly "signals present, cadence key
-// absent". no_calendar_water (explicit, stronger) wins
-// the label when both are set. Returns 'no_calendar_water' | 'growth_gated' | null.
-// Suppression is LOUD, never silent: the caller routes the planting to counts.dormancy_suppressed +
-// tasks.dormancy_suppressed with a per-item rule + reason, so a suppressed planting is distinguishable from a
-// forgotten one. Watering ONLY — fert/pest/cold generation is untouched. The check sits in the shared
-// pre-branch path of generatePlanForUser so it applies identically under EVERY flag combination
-// (todayAware / rainCredit / rainMaxDays on or off) — a guard written inside one flag branch would be
-// silently deleted when the flag flips (house flag-parity lesson).
+// ── Dormancy/growth-cycle watering suppression ──
+// Some care profiles (Lithops-class succulents) mark watering as NOT calendar-drivable: no_calendar_water:true and/or
+// water_rule:'growth_gated'. Without this gate nothing read those signals and the plan issued interval watering for a summer-dormant
+// Lithops (watering during dormancy rots it).
+// Sources checked IN ORDER: the resolved cadence `c` AND the raw DB profile p.db_cadence. The raw read is load-bearing: resolveCadence
+// adopts db_cadence only when a scope CONTRIBUTED A CADENCE KEY, and a profile can declare suppression while carrying no watering interval
+// at all (the Lithops class: signals present, cadence key absent), so a c-only check would drop the signal. no_calendar_water (explicit,
+// stronger) wins the label when both are set. Returns 'no_calendar_water' | 'growth_gated' | null.
+// Suppression is LOUD, never silent: the caller routes the planting to counts.dormancy_suppressed + tasks.dormancy_suppressed with a
+// per-item rule + reason, so a suppressed planting is distinguishable from a forgotten one. Watering ONLY — fert/pest/cold generation is
+// untouched. The check sits in the shared pre-branch path of generatePlanForUser so it applies identically under EVERY flag combination:
+// a guard written inside one flag branch would be silently deleted when the flag flips.
 function waterSuppression(p, c){
   const srcs=[c, p&&p.db_cadence];
   for(const s of srcs){ if(s && s.no_calendar_water===true) return 'no_calendar_water'; }
