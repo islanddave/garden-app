@@ -7,26 +7,22 @@
 // 'cut_and_come_again')` (it returns false for 'single' before it ever reaches the DOY window) AND at
 // least one prior harvest, which the server enforces in the candidate join. Both conditions are
 // correct for what that band is — an evidence-only "you have picked this before and are due again"
-// nudge. Their joint effect is that every once-per-season crop is structurally invisible to it: 23 of
-// Dave's live edible plantings on 2026-08-12 (beet, cabbage, carrot, garlic, kohlrabi, leek, onion,
-// potato, radicchio, shallot, sweet potato). That gap is real and is the true half of the ledger item.
+// nudge. Their joint effect is that every once-per-season crop (beet, cabbage, carrot, garlic,
+// kohlrabi, leek, onion, potato, radicchio, shallot, sweet potato) is structurally invisible to it.
 //
-// WHY IT IS ALMOST EMPTY — the other half of the item did not survive verification. The originally
-// specified crop list was five crops; against live prod, two of them are not grown (winter squash has
-// no live plantings; there is no dry-bean crop type and all three `bean` plantings are snap/filet
-// types on a 'repeat' crop type), garlic's hard window had already closed on 2026-07-30, and the
-// onion/shallot/cabbage triggers (leaf-fall, pod-rattle, rain-split, cure) are observed plant states
-// that appear in NONE of the 38 event types in prod. Exactly one crop — sweet potato — has a seasonal
-// deadline that is citable, still in the future, and attached to a live planting.
+// WHY IT IS ALMOST EMPTY. Most candidate crops failed verification: the triggers for onion, shallot
+// and cabbage (leaf-fall, pod-rattle, rain-split, cure) are observed plant states that no event type
+// records, and the other candidates had no live planting or no citable window. Exactly one crop —
+// sweet potato — has a seasonal deadline that is citable and attached to a live planting.
 //
 // DO NOT REACH FOR `crop_types.harvest_season_end_doy` TO STORE THESE. It is tempting and it is wrong
 // twice over. First, it is a SUPPRESSOR inside `isReadyToPick`, and that function has already returned
 // false for a 'single' crop by the time the window is consulted — so a value written there for a
 // storage crop is unreachable code paved as data. Second, its own field contract
 // (`harvest-attributes-v1.json`) restricts it to windows where harvesting OUTSIDE is actively harmful,
-// precisely because a wrong window silently suppresses a true readiness signal. It is populated for 2
-// of 136 crop types on purpose. This module keeps advisory deadlines in a separate key space so
-// neither meaning can bleed into the other.
+// precisely because a wrong window silently suppresses a true readiness signal. It is populated for
+// only a handful of crop types on purpose. This module keeps advisory deadlines in a separate key
+// space so neither meaning can bleed into the other.
 //
 // PURE, like harvestReadiness: `todayISO` always arrives as an argument. No internal `new Date()` —
 // a date-dependent module that reads its own clock cannot be tested across a boundary without flake,
@@ -36,29 +32,15 @@
 // ready". The one date in here is a measured site BACKSTOP standing in for VINE KILL — an observed plant
 // state nobody is recording; copy that asserts readiness would overclaim it.
 //
-// THE ONE DATE HAS MOVED TWICE, AND ONLY THE SECOND MOVE WAS MEASURED. Read this before touching it.
-//  • 1.0.0 shipped 10-15, read off UMass's "usually before mid-October" as a SOIL-temperature cutoff.
-//  • 1.1.0 (BUG-SWEETPOTATODEADLINE-001, 2026-08-17) replaced the mechanism with VINE KILL — correct,
-//    and it still stands — but derived the new date from FROST_ANCHORS.firstFallFrost, landing on
-//    09-25 (anchor - 3d).
-//  • 1.2.0 (same day, 8-seat crucible) reverted the DATE to 10-10 and kept the mechanism. The anchor is
-//    a conservative SOWING-safety margin, not an observed frost date — that reasoning stands. Its
-//    NUMBERS did not: 1.2.0 cited 11 years of ERA5 2m minima putting first frost between 10-10 and
-//    11-08, median 10-29, with no September tail. BUG-FROSTANCHORERA5-001 (2026-09-03) replaced that
-//    instrument with a 3-station GHCN composite: 09-21 to 10-31, median 10-15, and September does have
-//    a tail (2020, 1 season in 11). 09-25 therefore fired ahead of frost in 10 of 11 seasons rather
-//    than all 11 — still the wrong trade, by a smaller margin than 1.2.0 claimed. The DATE is
-//    unchanged at 10-10 and its ground has moved; storageDeadlines.json's sweet_potato `notes` records
-//    what is now open about it.
 // THE STANDING RULE: no deadline in this file may be derived from FROST_ANCHORS, in either direction.
-// Two sessions did it, on opposite readings, and both were wrong. The dataset's `frost_anchor_warning`
-// carries the argument and every dated record now carries a reproducible `measured_basis`;
-// storageDeadlines.test.js pins the date to that measurement rather than to the anchor.
-// BUG-FROSTANCHORWRONG-001 (2026-08-17) gave the measurement a NAME so the next consumer does not
-// have to re-derive it: sowEngine.js exports OBSERVED_FIRST_FALL_FROST carrying the identical
-// `measured_basis`, and sowEngine.test.js pins the two copies deep-equal. The standing rule above is
-// unchanged — FROST_ANCHORS is still not a frost date — but "which value SHOULD I use" now has an
-// answer that is a symbol rather than a warning.
+// The anchor is a conservative SOWING-safety margin, not an observed frost date: deriving from it
+// fires ahead of frost in most seasons. The sweet-potato date is a measured site backstop for vine
+// kill; the dataset's `frost_anchor_warning` carries the argument, every dated record carries a
+// reproducible `measured_basis`, and storageDeadlines.test.js pins the date to that measurement
+// rather than to the anchor. sowEngine.js exports OBSERVED_FIRST_FALL_FROST carrying the identical
+// `measured_basis` (sowEngine.test.js pins the two copies deep-equal), so "which value SHOULD I use"
+// has an answer that is a symbol. storageDeadlines.json's sweet_potato `notes` records what is still
+// open about the date.
 
 import DATA from '../data/storageDeadlines.json'
 

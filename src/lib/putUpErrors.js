@@ -1,11 +1,9 @@
-// putUpErrors.js — Put-Up release 1a (design V4 §6.5 "409 handling", §5.4, §11). A refused write
-// says WHY, by the server's `code`, instead of "Couldn't update — try again."
+// putUpErrors.js — Put-Up (design V4 §6.5 "409 handling", §5.4, §11). A refused write says WHY, by
+// the server's `code`, instead of "Couldn't update — try again."
 //
-// WHY 1a CARRIES WORDS FOR CODES ITS OWN SERVER NEVER SENDS. client_stale arrives from the release
-// 1b/2 legacy PUT, only_n_left from the release-2 uses route, batch_closed from 1b's Put it up. The
-// bundle that meets them is by definition the OLD one — the phone that has not updated yet — and an
-// old bundle can only explain a refusal it already knows how to read. So the reading ships first.
-// Before this, RecordRow.put discarded the body and every retry got the same generic line (V4 §11).
+// WHY THIS CARRIES WORDS FOR CODES A SERVER MAY NOT SEND YET. The bundle that meets a new refusal
+// can be the OLD one — the phone that has not updated yet — and an old bundle can only explain a
+// refusal it already knows how to read. So the reading ships before the server that sends the code.
 //
 // THE WIRE. api.js throws Error(body.error) carrying `.status` and `.body` (the parsed JSON), so the
 // code is `err.body.code` — the house shape `{ error, code }` (lambda/locations `location_slug_conflict`,
@@ -16,25 +14,24 @@
 // to match what the surface offers (client_stale's is the only one with a button) and has to stay
 // true on a bundle nobody can update. A code it does NOT know gets the server's own text — the
 // server that invented the code is the only party that can explain it — except DB_ERROR_CODES below,
-// which return null like an uncoded failure. A coded refusal with no text
-// at all returns null, and so does every uncoded failure: the caller keeps its own copy for those
-// (offline, a timeout, an uncoded 400), so nothing that renders today changes.
+// which return null like an uncoded failure. A coded refusal with no text at all returns null, and
+// so does every uncoded failure: the caller keeps its own copy for those (offline, a timeout, an
+// uncoded 400).
 
 export const REFUSAL_CODES = Object.freeze({
   CLIENT_STALE: 'client_stale',
   ONLY_N_LEFT: 'only_n_left',
   BATCH_CLOSED: 'batch_closed',
-  // The release-1a server lane's refusal for a package count lowered below what is already used
-  // (V4 §5.4 "From 1a": the delta would take remaining_count below 0). Its name is the server lane's
-  // to confirm; a different name still renders, through the unknown-code arm, as the server's text.
+  // A package count lowered below what is already used (V4 §5.4: the delta would take
+  // remaining_count below 0).
   COUNT_BELOW_USED: 'count_below_used',
-  // The storage Lambda, from 1a: a place with that kind and name is already there (1b's UNIQUE on
-  // storage_location). Its words are the SERVER's — the server lane writes a message meant to be shown
-  // as-is — so it has no sentence here and describeRefusal renders it through the unknown-code arm.
-  // On a create it is not a failure at all: see existingPlaceId.
+  // The storage Lambda: a place with that kind and name is already there (UNIQUE on
+  // storage_location). Its words are the SERVER's — a message meant to be shown as-is — so it has no
+  // sentence here and describeRefusal renders it through the unknown-code arm. On a create it is not
+  // a failure at all: see existingPlaceId.
   PLACE_EXISTS: 'place_exists',
-  // Release F (contract-F §2.7). Each carries the server's own sentence too; the ones below get this
-  // module's words so a bundle that outlives a server wording change still reads right.
+  // Each carries the server's own sentence too (contract-F §2.7); the ones below get this module's
+  // words so a bundle that outlives a server wording change still reads right.
   ONLY_G_LEFT: 'only_g_left',
   JAR_USED_UP: 'jar_used_up',
   JAR_REMOVED: 'jar_removed',
@@ -44,8 +41,8 @@ export const REFUSAL_CODES = Object.freeze({
   PUT_UP_IN_USE: 'put_up_in_use',
   KEY_CONFLICT: 'key_conflict',
   SHU_CANNOT_COMPUTE: 'shu_cannot_compute',
-  // B′ release 2 (the pantry-server lane's Pantry routes). Remove on a put-up that was used or drawn
-  // into a batch; a use's Undo refused; a bought item removed under the person.
+  // The Pantry routes: Remove on a put-up that was used or drawn into a batch; a use's Undo refused;
+  // a bought item removed under the person.
   JAR_WAS_USED: 'jar_was_used',
   JAR_IN_BATCH: 'jar_in_batch',
   ALREADY_UNDONE: 'already_undone',
@@ -53,12 +50,12 @@ export const REFUSAL_CODES = Object.freeze({
   USE_IS_REVERSAL: 'use_is_reversal',
   COUNT_CHANGED: 'count_changed',
   ITEM_REMOVED: 'item_removed',
-  // B′ release 3: Undo that put-up on How it was made →'s sitting, which wrote no jars of its own.
+  // Undo that put-up on How it was made →'s sitting, which wrote no jars of its own.
   NOTHING_PUT_UP_HERE: 'nothing_put_up_here',
-  // Put-Up R2a, the storage Lambda's two place refusals: a re-kind while the place holds put-ups whose dates
-  // were worked out for its kind, and a delete while something is stored there. Each 409 carries `n` and the
-  // server's own sentence; neither has words here, so describeRefusal answers them through the unknown-code
-  // arm (the server's sentence), and the Places sheet builds its own lines from the code and `n`.
+  // The storage Lambda's two place refusals: a re-kind while the place holds put-ups whose dates
+  // were worked out for its kind, and a delete while something is stored there. Each 409 carries `n`
+  // and the server's own sentence; neither has words here, so describeRefusal answers them through
+  // the unknown-code arm, and the Places sheet builds its own lines from the code and `n`.
   PLACE_HAS_DATED_JARS: 'place_has_dated_jars',
   PLACE_IN_USE: 'place_in_use',
 })
@@ -71,7 +68,7 @@ export const COUNT_BELOW_USED_TEXT =
   'Some of these have already been used, so the count can’t go that low — nothing was changed.'
 export const ONLY_SOME_LEFT_TEXT = 'Not that many are left — nothing was changed.'
 
-// Release F's words (06 §1.4, §3.11, §3.12; contract-F §2.7). Plain, one line, no alarm.
+// Plain, one line, no alarm (06 §1.4, §3.11, §3.12; contract-F §2.7).
 export const JAR_USED_UP_TEXT = 'That one is marked used up — nothing was changed.'
 export const JAR_REMOVED_TEXT = 'That jar was removed — nothing was changed.'
 export const HAS_SALT_LINE_TEXT = 'Take the salt line out first.'
@@ -96,8 +93,8 @@ export const KEY_CONFLICT_TEXT = 'That didn’t go through — nothing was chang
 export const SHU_CANNOT_COMPUTE_TEXT = 'Can’t work out the heat yet — nothing was saved.'
 export const ONLY_SOME_G_LEFT_TEXT = 'Not that much is left in that one — nothing was changed.'
 
-// B′ release 2's words (V4 §2.5: Remove is "logged by mistake"; refused on a jar with uses or live lines,
-// with the reason and a path). Plain, one line.
+// V4 §2.5: Remove is "logged by mistake"; refused on a jar with uses or live lines, with the reason
+// and a path. Plain, one line.
 export const JAR_WAS_USED_SOME_TEXT = 'Some were used — mark the rest Went bad, or undo that use.'
 export function jarWasUsedText(n) {
   return `${n} was used — mark the rest Went bad, or undo that use.`
@@ -121,7 +118,7 @@ export function onlyNLeftText(n) {
 // only_n_left's number, from the server — never computed from the row on screen, which is exactly the
 // copy that went stale when the other person used a jar. `n` is the name this client asks a server to
 // send (the code reads "only N left"); the other three are read too, because once this bundle is the
-// stale one it cannot be taught a new spelling, and the server that sends this code is not built yet.
+// stale one it cannot be taught a new spelling.
 const LEFT_COUNT_KEYS = ['n', 'left', 'remaining', 'remaining_count']
 
 function leftCount(body) {
@@ -146,8 +143,7 @@ function serverText(body) {
 
 // place_exists names the place the person meant, so a create that meets it selects that place instead
 // of reporting a failure. err -> the existing place's id (a string) | null. The key is read in every
-// spelling a server might pick — the lane sending it is being built alongside this one, and once this
-// bundle is the stale one it cannot learn a new spelling.
+// spelling a server might pick, because a stale bundle cannot learn a new one.
 const PLACE_ID_KEYS = ['existing_id', 'id', 'place_id']
 
 export function existingPlaceId(err) {
@@ -210,8 +206,8 @@ export function describeRefusal(err) {
       return { code, text: KEY_CONFLICT_TEXT, refresh: false }
     case REFUSAL_CODES.SHU_CANNOT_COMPUTE:
       return { code, text: SHU_CANNOT_COMPUTE_TEXT, refresh: false }
-    // B′ release 2. jar_was_used counts from the server's `n`; jar_in_batch keeps the server's words (they
-    // name the batch), with this module's sentence when it sent none.
+    // jar_was_used counts from the server's `n`; jar_in_batch keeps the server's words (they name the
+    // batch), with this module's sentence when it sent none.
     case REFUSAL_CODES.JAR_WAS_USED: {
       const n = leftCount(body)
       return { code, text: n != null && n > 0 ? jarWasUsedText(n) : JAR_WAS_USED_SOME_TEXT, refresh: false }

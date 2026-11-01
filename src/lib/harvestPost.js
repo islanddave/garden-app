@@ -2,40 +2,27 @@
 // harvest post. PURE: no React, no network, no clock — every time input is passed in. Mirrors the
 // lambda/harvests/aggregate.js split so it unit-tests with zero runtime deps.
 //
-// WHY A BATCH AND NOT A DAY (crucible 2026-08-10, measured against prod, 469 gaps / 30 days):
-// Dave's posts correspond to ONE evening logging session, not a calendar day. On 2026-08-05 he
-// logged 31 picks and posted 19 — the berry/herb/cup-unit picks logged earlier that day were
-// deliberately omitted. Clustering by created_at gap reproduces that split exactly (9 items at
-// 10:25, 3 at 12:09, 19 at 23:08 = 31). A "today's harvest" summary is measurably noisier than
-// what he actually writes, which is why this file exists at all.
+// WHY A BATCH AND NOT A DAY: Dave's posts correspond to ONE evening logging session, not a calendar
+// day. Picks logged earlier in the day (berries, herbs, cup-unit picks) are deliberately omitted, and
+// clustering by created_at gap reproduces that split. A "today's harvest" summary is measurably
+// noisier than what he actually writes.
 //
-// WHY 45 MINUTES — corrected 2026-08-10 after an audit found the original justification circular AND
-// factually wrong about the day it cited. Both errors are recorded here rather than deleted, because
-// the wrong version was persuasive and the next reader deserves to know why it does not hold:
-//   * WRONG: "both reference batches reproduce at every N from 20–240, so 45 is on a plateau." They
-//     are bounded by 656-min and 334-min gaps, so ANY N in that range returns them unchanged BY
-//     CONSTRUCTION. That shows the two fixtures carry zero information about N — not that N is safe.
-//     It is also self-refuting: 45 was then chosen over 90 precisely BECAUSE they differ.
-//   * WRONG: "the 08-08 batch is 32 events over 131 min held together by sub-90m gaps." Prod says
-//     08-08 is 31 events in a tight 54-min run plus ONE straggler 76.6 min later. N=90 appends the
-//     straggler; it does not fuse a grazing session.
-// The claim that DOES hold, and the only one this constant now rests on: over 40 days of real gaps
-// there are ZERO observed gaps in the (45, 75] minute band, so 45 sits inside a genuinely empty
-// interval rather than on a slope. The real cost of 45 over 90 is the inverse of what was claimed —
-// on a straggler evening like 08-08 it yields a ONE-ITEM last batch, which is why MIN_POST_LINES
-// exists below.
+// WHY 45 MINUTES: over 40 days of real gaps there are ZERO observed gaps in the (45, 75] minute band,
+// so 45 sits inside a genuinely empty interval rather than on a slope. The reference batches say
+// nothing about N (they are bounded by gaps far wider than any candidate N). The cost of 45 is a
+// ONE-ITEM last batch on a straggler evening, which is why MIN_POST_LINES exists below.
 //
 // WHY (created_by, created_at) AND NOT created_at ALONE: Jen is a real second logger. Overlapping
 // evening sessions would otherwise merge into one "batch" published in Dave's first person.
 //
-// WHY created_at AND NOT event_date: event_date is date-grained by construction — 482 of 504 rows
-// sit at exactly 08:00 ET (a DST-safe date-at-noon encoding) — so it cannot order within a day.
+// WHY created_at AND NOT event_date: event_date is date-grained by construction (a DST-safe
+// date-at-noon encoding, 08:00 ET), so it cannot order within a day.
 
 export const DEFAULT_GAP_MINUTES = 45
 
-// A crop gets its own heading only at >= 3 distinct varieties. Ground truth: Dave's 2026-08-06 post
-// lists Cubanelle and Piri Piri — two distinct pepper varieties — as FLAT lines with no "Peppers:"
-// heading, so a >=2 rule would emit a heading he did not write. 3 reproduces both reference posts.
+// A crop gets its own heading only at >= 3 distinct varieties. Dave lists two distinct pepper
+// varieties as FLAT lines with no "Peppers:" heading, so a >=2 rule would emit a heading he did not
+// write. 3 reproduces both reference posts.
 export const DEFAULT_GROUP_THRESHOLD = 3
 
 // Past ~15 lines the tail falls below Facebook's "See more" fold, so the crops added last become
@@ -43,14 +30,11 @@ export const DEFAULT_GROUP_THRESHOLD = 3
 export const LINE_SOFT_CAP = 15
 
 // Below this, the surface offers nothing. N=45 produces a one-item last batch on a straggler evening
-// (see the header), and "tonight's harvest: 1 tomato" is a post nobody writes. This is plan item B10,
-// which was written for the compose surface and then lost when the nightly-draft track was cut —
-// B10's suppression rule lived in the cut track's section but its subject was this one.
+// (see the header), and "tonight's harvest: 1 tomato" is a post nobody writes.
 export const MIN_POST_LINES = 2
 
-// Only `count` renders. Weight is 73.5% server-ESTIMATED and must never appear in a public post.
-// 2026 unit distribution: count 404, cup 87, head 5, bunch 3 — and both reference batches are 100%
-// count, so this drops nothing Dave actually posted.
+// Only `count` renders. Weight is mostly server-ESTIMATED and must never appear in a public post.
+// Both reference batches are 100% count, so this drops nothing Dave actually posted.
 const POSTABLE_UNITS = new Set(['count'])
 
 // Validated against the live cultivar corpus. ' Roma' is deliberately ABSENT: "San Marzano Roma" is
@@ -58,20 +42,18 @@ const POSTABLE_UNITS = new Set(['count'])
 // silently rename a crop in a public post.
 const STRIP_SUFFIXES = [' F1', ' (Burpee)', ' Heirloom']
 
-// Evidence-backed shortenings, taken verbatim from Dave's published post text (2026-08-05 and
-// 2026-08-06) where the DB name and the name he actually writes differ. This is the "small override
-// table" the crucible asked for, seeded ONLY from posts we can read — not from guesses. ' Roma' is
-// here as a per-name override rather than a blanket suffix strip because "San Marzano Roma" is a
-// legitimate full variety name; the evidence is that Dave shortens THIS one, not that the suffix is
-// generally droppable.
+// Evidence-backed shortenings, taken verbatim from Dave's published post text where the DB name and
+// the name he actually writes differ. Seeded ONLY from posts we can read, not from guesses. ' Roma'
+// is a per-name override rather than a blanket suffix strip: Dave shortens THIS one, which does not
+// make the suffix generally droppable.
 export const NAME_OVERRIDES = {
   'san marzano roma': 'San Marzano',
   "czech's bush": 'Czech Bush',
   'chilly chill': 'Chilly Chills',
 }
 
-// Cultivar/planting names carrying identification uncertainty must never publish as-is. These are
-// real values in prod ("Onion — scallion-type (thick blue-green, ID pending)").
+// Cultivar/planting names carrying identification uncertainty must never publish as-is, e.g.
+// "Onion — scallion-type (thick blue-green, ID pending)".
 const UNCERTAIN_NAME = /\b(id pending|unknown variety|unknown|tbd)\b|\(.*\?\s*\)/i
 
 /**
@@ -95,13 +77,12 @@ const INVARIANT_PLURALS = new Set([
 const O_TAKES_ES = new Set(['tomato', 'potato', 'hero'])
 
 /**
- * Drop a TRAILING parenthetical. Every parenthetical in the live harvested-name corpus is internal
- * bookkeeping or an ID note, never part of the name Dave would write in a post — measured, all four
- * of them: "Cherokee Green (Rescue)", "Scallion (thin clump)", "Strawberry (unknown variety)",
- * "Onion — scallion-type (thick blue-green, ID pending)". The last two are blocked outright by
- * isUncertainName; this handles the two that are safe to publish once the note is removed.
- * Crop types have the same shape — "Onion (bunching / scallion)" was rendering as
- * "Onion (bunching / scallion)s" in the plural path.
+ * Drop a TRAILING parenthetical. Every parenthetical in the harvested-name corpus is internal
+ * bookkeeping or an ID note ("Cherokee Green (Rescue)", "Scallion (thin clump)"), never part of the
+ * name Dave would write in a post. ID notes ("unknown variety", "ID pending") are blocked outright by
+ * isUncertainName; this handles the ones that are safe to publish once the note is removed.
+ * Crop types have the same shape: without this, "Onion (bunching / scallion)" pluralised to
+ * "Onion (bunching / scallion)s".
  */
 function stripParenthetical(s) {
   return String(s || '').replace(/\s*\([^()]*\)\s*$/, '').trim()
@@ -110,9 +91,8 @@ function stripParenthetical(s) {
 export function pluralizeCrop(word, qty) {
   const w = stripParenthetical(word)
   if (!w || Number(qty) === 1) return w
-  // Pluralise the LAST word, keep the qualifiers. Testing the whole string meant "Summer Squash"
-  // missed the `squash` invariant and published "Summer Squashes", and "Cherry Tomato" would have
-  // taken the generic -s rather than tomato -> tomatoes. Six multi-word crop names reach a post.
+  // Pluralise the LAST word, keep the qualifiers: testing the whole string would miss the `squash`
+  // invariant ("Summer Squashes") and the tomato -> tomatoes rule ("Cherry Tomatos").
   const parts = w.split(/\s+/)
   const head = parts.slice(0, -1)
   const tail = parts[parts.length - 1]
@@ -144,9 +124,8 @@ export function normalizeVarietyName(raw) {
       }
     }
   }
-  // Fold curly apostrophes to straight before the lookup. Found by RENDERING the component rather
-  // than by any test: "Czech’s Bush" missed the "czech's bush" key and published unnormalised. Which
-  // form a cultivar carries depends on how it was typed, so the table cannot depend on either.
+  // Fold curly apostrophes to straight before the lookup: "Czech’s Bush" would otherwise miss the
+  // "czech's bush" key. Which form a cultivar carries depends on how it was typed.
   const override = NAME_OVERRIDES[n.toLowerCase().replace(/[‘’]/g, "'")]
   return override || n
 }
@@ -204,9 +183,8 @@ export function toLines(items) {
     const rawName = e.planting_name || e.variety_name || ''
     const uncertain = UNCERTAIN_NAME.test(rawName)
     const name = uncertain ? '' : normalizeVarietyName(rawName)
-    // harvest_log.quantity is `numeric`, so the neon driver hands back a STRING. The same coercion the
-    // read model already applies to weight_grams, for the same reason: a string here turns every sum
-    // in leadFacts into concatenation and every comparison into lexical ordering.
+    // harvest_log.quantity is `numeric`, so the neon driver hands back a STRING; left as is, every sum
+    // in leadFacts becomes concatenation and every comparison lexical.
     const qty = Number(e.quantity)
     return {
       id: e.event_id,
@@ -214,10 +192,9 @@ export function toLines(items) {
       crop,
       quantity: Number.isFinite(qty) ? qty : null,
       unit: e.unit ?? null,
-      // Dave's OWN marking, not a computed guess. A window function over plant_id contradicts him
-      // in both directions on the reference posts — it says Piri Piri's first was 2026-08-05 while
-      // his 08-06 post calls it a first, and it flags Armageddon as a first on the exact row he
-      // hand-annotated "not 1st harvest". So this is only ever pre-checked from his event type.
+      // Dave's OWN marking, not a computed guess: a window function over plant_id contradicts his
+      // hand annotations in both directions on the reference posts. So this is only ever pre-checked
+      // from his event type.
       isFirst: e.event_type === 'first_harvest',
       // Suggestion, never finished copy: he REWRITES these ("Fell off plant with major blotch" ->
       // "(fell from plant w/ deformity, not 1st harvest)"). The UI offers it; it is not auto-emitted.
@@ -225,21 +202,18 @@ export function toLines(items) {
       needsName: !name,
       uncertainName: uncertain,
       // A row with NEITHER a name NOR a crop renders as a bare integer ("2"), which is worse than an
-      // omission because it publishes as a line of the itemised list. All 5 live plant_id-IS-NULL
-      // harvests are exactly this shape — no plant means no cultivar means no crop_types join — and
-      // running this module over 504 prod rows put a naked integer in 3 of 35 historical batches,
-      // including the 08-05 batch this file's own header cites as its reconciliation proof.
-      // Not postable, but still surfaced to the composer as `needsName` so it is visible and namable
-      // rather than silently dropped.
+      // omission because it publishes as a line of the itemised list. Harvests with plant_id NULL are
+      // exactly this shape (no plant, so no cultivar, so no crop_types join). Not postable, but still
+      // surfaced to the composer as `needsName` so it is visible and namable rather than dropped.
       postable: POSTABLE_UNITS.has(e.unit) && Number.isFinite(qty) && qty > 0 && !!(name || crop),
     }
   })
 }
 
-// BUG-HARVESTPOSTREGEX-001 — kept byte-identical to lambda/facebook-share/altText.js:89 on purpose.
-// The two run over the same user-authored crop and cultivar strings on the two halves of one publish
-// path, and a subtly different character class between them is how the client and the Page end up
-// disagreeing about a name only for the cultivars that contain the character one of them missed.
+// BUG-HARVESTPOSTREGEX-001 — kept byte-identical to the escape in lambda/facebook-share/altText.js on
+// purpose. The two run over the same user-authored crop and cultivar strings on the two halves of one
+// publish path; a different character class between them makes the client and the Page disagree about
+// a name only for cultivars containing the character one of them missed.
 function escapeRe(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
@@ -263,19 +237,14 @@ export function renderLine(line, { withCrop } = {}) {
   const plural = pluralizeCrop(crop, qty).toLowerCase()
 
   if (name.toLowerCase() === crop.toLowerCase()) return `${qty} ${plural}`
-  // BUG-HARVESTPOSTREGEX-001 — `crop` is user-authored and was interpolated into `new RegExp` raw.
-  // A crop named "Squash+" or "Pepper[" throws a SyntaxError out of renderLine, which takes the
+  // BUG-HARVESTPOSTREGEX-001 — `crop` is user-authored, so it must be escaped before `new RegExp`.
+  // A crop named "Squash+" or "Pepper[" would throw a SyntaxError out of renderLine and take the
   // whole post composer with it; milder metacharacters mis-match silently instead.
   //
-  // Latent TODAY, not theoretical: 12 live crop types already carry parentheses ("Cherry (sweet)",
-  // "Onion (bunching / scallion)"). None reach here only because they contain a space and
-  // cropIsSingleWord gates them out — an accident of an unrelated taxonomy rule, not a guard. The
-  // first single-token crop with a metacharacter breaks it, and Dave can mint crop types from the
-  // app. Verified against prod: zero single-word crop names carry a metacharacter right now.
-  //
-  // lambda/facebook-share/altText.js:84 already escapes for exactly this reason and its comment
-  // names this file as the unfixed half ("Reported rather than fixed upstream: src/lib is another
-  // lane's file"). This is that fix; the two sides now agree.
+  // Crop types with parentheses ("Onion (bunching / scallion)") only avoid this because they contain
+  // a space and cropIsSingleWord gates them out, which is an accident of an unrelated taxonomy rule,
+  // not a guard. Dave can mint crop types from the app. lambda/facebook-share/altText.js escapes the
+  // same way.
   const cropTail = cropIsSingleWord ? new RegExp(`\\s${escapeRe(crop)}$`, 'i') : null
   if (cropTail && cropTail.test(name)) {
     return `${qty} ${name.replace(cropTail, ` ${plural}`)}`
@@ -294,9 +263,8 @@ export function buildPostModel(lines, options = {}) {
 
   // Sibling plantings of one cultivar are DISTINCT garden_node rows, so picking from two beds of San
   // Marzano emits two identical lines. Dave writes "8 San Marzano", not "4 San Marzano / 4 San
-  // Marzano". Measured over prod: 2 of 35 historical batches hit this, worst case 7 duplicated pairs
-  // in one evening. Merge on the RESOLVED name + crop (post identity), not on variety_id or plant_id
-  // — two sibling plantings are different plants and the same thing to a reader.
+  // Marzano". Merge on the RESOLVED name + crop (post identity), not on variety_id or plant_id:
+  // two sibling plantings are different plants and the same thing to a reader.
   // A merged line keeps the first row's id so annotations and exclusions still address it, and ORs
   // isFirst so a first-harvest on either sibling survives the merge.
   const merged = new Map()
@@ -374,12 +342,9 @@ export function renderPost(model, options = {}) {
 
 // Per-crop season totals, read from the aggregates block of GET /api/harvests.
 //
-// BUG-COMPOSETOTALS-001 — this function exists because the previous version summed the ENTRIES array,
-// which is keyset-paginated at 50 rows. With 176 harvests in the live 7-day window it published
-// "36 tomatoes so far" against a true figure of 132, and because the page boundary falls inside a day
-// ordered by UUID, the number also changed between loads. The endpoint already computes the correct
-// figure over the FULL range with no cursor and no limit; nothing needed to be paginated, only read
-// from the right place.
+// BUG-COMPOSETOTALS-001 — never sum the ENTRIES array: it is keyset-paginated at 50 rows, so the
+// total is wrong and, with the page boundary inside a day ordered by UUID, changes between loads. The
+// endpoint already computes the correct figure over the FULL range with no cursor and no limit.
 export function seasonCountsByCrop(aggregates) {
   const out = new Map()
   for (const c of aggregates?.crops ?? []) {
@@ -394,18 +359,17 @@ export function seasonCountsByCrop(aggregates) {
 // Deliberately NOT prose — a generated sentence in his voice is worse than no lead at all.
 //
 // `seasonCounts` is a Map(cropName -> count) from seasonCountsByCrop, and `windowLabel` names the
-// span those totals cover. The label is REQUIRED and unabbreviated in the emitted chip, because the
-// previous wording ("N so far") read as season-to-date while the underlying window was at most 7 days
-// and in practice about 2.5 — a chip that ships into a public post has to say what it counted.
+// span those totals cover. The label is REQUIRED and unabbreviated in the emitted chip: "N so far"
+// reads as season-to-date while the window is a few days, and a chip that ships into a public post
+// has to say what it counted.
 export function leadFacts(batch, seasonCounts, windowLabel = 'this season') {
   const items = batch?.items ?? []
   const counted = items.filter((e) => POSTABLE_UNITS.has(e.unit) && Number(e.quantity) > 0)
   const total = counted.reduce((s, e) => s + Number(e.quantity), 0)
   const varieties = new Set(counted.map((e) => e.planting_name || e.variety_name).filter(Boolean)).size
 
-  // Per-crop batch totals, so each season figure is compared against ITS OWN crop rather than against
-  // the cross-crop batch sum — the old guard compared incomparable aggregates, suppressing valid facts
-  // on large batches and admitting misleading ones on small.
+  // Per-crop batch totals, so each season figure is compared against ITS OWN crop rather than the
+  // cross-crop batch sum (incomparable aggregates).
   const batchByCrop = new Map()
   for (const e of counted) {
     const c = e.crop_name || e.crop_type_slug

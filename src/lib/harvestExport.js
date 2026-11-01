@@ -9,7 +9,7 @@
 // weightParts / groupByDay / dayLabel), because the export's entire value is that it reconciles
 // with what Dave just looked at. A second formatting path here would drift on the first change.
 //
-// NO UNIT CONVERSION, ever. 3 cups + 2 heads is not 5 of anything, and grams are 73.5% server-
+// NO UNIT CONVERSION, ever. 3 cups + 2 heads is not 5 of anything, and grams are mostly server-
 // ESTIMATED — a converted number in a spreadsheet is a fabricated measurement. Units are emitted
 // natively and the weight line always carries its measured/estimated/unweighed qualifier.
 import { unitsLine, fmtFirstPick, seasonTotalPhrase } from './harvestSummary.js'
@@ -52,12 +52,11 @@ function weightLine(weight) {
   if (parts.length === 0) return null
   const text = formatGrams(weight.grams)
   const value = text == null ? 'none derivable yet' : `${weight.estimated > 0 ? '≈ ' : ''}${text}`
-  // V4-HARVGRAIN-001 (B4): the same share the Totals card prints. The clause above counts ROWS,
-  // which on live prod reads "313 weighed · 367 estimated" and scans as mostly-weighed while 52% of
-  // the POUNDAGE is modelled — the weighed rows skew small. A number pasted into a spreadsheet loses
-  // every surrounding cue the page had, so if either surface carries the caveat this one must.
-  // Silent when estimated_grams is 0 or absent (an all-measured total, or a Lambda predating the
-  // split) — inventing "0% estimated" would manufacture a doubt.
+  // V4-HARVGRAIN-001 (B4): the same share the Totals card prints. The clause above counts ROWS, which
+  // can scan as mostly-weighed while most of the POUNDAGE is modelled (weighed rows skew small). A
+  // number pasted into a spreadsheet loses every surrounding cue the page had, so if either surface
+  // carries the caveat this one must. Silent when estimated_grams is 0 or absent (an all-measured
+  // total, or a Lambda predating the split) — inventing "0% estimated" would manufacture a doubt.
   const modelled = weight.grams > 0 && weight.estimated_grams > 0
     ? ` — ${Math.round((weight.estimated_grams / weight.grams) * 100)}% estimated, not weighed`
     : ''
@@ -66,14 +65,13 @@ function weightLine(weight) {
 
 // V4-HARVGRAIN-001 — one variety's grams, appended to its own sub-line.
 //
-// It rides the export because the export now RANKS: the server orders varieties by weight, and this
-// file prints them in wire order, so without the number the reordering is an unexplained shuffle of
-// a list that used to be alphabetical. And the ranking's own basis has to travel with it — estimated
-// grams are a flat per-variety constant, so an all-≈ ordering is the count column rescaled and
-// nothing more. Parenthesised qualifier, matching `Total weight:` above rather than inventing a
-// second phrasing for the same fact. Empty string (not a placeholder) when there is nothing
-// derivable, and equally when the row predates the variety grain — an older Lambda's crops[] rows
-// simply have no `weight` key, and "this API cannot compute it" must not print as "0 g".
+// It rides the export because the export RANKS: the server orders varieties by weight and this file
+// prints them in wire order, so without the number the ordering is an unexplained shuffle. The
+// ranking's own basis travels with it — estimated grams are a flat per-variety constant, so an
+// all-≈ ordering is the count column rescaled and nothing more. Parenthesised qualifier, matching
+// `Total weight:` above. Empty string (not a placeholder) when there is nothing derivable, and
+// equally when the row predates the variety grain — an older Lambda's crops[] rows have no `weight`
+// key, and "this API cannot compute it" must not print as "0 g".
 function varietyWeight(weight) {
   const text = formatGrams(weight?.grams)
   if (text == null) return ''
@@ -86,8 +84,8 @@ function varietyWeight(weight) {
  * selected crops by the caller (the server takes a single `crop` param, so multi-select filters
  * client-side — see HarvestExportSheet).
  *
- * Variety sub-lines are NOT optional (design §2c, adjudicated): the January seed-ordering use is
- * variety-grain — "Pepper — 300 count" cannot decide which of 49 cultivars earned a reorder.
+ * Variety sub-lines are NOT optional (design §2c): the seed-ordering use is variety-grain —
+ * "Pepper — 300 count" cannot decide which cultivar earned a reorder.
  * First-pick lines answer "did it produce before frost". Unquantified counts are included so the
  * export never silently under-reports what was picked.
  */
@@ -220,11 +218,9 @@ export function buildLogExport({ entries = [], timeframe = '', cropNames = [], g
  * needs. Copy stays byte-plain (design §2c): a notes app or a spreadsheet wants the data, not a
  * sentence about it.
  *
- * Built on `seasonTotalPhrase` (the idle primitive named in the design). `leadFacts` is deliberately
- * NOT used: it takes a harvestPost BATCH (one evening's logging session, clustered on created_at)
- * and computes "picked tonight" facts, which are false of a season-scoped export. Reaching for it
- * here would produce a confidently wrong sentence — exactly the class this codebase keeps writing
- * honesty rules about.
+ * Built on `seasonTotalPhrase`. `leadFacts` is deliberately NOT used: it takes a harvestPost BATCH
+ * (one evening's logging session, clustered on created_at) and computes "picked tonight" facts,
+ * which are false of a season-scoped export.
  */
 export function narratedHeader({ mode, aggregates, entries = [], timeframe = '' } = {}) {
   const scope = timeframeLabel(timeframe).toLowerCase()
@@ -234,10 +230,8 @@ export function narratedHeader({ mode, aggregates, entries = [], timeframe = '' 
   }
   const crops = aggregates?.crops ?? []
   if (crops.length === 0) return `My garden, ${scope}:`
-  // V4-HARVGRAIN-001 moved the server's crop ordering from alphabetical to weight-descending, so
-  // crops[0] is now the season's biggest producer rather than whatever sorted first. That is the
-  // better lead for a shared header and needs no code change here — noted because this line reads
-  // as arbitrary otherwise, and because a future re-sort silently changes what the post opens with.
+  // The server orders crops weight-descending (V4-HARVGRAIN-001), so crops[0] is the season's biggest
+  // producer. A future re-sort silently changes what the shared header opens with.
   const phrase = seasonTotalPhrase(crops[0])
   const more = crops.length - 1
   const tail = more > 0 ? ` and ${more} more crop${more === 1 ? '' : 's'}` : ''

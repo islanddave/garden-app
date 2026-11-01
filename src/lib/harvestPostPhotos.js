@@ -1,16 +1,14 @@
 // harvestPostPhotos.js — V4-HARVPOSTPHOTOS-001. The photo half of the harvest post composer.
 //
-// WHY THIS EXISTS: ComposeHarvestBand shipped the caption and stopped there, so Dave still re-adds
-// every photo by hand in the Facebook composer — the transcription this surface was built to remove,
-// moved rather than deleted. `navigator.share({ files })` on Chrome Android hands the OS the bytes
-// alongside the text, which is the whole gap.
+// WHY THIS EXISTS: a caption alone leaves Dave re-adding every photo by hand in the Facebook
+// composer. `navigator.share({ files })` on Chrome Android hands the OS the bytes alongside the text.
 //
 // PURE + INJECTED, no React and no bare `fetch` in the hot path, so it unit-tests with zero runtime
 // deps — same split as harvestPost.js next to it, and the same reason photoModel.js refuses to import
 // a component: `mint` is passed in by the caller (which owns PhotoImg's minting cache) rather than
 // imported here.
 //
-// ── The three facts the design rests on ────────────────────────────────────────────────────────────
+// The three facts the design rests on:
 // 1. TRANSIENT USER ACTIVATION DIES ACROSS AN AWAIT (Chrome Android). navigator.share must be called
 //    with the files ALREADY IN HAND, so the fetching happens when the composer opens, not when Share
 //    is tapped. Composition time is the prefetch window. Same landmine HarvestExportSheet documents.
@@ -18,26 +16,25 @@
 //    convert it to bytes immediately: the TTL only has to survive the mint -> fetch hop (milliseconds),
 //    not the minutes Dave spends writing his lead. Holding a File is what immunizes this path.
 // 3. THE SERVER CANNOT TELL US HOW BIG A PHOTO IS. photos.file_size_bytes and photos.mime_type are
-//    NULL on 1269 of 1281 live rows (measured on prod 2026-08-20), so the byte budget can only be
-//    enforced against blobs we have already received. It bounds what we HOLD and hand to the OS, not
-//    what crosses the wire — the overshoot is capped at one file by the break below.
+//    NULL on nearly every row, so the byte budget can only be enforced against blobs we have already
+//    received. It bounds what we HOLD and hand to the OS, not what crosses the wire — the overshoot
+//    is capped at one file by the break below.
 //
 // A presigned S3 GET is fetched with credentials omitted: the signature is in the query string, and
 // attaching the app's Authorization header (i.e. going through useApiFetch) makes S3 reject it.
 
 import { stripImageFileStrict } from './imageMetadataStrip.js'
 
-// Measured on prod (2026-08-20, 106 logging batches by the harvestPost.js 45-minute rule): 29 batches
-// carry photos, distributed 1x13, 2x2, 3x4, 5x2, 8x2, 9, 11, 13, 14, 16, 30. A cap of 10 covers 24 of
-// those 29 whole; the tail is bulk-import evenings, not posts. 10 is also where a Facebook post stops
-// being a photo grid and becomes an album, and it keeps the file count well under any browser ceiling.
-// NOTHING IS SILENTLY DROPPED — the composer states the count it left out.
+// A cap of 10 covers nearly every real batch whole; the tail is bulk-import evenings, not posts. 10
+// is also where a Facebook post stops being a photo grid and becomes an album, and it keeps the file
+// count well under any browser ceiling. NOTHING IS SILENTLY DROPPED — the composer states the count
+// it left out.
 export const MAX_POST_PHOTOS = 10
 
-// Typical upload is ~240-830KB (imageDownscale caps the long edge at 2048px and re-encodes anything
-// over 512KB), so ten photos is ~5MB and this never binds. It exists for the 913 photos backfilled
-// BEFORE that downscale shipped, whose originals measured 1.9-6.2MB: ten of those would be 60MB of
-// blobs held in a phone renderer, which is the OOM class imagePipeline.js is written around.
+// Typical upload is under 1MB (imageDownscale caps the long edge at 2048px), so ten photos is a few
+// MB and this never binds. It exists for photos backfilled BEFORE that downscale shipped, whose
+// originals run several MB: ten of those would be tens of MB of blobs held in a phone renderer,
+// which is the OOM class imagePipeline.js is written around.
 export const MAX_POST_PHOTO_BYTES = 25 * 1024 * 1024
 
 // One retry of the whole (mint, fetch) pair. Rural LTE is this app's normal condition, and a mint that
@@ -47,9 +44,8 @@ const ATTEMPTS = 2
 
 // The share sheet hands this filename to whatever app receives it, and Android apps routinely
 // dispatch on the extension rather than the MIME type — so a lying one is a file that will not
-// open. avif/heif were missing here while photoKeys.js (the upload side) had both; that was latent
-// only because BUG-HEICEXIFPASSTHRU-001's fail-closed strip dropped every ISOBMFF photo before it
-// could be named. BUG-HEICREALSTRIP-001 lets them through, so the gap is now reachable.
+// open. Keep avif/heif here in step with photoKeys.js (the upload side); the strip now passes
+// ISOBMFF photos through (BUG-HEICREALSTRIP-001), so every one of them reaches this table.
 const EXT = {
   'image/png': 'png', 'image/webp': 'webp', 'image/jpeg': 'jpg',
   'image/heic': 'heic', 'image/heif': 'heif', 'image/avif': 'avif',
@@ -102,28 +98,21 @@ async function loadOne(ref, { mint, fetchBlob, signal, index }) {
       if (!blob || !blob.size) throw new Error('empty photo body')
       const type = blob.type || 'image/jpeg'
       // V4-PHOTOEXIFSTRIP-001 LAYER 2 — strip here as well as on upload, because this is the only
-      // layer that protects the 913 photos ALREADY in S3. They were backfilled before any downscale
-      // or strip existed, so they are camera originals with GPS at Dave's house, and nothing about
-      // stripping on upload reaches them. Doing it here needs no bulk rewrite of stored objects:
-      // the share sheet only ever sees the bytes we hand it. Upload-side strip fixes the future,
-      // this fixes the present.
+      // layer that protects photos ALREADY in S3. Those were backfilled before any downscale or strip
+      // existed, so they are camera originals with GPS at Dave's house, and stripping on upload never
+      // reaches them. Doing it here needs no bulk rewrite of stored objects: the share sheet only
+      // ever sees the bytes we hand it.
       //
       // A THROW IS THE CORRECT OUTCOME. It lands in the catch below, which retries the whole
       // (mint, fetch, strip) once and then counts the photo failed — so the composer says
       // "1 didn't load" and the post goes without it. A photo we cannot strip is not shared.
       //
-      // BUG-HEICEXIFPASSTHRU-001 — the sentence above used to be FALSE, and it was false in the
-      // exact place it was written. This called the LENIENT stripImageFile, which throws on an
-      // unreadable blob but RETURNS THE INPUT for a container it has no walker for. Measured on a
-      // real HEIC: fetchPostPhotos returned it as harvest-photo-1.heic, failed:0, GPS intact, and
-      // handed it to the share sheet. Strict is what makes the comment true — the FB Lambda's
-      // isJpeg reject (lambda/facebook-share/index.js) was the only enforcement, and the share
-      // sheet does not go through the Lambda.
-      //
-      // BUG-HEICREALSTRIP-001 — strict stays, and the set of things it refuses shrank. HEIC/AVIF
-      // now have an ISOBMFF walker, so they come back stripped and ARE shared; what still throws
-      // is a container with no walker at all (a raw DNG, a TIFF). The policy on this line did not
-      // change and is still the thing keeping the comment above true.
+      // BUG-HEICEXIFPASSTHRU-001 — it MUST be the STRICT stripImageFileStrict. The lenient
+      // stripImageFile RETURNS THE INPUT for a container it has no walker for, so a HEIC would reach
+      // the share sheet with GPS intact; the share sheet does not go through the FB Lambda's isJpeg
+      // reject, so nothing else would stop it. BUG-HEICREALSTRIP-001: HEIC/AVIF now have an ISOBMFF
+      // walker and come back stripped; strict still throws on a container with no walker (raw DNG,
+      // TIFF).
       const clean = await stripImageFileStrict(blob)
       // A neutral filename: it rides into the share sheet and on to whatever app receives it, so it
       // must not carry a caption, a variety name or a UUID.
@@ -138,8 +127,8 @@ async function loadOne(ref, { mint, fetchBlob, signal, index }) {
 // Fetch the batch's photos as Files, sequentially.
 //
 // SEQUENTIAL ON PURPOSE. Concurrency would make the byte budget fuzzy (in-flight responses can
-// overshoot it by N files instead of 1) and buys little: the median photo-bearing batch is 3 photos,
-// and this runs while Dave writes his lead rather than while he waits on a tap.
+// overshoot it by N files instead of 1) and buys little: batches are a few photos, and this runs
+// while Dave writes his lead rather than while he waits on a tap.
 //
 // PARTIAL IS THE CORRECT OUTCOME, and it is the opposite of HarvestExportSheet's drain-abort. That
 // export aborts on a short page because a silently-truncated LIST OF HARVESTS looks complete and is
