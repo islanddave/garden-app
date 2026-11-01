@@ -1,4 +1,4 @@
-// A0.1 — closed allowlist for the caller-named key on GET /api/photos/upload-url.
+// Closed allowlist for the caller-named key on GET /api/photos/upload-url.
 // The grammar mirrors src/lib/photoKeys.js buildPhotoKey EXACTLY (the only shapes the app
 // client emits): standalone/{uuid}.{ext} or {prefix}/{id}/{uuid}.{ext}. Segments are dot-free
 // (genUuid + DB uuids never contain dots) — that one restriction rejects traversal (`..`),
@@ -25,7 +25,7 @@ export function isAllowedUploadKey(key) {
   return typeof key === 'string' && key.length <= 256 && KEY_RE.test(key);
 }
 
-// I34 (BUG-AUTHZLAMBDA-001) — what POST /api/photos may REGISTER as storage_path: a caller-nameable
+// What POST /api/photos may REGISTER as storage_path: a caller-nameable
 // upload key above, or the caller's OWN inbox key in exactly the shape POST /api/photos/batch mints
 // (inbox/{sub}/{uuid}.{ext}). Never thumbs/…, never another sub's inbox, never a nested, traversal
 // or empty tail — a bare startsWith() admitted all three. SAFE_KEY_SEGMENT is the ONE copy of the

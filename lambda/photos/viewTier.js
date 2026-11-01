@@ -1,21 +1,19 @@
-// V4-TIERBLINDMINT-001 — tier selection for GET /api/photos/view-url/:id.
+// Tier selection for GET /api/photos/view-url/:id.
 //
-// That route presigned photos.storage_path unconditionally, so the re-mint could only ever hand
-// back the ORIGINAL. Both list read paths serve a tile its THUMB instead (thumbs/<storage_path>,
-// derived by convention — BUG-PHOTOBLANK-001), and PhotoImg re-mints by photo id ALONE, so a thumb
-// tile that healed a 900s expiry silently adopted the full original and kept it for the rest of its
-// life. Not a regression (one request instead of three, no blank flash, same bytes) but it defeats
-// the thumbnail saving on any tile that heals, which is the entire point of the tier.
+// That route used to presign photos.storage_path unconditionally, so a re-mint could only hand back
+// the ORIGINAL. Both list read paths serve a tile its THUMB instead (thumbs/<storage_path>, derived by
+// convention), and PhotoImg re-mints by photo id ALONE, so a thumb tile that healed an expired (900s)
+// URL silently adopted the full original and kept it, defeating the thumbnail saving on any tile that
+// heals.
 //
 // The response NAMES the tier it minted, not just the URL. Without that name a caller cannot tell a
-// thumb presign from a full one, so it could not honour the tier even having asked for it — which is
-// the "tier-blind" half of the defect, distinct from the "always original" half.
+// thumb presign from a full one, so it could not honour the tier even having asked for it: the
+// "tier-blind" half of the defect, distinct from the "always original" half.
 //
 // SECURITY — the tier is an ENUM, never a key fragment. The caller names a tier from a closed set
 // and the SERVER owns the prefix that name maps to, exactly as thumb-upload-url already does: "the
 // `thumbs/` prefix is applied SERVER-SIDE and is not caller-nameable". Interpolating a caller string
-// into the key would hand back the traversal and prefix-smuggling surface that A0.1
-// (uploadKeyPolicy.js) spent a route closing.
+// into the key would reopen the traversal and prefix-smuggling surface that uploadKeyPolicy.js closes.
 
 export const PHOTO_VIEW_TIERS = Object.freeze(['full', 'thumb']);
 
