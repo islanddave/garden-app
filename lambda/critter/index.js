@@ -1,9 +1,8 @@
-// /api/critters Lambda — MVP-Critter Stages 1+2+3 server.
-// Canonical spec: mvp-critter-pre-build-revision-V001-20260528.md §2 (Lambda routes + handlers).
-// Binding parent: reward-ux-guideline-V100-20260518.1830.md (CONTENT-LOCKED).
+// /api/critters Lambda: critter stickerbook, notification prefs, and the dormant app-config routes.
+// Spec: mvp-critter-pre-build-revision-V001-20260528.md §2; binding parent: reward-ux-guideline-V100-20260518.1830.md.
 //
-// Routes (12 declared; POST /api/critters is retired — see the tombstone in the handler):
-//   POST   /api/critters                           Award critter for action-completion event (MVP plant-only)
+// Routes (POST /api/critters is retired; see the tombstone in the handler):
+//   POST   /api/critters                           RETIRED (BUG-CRITTERSELFGRANT-001); falls through to 404
 //   GET    /api/critters/active                    Unviewed + unfaded list for the caller
 //   GET    /api/critters/collection             Per-user lifetime stickerbook summary (Collection page Phase 2 wiring)
 //   GET    /api/critters/:id                       Single row (smoke verification)
@@ -19,17 +18,14 @@
 //   PATCH  /api/app-config                         DORMANT since V5-NAVCUSTOM-001 — was the global nav write, ADMIN_CLERK_SUBS gated
 //
 // Scope: every route except the two /api/app-config ones is PER-USER (created_by = the caller's own sub).
-// Those two write a row no user owns, which is why their PATCH keeps its admin gate. They are dormant:
-// Dave ruled on 2026-09-24 (D4) that the tab bar is per person, so the SPA stopped using them in
-// V5-NAVCUSTOM-001 and the per-person bar is bar_layout on the prefs route. They stay only so a client
-// still rolling out gets a 200 rather than a 404; removal is a follow-up (see the block above them).
-// Scope: ZERO RLS in current Neon. Lambda enforces created_by = ANY(${ownerIds}) with ownerIds = [caller]: the
-// stickerbook is per person even when GARDEN_HOUSEHOLD_IDS lists a household (Dave's ruling; guard:
+// Those two write a row no user owns, so their PATCH keeps its admin gate; they are dormant since
+// V5-NAVCUSTOM-001 (the tab bar is per person: bar_layout on the prefs route) and stay only so a client
+// still rolling out gets a 200 rather than a 404.
+// ZERO RLS in current Neon. Lambda enforces created_by = ANY(${ownerIds}) with ownerIds = [caller]: the
+// stickerbook is per person even when GARDEN_HOUSEHOLD_IDS lists a household (guard:
 // tests/integration/critter.int.test.js "SEC-13a" case, lambda/household-isolation.test.js OUT_OF_SCOPE).
-// Idempotency: POST /api/critters relies on UNIQUE INDEX idx_critter_state_source_event_id.
-//   PG 23505 (unique_violation) caught + returns existing row → idempotent success (revision §3.27).
 // CORS: Lambda URL config owns it. Handler keeps CORS = {} per L-097.
-// Deploy marker: cold-start console.log per revision §2.6 — smoke greps last 5min logs before block I.
+// Deploy marker: cold-start console.log; smoke greps the last 5 min of logs before block I.
 
 import { neon } from '@neondatabase/serverless'
 import {
@@ -39,8 +35,8 @@ import {
 } from './validators.js'
 import { requestContext } from './request-context.js'
 
-// Deploy marker — fires once per cold start. Smoke step greps last 5min CloudWatch for this string.
-// L-072 / L-104 family: green tests ≠ green deploy. Marker proves the *running* Lambda is current.
+// Deploy marker, once per cold start; the smoke step greps CloudWatch for it. Proves the *running*
+// Lambda is current (L-072 / L-104: green tests do not mean green deploy).
 console.log(`critter-lambda: deploy-marker ${process.env.GIT_SHA ?? 'unknown'}`)
 
 const CORS = {} // Lambda URL config owns CORS — handler must NOT duplicate (L-097)
@@ -53,13 +49,10 @@ function resp(statusCode, body) {
   }
 }
 
-// ─── helpers ────────────────────────────────────────────────────────────────
-
 // Quiet-hours server-side evaluation per revision §3.6. Returns ISO timestamp of the
 // "dot becomes visible" moment — either now (outside quiet hours) or the next 07:00 local.
 // Client TZ is passed via header `x-client-tz-offset` (minutes from UTC, JS convention).
 function computeDotVisibleAfter(now, quietStart, quietEnd, tzOffsetMin) {
-  // Defaults if prefs missing.
   const start = quietStart ?? '21:00'
   const end = quietEnd ?? '07:00'
   const offset = Number.isFinite(tzOffsetMin) ? tzOffsetMin : 0
@@ -77,7 +70,6 @@ function computeDotVisibleAfter(now, quietStart, quietEnd, tzOffsetMin) {
   const target = new Date(localNow)
   target.setUTCHours(eh, em, 0, 0)
   if (target <= localNow) target.setUTCDate(target.getUTCDate() + 1)
-  // Back to UTC.
   return new Date(target.getTime() + offset * 60 * 1000).toISOString()
 }
 
@@ -95,9 +87,9 @@ async function readUserPrefs(sql, clerkSub) {
      WHERE created_by = ${clerkSub}
      LIMIT 1
   `
-  // V5-NAVCUSTOM-001: this list names more_pins and bar_layout, and it runs on every user's boot. It
-  // must never reach an environment before migrations/v5-navcustom-001 — a missing column 500s this
-  // read for everyone and every per-person pref resets (README-BUILD.md there has the order).
+  // V5-NAVCUSTOM-001: this list names more_pins and bar_layout and runs on every user's boot, so it must
+  // never reach an environment before migrations/v5-navcustom-001 (README-BUILD.md there has the order):
+  // a missing column 500s this read for everyone.
   if (rows.length > 0) return rows[0]
   return {
     critter_visit: 'in_app_only',
@@ -111,27 +103,26 @@ async function readUserPrefs(sql, clerkSub) {
     garden_expanded: null,
     garden_bloom_seen: null,
     garden_helper_rung1_seen: null,
-    // V4-USERPREFS-001. NULL is the honest default for all three: it means "this user has not set
-    // it", which is what every client-side fallback already assumes. Do NOT substitute a concrete
-    // default here — that would make "unset" indistinguishable from a real choice, the same trap
-    // V4-ACQMATURE-001's nullable-no-default column exists to avoid.
+    // V4-USERPREFS-001. NULL is the honest default for these three: "this user has not set it", which
+    // every client-side fallback assumes. Do NOT substitute a concrete default; "unset" must stay
+    // distinguishable from a real choice.
     today_skipped: null,
     log_many_all_selected: null,
     whats_new_last_seen: null,
-    // V5-NAVCUSTOM-001. NULL = no pins (the shipped More menu) and the shipped bar, per CONTRACT §2.
+    // NULL = no pins (the shipped More menu) and the shipped bar (CONTRACT §2).
     more_pins: null,
     bar_layout: null,
     created_at: null, updated_at: null,
   }
 }
 
-// V5-TODAYREDESIGN-001 S7 — today_sections, the redesigned Today's remembered open/closed state.
+// today_sections: the Today page's remembered open/closed state.
 //
-// THIS LAMBDA TOLERATES THE COLUMN'S ABSENCE, unlike more_pins / bar_layout above. migrations/
-// v5-todaysections-001 may land on an environment after this code does (prod DDL waits for Dave's OK), so
-// the column is never named in readUserPrefs' boot SELECT — a missing column there would 500 every user's
-// boot read. It is read by its own statement instead, and that statement's failure never fails the GET:
-//   * 42703 naming the column (not migrated here yet): the GET carries NO today_sections key at all, and the
+// THIS LAMBDA TOLERATES THE COLUMN'S ABSENCE, unlike more_pins / bar_layout above.
+// migrations/v5-todaysections-001 may land on an environment after this code (prod DDL waits for Dave's
+// OK), so the column is never named in readUserPrefs' boot SELECT: a missing column there would 500 every
+// user's boot read. It is read by its own statement, whose failure never fails the GET:
+//   * 42703 naming the column (not migrated yet): the GET carries NO today_sections key at all, and the
 //     absence is remembered for TODAY_SECTIONS_ABSENT_MS so a warm container does not re-ask on every boot;
 //   * any other error: logged, and the key is omitted the same way. The client then reads its own mirror.
 // The PATCH arm (Route 8) writes it with its own statement too, and answers 409 on the same 42703.
@@ -164,8 +155,6 @@ async function readTodaySections(sql, clerkSub) {
 // Test seam: the absence memo is module state and vitest does not reset modules between cases in a file.
 export function __resetTodaySectionsAbsence() { todaySectionsAbsentUntil = 0 }
 
-// ─── handler ───────────────────────────────────────────────────────────────
-
 export const handler = async (event) => {
   // The kit answers OPTIONS and every sign-in refusal (401, the household gate's 403) before any statement. No scope:
   // the stickerbook is per person. The two semicolons are load-bearing: household-isolation.test.js KIT_CALL needs them.
@@ -179,34 +168,22 @@ export const handler = async (event) => {
   const tzOffsetMin = parseInt(headers['x-client-tz-offset'] ?? headers['X-Client-Tz-Offset'] ?? '0', 10)
 
   try {
-    // ── Route 1: POST /api/critters — RETIRED 2026-08-12 (BUG-CRITTERSELFGRANT-001) ──────
-    // This route inserted a critter_state row for ANY event in the caller's household: no
-    // event_type gate, NO PROBABILITY ROLL AT ALL, and the CALLER CHOSE species_id. It was a
-    // guaranteed self-grant of the one reward in this system that writes durable data (xp, streak
-    // and total_events are all recomputed from event_log; a critter_state row persists until
-    // someone deletes it). Strictly worse than the ~47.5% server roll that BUG-CRITTERNONREWARD-001
-    // gated, and it predated the NON_REWARD_EVENT_TYPES partition entirely.
-    //
-    // Retired rather than gated. Gating would have needed a codegen change — the event-type
-    // vocabulary generates into lambda/events/ only — to teach this Lambda a vocabulary it has no
-    // other reason to know, in order to keep a route with no callers alive.
-    //
-    // Evidence there were none, checked before removal rather than assumed:
-    //   * SPA: critterClient.awardCritter() had zero call sites; EventNew.jsx:1041 records that the
-    //     server-side hook (events Lambda -> critterAward.js) replaced it. That dead client function
-    //     is removed in the same commit, so no client can name this path.
-    //   * PROD: all 1277 live critter_state rows carry meta->>'deterministic_seed', which ONLY
-    //     awardCritterServer writes; this route wrote the caller's meta (default {}). Zero rows have
-    //     ever come from here. (Live read-only query, 2026-08-12.)
-    // Requests now fall through to the 404 at the bottom of this handler.
+    // ── Route 1: POST /api/critters, RETIRED (BUG-CRITTERSELFGRANT-001) ──────
+    // It inserted a critter_state row for any event in the caller's household with NO event_type gate,
+    // NO probability roll, and a CALLER-CHOSEN species_id: a guaranteed self-grant of the one reward in
+    // this system that writes durable data (a critter_state row persists until someone deletes it).
+    // Retired rather than gated: gating would need codegen so this Lambda learns the event-type
+    // vocabulary, to keep a route with no callers alive. It had none: the SPA's awardCritter() had zero
+    // call sites (EventNew.jsx:1041 records that the server-side hook, events Lambda -> critterAward.js,
+    // replaced it), and every live critter_state row carries meta->>'deterministic_seed', which only
+    // awardCritterServer writes. Requests now fall through to the 404 at the bottom of this handler.
 
     // ── Route 2: GET /api/critters/active ───────────────────────────────
     // Two lifetime counts per species_id (incl. viewed/faded; excludes soft-deleted):
-    //   species_user_count      — scoped to THIS user (created_by = userId). Drives the
-    //                              "✨ First sighting!" celebration. Stickerbook is per-person
-    //                              per Dave 2026-05-31 (each user collects their own roster).
-    //   species_household_count — counted over ownerIds, the caller alone, so it equals
-    //                              species_user_count. Kept in the response for clients; not surfaced.
+    //   species_user_count      scoped to THIS user; drives the "First sighting!" celebration (the
+    //                           stickerbook is per person).
+    //   species_household_count counted over ownerIds, the caller alone, so it equals species_user_count.
+    //                           Kept in the response for clients; not surfaced.
     if (rawPath === '/api/critters/active' && method === 'GET') {
       const rows = await sql`
         -- V4-PERFCRITTER-001: per-species lifetime counts via single-pass GROUP BY CTEs
@@ -251,13 +228,10 @@ export const handler = async (event) => {
     }
 
     // ── Route 2.5: GET /api/critters/collection (per-user stickerbook) ──
-    // Per-USER lifetime species summary for Collection page Phase 2 wiring.
-    // Scope: created_by = userId: the stickerbook is per person, not per household.
-    // Lifetime: includes viewed AND faded rows (excludes only soft-deleted).
-    // Species never earned by the user are absent from the response — the frontend
-    // renders them as silhouettes per spec V001.
-    // IMPORTANT: declared BEFORE Route 3 (GET /api/critters/:id) so the "collection"
-    //   path segment doesn't get UUID-matched as an :id by Route 3's regex.
+    // Per-USER lifetime species summary (viewed AND faded rows; excludes only soft-deleted). Species
+    // never earned are absent; the frontend renders them as silhouettes.
+    // IMPORTANT: declared BEFORE Route 3 (GET /api/critters/:id) so the "collection" path segment
+    //   doesn't get UUID-matched as an :id by Route 3's regex.
     if (rawPath === '/api/critters/collection' && method === 'GET') {
       const rows = await sql`
         SELECT species_id,
@@ -292,9 +266,8 @@ export const handler = async (event) => {
     }
 
     // ── Route 4: PATCH /api/critters/viewed (Stage 3 dot clear) ─────────
-    // Session 3.5 (revision §3.26): accepts optional { actually_seen_critter_ids: [uuid...] }.
-    // Non-empty → mark ONLY those ids (per-sprite IO-gated marking). Missing/empty → bulk fallback.
-    // Race-window guard (revision §2.5) preserved in both branches.
+    // Optional { actually_seen_critter_ids: [uuid...] }: non-empty marks ONLY those ids (per-sprite
+    // IO-gated marking); missing/empty is the bulk fallback. Race-window guard (revision §2.5) applies to both.
     if (rawPath === '/api/critters/viewed' && method === 'PATCH') {
       const gateHeader = headers['x-garden-view-opened-at'] ?? headers['X-Garden-View-Opened-At']
       const gate = gateHeader ?? new Date().toISOString()
@@ -373,11 +346,11 @@ export const handler = async (event) => {
     }
 
     // ── Route 7: GET /api/notifications/prefs (stateless defaults) ──────
-    // can_edit_bar (V5-NAVCUSTOM-001) is computed per request from ADMIN_CLERK_SUBS and never stored.
-    // It decides only who SEES the bar editor (D3: today, Dave); every bar_layout write goes to the
-    // caller's own row and needs no admin check. Fail-closed: unset allowlist -> false for everyone.
-    // today_sections (V5-TODAYREDESIGN-001 S7) rides along only when this environment has the column: absent
-    // from the body means "this server cannot store it yet", null means "stored nothing yet" (readTodaySections).
+    // can_edit_bar is computed per request from ADMIN_CLERK_SUBS and never stored. It decides only who SEES
+    // the bar editor; every bar_layout write goes to the caller's own row and needs no admin check.
+    // Fail-closed: unset allowlist -> false for everyone.
+    // today_sections rides along only when this environment has the column: absent from the body means "this
+    // server cannot store it yet", null means "stored nothing yet" (readTodaySections).
     if (rawPath === '/api/notifications/prefs' && method === 'GET') {
       const [prefs, sections] = await Promise.all([readUserPrefs(sql, userId), readTodaySections(sql, userId)])
       const body = { ...prefs, can_edit_bar: isAdmin(userId, process.env) }
@@ -390,13 +363,12 @@ export const handler = async (event) => {
       const body = JSON.parse(event.body ?? '{}')
       const vErr = validatePrefsPatchBody(body)
       if (vErr) return resp(vErr.status, { error: vErr.error })
-      // V5-TODAYREDESIGN-001 S7 — today_sections, alone (the validator refused it beside anything else), by
-      // its OWN statement: the one write on this route that may meet a database without its column. Merged
-      // PER TOP-LEVEL KEY — `stored || incoming`, so an entry this body carries replaces that section's
-      // entry and every other section's entry stays (plan-v2 §2.1; README-BUILD.md "Cross-device merge
-      // rule"). Every other column on this route still replaces whole (COALESCE below). jsonb, so stringified
-      // and cast ::jsonb at both binding sites, exactly as today_skipped. 42703 → 409 with nothing written:
-      // the client keeps the entries dirty on its device and sends them again at its next visit start.
+      // today_sections goes alone (the validator refused it beside anything else), by its OWN statement: the
+      // one write on this route that may meet a database without its column. Merged PER TOP-LEVEL KEY
+      // (`stored || incoming`): an entry this body carries replaces that section's entry and every other
+      // section's stays (plan-v2 §2.1; README-BUILD.md "Cross-device merge rule"). Every other column here
+      // replaces whole (COALESCE below). jsonb, so stringified and cast ::jsonb at both binding sites.
+      // 42703 -> 409 with nothing written: the client keeps the entries dirty and resends at its next visit start.
       if (body.today_sections != null) {
         const tsec = JSON.stringify(body.today_sections)
         try {
@@ -416,8 +388,7 @@ export const handler = async (event) => {
           return resp(409, { error: 'today_sections is not stored on this server yet' })
         }
       }
-      // Build column set dynamically (NULLs are skip via COALESCE on UPDATE).
-      // Use INSERT...ON CONFLICT DO UPDATE for upsert.
+      // Upsert; NULLs are skipped via COALESCE on UPDATE.
       const cv = body.critter_visit ?? null
       const qs = body.quiet_hours_start ?? null
       const qe = body.quiet_hours_end ?? null
@@ -428,26 +399,22 @@ export const handler = async (event) => {
       const gbsArr = body.garden_bloom_seen ?? null
       const gbs = gbsArr == null ? null : JSON.stringify(gbsArr)
       const ghr = body.garden_helper_rung1_seen ?? null
-      // V4-USERPREFS-001. today_skipped is jsonb, so it is stringified here and cast at every
-      // binding site below — EVERY site, including the INSERT VALUES and both COALESCE arms. A
-      // bare NULL parameter has no inferable type to Postgres and fails with "could not determine
-      // data type of parameter" rather than with anything that names the column; the cast is what
-      // makes the null arm legal, not a stylistic flourish.
+      // today_skipped is jsonb: stringified here and cast at EVERY binding site below
+      // (INSERT VALUES and both COALESCE arms). A bare NULL parameter has no inferable type and fails with
+      // "could not determine data type of parameter", which names no column.
       const tsObj = body.today_skipped ?? null
       const ts = tsObj == null ? null : JSON.stringify(tsObj)
       const lma = body.log_many_all_selected ?? null
-      // BUG-WHATSNEWSTALELOCALPUSH-001. whats_new_last_seen is the one column here that only moves
-      // FORWARD: the ON CONFLICT arm keeps the LARGER of incoming and stored, compared as dot-separated
-      // integers (bigint[] — 4.10.0 is above 4.9.0, which a text compare gets backwards), in the one
-      // statement so two devices cannot race it. A device with a stale local value can no longer
-      // lower it. The digit patterns guard the casts; a value on either side that is not plain dotted
-      // digits falls back to last-write, which is what validators.js leaves the door open for. The
-      // patterns spell the dot as [.] because a backslash would be eaten by the template literal.
+      // BUG-WHATSNEWSTALELOCALPUSH-001: whats_new_last_seen only moves FORWARD. The ON CONFLICT arm keeps the
+      // LARGER of incoming and stored, compared as dot-separated integers (bigint[]; 4.10.0 is above 4.9.0,
+      // which a text compare gets backwards), in one statement so two devices cannot race it. A value on
+      // either side that is not plain dotted digits falls back to last-write. The patterns spell the dot as
+      // [.] because a backslash would be eaten by the template literal.
       const wnls = body.whats_new_last_seen ?? null
-      // V5-NAVCUSTOM-001. Both jsonb, so stringified here and cast ::jsonb at every binding site below,
-      // exactly as today_skipped: the driver would otherwise send a JS array as a Postgres array
-      // literal, and a bare NULL parameter has no type Postgres can infer. [] (and the shipped-default
-      // bar_layout object) is how a client clears; null here means "leave the stored value alone".
+      // more_pins / bar_layout are jsonb: stringified here and cast ::jsonb at every binding site (as
+      // today_skipped), else the driver sends a JS array as a Postgres array literal and a bare NULL has no
+      // inferable type. [] (and the shipped-default bar_layout object) is how a client clears; null means
+      // "leave the stored value alone".
       const mpArr = body.more_pins ?? null
       const mp = mpArr == null ? null : JSON.stringify(mpArr)
       const blObj = body.bar_layout ?? null
@@ -529,28 +496,21 @@ export const handler = async (event) => {
       return resp(200, rows[0])
     }
 
-    // ── Routes 11+12: /api/app-config — DORMANT since V5-NAVCUSTOM-001 (was global config, V5-ADMINCENTER-001) ──
+    // ── Routes 11+12: /api/app-config, DORMANT since V5-NAVCUSTOM-001 (was global config) ──
     //
-    // THE SPA STOPPED USING THESE TWO ROUTES IN V5-NAVCUSTOM-001. Dave ruled on 2026-09-24 (D4) that
-    // the tab bar is per person — only his bar changes, and Jen's never shifts — which reverses his
-    // 2026-09-08 ruling that the nav order is one setting for the whole installation. The per-person
-    // bar is bar_layout on the prefs route (Routes 7 and 8). These two stay, behaviour unchanged, only
-    // so a client that is still rolling out gets a 200 rather than a 404; removing them is a follow-up
-    // ledger row, not this release. Nothing new should call them.
+    // The SPA stopped using these two routes: the tab bar is per person (bar_layout on the prefs route,
+    // Routes 7 and 8). They stay, behaviour unchanged, only so a client still rolling out gets a 200 rather
+    // than a 404. Nothing new should call them.
     //
-    // While they exist, the reasoning that shaped them still holds. They sit on this Lambda because a
-    // new rawPath on an already-warm origin cost zero preconnects, zero new VITE_API_* variables and
-    // zero new Function URLs (bootPaint.static.test.js dedupes the preconnect set by ORIGIN,
-    // warmOrigins.js:92-93). And they are the only routes here that are NOT per-user:
-    // public.app_config is keyed by `key` alone, so a write changes the row for everyone, and a
-    // self-scoped write to a SHARED row is not self-scoped. RLS cannot help — app_config's policies
-    // admit any authenticated caller, and this Lambda connects as a role that bypasses them anyway.
-    // That is why the PATCH below keeps its admin gate for as long as the route exists.
+    // They sit on this Lambda because a new rawPath on an already-warm origin costs zero preconnects, zero
+    // new VITE_API_* variables and zero new Function URLs (bootPaint.static.test.js dedupes the preconnect
+    // set by ORIGIN, warmOrigins.js:92-93). They are also the only routes here that are NOT per-user:
+    // public.app_config is keyed by `key` alone, so a write changes the row for everyone. RLS cannot help
+    // (the policies admit any authenticated caller, and this Lambda connects as a role that bypasses them),
+    // so the PATCH keeps its admin gate.
     if (rawPath === '/api/app-config' && method === 'GET') {
-      // UNGATED ON PURPOSE, and only the read: while clients read the nav order from here at boot, the
-      // non-admin one needed it too, and nav layout is not a secret. NO ROW = SHIPPED DEFAULT:
-      // app_config has zero rows on prod, and every key is reported explicitly as null when absent, so
-      // an old client still reading this route keeps getting "unset" and draws the shipped bar.
+      // UNGATED ON PURPOSE, and only the read: nav layout is not a secret. NO ROW = SHIPPED DEFAULT (zero rows
+      // on prod): every key is reported as null when absent, so an old client draws the shipped bar.
       const rows = await sql`
         SELECT key, value FROM public.app_config WHERE key = ANY(${APP_CONFIG_KEYS})
       `
@@ -558,21 +518,18 @@ export const handler = async (event) => {
     }
 
     if (rawPath === '/api/app-config' && method === 'PATCH') {
-      // GATE FIRST, BEFORE THE BODY IS EVEN PARSED — the order facebook-share/index.js:9 documents
-      // ("auth -> admin gate -> kill switch -> validate"). A non-admin is refused without the
-      // payload being read. It is the only thing standing between either household member and this
-      // shared row, so it stays for as long as the dormant route can write it; there is no client-side
-      // admin list and adding one would reverse a decision recorded in three files (DebugMenu.jsx:18-26).
+      // GATE FIRST, BEFORE THE BODY IS EVEN PARSED (the order facebook-share/index.js documents: "auth ->
+      // admin gate -> kill switch -> validate"). It is the only thing standing between either household
+      // member and this shared row; there is no client-side admin list and adding one would reverse a
+      // decision recorded in three files (DebugMenu.jsx:18-26).
       const refusal = adminRefusal(userId, process.env)
       if (refusal) return resp(refusal.status, { error: refusal.error })
       let body
       try { body = JSON.parse(event.body ?? '{}') } catch { return resp(400, { error: 'malformed JSON body' }) }
       const vErr = validateAppConfigPatchBody(body)
       if (vErr) return resp(vErr.status, { error: vErr.error })
-      // updated_at is maintained by the live set_updated_at BEFORE UPDATE trigger, so it is not
-      // named here. app_config carries no actor column: "which admin changed the nav" is not
-      // recorded by this table, and adding a per-key actor column to a generic k/v store would be
-      // the wrong shape — if it is ever wanted it is an audit_events write from here.
+      // updated_at comes from the set_updated_at BEFORE UPDATE trigger. app_config carries no actor column; if
+      // "which admin changed the nav" is ever wanted it is an audit_events write from here.
       const rows = await sql`
         INSERT INTO public.app_config (key, value)
         VALUES ('nav_tabs', ${JSON.stringify(body.nav_tabs)}::jsonb)

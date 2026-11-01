@@ -4,15 +4,9 @@
 
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-// NOTE: validateCritterPostBody was removed with POST /api/critters (BUG-CRITTERSELFGRANT-001; see
-// the tombstone in index.js). Its SMOKE_SENTINEL_SPECIES_ID went with it — that route was the only
-// caller, and critterSpecies.js holds the copy the client/lambda parity tests actually compare.
-//
-// The two range constants STAY: validateSpeciesPrefsPatchBody bounds its species_id with them, so
-// they were never exclusive to the retired route. Same values, same reason.
-// V102 un-gate (L-102 owner-override): full earnable critter pool. Live pool is species_id 1-168;
-// the bound is 1-254 to leave headroom under the DB CHECK (species_id BETWEEN 1 AND 255) for later
-// roster waves without re-touching this gate.
+// The two range constants serve validateSpeciesPrefsPatchBody (POST /api/critters was removed,
+// BUG-CRITTERSELFGRANT-001; see the tombstone in index.js). Live pool is species_id 1-168; the bound is
+// 1-254 to leave headroom under the DB CHECK (species_id BETWEEN 1 AND 255).
 export const MVP_SPECIES_MIN = 1
 export const MVP_SPECIES_MAX = 254
 
@@ -20,27 +14,22 @@ export const MVP_SPECIES_MAX = 254
 const CRITTER_VISIT_VALUES = new Set(['off', 'in_app_only', 'system'])
 // Every value Garden's group-by control can offer (src/lib/gardenGroupBy.js). The client keeps its own copy
 // (GARDEN_GROUP_BY_VALUES in src/lib/notificationPrefsClient.js); groupby.parity.test.js pins the two lists
-// together AND against the control. BUG-GARDENGROUPBYRESET-001: 'crop_type' (Type) and the three bean
-// facets were missing here, so those choices 400'd, the server kept an older one, and Garden re-adopted it.
+// together AND against the control. A value missing here 400s, the server keeps an older one, and Garden re-adopts it.
 export const GARDEN_GROUP_BY_VALUES = new Set(['none', 'type', 'crop_type', 'lifecycle', 'heat', 'determinacy', 'day_length', 'allium_type', 'basil_use', 'bean_type', 'bean_habit', 'bean_use', 'location', 'group', 'freeform', 'status'])
 export const GARDEN_SORT_ORDER_VALUES = new Set(['alpha', 'recency'])
 export const GARDEN_EXPANDED_MAX = 2000
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/
-// V4-USERPREFS-001 — today_skipped.date. Format-only, matching the DB CHECK's own strictness:
-// calendar validity is not asserted because the client writes todayLocalISO() and a wrong-but-
-// well-formed date self-heals on the next day boundary (the set is ignored when date != today).
+// today_skipped.date: format-only, matching the DB CHECK's strictness; a wrong-but-well-formed date
+// self-heals at the next day boundary (the set is ignored when date != today).
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
-// V5-NAVCUSTOM-001 — the two per-person nav settings, more_pins and bar_layout. Dave ruled on
-// 2026-09-24 that pins (D1) AND the tab bar (D4) are per person, so both live on the caller's own
-// prefs row and are validated here with the rest of that row. The database checks shape only
-// (migrations/v5-navcustom-001); the vocabulary is checked here. A more_pins id is checked for FORM,
-// never against the current More rows: a retired row id must not make every later save by that
-// person fail (CONTRACT §3), and the client drops ids it cannot draw at read time.
+// Per-person nav settings, more_pins and bar_layout, both on the caller's own prefs row. The database
+// checks shape only (migrations/v5-navcustom-001); the vocabulary is checked here. A more_pins id is
+// checked for FORM, never against the current More rows: a retired row id must not make every later save
+// fail (CONTRACT §3), and the client drops ids it cannot draw.
 //
-// The shipped tab vocabulary, in the shipped order. Byte-identical to DEFAULT_NAV_TABS in
-// src/lib/navConfig.js, the client's copy and the renderer's authority; appConfig.parity.test.js
-// asserts the two agree. It is also the reset value and the slot cap (BAR_MAX_SLOTS).
+// The shipped tab vocabulary, in shipped order. Byte-identical to DEFAULT_NAV_TABS in src/lib/navConfig.js;
+// appConfig.parity.test.js asserts the two agree. Also the reset value and the slot cap (BAR_MAX_SLOTS).
 export const NAV_TAB_KEYS = ['today', 'garden', 'create', 'harvests', 'put-up']
 // The tabs a person may move off the bar into More. Today (where the app lands) and ＋ (the only door
 // to the create sheet and, in field mode, to Field capture) never move; More is not a tab key.
@@ -51,34 +40,29 @@ export const MORE_PIN_ID_RE = /^[a-z][a-z0-9-]{0,39}$/
 // The stored cap, equal to chk_unp_more_pins_shape's. The sheet shows at most 4 pins; the headroom
 // keeps pins that are asleep (a flag-off or unknown row) through a save.
 export const MORE_PINS_MAX = 32
-// V5-NAVANYSLOT-001 (Dave 2026-09-30: any More row may take a tab-bar slot). bar_layout.order is the
-// bar itself, left to right: distinct ids of the MORE_PIN_ID_RE form (a tab key or a More row id —
-// the same id a page carries as a pin), holding Today and ＋, at most BAR_MAX_SLOTS long. Checked for
-// FORM like more_pins, for the same reason: the Lambda does not know the client's More rows, and the
-// client skips an id it cannot draw. A pre-change {order: [the five], hidden: [...]} still passes.
+// bar_layout.order is the bar itself, left to right: distinct ids of the MORE_PIN_ID_RE form (a tab key or
+// a More row id), holding Today and ＋, at most BAR_MAX_SLOTS long. Checked for FORM like more_pins (the
+// Lambda does not know the client's More rows). A pre-change {order: [the five], hidden: [...]} still passes.
 // Byte-identical to navConfig.js BAR_REQUIRED_KEYS / BAR_MAX_SLOTS (navcustom.parity.test.js).
 export const BAR_REQUIRED_KEYS = ['today', 'create']
 export const BAR_MAX_SLOTS = NAV_TAB_KEYS.length
 
-// V5-TODAYREDESIGN-001 S7 — today_sections, the redesigned Today's remembered open/closed state (plan-v2
-// §2.1 Layer 1, §13 MF1). {v:1, <section>: {open, at, ack?}}: one entry per section key, written only by an
-// explicit header tap. The database checks shape only (migrations/v5-todaysections-001: NULL or an object);
-// this is the contract. The client's copy is src/lib/todayV2/sectionsWire.js; todaySections.parity.test.js
-// runs both over one table of bodies, so a body one side accepts and the other refuses reds there.
+// today_sections: the Today page's remembered open/closed state, {v:1, <section>: {open, at, ack?}}, one
+// entry per section key, written only by an explicit header tap. The database checks shape only
+// (migrations/v5-todaysections-001); this is the contract. The client's copy is
+// src/lib/todayV2/sectionsWire.js; todaySections.parity.test.js runs both over one table of bodies.
 //
-// KEYS ARE A WHITELIST, per the S7 brief: the seven fixed sections and one household section per member,
-// 'hh-' + the first 8 characters of that member's Clerk sub (HouseholdSection.jsx householdKey). A sub is
-// `user_` + base62, so the tail carries '_' and capitals — a lowercase-only form would refuse every real
-// household key. A section added later is added here in the same release; until then the client keeps
-// that entry on the device (it never sends an entry this list refuses, so one cannot block the others).
+// KEYS ARE A WHITELIST: the seven fixed sections and one household section per member, 'hh-' + the first 8
+// characters of that member's Clerk sub (HouseholdSection.jsx householdKey). A sub is `user_` + base62, so
+// the tail carries '_' and capitals; a lowercase-only form would refuse every real household key. A section
+// added later is added here in the same release; until then the client keeps that entry on the device.
 export const TODAY_SECTION_KEYS = ['glance', 'protect', 'headsup', 'care', 'harvest', 'putup', 'resting']
 export const TODAY_SECTION_HH_RE = /^hh-[A-Za-z0-9_-]{1,8}$/
 // The ack vocabulary is what triggers.js records (its header names this validator): t is a Protect tier
 // (TIER_RANK's keys), r one reason type or a list of them (CARE_REASONS ∪ HEADSUP_REASONS).
 export const TODAY_SECTION_ACK_TIERS = ['chill', 'frost', 'hardfreeze']
 export const TODAY_SECTION_ACK_REASONS = ['never', 'hot', 'small', 'window', 'deadline']
-// v plus 23 sections. Eight exist today plus one per other household member, so this is headroom, not a
-// limit anyone meets; the byte cap bounds the body whatever a future entry shape adds.
+// v plus 23 sections: headroom, not a limit anyone meets; the byte cap bounds the body.
 export const TODAY_SECTIONS_MAX_KEYS = 24
 export const TODAY_SECTIONS_MAX_CHARS = 4096
 export const TODAY_SECTIONS_VERSION = 1
@@ -169,13 +153,9 @@ export function validatePrefsPatchBody(body) {
   if (body.garden_helper_rung1_seen != null && typeof body.garden_helper_rung1_seen !== 'boolean') {
     return { status: 400, error: 'garden_helper_rung1_seen must be a boolean' }
   }
-  // V4-USERPREFS-001 — the three per-device UI states that became per-user server state
-  // (V4-TODAYLOC-002, V4-LOGMANY-001, V4-WHATSNEW-002).
-  //
-  // today_skipped is validated to the SAME object contract as the DB CHECK
-  // (chk_unp_today_skipped_shape). Two enforcement points on one contract is deliberate: the DB
-  // guard is the one that cannot be bypassed, and this one is what turns a malformed write into a
-  // 400 the client can act on rather than a 500 from a constraint violation.
+  // Per-user UI state (formerly per-device). today_skipped is validated to the SAME object contract as the
+  // DB CHECK (chk_unp_today_skipped_shape): the DB guard cannot be bypassed; this one turns a malformed
+  // write into a 400 the client can act on rather than a 500.
   if (body.today_skipped != null) {
     const ts = body.today_skipped
     if (typeof ts !== 'object' || Array.isArray(ts)) {
@@ -204,9 +184,8 @@ export function validatePrefsPatchBody(body) {
       return { status: 400, error: 'whats_new_last_seen must be a string of at most 32 chars' }
     }
   }
-  // V5-NAVCUSTOM-001 — more_pins, in pin order. [] clears; null or absent leaves the stored list alone
-  // (the route merges with COALESCE, so it cannot write NULL back). One bad entry refuses the whole
-  // list: a partly applied list would silently drop a pin the person just set.
+  // more_pins, in pin order. [] clears; null or absent leaves the stored list alone (the route merges
+  // with COALESCE). One bad entry refuses the whole list: a partly applied list would silently drop a pin.
   if (body.more_pins != null) {
     const pins = body.more_pins
     if (!Array.isArray(pins)) return { status: 400, error: 'more_pins must be an array of More row ids' }
@@ -218,8 +197,7 @@ export function validatePrefsPatchBody(body) {
     }
     if (new Set(pins).size !== pins.length) return { status: 400, error: 'more_pins must not repeat an id' }
   }
-  // V5-NAVCUSTOM-001 — bar_layout, this person's bar: EXACTLY {order, hidden}. Refused whole, so a
-  // valid order never lands beside a bad hidden list. The guards on `order` run in the same sequence as
+  // bar_layout: EXACTLY {order, hidden}, refused whole. The guards on `order` run in the same sequence as
   // the dormant nav_tabs validator below: array, vocabulary, repeat, arity.
   if (body.bar_layout != null) {
     const layout = body.bar_layout
@@ -250,10 +228,9 @@ export function validatePrefsPatchBody(body) {
     }
     if (new Set(hidden).size !== hidden.length) return { status: 400, error: 'bar_layout.hidden must not repeat a tab' }
   }
-  // V5-TODAYREDESIGN-001 S7 — today_sections, SENT ALONE (plan-v2 §2.1). The route writes it with its own
-  // statement, so that a database without the column (migrations/v5-todaysections-001 not yet applied there)
-  // can refuse it with 409 BEFORE anything is written; a body that also carried another field would be half
-  // saved. The client already sends it alone, because a pre-S7 Lambda answers its 400 for the whole body.
+  // today_sections is SENT ALONE: the route writes it with its own statement so a database without the
+  // column (migrations/v5-todaysections-001 not yet applied) can refuse it with 409 BEFORE anything is
+  // written; a body that also carried another field would be half saved.
   if (body.today_sections != null) {
     const others = Object.keys(body).filter(k => k !== 'today_sections' && body[k] != null)
     if (others.length > 0) return { status: 400, error: `today_sections must be sent alone (also present: ${others.join(', ')})` }
@@ -267,22 +244,18 @@ export function validatePrefsPatchBody(body) {
   return null
 }
 
-// ─── /api/app-config — DORMANT since V5-NAVCUSTOM-001 (was GLOBAL config, V5-ADMINCENTER-001) ──────
+// /api/app-config: DORMANT since V5-NAVCUSTOM-001 (was GLOBAL config).
 //
-// The SPA stopped reading and writing this route in V5-NAVCUSTOM-001. Dave ruled on 2026-09-24 (D4)
-// that the tab bar is per person — only his bar changes, and Jen's never shifts — which reverses his
-// 2026-09-08 ruling that nav_tabs is one global order for the installation. The per-person bar is
-// bar_layout on the caller's own prefs row, validated in validatePrefsPatchBody above. The route and
-// the helpers in this section stay, behaviour unchanged, only so a client that is still rolling out
-// gets a 200 rather than a 404; removing them is a follow-up ledger row, not this release.
+// The SPA no longer reads or writes this route; the tab bar is per person (bar_layout on the caller's own
+// prefs row, validated in validatePrefsPatchBody above). The route and helpers stay, behaviour unchanged,
+// only so a client still rolling out gets a 200 rather than a 404.
 //
-// `nav_tabs` must still never be added to HAS_UPDATABLE: it is the dormant GLOBAL key, and a key on
-// the prefs route writes the caller's own row. The per-person setting is bar_layout.
+// `nav_tabs` must never be added to HAS_UPDATABLE: it is the dormant GLOBAL key, and a key on the prefs
+// route writes the caller's own row.
 //
-// What stays true while the route exists: the store is public.app_config (key text PK | value jsonb |
-// updated_at), which predates this code (created 2026-04-23 in the Supabase era, 0 rows on prod). Its
-// RLS policies admit any authenticated caller, so RLS cannot express an admin restriction — which is
-// why the PATCH's admin gate stays mandatory for as long as the route does.
+// The store is public.app_config (key text PK | value jsonb | updated_at). Its RLS policies admit any
+// authenticated caller, so RLS cannot express an admin restriction; the PATCH's admin gate is mandatory
+// for as long as the route exists.
 
 // The write-side key allowlist. An unrecognised key 400s BEFORE any SQL is built, which is the
 // safety property V101 §3 identified as load-bearing: the guard is the allowlist, not the storage.
@@ -294,39 +267,30 @@ function adminSubs(env) {
   return (env?.ADMIN_CLERK_SUBS ?? '').split(',').map(s => s.trim()).filter(Boolean)
 }
 
-// Fail-CLOSED admin check. Unset/empty ADMIN_CLERK_SUBS -> nobody is admin. Two callers:
-//   * the dormant app-config PATCH, through adminRefusal below (403 for everyone when unset);
-//   * GET /api/notifications/prefs, which reports it as can_edit_bar (V5-NAVCUSTOM-001). That flag
-//     decides only who SEES the bar editor (D3: today, Dave). It never gates a write — the prefs PATCH
-//     writes the caller's own row, so a bar_layout save needs no admin check.
-// ADMIN_CLERK_SUBS is per-function Lambda runtime config: deploy-lambda.yml sets it on garden-critter
-// in a continue-on-error step, and deploy-staging.yml does not set it on garden-critter-staging, so
-// can_edit_bar is false for everyone on staging. Copied from lambda/tags/validate.js:56-60 rather than
-// reinvented — four Lambdas, one idiom, and this is the fifth.
+// Fail-CLOSED admin check: unset/empty ADMIN_CLERK_SUBS -> nobody is admin. Two callers: the dormant
+// app-config PATCH (via adminRefusal) and GET /api/notifications/prefs, which reports it as can_edit_bar.
+// That flag decides only who SEES the bar editor; it never gates a write (the prefs PATCH writes the
+// caller's own row). ADMIN_CLERK_SUBS is per-function Lambda runtime config: deploy-lambda.yml sets it on
+// garden-critter in a continue-on-error step and deploy-staging.yml does not set it on garden-critter-staging,
+// so can_edit_bar is false for everyone on staging. Same idiom as lambda/tags/validate.js.
 export function isAdmin(userId, env) {
   const subs = adminSubs(env)
   return subs.length > 0 && subs.includes(userId)
 }
 
-// The refusal, split in two the way lambda/projects/index.js:598-605 splits it: "not configured" and
-// "not you" are different operational facts and collapsing them costs a deploy-debugging session.
-// Built ON isAdmin rather than beside it — a second copy of the split-and-trim would be a redundant
-// suppression that hides a mutation in the first.
+// Split the way lambda/projects/index.js splits it: "not configured" and "not you" are different
+// operational facts. Built ON isAdmin, not beside it: a second copy of the split-and-trim would hide a
+// mutation in the first.
 export function adminRefusal(userId, env) {
   if (adminSubs(env).length === 0) return { status: 403, error: 'Admin route not configured' }
   if (!isAdmin(userId, env)) return { status: 403, error: 'Not authorized' }
   return null
 }
 
-// The GET's row -> response projection. EXTRACTED SO IT CAN BE TESTED: importing
-// lambda/critter/index.js is impossible in this suite (its Lambda runtime deps are deliberately not
-// installed), so a projection left inline there would be asserted by nothing.
-//
-// NO ROW = SHIPPED DEFAULT, made explicit here rather than implied. Every allowlisted key is
-// reported — absent ones as null — so a client sees "unset" rather than a key simply missing from the
-// object; the client resolver that read this route (resolveNavTabs, until V5-NAVCUSTOM-001) maps null
-// to the shipped bar. app_config has zero rows in prod, so "never configured" is the natural state
-// and no seeding row is needed or wanted.
+// The GET's row -> response projection, extracted so it can be tested (importing lambda/critter/index.js
+// is impossible in this suite: its runtime deps are not installed). NO ROW = SHIPPED DEFAULT: every
+// allowlisted key is reported, absent ones as null, so a client sees "unset" rather than a missing key.
+// app_config has zero rows in prod; no seeding row is wanted.
 export function projectAppConfig(rows) {
   const out = Object.fromEntries(APP_CONFIG_KEYS.map(k => [k, null]))
   for (const r of Array.isArray(rows) ? rows : []) {
@@ -335,14 +299,10 @@ export function projectAppConfig(rows) {
   return out
 }
 
-// PATCH /api/app-config body validator — DORMANT with its route (section header above); unchanged.
-//
-// Its guard order (array, vocabulary, duplicate, arity) mirrors resolveNavTabs in
-// src/lib/navConfig.js, the client resolver that read this key until V5-NAVCUSTOM-001, and
-// bar_layout.order above repeats the same sequence. It is REORDER-ONLY: a short array (including []) is
-// a hide attempt and a long one an add, and both are refused whole. Hiding now happens per person, in
-// bar_layout.hidden, which admits only the movable tabs; nothing here was widened to allow it, so an old
-// client that still saves nav_tabs can only ever store a full five-tab order.
+// PATCH /api/app-config body validator: DORMANT with its route; unchanged. Guard order (array,
+// vocabulary, duplicate, arity) mirrors resolveNavTabs in src/lib/navConfig.js and bar_layout.order above.
+// REORDER-ONLY: a short array (including []) is a hide attempt and a long one an add; both are refused
+// whole. Hiding is per person, in bar_layout.hidden.
 export function validateAppConfigPatchBody(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return { status: 400, error: 'body required' }
   const unknown = Object.keys(body).filter(k => !APP_CONFIG_KEYS.includes(k))
