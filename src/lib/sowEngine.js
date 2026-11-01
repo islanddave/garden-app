@@ -492,7 +492,7 @@ function latestSafeMs(candidate, dtm, ctx) {
     // band; this set is its edible subset), so first frost does not end it and the safety margin has no
     // job here. Maturity is aimed at the growth-stop anchor GS (see HARDY_GROWTH_STOP_MONTH_DAY).
     // FALL_SLOWDOWN_DAYS applies here exactly as on the fall indoor pass for the same crop set, so a
-    // packet's DTM is slowdown-corrected on both paths; the two hardy paths differ ONLY by the nursery
+    // packet's DTM is slowdown-adjusted on both paths; the two hardy paths differ ONLY by the nursery
     // period.
     if (FALL_HARDY_CROPS.has(candidate.crop_type_slug)) {
       return ctx.GS - (dtm + FALL_SLOWDOWN_DAYS) * DAY_MS;
@@ -508,7 +508,6 @@ function methodIncludesIndoor(method) {
 
 function buildDirectWindows(candidate, dtm, ctx, gated = false) {
   const clauses = splitClauses(candidate.direct_sow_timing).map(classifyClause);
-  // BUG-SOWPROSEUNREAD-001 — the packet SAID something about timing and we understood none of it.
   // True when the packet SAID something about timing and the CLASSIFIER understood none of it (every
   // clause is `cls: null`). Measured on the ORIGINAL clause list rather than on `kept` below: `kept` is
   // narrowed on purpose (the gated-allium filter drops classes deliberately), and a deliberate drop is
@@ -1099,8 +1098,9 @@ export function isUnstartedSave(candidate) {
   // quantity_on_hand 1 (one JAR) and keep the count in `seed_count`, so isDepleted alone would return
   // false for every new save and the divert this function exists to perform would silently stop
   // firing: a jar of wet fermenting seed offered by Sow Now as though it were a finished packet.
-  // Test fixtures for this must match the shape SaveSeedSheet actually creates; hand-built rows cannot
-  // see a writer regression.
+  // sowEngine.test.js, SowNow.test.jsx and CultivationLead.test.jsx hand-build their candidate rows, so
+  // none of them reds on a change to what the WRITER stores: keep their fixtures in the shape
+  // SaveSeedSheet actually creates.
   //
   // Legacy arm kept FIRST and unchanged: a lot created before that change still carries the old shape,
   // and `qty <= 0` remains the honest reading of it.

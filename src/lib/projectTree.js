@@ -454,7 +454,7 @@ function buildStatusGroupedList(live, order) {
 
 // Title-case a crop_type_slug for display ('sweet-potato' -> 'Sweet Potato', 'pepper' -> 'Pepper').
 // The /api/plants variety_ref carries only the slug (no display name), so the label is derived here.
-// label is derived here. Split on -/_/space so multi-word slugs read naturally.
+// Split on -/_/space so multi-word slugs read naturally.
 export function cropTypeLabel(slug) {
   return String(slug || '').split(/[-_ ]+/).filter(Boolean)
     .map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
