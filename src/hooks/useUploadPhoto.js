@@ -1,10 +1,10 @@
 // src/hooks/useUploadPhoto.js
-// V2-PHOTO-F1 — shared 3-step upload engine.
+// Shared 3-step upload engine.
 //   1. GET  /api/photos/upload-url?key=...&content_type=...  -> { upload_url }
 //   2. PUT  upload_url  body=file  Content-Type=mime           (direct S3, no auth)
 //  2b. GET  /api/photos/thumb-upload-url?key=... -> PUT the 800px thumb at thumbs/<key>
-//      BEST-EFFORT: every failure swallowed. Closes the gap where only the 913 backfilled
-//      photos had thumbs and every new upload fell back to its full-size original.
+//      BEST-EFFORT: every failure swallowed. Without it a new upload falls back to its
+//      full-size original in the grid.
 //   3. POST /api/photos { storage_path, linkage..., caption, is_public, capture meta } -> photo row
 //
 // Owns URL.createObjectURL / revokeObjectURL lifecycle so callers can't leak blob URLs.
@@ -38,12 +38,11 @@ import { sendUxEvent, FLOWS } from '../lib/uxEvents.js';
 // never be the reason a save hangs (see the bounded-PUT note at its call site).
 const THUMB_PUT_TIMEOUT_MS = 10_000;
 
-// BUG-PHOTOUPLOADRELAY-001: when the direct-to-S3 PUT fails (stall watchdog, dead socket), retry
-// THROUGH the API — a client's route to S3 can be dead while its route to Lambda is healthy
-// (observed live 2026-07-28: s3.us-east-1 TCP blackholed inside the ISP, Lambda traffic fine).
-// Caps mirror the server route; a fallback-to-original file larger than the cap skips the relay
-// and surfaces the direct-PUT error honestly. The relay call gets its own generous timeout —
-// the WS-A6 15s default is too tight for shipping the photo bytes in the request body.
+// When the direct-to-S3 PUT fails (stall watchdog, dead socket), retry THROUGH the API — a
+// client's route to S3 can be dead while its route to Lambda is healthy. Caps mirror the server
+// route; a fallback-to-original file larger than the cap skips the relay and surfaces the
+// direct-PUT error honestly. The relay call gets its own generous timeout — the default apiFetch
+// timeout is too tight for shipping the photo bytes in the request body.
 const RELAY_MAX_BYTES = 3_900_000;
 const RELAY_THUMB_MAX_BYTES = 500_000;
 const RELAY_TIMEOUT_MS = 60_000;
@@ -68,15 +67,14 @@ async function blobToBase64(blob) {
   });
 }
 
-// BUG-PHOTOUPLOADHANG-001: downscaleWithThumb is throw-proof (returns the original on any error)
-// but ran unbounded BEFORE the try block — a decode/encode that never settles (mobile memory
-// pressure is a real toBlob failure mode) wedged the save forever with isUploading stuck true and
-// no error. A phone decodes a camera photo in 1-3s; if it has not settled in 15s it is not going
-// to. On deadline, proceed with the ORIGINAL file — exactly the module's own fail-safe contract,
-// enforced by clock instead of by catch.
+// downscaleWithThumb is throw-proof (returns the original on any error) but unbounded — a
+// decode/encode that never settles (mobile memory pressure is a real toBlob failure mode) would
+// wedge the save forever with isUploading stuck true and no error. A phone decodes a camera photo
+// in 1-3s; if it has not settled in 15s it is not going to. On deadline, proceed with the ORIGINAL
+// file — exactly the module's own fail-safe contract, enforced by clock instead of by catch.
 const DOWNSCALE_DEADLINE_MS = 15_000;
 
-// BUG-PHOTOTAKENATNULL-001: same discipline for the capture-metadata read. readCaptureMeta reads a
+// Same discipline for the capture-metadata read. readCaptureMeta reads a
 // bounded ~128KB slice and swallows its own errors, so the only way past this deadline is a File
 // whose read never settles (a content:// picker handle on a yanked SD card) or an exifr chunk that
 // never arrives. It is a backstop, not a budget — the read is kicked off at the top of upload() and
@@ -94,7 +92,7 @@ function genUuid() {
 }
 
 export function useUploadPhoto({ errorMode = 'surface' } = {}) {
-  // getToken is for the V4-PHOTOUPLOADINSTR-001 beacon only. Taken from useApiFetch rather than
+  // getToken is for the upload telemetry beacon only. Taken from useApiFetch rather than
   // Clerk directly for the reason uxEvents.js documents: consumer tests that mock '../lib/api.js'
   // then neutralize the Clerk dependency automatically, so instrumenting this hook does not force a
   // ClerkProvider into every test that uploads a photo.
@@ -103,7 +101,7 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
   const [error, setError]             = useState(null);
   const [photo, setPhoto]             = useState(null);
   const [preview, setPreview]         = useState(null);
-  // BUG-PHOTOUPLOADHANG-001 instrumentation: which step the save is in ('preparing' | 'uploading'
+  // Instrumentation: which step the save is in ('preparing' | 'uploading'
   // | 'saving' | null) and PUT progress 0-100 (null outside step 2). A future "stuck" report can
   // then name the exact step + percentage instead of just "stuck".
   const [stage, setStage]             = useState(null);
@@ -156,11 +154,9 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
     setProgress(null);
 
     try {
-      // BUG-PHOTOTAKENATNULL-001: capture metadata, read from the ORIGINAL `file`. Both ends of
-      // this plumbing shipped in v3.55.0 — imagePipeline extracts the fields, and
-      // lambda/photos/index.js binds all of them in both INSERT templates — and nothing ever
-      // connected them, so taken_at was NULL on 1,270 of 1,270 prod rows while the phone destroyed
-      // the only copy on every upload.
+      // Capture metadata, read from the ORIGINAL `file`: imagePipeline extracts the fields and
+      // lambda/photos/index.js binds all of them in both INSERT templates, so this is the one place
+      // that connects them. The phone destroys the only copy of the metadata on every upload.
       //
       // ORDERING (imagePipeline.js rule 1) IS PRESERVED BY WHICH BYTES ARE READ, NOT BY WHEN.
       // canvas.toBlob() emits a bare JPEG with no APP1 segment, so reading the RESIZED output
@@ -172,7 +168,7 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
       const capturePromise = Promise.resolve(readCaptureMeta(file))
         .then((v) => v ?? NO_CAPTURE_META, () => NO_CAPTURE_META);
 
-      // BUG-PHOTOBLANK-001: shrink BEFORE anything derives from the file. Raw camera originals
+      // Shrink BEFORE anything derives from the file. Raw camera originals
       // (3-12MB) are what stall the S3 PUT on a mobile uplink. downscaleImage is fail-safe — it
       // returns the ORIGINAL file on any error or when re-encoding wouldn't save bytes — so this
       // can only reduce work, never block the upload. Runs first because ext/mime/key and the
@@ -180,13 +176,10 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
       // both extension and Content-Type).
       // Also yields the 800px thumb off the SAME decode (see downscaleWithThumb: a second decode
       // would double peak native memory on exactly the devices where uploads already hang).
-      // BUG-PHOTOUPLOADHANG-001: raced against DOWNSCALE_DEADLINE_MS — a decode that never
-      // settles must not wedge the save; the module's own fail-safe (original file, no thumb)
-      // is applied by deadline.
-      // V4-PHOTOUPLOADINSTR-001: `outcome` distinguishes the five fail-safe paths that all hand back
-      // the ORIGINAL file. The deadline arm is the one this instrumentation exists to catch — it is
-      // the only bypass whose cause is OUTSIDE imageDownscale, and the leading hypothesis for the
-      // 11 consecutive 5.8-10 MB uploads measured on prod between 11:14 and 11:33 on 2026-08-21.
+      // Raced against DOWNSCALE_DEADLINE_MS — a decode that never settles must not wedge the save;
+      // the module's own fail-safe (original file, no thumb) is applied by deadline.
+      // `outcome` distinguishes the five fail-safe paths that all hand back the ORIGINAL file. The
+      // deadline arm is the only bypass whose cause is OUTSIDE imageDownscale.
       const tDownscale = Date.now();
       let { file: upFile, thumb, outcome: downscaleOutcome } = await new Promise((resolve) => {
         const timer = setTimeout(() => {
@@ -201,9 +194,8 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
       downscaleOutcome = downscaleOutcome ?? 'unknown';
       const downscaleMs = Date.now() - tDownscale;
 
-      // V4-PHOTOEXIFSTRIP-001 — nothing reaches S3 carrying the camera's capture metadata. Dave's
-      // garden IS his home, so a GPS tag is his home address (measured on his own originals:
-      // [site lat] / [site lon], the house).
+      // Nothing reaches S3 carrying the camera's capture metadata. The garden IS the household's
+      // home, so a GPS tag is a home address.
       //
       // PLACED AFTER THE DOWNSCALE ON PURPOSE. The canvas path already emits a bare EXIF-free JPEG,
       // so on the common path this is a cheap no-op. It exists for the FIVE paths that hand back
@@ -226,22 +218,14 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
       // never uploaded unstripped. Sequential rather than parallel so only one copy of a
       // multi-megabyte original is held at a time (imagePipeline rule 3's memory class).
       //
-      // BUG-HEICEXIFPASSTHRU-001 / BUG-HEICREALSTRIP-001 — THE SIXTH BYPASS, and the reason this
-      // call is lenient rather than fail-closed. "Never uploaded unstripped" held for an unreadable
-      // blob but not for a container the stripper had no walker for: HEIC/AVIF are ISOBMFF box
-      // trees, they passed straight through here, and they landed in S3 byte-identical to the
-      // camera original with the GPS still in them. It stacked on the downscale bypass above —
-      // createImageBitmap cannot decode HEIC, so imageDownscale had already handed back the
-      // original — which made it the leakiest of the six.
-      //
-      // The fix is in the stripper, not here: imageMetadataStrip now walks ISOBMFF and zeroes the
-      // Exif/XMP items in place. REFUSING THE UPLOAD WAS THE OTHER OPTION AND DAVE REJECTED IT
-      // ("I think refusing a photo upload is a terrible idea"), so PHOTO_STRIP_STRICT_UPLOAD and
-      // the strict-vs-lenient seam that stood here are gone. Lenient is now the honest choice
-      // rather than the resigned one — every format a phone actually shoots has a walker.
+      // A container the stripper has no walker for is the one case that is not fail-closed.
+      // createImageBitmap cannot decode HEIC, so imageDownscale hands the original back; HEIC and
+      // AVIF are ISOBMFF box trees, so the stripper itself walks them and zeroes the Exif/XMP items
+      // in place. Refusing the upload was rejected as the alternative (a lost photo is worse than a
+      // kept tag), so this call is lenient — and every format a phone actually shoots has a walker.
       //
       // What lenient still means: a container with no walker at all (a raw DNG, a TIFF) uploads
-      // with its metadata and a console.warn, exactly as before. The SHARE layer
+      // with its metadata and a console.warn. The SHARE layer
       // (harvestPostPhotos.js) stays fail-closed unconditionally, so nothing unstripped is ever
       // published — there the cost of refusing is one photo missing from a post, not a lost photo.
       const tStrip = Date.now();
@@ -270,9 +254,8 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
       const presignMs = Date.now() - tPresign;
 
       // Step 2: direct PUT to S3 (no auth header — URL is pre-signed).
-      // BUG-PHOTOUPLOADHANG-001: was a bare window.fetch with NO bound — the traced hang site
-      // (presign logged, no S3 object, no register). Now progress-aware with a stall watchdog:
-      // aborts only when bytes stop moving, so a slow-but-moving fallback original still lands.
+      // Progress-aware with a stall watchdog: aborts only when bytes stop moving, so a
+      // slow-but-moving fallback original still lands. A bare unbounded fetch here is a hang site.
       setStage('uploading');
       const tPut = Date.now();
       let relayedThumb = false;
@@ -280,7 +263,7 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
       try {
         await putWithProgress(presign.upload_url, upFile, mime, { onProgress: setProgress });
       } catch (putErr) {
-        // BUG-PHOTOUPLOADRELAY-001: direct path dead — relay the bytes through the API when they
+        // Direct path dead — relay the bytes through the API when they
         // fit. On relay failure the ORIGINAL error surfaces (it names the real problem).
         if (typeof upFile.size !== 'number' || upFile.size > RELAY_MAX_BYTES) throw putErr;
         setProgress(null);
@@ -308,14 +291,13 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
       //
       // STRICTLY BEST-EFFORT — every failure here is swallowed. The grid presigns thumbs/<key> and
       // falls back to view_url when the object is missing, which is precisely the pre-existing
-      // behavior for the photos that have no thumb today. So the worst case of this block failing
-      // is "no better than before", never a lost photo. It runs BEFORE the row is registered so a
+      // behavior for a photo that has no thumb. So the worst case of this block failing
+      // is "no thumb", never a lost photo. It runs BEFORE the row is registered so a
       // photo never appears in the grid without its thumb, and it is cheap (the thumb is ~50KB
       // against a 2048px original).
       // BOUNDED (THUMB_PUT_TIMEOUT_MS): uploads deliberately bypass the WS-A6 apiFetch timeout
       // because a large original legitimately takes a while — but this extra PUT sits on the user's
-      // save path, and "photo upload hangs" is an OPEN bug. An unbounded call here would add a new
-      // way for Save to stall forever. A thumb is ~50KB, so if it hasn't landed in 10s it is not
+      // save path. An unbounded call here would add a new way for Save to stall forever. A thumb is ~50KB, so if it hasn't landed in 10s it is not
       // going to; abandon it and let the read path fall back. Never applied to the original PUT.
       if (thumb && !relayedThumb) {
         try {
@@ -334,10 +316,10 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
               if (timer) clearTimeout(timer);
             }
           }
-        } catch { /* no thumb: read path falls back to view_url, exactly as it does today */ }
+        } catch { /* no thumb: read path falls back to view_url */ }
       }
 
-      // Bounded for the same reason the downscale is (BUG-PHOTOUPLOADHANG-001): nothing new on the
+      // Bounded for the same reason the downscale is: nothing new on the
       // save path may be able to wedge it. The read has had the whole upload to settle by now, so
       // this deadline only ever fires on a read or a chunk fetch that is never going to finish.
       const capture = await new Promise((resolve) => {
@@ -359,8 +341,7 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
           caption,
           is_public,
           ...linkage,
-          // BUG-PHOTOTAKENATNULL-001. These columns have been bound by buildPhotoInsert since
-          // v3.55.0 and the client sent none of them. Written AFTER ...linkage deliberately: they
+          // These columns are bound by buildPhotoInsert. Written AFTER ...linkage deliberately: they
           // are derived from the bytes actually uploaded and must not be clobberable by a caller's
           // linkage object.
           // NULL IS A LEGITIMATE VALUE, not a gap to paper over. A screenshot, a download, or a
@@ -369,8 +350,8 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
           // taken_at exists to draw (see its COMMENT in migrations/v4-photobulk-p1/0a-additive-ddl).
           // Readers already fall back to created_at when it is NULL.
           // content_hash is deliberately absent — writing it would arm idx_photos_content_hash_uniq
-          // and turn this INSERT into an UPSERT. That belongs to V4-PHOTOBULK-001's dedupe work,
-          // not to a capture-time fix; pinned by useUploadPhoto.captureMeta.test.js.
+          // and turn this INSERT into an UPSERT. That belongs to the photo dedupe work, not to
+          // capture-time metadata; pinned by useUploadPhoto.captureMeta.test.js.
           taken_at:          capture.takenAt ? capture.takenAt.toISOString() : null,
           gps_lat:           capture.gpsLat,
           gps_lon:           capture.gpsLon,
@@ -380,10 +361,9 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
         }),
       });
 
-      // V4-PHOTOUPLOADINSTR-001 — ONE fire-and-forget event per upload, carrying the branch that ran
-      // and where the wall-clock went. This is the signal BUG-PHOTOUPLOADSLOW-001 needed and did not
-      // have: photos.file_size_bytes exists on 33 of ~1300 rows and records only the OUTCOME size,
-      // never the reason. With this, the next slow upload names its own cause.
+      // ONE fire-and-forget event per upload, carrying the branch that ran and where the wall-clock
+      // went. photos.file_size_bytes records only the OUTCOME size, never the reason; this names the
+      // cause of a slow upload.
       //
       // NO FILENAME, NO KEY, NO CAPTION. Sizes, durations and a branch label only — this is a
       // telemetry table, and an original_filename is user content that has no business in it.
@@ -418,10 +398,10 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
       } catch { /* telemetry must never affect the save */ }
 
       setPhoto(registered);
-      // V4-IMGCACHE-001 D-1: a new photo can land in ANY cached photo list — the /api/photos wall, a
+      // A new photo can land in ANY cached photo list — the /api/photos wall, a
       // ?attachedTo= gallery (via the server-side event→plant union), a ?location_id= grid. The client
       // can't compute which, so invalidate every /api/photos* key: subscribed surfaces refresh without a
-      // remount; unmounted ones refetch on next mount. No-op when the cache is empty (flag off / tests).
+      // remount; unmounted ones refetch on next mount. No-op when the cache is empty.
       invalidatePhotoLists('/api/photos');
       setIsUploading(false);
       setStage(null);

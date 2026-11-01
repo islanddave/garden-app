@@ -1,73 +1,64 @@
-// useDailyPlan — fetch hook for GET /api/daily-plan (DRG-TODAY-002 read model).
+// useDailyPlan — fetch hook for GET /api/daily-plan.
 // Contract: { data, loading, refreshing, seedPending, error, reload, refresh }
 //   data: { schema_version, plan_date, generated_at, has_plan, plan } | null
 //     plan (when has_plan): { weather, hydrology, substrate, counts,
 //                             water_due[], no_history[], fertilize[], pest[], cold[], dormant[] }
 // Mirrors useFindings (load-counter guards against out-of-order responses).
 //
-// DRG-INTRADAY-002 — TWO fetch modes, because they have opposite failure requirements.
+// TWO fetch modes, because they have opposite failure requirements.
 //
-// `reload` (INITIAL) is unchanged, byte-for-byte in behaviour: it sets `loading`, clears `error`, and
-// is what the mount effect and an includeHousehold toggle call. Today.jsx gates the whole plan block
+// `reload` (INITIAL) sets `loading`, clears `error`, and is what the mount effect and an
+// includeHousehold toggle call. Today.jsx gates the whole plan block
 // on `!loading && !error`, so this mode is allowed to blank the screen — there is nothing on it yet.
 //
 // `refresh` (REVALIDATE) is the intraday path, and it must NEVER blank the screen. Calling `reload`
-// on focus/visibilitychange was the original DRG-INTRADAY-002 proposal and it is a full teardown: it
-// sets loading=true, Today.jsx then unmounts <CareNeeded>, and every piece of in-memory list state
+// on focus/visibilitychange would be a full teardown: it sets loading=true, Today.jsx then unmounts <CareNeeded>, and every piece of in-memory list state
 // dies with it — grouping mode, manual expand/collapse, the "Show N more" state, an open bulk sheet
 // and its hand-checked subset, in-flight pending rows, and the scroll position of a ~200-row list the
 // user is physically walking. So `refresh` holds `data` and reports through `refreshing` instead.
 //
 // STALE ROWS BEAT BLANK ROWS. On a refresh failure we keep the last good plan and do NOT set `error`
-// — the same rule src/lib/useAmbientBandFetch.js:18-20 already applies, for the same reason: this app
+// — the same rule src/lib/useAmbientBandFetch.js applies, for the same reason: this app
 // treats rural dead zones as normal operating conditions, and replacing a complete, still-actionable
 // watering list with a red one-line string because one revalidation timed out is a strictly worse
 // answer than showing slightly older truth. `error` stays reserved for the never-loaded case.
 //
 // The in-flight guard is a ref, not state, so it cannot cause a render or go stale in a closure
-// (house pattern — TodayBand.jsx:48, useAmbientBandFetch.js:48). It matters here because Android
+// (house pattern, as in TodayBand.jsx and useAmbientBandFetch.js). It matters here because Android
 // fires BOTH `focus` and `visibilitychange` on a single wake, which without it is two concurrent
 // fetches per wake.
 //
-// BUG-PLANNOREVALIDATE-001 (2026-09-13) — the listeners the block above describes DID NOT EXIST.
-// `refresh` was exported and called by NOBODY: Today.jsx destructured only { data, loading, error },
-// and neither it nor this hook registered `focus` or `visibilitychange`. So the plan was fetched once
-// per Today mount and never revalidated — leave the PWA open on Today and resume hours later and you
-// were reading whatever was current when you opened it. Every other piece of DRG-INTRADAY-002 shipped
-// (the two fetch modes, the coalescing ref, stale-beats-blank, the stable `refresh` identity); only
-// the registration was missing, which is why it was invisible — nothing was broken, a thing simply
-// never ran. Found while making the daily-plan cron hourly: 16 extra server-side generations a day
-// buy nothing if the client never asks for them again.
+// The wake listeners (`focus`, `visibilitychange`) are registered by this hook, so a plan left open
+// on Today and resumed hours later is revalidated: the server regenerates the plan hourly, which
+// buys nothing if the client never asks for it again.
 //
 // The listeners live HERE, not in Today.jsx, because `refresh`'s identity is deliberately stabilised
-// in this file (see hasDataRef above) so registration survives a successful fetch. A consumer wiring
+// in this file (see hasDataRef below) so registration survives a successful fetch. A consumer wiring
 // its own listener would re-derive that guarantee and eventually get it wrong.
 //
-// BUG-TODAYHOUSEHOLDRELOADDROP-001 (2026-09-28) — the in-flight guard coalesced EVERY call, including
-// one asking a different question. Today asks with includeHousehold = showOthers && canShowOthers, and
-// on a cold roster (launch or sign-in, toggle saved ON) the members land while the first plan request
-// is still open: the reload that flip asked for hit the guard and was dropped, and since `run` closes
-// over includeHousehold nothing asked again. Today showed the toggle ON over "No one else has care
-// needs today." until the next wake. Now a settling request compares the question it asked (fetch +
-// includeHousehold) with the one the latest commit asks, and if they differ ONE trailing run asks the
-// current one. The same question still coalesces: the Android double wake, and StrictMode's double
+// The in-flight guard must not coalesce a call asking a DIFFERENT question. Today asks with
+// includeHousehold = showOthers && canShowOthers, and on a cold roster (launch or sign-in, toggle
+// saved ON) the members land while the first plan request is still open: the reload that flip asks
+// for hits the guard, and since `run` closes over includeHousehold nothing would ask again — Today
+// would show the toggle ON over "No one else has care needs today." until the next wake. So a
+// settling request compares the question it asked (fetch + includeHousehold) with the one the
+// latest commit asks, and if they differ ONE trailing run asks the current one. The same question still coalesces: the Android double wake, and StrictMode's double
 // mount effect in dev, stay one request each, and a question changed and changed back mid-flight is
 // already answered by the open request. The trailing run never blanks a plan on screen: it is a
 // refresh once a plan has been shown (so STALE ROWS BEAT BLANK ROWS covers its failure), and an
 // initial load when none has.
 //
-// V5-TODAYREDESIGN-001 S2 — an OPT-IN `seed` (plan-v2 §6.3), absent for every existing caller (Today.jsx,
-// TodayReasoning.jsx), which therefore behave exactly as before. A caller passing `seed` (the signed-in
-// user's id) gets the module-level last good plan for the same user + question on a remount, when that
+// An OPT-IN `seed`, absent for callers that do not pass it (Today.jsx, TodayReasoning.jsx), which
+// therefore get no seeding. A caller passing `seed` (the signed-in user's id) gets the module-level last good plan for the same user + question on a remount, when that
 // plan is TODAY's: it paints at once with `loading` false, and the mount fetch runs as a REFRESH (loading
 // never flips on, a failure keeps the seeded plan). So Back to the redesigned Today paints the page it
 // left, under the page-scroll manager's restore, instead of a "Loading…" frame. Another user never reads
 // it (keyed by id), yesterday's plan is never painted as today's, and a successful fetch replaces it.
 //
-// `seedPending` (review 4160.2 IMPORTANT-2, V5-TODAYREDESIGN-001 integration 2): true from a SEEDED mount until its
-// first fetch settles. A seed is the plan as read BEFORE the page was left, so a watering logged elsewhere meanwhile
-// (a planting's own Water, then Back) is still due in it; a caller holds its write controls over that window. False
-// on every unseeded mount, so the existing callers never see it change.
+// `seedPending`: true from a SEEDED mount until its first fetch settles. A seed is the plan as read
+// BEFORE the page was left, so a watering logged elsewhere meanwhile (a planting's own Water, then
+// Back) is still due in it; a caller holds its write controls over that window. False on every
+// unseeded mount.
 import { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react'
 import { useApiFetch } from '../lib/api.js'
 import { todayLocalISO } from '../lib/dateLocal.js'
@@ -107,10 +98,10 @@ export function useDailyPlan({ includeHousehold = false, seed } = {}) {
   // would put `data` in the useCallback deps and change `refresh`'s identity on every successful
   // fetch — re-registering the focus/visibility listeners each time.
   const hasDataRef = useRef(!!seeded)
-  // BUG-TODAYHOUSEHOLDRELOADDROP-001 — the question the latest commit asks (its fetch + includeHousehold)
+  // The question the latest commit asks (its fetch + includeHousehold)
   // and the `run` that asks it; null once unmounted, so a request settling after that starts nothing.
   const latestRef = useRef(null)
-  // S2 seed: whether this mount painted a seed (its first fetch is then a refresh), and whose store a good
+  // Seed: whether this mount painted a seed (its first fetch is then a refresh), and whose store a good
   // answer refreshes. A ref, so a user id landing after mount never changes `run` and never re-fetches.
   const seededRef = useRef(!!seeded)
   const seedRef = useRef(seed)
@@ -141,7 +132,7 @@ export function useDailyPlan({ includeHousehold = false, seed } = {}) {
       if (loadCounterRef.current === my) { setLoading(false); setRefreshing(false); setSeedPending(false) }
       lastSettledAtRef.current = Date.now()
       inflightRef.current = false
-      // BUG-TODAYHOUSEHOLDRELOADDROP-001 — the question changed while this request was open. ONE trailing
+      // The question changed while this request was open. ONE trailing
       // run, with the latest commit's args: a refresh if a plan has been shown, else an initial load.
       const latest = latestRef.current
       if (latest && (latest.fetch !== fetch || latest.includeHousehold !== includeHousehold)) latest.run(hasDataRef.current)
@@ -164,7 +155,7 @@ export function useDailyPlan({ includeHousehold = false, seed } = {}) {
     reload()
   }, [reload, run])
 
-  // BUG-PLANNOREVALIDATE-001 — the missing half of DRG-INTRADAY-002. Both events, because Android
+  // Wake revalidation. Both events, because Android
   // fires them inconsistently: `visibilitychange` on app switch, `focus` on window re-focus within
   // the app, and frequently both on one wake (which inflightRef coalesces).
   useEffect(() => {
