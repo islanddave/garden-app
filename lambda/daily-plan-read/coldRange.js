@@ -1,15 +1,13 @@
-// V5-WXCOLDBAND-001 — tonight's forecast cold range, read for the Today card.
+// V5-WXCOLDBAND-001: tonight's forecast cold range, read for the Today card.
 //
-// public.weather_cold_range is written each morning by ONE job on the owner's Mac (WeatherNext 3
-// ensemble, INSERT only; migrations/v5-wxcoldband-001). Nothing in AWS writes it, so "the job did not
-// run" is the steady state, not an edge case: no row, a partial row, or yesterday's row all serve
-// null and the card shows nothing. Display only — nothing alerts off this.
+// public.weather_cold_range is written each morning by ONE job on the owner's Mac (WeatherNext 3 ensemble,
+// INSERT only; migrations/v5-wxcoldband-001). Nothing in AWS writes it, so "the job did not run" is the
+// steady state: no row, a partial row, or yesterday's row all serve null and the card shows nothing. Display
+// only; nothing alerts off this.
 //
-// Its own module and its own statement, never a JOIN onto the plan read: index.test.js reads
-// index.js's tagged templates BY POSITION, and a missing or unreadable table must blank the range,
-// not Today. The caller wraps this in try/catch as well; readColdRange itself throws on a DB error so
-// a test can tell "no row" from "the read failed".
-//
+// Its own module and statement, never a JOIN onto the plan read: index.test.js reads index.js's tagged
+// templates BY POSITION, and a missing table must blank the range, not Today. readColdRange throws on a DB
+// error so a test can tell "no row" from "the read failed"; the caller wraps it in try/catch as well.
 // Dependency-free (sql is injected) so the unit suite can EXECUTE it.
 
 // The row the read accepts (migrations/v5-wxcoldband-001/README.md "For the two lanes that follow"):

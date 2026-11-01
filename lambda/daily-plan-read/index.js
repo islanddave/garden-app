@@ -1,9 +1,7 @@
-// /api/daily-plan — DRG-TODAY-002 read model. GET-only, Clerk-authed, PER-USER, soft-delete filtered.
-// Returns the persisted daily_plan row the overnight engine (DRG-TODAY-001) wrote for the requester's
-// LOCAL (America/New_York) calendar date. Mutates nothing — the engine is the producer; this is the thin
-// read seam the Today surface consumes. PER-USER (NOT household-scoped): each caretaker sees only their
-// own plan (Dave's list vs Jen's list), matching the engine's one-row-per-user_id-per-day write. Mirrors
-// lambda/findings/index.js on the auth/secrets/CORS seam (live, prod-proven).
+// /api/daily-plan: DRG-TODAY-002 read model. GET-only, Clerk-authed, PER-USER (not household-scoped; each
+// caretaker sees only their own plan, matching the engine's one-row-per-user_id-per-day write), soft-delete
+// filtered. Returns the daily_plan row the overnight engine (DRG-TODAY-001) wrote for the requester's
+// America/New_York date. Mutates nothing. Mirrors lambda/findings/index.js on the auth/secrets/CORS seam.
 import { neon } from '@neondatabase/serverless';
 import { householdScope } from './household.js';  // V4-ASSIGNLENS-001 opt-in household widening (per-dir copy; bundle-safe)
 import { requestContext } from './request-context.js';
@@ -12,10 +10,9 @@ import { matchCueImpressionRoute, handleCueImpressionPost } from './cue-impressi
 import { readColdRange } from './coldRange.js';  // V5-WXCOLDBAND-001 tonight's forecast cold range (own module; dependency-free)
 
 const SCHEMA_VERSION = 1;      // API-response envelope version (client contract)
-// DRG-WATERRECON-002: the version the STORED daily_plan.items must carry — pinned to
-// lambda/daily-plan/engine.js PLAN_SCHEMA_VERSION (lockstep enforced by an anti-drift source test).
-// A stored plan whose schema_version differs is a field-rename/shape-drift signal: we FAIL LOUD
-// (log + schema_stale flag) and refuse to serve the now-untrustworthy task arrays as a real plan.
+// The version the STORED daily_plan.items must carry (DRG-WATERRECON-002), pinned to lambda/daily-plan/engine.js
+// PLAN_SCHEMA_VERSION (lockstep enforced by an anti-drift source test). A stored plan whose schema_version differs
+// is a shape-drift signal: FAIL LOUD (log + schema_stale flag) and refuse to serve the untrustworthy task arrays.
 const PLAN_SCHEMA_VERSION = 1;
 
 const CORS = {}; // Lambda URL config is sole CORS source — handler must not duplicate.
@@ -32,11 +29,10 @@ export const handler = async (event) => {
 
   const method = event.requestContext?.http?.method ?? 'GET';
   const rawPath = event.rawPath ?? '/api/daily-plan';
-  // OPS-CUEINSTRUMENT-001 — the impression beacon rides this Lambda's existing prefix. Handled and
-  // RETURNED before the GET guard below, which is left byte-identical: this branch is reachable only
-  // on its own literal path, so the plan read cannot be affected by anything in it. The writer is
-  // fail-open (always 202) and its SQL lives in cue-impression.js, keeping this file's tagged-template
-  // ordering — which index.test.js indexes positionally — untouched.
+  // OPS-CUEINSTRUMENT-001: the impression beacon rides this Lambda's existing prefix. Handled and RETURNED
+  // before the GET guard below, which is left byte-identical, so the plan read cannot be affected. The writer
+  // is fail-open (always 202) and its SQL lives in cue-impression.js, keeping this file's tagged-template
+  // ordering (which index.test.js indexes positionally) untouched.
   const cueRoute = matchCueImpressionRoute(method, rawPath);
   if (cueRoute) {
     if (cueRoute.kind === 'method_not_allowed') return resp(405, { error: 'Method not allowed' });
@@ -53,7 +49,7 @@ export const handler = async (event) => {
   try {
     // Always returns exactly one row carrying today's ET date; items/generated_at are NULL when the engine
     // has not written a plan for this user today. plan_date is computed server-side so a client clock cannot
-    // shift which day is served. Per-user; soft-delete filtered; newest wins.
+    // shift which day is served.
     const rows = await sql`
       SELECT
         to_char((now() AT TIME ZONE 'America/New_York')::date, 'YYYY-MM-DD') AS plan_date,
@@ -70,8 +66,7 @@ export const handler = async (event) => {
     const row = rows[0] ?? {};
     let plan = row.items ?? null;
     // DRG-WATERRECON-002: guard the STORED plan's schema_version. A present plan whose version != expected
-    // means the engine's items shape drifted out from under this reader — FAIL LOUD (log + schema_stale)
-    // and serve an honest empty state rather than silently mapping renamed/garbage fields.
+    // means the items shape drifted: FAIL LOUD (log + schema_stale) and serve an honest empty state.
     let schemaStale = false;
     if (plan) {
       const storedV = (plan.schema_version ?? null);
@@ -81,15 +76,14 @@ export const handler = async (event) => {
         schemaStale = true;
         plan = null;
       } else {
-        // V3-TODAYDONE-001: best-effort read-time check-off — never let it break the prod Today read.
+        // V3-TODAYDONE-001: best-effort read-time check-off; never let it break the Today read.
         try { plan = await annotateDone(sql, plan); }
         catch (e) { console.error('done-annotate (non-fatal):', e?.message ?? String(e)); }
       }
     }
-    // V4-ASSIGNLENS-001 — OPT-IN household widening. Default (no ?include=household) is byte-identical
-    // and strictly PER-USER: the household_plans key is OMITTED unless explicitly opted in. Widening is
-    // self-authorizing (householdScope resolves the requester's OWN household; a non-member gets []),
-    // so there is no attacker-controlled sub to validate.
+    // V4-ASSIGNLENS-001: OPT-IN household widening. Default (no ?include=household) is byte-identical and
+    // strictly PER-USER: household_plans is OMITTED unless opted in. Widening is self-authorizing
+    // (householdScope resolves the requester's OWN household; a non-member gets []).
     const includeHousehold = (event.queryStringParameters?.include) === 'household';
     let householdPlans;
     if (includeHousehold) {
@@ -105,8 +99,8 @@ export const handler = async (event) => {
       plan: plan,
     };
     if (includeHousehold) body.household_plans = householdPlans;
-    // V5-WXCOLDBAND-001 — a passenger on the Today read: written from the Mac, often absent, and never
-    // allowed to fail the plan. Any error (the table missing included) serves null, as no row does.
+    // V5-WXCOLDBAND-001: a passenger on the Today read, written from the Mac, often absent, and never allowed
+    // to fail the plan. Any error (the table missing included) serves null, as no row does.
     let coldRange = null;
     try { coldRange = await readColdRange(sql, householdScope(userId)); }
     catch (e) { console.error('cold-range read (non-fatal):', e?.message ?? String(e)); }
@@ -118,26 +112,21 @@ export const handler = async (event) => {
   }
 };
 
-// V3-TODAYDONE-001 — read-time check-off. An actionable plan item is "done" for the day when a satisfying
+// V3-TODAYDONE-001: read-time check-off. An actionable plan item is "done" for the day when a satisfying
 // event was logged today (ET) for that planting. Derived from event_log, never stored (cross-device truthful).
 // Placed AFTER the handler so the plan SELECT remains the first tagged query in the file (static-guard ordering).
-// The done vocabulary and the fold itself live in ./doneEvents.js — dependency-free so CI can
-// actually EXECUTE them (nothing may import this file: its @neondatabase / @clerk / @aws-sdk
-// imports are not installed by the root-only `npm ci`). What stays here is the query that decides
-// WHICH events count as satisfying.
+// The vocabulary and the fold live in ./doneEvents.js (dependency-free, so CI can EXECUTE them); what stays
+// here is the query that decides WHICH events count as satisfying.
 export async function annotateDone(sql, plan) {
   const ids = planItemIds(plan);
   if (ids.length === 0) return plan;
-  // V4-WATERMATH-001 F0 interim snooze window. watering/rain keep the ET-calendar-day rule (a
-  // watering "counts for today"). A `moisture_check` ADDITIONALLY satisfies on a rolling 24h
-  // window, because an ET-day-only snooze tapped at 09:00 expires at midnight and the planting
-  // re-nags at the 02:00/12:00 run ~17-21h later — a snooze the app visibly overrides, which is the
-  // affordance-extinction pattern canon V100 §"Pre-F2 interim snooze semantics" forbids. Two
-  // reader-level SQL edits (this one and the dashboard bar's `fresh` CTE), superseded by the engine
-  // fold at F2. Written as an OR against the unchanged day predicate rather than as an exclusive
-  // branch so no existing type's behaviour moves; the two windows differ only for a moisture_check
-  // logged >24h ago but still inside a 25-hour DST fall-back day, where the union is the more
-  // lenient (snooze survives ~1h longer) and therefore fail-safe direction.
+  // V4-WATERMATH-001 F0 interim snooze window. watering/rain keep the ET-calendar-day rule. A `moisture_check`
+  // ADDITIONALLY satisfies on a rolling 24h window, because an ET-day-only snooze tapped at 09:00 expires at
+  // midnight and the planting re-nags at the next run, a snooze the app visibly overrides (canon V100 "Pre-F2
+  // interim snooze semantics" forbids that). Two reader-level SQL edits (this one and the dashboard bar's
+  // `fresh` CTE), superseded by the engine fold at F2. An OR against the unchanged day predicate, so no
+  // existing type's behaviour moves; the windows differ only inside a 25-hour DST fall-back day, where the
+  // union is the lenient, fail-safe direction.
   const rows = await sql`
     SELECT DISTINCT e.plant_id, e.event_type
     FROM event_log e
@@ -150,10 +139,9 @@ export async function annotateDone(sql, plan) {
           )
   `;
   const sat = new Set(rows.map((r) => `${r.plant_id}|${r.event_type}`));
-  // BUG-BACKDATEDFEED-001 — the feed bucket ALSO checks off on its own cadence, so a feeding recorded
-  // today but dated an earlier day retires the card (see doneEvents.js fedWithinInterval for why this
-  // widening is correct for feeding and wrong for watering). Scoped to the fertilize items that carry
-  // a numeric interval, so a plan stored before engine.js emitted one costs no extra query at all.
+  // BUG-BACKDATEDFEED-001: the feed bucket ALSO checks off on its own cadence, so a feeding recorded today
+  // but dated earlier retires the card (doneEvents.js fedWithinInterval says why that is right for feeding
+  // and wrong for watering). Scoped to fertilize items with a numeric interval, so an older plan costs no extra query.
   const fertIds = (Array.isArray(plan?.fertilize) ? plan.fertilize : [])
     .filter((it) => it && it.id && typeof it.interval === 'number')
     .map((it) => it.id);
@@ -162,11 +150,10 @@ export async function annotateDone(sql, plan) {
 }
 
 
-// V4-ASSIGNLENS-001 — opt-in read of OTHER household caretakers' plans for today (Today's "also show
-// Jen's care needs" section). Per-row: newest-wins dedup, the same schema_version guard as the primary
-// plan (a version-skewed row is skipped, never served as garbage), and read-time done-annotation (plant
-// -scoped, so a member's items check off from today's events regardless of who logged them). Defined
-// AFTER annotateDone so it is the last tagged query in the file (static-guard ordering invariant).
+// V4-ASSIGNLENS-001: opt-in read of OTHER household caretakers' plans for today. Per-row: newest-wins dedup,
+// the same schema_version guard as the primary plan (a skewed row is skipped), and read-time done-annotation
+// (plant-scoped, so a member's items check off from today's events regardless of who logged them).
+// Defined AFTER annotateDone: tagged-template ordering is a static-guard invariant.
 export async function readHouseholdPlans(sql, ids) {
   if (!ids || ids.length === 0) return [];
   const rows = await sql`
@@ -193,18 +180,15 @@ export async function readHouseholdPlans(sql, ids) {
   return out;
 }
 
-// BUG-BACKDATEDFEED-001 — newest fertilizing date per planting, as an ET calendar date, plus today's ET
-// date from the same round trip (one clock, so the comparison can never straddle two).
+// BUG-BACKDATEDFEED-001: newest fertilizing date per planting, as an ET calendar date, plus today's ET date
+// from the same round trip (one clock, so the comparison can never straddle two).
 //
-// Defined LAST on purpose. index.test.js indexes the file's tagged templates positionally (stmts[0]
-// = plan read, stmts[1] = done-derivation, stmts[2] = household read); appending here keeps every
-// existing index valid instead of silently re-pointing three guards at the wrong query. Same
-// ordering invariant readHouseholdPlans documents above — it just is not the last one any more.
+// Defined LAST on purpose: index.test.js indexes the file's tagged templates positionally (stmts[0] = plan
+// read, stmts[1] = done-derivation, stmts[2] = household read); appending here keeps every index valid.
 //
-// Deliberately reads event_log rather than entity_memory.last_fertilized_at: the ENGINE decides
-// due-ness from max(event_log.event_date), and a checker that consulted a different surface than the
-// generator could disagree with it — the cache is derived, and an undo that repairs one need not
-// repair the other in the same instant.
+// Reads event_log rather than entity_memory.last_fertilized_at: the ENGINE decides due-ness from
+// max(event_log.event_date), and a checker consulting a different surface than the generator could disagree
+// with it (the cache is derived).
 export async function lastFertByPlant(sql, ids) {
   const rows = await sql`
     SELECT e.plant_id AS plant_id,
@@ -222,7 +206,7 @@ export async function lastFertByPlant(sql, ids) {
     if (r.last_fert) lastFert.set(r.plant_id, r.last_fert);
     if (r.today) today = r.today;
   }
-  // A planting with no fertilizing history yields no row at all, so `today` can be null here; the
-  // fold treats a null-today ctx as "no cadence signal" and falls back to the day rule.
+  // A planting with no fertilizing history yields no row, so `today` can be null; the fold treats a null-today
+  // ctx as "no cadence signal" and falls back to the day rule.
   return today ? { today, lastFert } : null;
 }
