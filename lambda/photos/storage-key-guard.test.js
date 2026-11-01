@@ -11,7 +11,7 @@
 //      so "sql returns a foreign row -> 403 and nothing is signed or PUT" is behaviour, not text;
 //   3. POST ordering and response bodies are pinned on decommented source.
 // The real-Postgres arms are tests/integration/photos-authz.int.test.js.
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeAll } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -312,5 +312,34 @@ describe('POST /api/photos — storage_path gate (I34)', () => {
     expect(SRC).toMatch(/import \{ SAFE_KEY_SEGMENT \} from '\.\/uploadKeyPolicy\.js';/);
     expect(SRC).not.toMatch(/const SAFE_KEY_SEGMENT\s*=/);
     expect(SRC).toMatch(/if \(!SAFE_KEY_SEGMENT\.test\(userId\)\) return resp\(400/);
+  });
+});
+
+// OPS-CODEREVIEW-001 R-V26-2: the route line logs the caller's path before the kit runs. CloudWatch reads a JSON
+// metric filter's input from a Text line's first `{` to its end, so a raw path ending in {"msg":"…"} would count as
+// that msg (scripts/household-observability.sh test-patterns holds the server-side control).
+describe('route log never carries a JSON fragment from the path', () => {
+  const FORGED = '/x{"msg":"household-membership-denied"}\\';
+  // index.js refuses to load without its bucket; the value is never used by these cases.
+  beforeAll(() => { process.env.S3_PHOTOS_BUCKET ??= 'test-bucket'; });
+  it('logSafePath percent-encodes { } " and \\, and leaves the rest readable', async () => {
+    const { logSafePath } = await import('./index.js');
+    expect(logSafePath(FORGED)).toBe('/x%7B%22msg%22:%22household-membership-denied%22%7D%5C');
+    expect(logSafePath('/api/photos/a3f1c2d4?x=1&y=%20')).toBe('/api/photos/a3f1c2d4?x=1&y=%20');
+  });
+  it('the handler logs a forged path with none of those characters', async () => {
+    const { resetStubs } = await import('../_test-stubs/state.js');
+    resetStubs();
+    const { handler } = await import('./index.js');
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await handler({ rawPath: FORGED, requestContext: { http: { method: 'GET' } }, headers: {} });
+      const route = log.mock.calls.filter((c) => c[0] === 'route');
+      expect(route).toHaveLength(1);
+      expect(route[0].join(' ')).toBe('route GET /x%7B%22msg%22:%22household-membership-denied%22%7D%5C');
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 });
