@@ -483,7 +483,8 @@ describe('GET /api/plants?view=picker — exactly the chooser field set (V4-PICK
     const grepClient = (pattern) => execSync(`grep -rlE --exclude-dir=__tests__ "${pattern}" ${CLIENT} || true`, { encoding: 'utf8' })
       .split('\n').filter(Boolean).map((p) => p.replace(`${CLIENT}/`, '')).sort();
     expect(grepClient('view=picker')).toEqual(['hooks/usePlantPicker.js']);
-    expect(grepClient("hooks/usePlantPicker(\\.js)?'")).toEqual([
+    // Either quote: no lint rule fixes the quote style, so a double-quoted import is just as live.
+    expect(grepClient("hooks/usePlantPicker(\\.js)?['\\\"]")).toEqual([
       'components/LogManyVoice.jsx',
       'components/forms/PlantingSelect.jsx', 'pages/EventNew.jsx', 'pages/PhotoLibrary.jsx',
       'pages/SavedSeeds.jsx', 'pages/VoiceHarvest.jsx',
