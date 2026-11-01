@@ -9,9 +9,9 @@
 
 const A = {
   // today = DAILY CHECKLIST (two ticked rows + one open row). mono. DELIBERATE FORM, DO NOT CONVERGE IT
-  // BACK ON THE SEEDLING: it used to be a byte-copy of STATUS_GLYPHS.seedling.svg24, so one mark served a
-  // NAV DESTINATION, the seedling stages and the transplant event (chrome wearing content's mark, the
-  // same defect as event.given_away == action.share). src/__tests__/iconUniqueness.test.js fails if
+  // BACK ON THE SEEDLING: sharing STATUS_GLYPHS.seedling.svg24 would make one mark serve a NAV
+  // DESTINATION, the seedling stages and the transplant event (chrome wearing content's mark, the same
+  // defect as event.given_away == action.share). src/__tests__/iconUniqueness.test.js fails if
   // anyone re-points this at a sprout form.
   'nav.today': {
     class: 'mono', register: 'functional', variant: 'line',

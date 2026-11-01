@@ -551,9 +551,9 @@ export function classify(raw) {
 // ── V5-VOICEONEBREATH-002 / BUG-VOICETRAILCMD-001 ────────────────────────────────────────────────
 //
 // SPLIT A TRAILING COMMAND OFF A COMPLETE RECORD. One-breath speech ("cucumber, three count, two
-// thirty one grams, next") used to be DESTRUCTIVE: appending "next" made classify() return SEARCH
-// instead of `unparsed`, which skipped the one-breath reader and ran a planting search for the whole
-// string, silently discarding the count and weight. Re-speaking never helped.
+// thirty one grams, next") is DESTRUCTIVE without this split: appending "next" makes classify() return
+// SEARCH instead of `unparsed`, which skips the one-breath reader and runs a planting search for the whole
+// string, silently discarding the count and weight. Re-speaking never helps.
 //
 // This does not reopen the hole classify()'s whole-utterance rule closes (a SEARCH TERM must never
 // trigger a save), because the split is gated on the HEAD ALREADY BEING A RECORD:
