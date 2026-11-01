@@ -295,6 +295,20 @@ describe('refusals — the whole command, nothing written, no confirm window', (
     expect(writes()).toEqual([])
   })
 
+  // R-E2C-1 Q1: why LogManyVoice keeps its own fetch instead of usePlantPicker. The hook turns an
+  // unreadable body into [], and every skip would then read as "couldn't find", blaming the words.
+  it.each([
+    ['null', null],
+    ['an error object', { message: 'Internal Server Error' }],
+  ])('R-E2C-1 Q1: a picker body of %s refuses the skip as an unloaded list', async (_label, body) => {
+    const serve = apiFetch.getMockImplementation()
+    apiFetch.mockImplementation((path, opts) => (path === '/api/plants?view=picker' ? Promise.resolve(body) : serve(path, opts)))
+    await sayCommand('fed all pasture in ground except zephyr')
+    await screen.findByTestId('lmv-message')
+    expect(refusal()).toContain('I couldn’t load your plant list to check the names.')
+    expect(writes()).toEqual([])
+  })
+
   it('words that are not a care command are refused without a request', async () => {
     await sayCommand('hello there')
     await screen.findByTestId('lmv-message')
