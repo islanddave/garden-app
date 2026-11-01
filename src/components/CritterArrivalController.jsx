@@ -1,14 +1,11 @@
-// CritterArrivalController — global manager for Stage 1 flash (Phase B++ redesign 2026-05-30).
+// CritterArrivalController — global manager for the Stage 1 arrival flash.
 // Mounted ONCE at App.jsx level, fires regardless of which route the user is on.
-//
-// Replaces the Dashboard-only stage1Critter backfill effect.
 //
 // Behavior:
 // - On mount + on every location change, fetch /api/critters/active
 // - Filter for critters earned within the fresh window, not viewed,
 //   not already shown this session (sessionStorage de-dup key gardenApp.stage1ShownIds).
-//   V101 (2026-06-01): baseline residents RETIRED — robin/honeybee (1,2) now animate like
-//   any earned critter (removed the species_id<=2 exclusion).
+//   Every species animates like any earned critter (no baseline-resident exclusion).
 // - Pick the freshest qualifying critter; render <CritterArrival> with it
 // - When the animation finishes (~3s), clear local state; sessionStorage records the id
 //   so it doesn't re-fire on the next location change
@@ -21,7 +18,7 @@ import { useApiFetch } from '../lib/api.js'
 import { fetchActiveCritters } from '../lib/critterClient.js'
 import CritterArrival from './CritterArrival.jsx'
 
-const FRESH_WINDOW_MS = 5 * 60 * 1000  // 5 minutes — accommodate nav delay + auth hydration + cold-start (Dave smoke surfaced 30s was too tight)
+const FRESH_WINDOW_MS = 5 * 60 * 1000  // 5 minutes — accommodates nav delay + auth hydration + cold-start (30s proved too tight)
 const SHOWN_KEY = 'gardenApp.stage1ShownIds'
 const SHOWN_CAP = 50
 
@@ -29,18 +26,18 @@ export default function CritterArrivalController() {
   const { getToken } = useApiFetch()
   const location = useOverlayLocation()
   const [arrivingCritter, setArrivingCritter] = useState(null)
-  // V4-OVERLAY-001 Slice 2 (§7): a reward must NEVER pop over an open capture form. While a /log or
+  // A reward must NEVER pop over an open capture form. While a /log or
   // /log/many overlay is open, a fresh critter is suppressed-and-queued (never dropped — dropping is
   // its own dopamine-loop defect) and flushed on dismiss. Mirrors LogMany's "wake the controller
   // AFTER the result screen" precedent: rewards fire on completion, never initiation.
   const openOverlayPath = useOpenOverlayPath()
   const formOverlayOpen = openOverlayPath === '/log' || openOverlayPath === '/log/many'
-  // Slice 2 follow-up (Dave 2026-07-20): the batch-earned critter must fire ON the /log/many RESULT
+  // The batch-earned critter must fire ON the /log/many RESULT
   // screen (the accomplishment moment), NOT be deferred to dismiss. LogMany pushes state.critterCheck
   // onto the REAL overlay location at confirm→result; that explicit "reward-OK, show now" signal both
   // (a) re-triggers the poll (pageLocation — the stable background — does not change on that push) and
   // (b) bypasses the form-open suppression below. A plain ambient poll (no critterCheck) during active
-  // entry has no signal, so it stays suppressed-and-queued (§7 holds).
+  // entry has no signal, so it stays suppressed-and-queued.
   const rewardSignal = useOverlayRewardSignal()
   const queuedRef = useRef(null)
 

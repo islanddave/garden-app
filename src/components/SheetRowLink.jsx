@@ -1,10 +1,9 @@
 // src/components/SheetRowLink.jsx — a link inside an Android-Back-armed sheet that CONSUMES the armed
 // entry when it navigates.
 //
-// BUG-BACKNAVMORE-001 (BD-009) wrote this for BottomNav's two sheets; V5-SEEDSTAB-001 moved it here
-// because Saved seeds' "Track a saved-seed lot" sheet now arms Back too and holds a navigating link
-// ("Add the packet →"). It had already been copied by hand once, for sign-out; a second private copy
-// is how the two drift. Not in the forms barrel — import it by path (FROZEN.md, non-barrel table).
+// Shared by BottomNav's sheets and Saved seeds' "Track a saved-seed lot" sheet ("Add the packet →"),
+// which arms Back too and holds a navigating link; a private copy per sheet is how the two drift.
+// Not in the forms barrel — import it by path (FROZEN.md, non-barrel table).
 //
 // THE PROBLEM IT SOLVES. An armed sheet pushes a marker entry. A plain push from inside it strands
 // that marker MID-STACK ([page, page+marker, dest]) — a permanent dead Back press, because no browser
@@ -17,8 +16,7 @@
 // click falls through to the Link's own push, byte-identical to an unarmed link. Modified or
 // non-primary clicks (a new tab) fall through untouched.
 //
-// `state` is forwarded on BOTH paths. The replace path used to drop it, which was harmless while
-// every caller was a nav row carrying none; a Seeds door carries the page it should return to.
+// `state` is forwarded on BOTH paths: a Seeds door carries the page it should return to.
 //
 // Two variants rather than one component calling every hook: the overlay one needs the location as
 // well as navigate, and a plain row in a page that is not an overlay host has no use for either.

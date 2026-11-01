@@ -1,16 +1,15 @@
 // src/components/LogManyVoice.jsx
-// V5-VOICECARE-001 — spoken bulk care on Log many: "water all bag area", "fed all pasture in ground
-// except zephyr, crimson sweet, king richard". Dave's placement decision (2026-09-24): a mic ON LOG
-// MANY, because a spoken area already means what Log many's zone scope means (every live plant in it).
+// Spoken bulk care on Log many: "water all bag area", "fed all pasture in ground
+// except zephyr, crimson sweet, king richard". The mic lives ON LOG MANY because a spoken area
+// already means what Log many's zone scope means (every live plant in it).
 //
 // THE ENGINE IS NOT HERE. voiceCareGrammar.js says what was said, voiceCareResolve.js decides which
-// plantings it means (R0–R7 of _roadmapexec_20260916/lane-G-voicecare-hostres.md) and voiceCareBatch.js
-// moves it across the wire. This file is the HOST: it listens, shows the read-back, waits for the
+// plantings it means and voiceCareBatch.js moves it across the wire. This file is the HOST: it listens, shows the read-back, waits for the
 // go-ahead and hands a logged batch to the page. Every rule below is about that hand-off.
 //
 // ── THREE THINGS THIS HOST NEVER DOES ──────────────────────────────────────────────────────────
-//   1. It never writes without an explicit go-ahead: the word "next" (the harvest save word, Dave's
-//      Q-B) or a tap on the confirm button. Silence, any other words, a timeout, an edit to the list
+//   1. It never writes without an explicit go-ahead: the word "next" (the harvest save word) or a
+//      tap on the confirm button. Silence, any other words, a timeout, an edit to the list
 //      and every error all end with NOTHING written.
 //   2. It never writes the area minus the skips. The write names the planting ids that were read
 //      back (writeCarePlan: scope `ids`), so a planting added or ended in between is a 409 rather
@@ -25,14 +24,14 @@
 // delimiter" contract voiceCareGrammar was designed on. VoiceHarvest's recogniser and the frozen
 // debouncer serve a minutes-long continuous run with data commits at session boundaries; one command
 // per tap has none of that. The wrapper never re-arms, and Chrome Android can end a session in
-// ~1.7 s having heard nothing (2026-09-13 trace), so the WINDOW below re-arms empty sessions until a
+// ~1.7 s having heard nothing, so the WINDOW below re-arms empty sessions until a
 // deadline. A session WITH words is decided once, at its end, never on its first final: Chrome
-// revises finals inside a session ("bitter" -> "bitter melon", BUG-VOICEDUPE-003), and a "next" that
+// revises finals inside a session ("bitter" -> "bitter melon"), and a "next" that
 // is revised to "next to the fence" must cancel, not confirm.
 //
 // ── NOTHING SPEAKS ─────────────────────────────────────────────────────────────────────────────
 // The read-back is SHOWN, never spoken: nothing in the app speaks, and a spoken read-back would be
-// heard by the open mic — which, under Q-B, is "anything else" and cancels. The page's own
+// heard by the open mic — which counts as "anything else" and cancels. The page's own
 // ScopeChecklist is the visual twin: the area's plants with the skipped ones unticked, fed the SAME
 // dry-run answer the plan was built from so the list cannot drift from the sentence above it.
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
@@ -53,9 +52,8 @@ import { LAYER } from '../lib/dismissLayers.js'
 import { setReloadBlocked } from '../lib/reloadGate.js'
 import { PICKER_PATH } from '../hooks/usePlantPicker.js'
 
-// Listening windows. NONE OF THESE IS MEASURED — the confirm window in particular is design-note
-// open question 3 (laneD2-voicecare-core.md §9.3) and needs a device number, not this guess. What
-// each one bounds: COMMAND — how long a tap waits for the first words; CONFIRM — how long the
+// Listening windows. NONE OF THESE IS MEASURED — the confirm window in particular needs a device
+// number, not this guess. What each one bounds: COMMAND — how long a tap waits for the first words; CONFIRM — how long the
 // read-back waits for "next" before silence counts as a cancel; SETTLE — how long after the last
 // words the host ends a session Chrome is keeping open (desktop does; Android usually ends it first).
 export const COMMAND_WINDOW_MS = 10000
@@ -74,7 +72,7 @@ export const HELD_RECHECKS = 2
 const MAX_REARMS = 12
 const MIC_LABEL = 'log-many-voice'
 
-// The household list the names resolve against (U). This file is a censused consumer of the picker
+// The household list the names resolve against. This file is a censused consumer of the picker
 // projection — lambda/plants/grid-view.test.js lists it with the fields it reads. It takes only the
 // path, not usePlantPicker: the list is loaded on the first mic tap and awaited inside
 // loadVocabulary, and a null body must read as unreadable (ok:false), which the hook would turn into [].
@@ -96,7 +94,7 @@ const NO_RETRY = new Set(['denied', 'unavailable'])
 // what makes it understandable.
 const CONTINUATION = /^(except|excluding|but not|apart from|other than)\b/i
 
-// U + A in one load, started on the first tap (in parallel with listening) and awaited only when a
+// Plants and taught aliases in one load, started on the first tap (in parallel with listening) and awaited only when a
 // command actually names plants to skip. Crop aliases are attached to the ROW the way VoiceHarvest
 // attaches them, because careTerms() reads `crop_aliases` off the planting.
 async function loadVocabulary(apiFetch) {
@@ -113,14 +111,12 @@ async function loadVocabulary(apiFetch) {
       .then(() => apiFetch('/api/varieties/crop-types'))
       .then((d) => (Array.isArray(d) ? d : []))
       .catch(() => []),
-    // Fails soft by contract (voiceAliases.js): forgetting his taught names degrades matching, it never
-    // blocks it. BUG-VOICEALIASFAILSOFT-001 — a failed read is null ("unknown"), and indexes to an empty
-    // map, so a skip that needed a taught name is REFUSED (R3 "couldn't find" / "could be…"), never
-    // guessed: measured over all 33 of his live aliases × every top-level area (198 skips, the lane V
-    // report), 0 resolve to another planting with the list missing. The number case the harvest page
-    // had cannot arise here (a skip carries no amount), nor the late case (this load is awaited before
-    // any name is resolved). What was missing is the second try: `aliasesLoaded` makes ensureVocab ask
-    // again on the next tap instead of keeping the failed list for the whole visit.
+    // Fails soft by contract (voiceAliases.js): forgetting the taught names degrades matching, it
+    // never blocks it. A failed read is null ("unknown"), and indexes to an empty map, so a skip that
+    // needed a taught name is REFUSED (R3 "couldn't find" / "could be…"), never guessed. The number
+    // case the harvest page has cannot arise here (a skip carries no amount), nor the late case (this
+    // load is awaited before any name is resolved). `aliasesLoaded` makes ensureVocab ask again on
+    // the next tap instead of keeping the failed list for the whole visit.
     fetchAliases(apiFetch),
   ])
   const bySlug = new Map(cropTypes.map((c) => [c.slug, c]))
@@ -225,14 +221,13 @@ export default function LogManyVoice({
     }
     const arm = () => {
       if (windowRef.current !== w) return
-      // REVIEW MINOR-1 (review-logmany-voice.md). Only the TAP that opened a window may take the mic
-      // from another surface — that is the arbiter's newest-user-start rule, and the tap is this
-      // surface's user start. Every other start is AUTOMATIC: a re-arm after Chrome ends an empty
-      // session, the "next" window opening by itself under the read-back, a relisten, a retry. None
-      // of those may evict a mic the user tapped since. The only check used to sit in onEnd, 150 ms
-      // BEFORE the re-arm, so a mic taken inside that gap was taken straight back (reproduced by the
-      // seat with this component's own harness). It is made HERE, in the same synchronous call as the
-      // acquire inside startLiveTranscription, so nothing can slip between the check and the acquire.
+      // Only the TAP that opened a window may take the mic from another surface — that is the
+      // arbiter's newest-user-start rule, and the tap is this surface's user start. Every other
+      // start is AUTOMATIC: a re-arm after Chrome ends an empty session, the "next" window opening
+      // by itself under the read-back, a relisten, a retry. None of those may evict a mic the user
+      // tapped since. The check is made HERE, in the same synchronous call as the acquire inside
+      // startLiveTranscription, so nothing can slip between the check and the acquire (a check in
+      // onEnd would run 150 ms BEFORE the re-arm and a mic taken in that gap would be taken back).
       if (!(w.tapStart && w.starts === 0) && isMicHeld()) {
         if (w.heldChecks++ < HELD_RECHECKS) { w.timers.rearm = setTimeout(arm, REARM_DELAY_MS); return }
         finish(() => onMicError('taken'))
@@ -344,9 +339,9 @@ export default function LogManyVoice({
     } finally {
       writingRef.current = false
     }
-    // BUG-VOICEALIASHITCOUNT-001 — the batch is logged, so the taught names its skips were resolved
-    // through were used: count them. Before the liveness check, because the write landed whether or not
-    // this frame is still open; fire-and-forget (recordAliasUse), so it cannot touch the result.
+    // The batch is logged, so the taught names its skips were resolved through were used: count
+    // them. Before the liveness check, because the write landed whether or not this frame is still
+    // open; fire-and-forget (recordAliasUse), so it cannot touch the result.
     if (res.ok) recordAliasUse(apiFetch, plan.aliasUses)
     if (!aliveRef.current || run !== runRef.current) return
     if (res.ok) {
@@ -484,7 +479,7 @@ export default function LogManyVoice({
       if (skipped.has(String(p.id).toLowerCase())) decisions[p.id] = false
     }
     // baseline TRUE whatever the stored "start with nothing selected" preference says: a spoken
-    // area means every live plant in it (Q-A). touched TRUE so the checklist never re-seeds it.
+    // area means every live plant in it. touched TRUE so the checklist never re-seeds it.
     return { decisions, baseline: true, touched: true, mode: 'bulk' }
   }, [plan, dryRun])
   seedRef.current = seed
@@ -574,8 +569,8 @@ export default function LogManyVoice({
                 runDryRun={voiceDryRun}
                 onSelectionChange={onVoiceSelection}
                 initialSelection={seed}
-                // Review MINOR-5: "Start with everything selected" writes his STORED default for every
-                // future batch. A read-back must never be able to change it, so the twin hides it.
+                // "Start with everything selected" writes the STORED default for every future
+                // batch. A read-back must never be able to change it, so the twin hides it.
                 showDefaultToggle={false}
               />
             )}

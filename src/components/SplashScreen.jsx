@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { P } from '../lib/constants.js'
 
-// V4-BRANDICON-001 — in-app welcome/splash overlay.
+// In-app welcome/splash overlay.
 // Purpose: replace the blank cold-start flash with a branded cream screen showing
 // the locked garden-arbor illustration (public/splash.svg). NOT the OS splash
 // (Android auto-composes name+bg+icon; iOS startup PNGs are a separate later scope).
@@ -9,29 +9,13 @@ import { P } from '../lib/constants.js'
 // tap-to-dismiss, honors prefers-reduced-motion.
 // Rendered as a sibling overlay in App so it covers login + all routes.
 //
-// V4-PERFTHEMEA-001 made this exit on READINESS (Clerk's isLoaded) rather than on a timer, because
-// App.jsx's `Protected` returned null until then: the splash was leaving ~850ms before there was
-// anything behind it, and on a WARM session it never rendered at all and the full 3.4s was raw
-// white. The premise was correct for the app as it stood — a fixed-duration brand moment was doing
-// duty as a loading state because nothing else could.
-//
-// V4-PERFCLERK-001 C — THE PREMISE NO LONGER HOLDS, SO THE AUTH COUPLING IS GONE.
-// `Protected` now renders an identity-free skeleton instead of null, and the shell (header, nav
-// frame, content slot) paints on React's FIRST COMMIT. There is therefore something behind this
-// overlay from the moment it mounts, and holding it until isLoaded would spend the ~2.5s Clerk
-// window showing an illustration on top of a ready shell — the exact inversion of the goal.
-// So the exit condition is the brand hold again, and this is a brand moment again, not a gate.
-//
-// Two consequences, stated rather than buried:
-//   • MAX_HOLD_MS is GONE, not relaxed. It existed so a wedged/offline Clerk could not trap the user
-//     behind the brand screen. Removing the auth dependency eliminates that failure mode outright
-//     rather than bounding it — a ceiling on a timer that cannot exceed HOLD_MS is a dead guard.
-//   • A warm session (flag already set) now renders nothing at all and hands straight to the shell.
-//     Under the old model that path was the 3.4s-of-white case; under this one it is the fast path.
+// The exit is the brand hold timer, NOT an auth-readiness gate: `Protected` renders an
+// identity-free skeleton and the shell paints on React's FIRST COMMIT, so something is always
+// behind this overlay. Holding it until Clerk loaded would show an illustration on top of a ready
+// shell. For the same reason there is no max-hold ceiling (no auth dependency to wedge), and a warm
+// session (flag already set) renders nothing and hands straight to the shell.
 
-// V4-PERFSPLASH-001 — the brand hold is cut from 1720ms to 500ms (Dave, 2026-08-26: "cut it to
-// about half a second"). Nothing structural changes: same timer, same once-per-session flag, same
-// reduced-motion branch. Only the two durations move.
+// The brand hold is 500ms in total (the SplashScreen test mirrors these constants).
 // Why the split is 320/180 rather than an even one: this overlay is `position:fixed; inset:0` and
 // takes pointer events for its WHOLE life, so the fade is not free screen-dressing — it is a window
 // in which the shell is visibly ready and still swallows taps (a tap at 90% faded hits `dismiss`,
@@ -85,9 +69,8 @@ export default function SplashScreen() {
 
   if (!visible) return null
 
-  // Tap-to-dismiss is live again. It was made inert while auth loaded because dismissing would have
-  // revealed the blank this was covering; the shell underneath is now a rendered skeleton, so an
-  // impatient tap reveals structure rather than nothing.
+  // Tap-to-dismiss: the shell underneath is a rendered skeleton, so an impatient tap reveals
+  // structure rather than a blank.
   const dismiss = () => beginExit()
 
   return (

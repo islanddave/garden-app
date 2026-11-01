@@ -3,9 +3,8 @@ import { P } from '../lib/constants.js'
 import { T } from './forms/formStyles.js'
 import Icon from './Icon.jsx'
 
-// V4-FLAG-001 (2026-07-07): the per-planting flag UI is BACK; flagged severity variants (1/2/3)
-// reinstated alongside the system 'stale' badge. Keyed on int severity (event_log.severity).
-// V4-ICON-001: severity emoji -> the §9 monotonic glyph ladder (severity.low/med/high).
+// Flagged severity variants (1/2/3) sit alongside the system 'stale' badge. Keyed on int severity
+// (event_log.severity). Glyphs come from the monotonic ladder severity.low/med/high.
 // The badge span sets `color` per tone below, so each mono glyph inherits its severity hue
 // (shape carries the order; color reinforces; the label is the text channel — SC 1.4.1).
 const FLAG = {
@@ -49,8 +48,6 @@ export default function SeverityBadge({ reason, severity, daysStale }) {
       title={STALE.title}
       data-testid="severity-badge"
       data-variant="stale"
-      // Was a hand-copied duplicate of badgeStyle() — key-for-key identical, which is why
-      // the same two literals had to be fixed twice. Collapsed onto the helper.
       style={badgeStyle(STALE.color)}
     >
       {STALE.icon(STALE.color)}

@@ -2,7 +2,7 @@ import React from 'react'
 import { Link } from 'react-router-dom'
 import { P } from '../lib/constants.js'
 
-// StatTile — V4-HARVESTVIEW-001 S2b (design §8). Ambient snapshot tile: a small label + a primary
+// StatTile — ambient snapshot tile: a small label + a primary
 // line + optional secondary. Tappable when `to` is given (renders a Link), else a plain div. Static
 // by construction — no count-ups, no animation (Reward-UX: this surface never celebrates or scores).
 export default function StatTile({ label, primary, secondary, to, onClick }) {

@@ -1,26 +1,20 @@
-// V4-THEME-001 (V200 Pass B) — Photos WALL (Slice 3). The browse surface for the Garden tab's
-// Photos sub-tab: a chronological photo grid grouped by month with sticky headers, opening the
-// §10 Lightbox gallery on tap. Reuses the EXISTING /api/photos read shape (same as PhotoLibrary)
-// — frontend-only, no schema/backend change. PhotoLibrary stays at /photos for upload + tagging;
-// this is read-only browse.
+// Photos WALL. The browse surface for the Garden tab's Photos sub-tab: a chronological photo grid
+// grouped by month with sticky headers, opening the Lightbox gallery on tap. Reads the same
+// /api/photos shape as PhotoLibrary. PhotoLibrary stays at /photos for upload + tagging; this is
+// read-only browse.
 //
 // Lives OUTSIDE src/components/forms/, so it is exempt from the forms freeze-guard and the
 // no-hex / no-emoji ESLint scope (like PlantingTile). It still composes P/T tokens for chrome.
 //
 // Grouping/sort is by photoDate() — capture time (EXIF DateTimeOriginal) where the camera recorded
-// one, upload time otherwise. This note used to say capture time "would be the ideal grouping key
-// but is not surfaced by the photos Lambda" and to wait for the API to add a field. The field was
-// already there: photos.taken_at had been written on every upload since mid-August 2026, and the
-// gallery route simply did not project it. V4-PHOTOTAKENAT-002 projects it, and this is the surface
-// the omission was most visible on — a frame shot on 13 August and uploaded on 8 September sat
-// under a SEPTEMBER header. 150 of the 315 rows carrying a capture time were in that position when
-// measured 2026-09-09. Sorting and sectioning both go through photoDate() so a tile cannot land in
-// one month and sort as though it were in another.
+// one, upload time otherwise (the gallery route projects photos.taken_at), so a frame shot in one
+// month and uploaded in the next sits under the month it was shot. Sorting and sectioning both go
+// through photoDate() so a tile cannot land in one month and sort as though it were in another.
 //
-// V4-SPACEPHOTO-001 Lane C — this is the CANONICAL month-grouped gallery renderer. The Space
-// gallery is a PROP-CONFIG of it (`path` + `empty` + `renderTileFooter` + `testId`), NOT a fourth
-// copy alongside PhotoLibrary's and LocationDetail's grids. Every prop defaults to the shipped
-// behavior, so the Garden Photos sub-tab (<PhotosWall /> with no props) is byte-unchanged.
+// This is the CANONICAL month-grouped gallery renderer. The Space gallery is a PROP-CONFIG of it
+// (`path` + `empty` + `renderTileFooter` + `testId`), NOT a copy alongside PhotoLibrary's and
+// LocationDetail's grids. Every prop defaults to the Garden behaviour, so the Garden Photos sub-tab
+// (<PhotosWall /> with no props) needs no config.
 import React, { useState, useCallback, useMemo } from 'react'
 import { useCachedFetch } from '../hooks/useCachedFetch.js'
 import { photoDate } from '../lib/photoModel.js'
@@ -35,9 +29,8 @@ import useImageWindow from '../hooks/useImageWindow.js'
 const EMPTY_PHOTOS = []   // stable ref so the sort/section memos don't re-run while data is undefined
 
 // Canonical photo-load failure copy, shared with PhotoLibrary's grid. Both surfaces branch on the
-// same condition (no status / 5xx ⇒ service-side and worth retrying) and had drifted to two
-// near-identical sentences; this is the one string. `subject` names what failed to load, which is
-// the only genuinely surface-specific part.
+// same condition (no status / 5xx ⇒ service-side and worth retrying), so there is one string.
+// `subject` names what failed to load, the only surface-specific part.
 export function photoLoadErrorMessage(error, subject) {
   return (error?.status == null || error.status >= 500)
     ? 'The photo service had a problem. This is usually temporary — please retry.'
@@ -47,8 +40,7 @@ export function photoLoadErrorMessage(error, subject) {
 // Month bucket key + human label from an ISO-ish timestamp. Falls back to an "Undated" bucket
 // (sorted last) when the photo has no usable date at all, so a malformed row never drops out
 // silently. Note that a row with no taken_at is NOT undated — photoDate() hands this its created_at,
-// which is why the 1,269 pre-EXIF rows still section by upload month rather than piling into
-// "Undated".
+// so older rows without EXIF still section by upload month rather than piling into "Undated".
 const UNDATED_KEY = '0000-00'
 function monthKey(ts) {
   const t = ts ? Date.parse(ts) : NaN
@@ -72,14 +64,14 @@ export default function PhotosWall({
   testId = 'photos-wall',
   ariaLabelPrefix = 'Photos from',
 } = {}) {
-  // V4-IMGCACHE-001 D-1: read the photo list through the SWR cache — a revisit paints from cache
-  // instead of a refetch-and-re-presign every mount; `refetch` (Retry) force-revalidates. The cache
-  // key is identity-scoped AND path-scoped, so a scoped wall never reads the garden-wide bucket.
+  // Read the photo list through the SWR cache — a revisit paints from cache instead of a
+  // refetch-and-re-presign every mount; `refetch` (Retry) force-revalidates. The cache key is
+  // identity-scoped AND path-scoped, so a scoped wall never reads the garden-wide bucket.
   const { data, loading, error, refetch } = useCachedFetch(path)
   const photos = data ?? EMPTY_PHOTOS
   // Lightbox state: lbIndex is the FLAT index across all months into the sorted full list. lbFrozen
-  // snapshots the slide array at open (regression I4) so a background revalidate can't reorder it and
-  // jump the open slide to a different photo.
+  // snapshots the slide array at open so a background revalidate can't reorder it and jump the
+  // open slide to a different photo.
   const [lbOpen, setLbOpen] = useState(false)
   const [lbIndex, setLbIndex] = useState(0)
   const [lbFrozen, setLbFrozen] = useState(null)
@@ -98,7 +90,7 @@ export default function PhotosWall({
     })
   }, [photos])
 
-  // BUG-PHOTOTHUMB-001 — window the FLAT list, then section it. Windowing each month's TileGrid
+  // Window the FLAT list, then section it. Windowing each month's TileGrid
   // instead would bound each month but not the page (12 months x 24 > the 120 the API returns), so
   // the bound has to be applied before grouping. slice(0, shown) preserves indices, so flatIndex
   // below is still the index into the FULL sorted array and the Lightbox mapping is unchanged.
@@ -123,7 +115,7 @@ export default function PhotosWall({
 
   // Lightbox images derive from the SAME sorted order, so lbIndex (a flat index) is valid.
   const lbImages = useMemo(
-    // `thumbSrc` feeds the FILMSTRIP only (BUG-TIERLESSPHOTOS-001); the main slide stays `src`, the
+    // `thumbSrc` feeds the FILMSTRIP only; the main slide stays `src`, the
     // original. Additive and optional — Lightbox degrades to `src` when it is absent or 404s.
     () => sorted.map(p => ({ src: p?.view_url, thumbSrc: p?.thumb_url, photoId: p?.id, alt: p?.caption || 'Garden photo', caption: p?.caption || '' })),
     [sorted]
@@ -210,9 +202,8 @@ export default function PhotosWall({
 }
 
 // Square photo tile. aspect-ratio 1/1 keeps the wall a true grid of squares; the image is
-// async-decoded and the wall is bounded by useImageWindow above (NOT by loading="lazy", which was
-// measured to never fire here — 0 of 120 images requested, BUG-PHOTOTHUMB-001). The whole tile is
-// a ≥44px button.
+// async-decoded and the wall is bounded by useImageWindow above (NOT by loading="lazy", which
+// never fires here). The whole tile is a ≥44px button.
 function PhotoTile({ photo, onOpen, footer }) {
   // Open photo {n} — 1-based flat position, a stable accessible label across all months.
   const n = (photo._flatIndex ?? 0) + 1
@@ -227,10 +218,9 @@ function PhotoTile({ photo, onOpen, footer }) {
         background: P.greenPale, cursor: 'pointer',
       }}
     >
-      {/* V4-PHOTOMODEL-001 — was `initialUrl={photo.view_url}`: this 3-column wall was rendering
-          the FULL 4080x3072 originals, the exact load BUG-PHOTOTHUMB-001 fixed on PhotoLibrary's
-          grid and never applied here. tier=THUMB takes the ~200KB derivative (11-23x smaller,
-          measured) and degrades to the original in-hand if the thumb object is missing. */}
+      {/* tier=THUMB takes the small derivative, not the full original (a 3-column wall of full
+          originals is the load PhotoLibrary's grid already avoids), and degrades to the original
+          in-hand if the thumb object is missing. */}
       <PhotoView
         photo={photo}
         tier={TIER.THUMB}
@@ -240,7 +230,7 @@ function PhotoTile({ photo, onOpen, footer }) {
       />
     </button>
   )
-  // No footer (the shipped Garden wall) → the tile IS the rendered node, byte-unchanged. A footer
+  // No footer (the Garden wall) → the tile IS the rendered node. A footer
   // renders as a SIBLING of the tile, never inside it: the tile is a <button>, and a nested
   // interactive control there would be invalid markup and unreachable by keyboard.
   if (!footer) return tile

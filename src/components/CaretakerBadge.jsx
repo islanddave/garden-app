@@ -1,4 +1,4 @@
-// src/components/CaretakerBadge.jsx — V4-ASSIGNLENS-001. Tiny caretaker indicator: colored dot +
+// src/components/CaretakerBadge.jsx — tiny caretaker indicator: colored dot +
 // initial (colour alone fails SC1.4.1). Unassigned -> hollow outline dot, no initial. Carries a
 // human aria-label so the meaning survives without colour.
 import React from 'react'

@@ -5,14 +5,13 @@ import { useShareToSocial, TARGETS, captionLimitFor, validateForTargets } from '
 import { useDismissable } from '../context/DismissRegistry.jsx'
 import { LAYER } from '../lib/dismissLayers.js'
 
-// V4-FBSHARE-001 / V4-IGSHARE-001 — compose + post sheet for sharing photos to "Gardens at Mathews"
-// on Facebook and/or Instagram. Reused for single-photo (from the tag modal) and multi-select (from
+// Compose + post sheet for sharing photos to "Gardens at Mathews" on Facebook and/or Instagram. Reused for single-photo (from the tag modal) and multi-select (from
 // the selection bar). The bytes are uploaded server-side; nothing here touches is_public. Bottom-sheet
 // layout keeps the Post button in the thumb zone.
 //
 // INSTAGRAM IS OFF BY DEFAULT, and that is a safety default rather than a UI preference. A Facebook
-// post can be deleted; an Instagram post CANNOT be removed through the API (verified 2026-08-21,
-// DELETE -> code 10) and has to be deleted by hand in the app. A destination that cannot be undone
+// post can be deleted; an Instagram post CANNOT be removed through the API (DELETE fails with code
+// 10) and has to be deleted by hand in the app. A destination that cannot be undone
 // should be chosen deliberately every time, not inherited from the last session.
 const HASHTAG = '#GardensAtMathews'
 // The three states that REPLACE the composer with <Blocked>. Named once because the reload-gate
@@ -45,11 +44,11 @@ export default function FacebookShareSheet({ open, photos = [], onClose, onPoste
   // identity. Every setState here must therefore be a NO-OP on a second run, or the effect feeds
   // itself: React bails out of a re-render when the next state is Object.is-equal to the current
   // one, which `setCaption('')` satisfies for free — and an inline `{ facebook: true, ... }` never
-  // does, because it is a fresh object every time. Written inline it spun render -> new object ->
-  // render until the heap died (an OOM, not a hang: the worker is killed and the run reports
-  // "Worker exited unexpectedly" with no failing test). The real hook's `reset` is useCallback-
-  // stable so production never reached it, but a component that loops infinitely whenever a
-  // dependency is unstable is one refactor away from doing it for real.
+  // does, because it is a fresh object every time. Written inline it spins render -> new object ->
+  // render until the heap dies (an OOM under a test with an unstable mocked `reset`: the worker is
+  // killed with no failing test). The real hook's `reset` is useCallback-stable, but a component
+  // that loops infinitely whenever a dependency is unstable is one refactor away from doing it for
+  // real.
   useEffect(() => {
     if (open) { reset(); setCaption(''); setTargets(DEFAULT_TARGETS) }
   }, [open, reset])
@@ -70,15 +69,15 @@ export default function FacebookShareSheet({ open, photos = [], onClose, onPoste
   // would DESTROY something. Up to 5000 chars of free text that exists nowhere but this state.
   //
   // Reported out rather than derived: `caption` is internal and the sheet is opened by a page that
-  // holds the reload gate, so PhotoLibrary cannot see this without being told (V4-DIRTYGUARDSWEEP-001,
-  // same shape as MicCaptureButton's onRecordingChange).
+  // holds the reload gate, so PhotoLibrary cannot see this without being told (same shape as
+  // MicCaptureButton's onRecordingChange).
   //
   // `open &&` IS load-bearing, and for the OPPOSITE reason to PhotoLibrary's staged file, which is
   // deliberately NOT gated on its form being visible: there the blob survives a collapse and comes
   // back on re-open, so releasing would drop a live hold. Here the effect above wipes the caption on
   // every open, so a dismissed draft is ALREADY unreachable — holding for it would wedge updates over
-  // text the user cannot get back to (BUG-STALECLIENT-001's shape). A test pins both halves: the hold
-  // releases on close, AND the text really is gone on re-open.
+  // text the user cannot get back to. A test pins both halves: the hold releases on close, AND the
+  // text really is gone on re-open.
   //
   // `!done` because a posted caption is saved, not unsaved — nothing clears `caption` on success, so
   // without this term the Success screen would hold a deploy until someone tapped Done. `!blocked`
@@ -100,15 +99,13 @@ export default function FacebookShareSheet({ open, photos = [], onClose, onPoste
     return () => onDirtyChange(false)
   }, [dirty, onDirtyChange])
 
-  // V4-BACKNAV-001 Slice 2 — this surface had NO Escape handler at all, so registering ADDS
-  // Escape-to-close. `busy: posting` is load-bearing: this is the one surface in the app with a
-  // non-idempotent in-flight action (a Facebook post), and it already disabled its Close button
-  // while posting. blockOnBusy makes Escape respect the same rule.
+  // Registering gives the sheet Escape-to-close. `busy: posting` is load-bearing: this is the one
+  // surface in the app with a non-idempotent in-flight action (a Facebook post), and its Close
+  // button is disabled while posting. blockOnBusy makes Escape respect the same rule.
   //
-  // V4-DIRTYGUARDREST-001 — the dirty half, which Slice 2 left off. The predicate above already
-  // existed (it feeds the parent's reload gate) but was never handed to the arbiter, so up to 5000
-  // characters of composed caption — the largest single body of unsaved typing left in the app, and
-  // one with no draft stash of any kind — were discarded outright by Escape and by Android Back.
+  // The dirty half: the predicate above feeds the parent's reload gate and is also handed to the
+  // arbiter, because up to 5000 characters of composed caption — with no draft stash of any kind —
+  // would otherwise be discarded outright by Escape and by Android Back.
   //
   // THREE registration fields, not one. `dirty` because the arbiter cannot see the caption;
   // `confirmOnDirty` because per-entry opt-in is what makes the global switch safe (dismissLayers.js
@@ -219,8 +216,7 @@ export default function FacebookShareSheet({ open, photos = [], onClose, onPoste
                       onChange={() => toggleTarget(t.key)} />
                     {/* "posted" goes in the TEXT, not on an aria-label pinned to the tick. A bare
                         <span> has no role that can hold an accessible name, so aria-label there is
-                        dropped by the a11y gate and by assistive tech alike — the state would have
-                        been announced to nobody. A checked+disabled checkbox reads as "checked,
+                        dropped by the a11y gate and by assistive tech alike. A checked+disabled checkbox reads as "checked,
                         dimmed", which does not say "this one already went out". */}
                     {isDone ? `${t.label} — posted` : t.label}
                     {isDone && <span aria-hidden="true" style={{ color: P.green }}>✓</span>}
@@ -253,10 +249,6 @@ export default function FacebookShareSheet({ open, photos = [], onClose, onPoste
                 style={{ width: '100%', minHeight: 90, padding: '10px 12px', border: `1px solid ${P.border}`, borderRadius: 8, fontSize: '0.9rem', fontFamily: 'inherit', boxSizing: 'border-box', resize: 'vertical' }} />
             </div>
 
-            {/* `timeout` is a DIFFERENT outcome from `error` and must not be styled or worded as a
-                failure: we stopped waiting before the server did, so the post may well be live.
-                Gating this banner on 'error' alone left the timeout state rendering nothing at all —
-                a dismissed spinner and no explanation. */}
             {/* A PARTIAL is the outcome this banner exists for. One line per target that did not
                 land, each naming its own target — a single merged message cannot say which surface
                 is live and which is not, and that is the only fact the user needs in order to act.
@@ -264,8 +256,7 @@ export default function FacebookShareSheet({ open, photos = [], onClose, onPoste
 
                 `timeout` is a DIFFERENT outcome from `error` and must not be worded as a failure:
                 we stopped waiting before the server did, so the post may well be live. Gating this
-                on 'error' alone left the timeout state rendering nothing at all — a dismissed
-                spinner and no explanation. */}
+                on 'error' alone would render nothing at all for a timeout. */}
             {failures.length > 0 && (
               <div role="alert" style={{ background: P.alert, border: `1px solid ${P.alertBorder}`, borderRadius: 8, padding: '10px 14px', fontSize: '0.82rem', color: P.bannerInk, display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {landed.length > 0 && (

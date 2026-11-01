@@ -1,4 +1,4 @@
-// UpdateBanner — BUG-STALECLIENT-001. Fixed banner offering an explicit Refresh when a new
+// UpdateBanner — fixed banner offering an explicit Refresh when a new
 // version is available (waiting SW or stale shell, via useAppUpdate). Renders nothing when
 // current. Dismiss hides that specific version for this page lifetime; a NEWER version found
 // later re-shows. Sits above the bottom nav; role=status so screen readers announce it once.

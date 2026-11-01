@@ -1,7 +1,7 @@
-// src/components/Icon.jsx — V4-ICON-001 (Pass B V101) + V4-ICONCOLOR-001 single icon render surface.
-// Registry-driven (getIcon). Selects 24/18 master at the §2 crossover, computes the §4
+// src/components/Icon.jsx — single icon render surface.
+// Registry-driven (getIcon). Selects the 24/18 master at the size crossover, computes the
 // effective stroke (size-aware so the RENDERED width holds), forks mono(currentColor) vs
-// color-candidate(authored fills). COLOR PASS (V4-ICONCOLOR-001): for a color-candidate
+// color-candidate(authored fills). COLOR PASS: for a color-candidate
 // entry whose markup declares [data-region] fills, on the non-inverting 'cream' surface
 // with color enabled, each region's fill|stroke="currentColor" is substituted with the
 // resolved hex from ICON_COLORS via the entry's colorFills:{region:tokenName} map — the

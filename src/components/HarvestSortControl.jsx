@@ -1,6 +1,5 @@
 // Sort control for Harvests → Totals. Applies to the crop list AND to the variety sub-rows inside
-// each expanded crop — one control, one mental model, per Dave: "both for the main list (the crop
-// type main view) as well as the inside-a-type (where each tomato is listed)".
+// each expanded crop — one control, one mental model.
 //
 // Mode uses the canonical SegmentedControl (exactly-one-active view switch, which this is). The
 // direction toggle is a separate button rather than a fourth segment: mode and direction are two

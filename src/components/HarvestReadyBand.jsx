@@ -1,19 +1,19 @@
 // src/components/HarvestReadyBand.jsx
-// V4-HARVESTSURF-001 — the "ready to pick" ambient card on Today. Mirrors PutUpUseSoonBand's data
-// posture exactly: self-fetching, refresh on mount / in-app nav / app-foreground, and the fetch error
-// is still SWALLOWED (supplementary glance — it must never throw or surface onto Today).
+// The "ready to pick" ambient card on Today. Mirrors PutUpUseSoonBand's data posture exactly:
+// self-fetching, refresh on mount / in-app nav / app-foreground, and the fetch error is SWALLOWED
+// (supplementary glance — it must never throw or surface onto Today).
 //
-// BUG-READYBANDFETCH-001: swallowing is not the same as rendering nothing. A failed fetch used to
-// leave state null, which renders identically to an empty queue — an outage was indistinguishable
-// from "nothing to pick" on the exact surface whose job is to answer that question. The fetch now
-// runs through useAmbientBandFetch, which retries once and then reports `failed`, and this band
-// renders one muted ambient line instead of vanishing. Still no toast, modal, banner or alert colour.
+// Swallowing is not the same as rendering nothing: a failed fetch left as null renders identically
+// to an empty queue, so an outage would be indistinguishable from "nothing to pick" on the surface
+// whose job is to answer that question. The fetch runs through useAmbientBandFetch, which retries
+// once and then reports `failed`, and this band renders one muted ambient line instead of
+// vanishing. Still no toast, modal, banner or alert colour.
 //
 // Deliberately NOT routed through the daily-plan engine: PLAN_SCHEMA_VERSION is pinned across four
 // files behind a lockstep anti-drift test, the parity golden harness blocks on any added key, and a
 // nightly batch cannot reflect a harvest logged at 9am. A self-fetching band is fresh every load.
 //
-// Reward-UX V102 compliance: ambient only. No push, no modal, no toast/snackbar/sheet, no haptic, no
+// Reward UX: ambient only. No push, no modal, no toast/snackbar/sheet, no haptic, no
 // streak, no numeric count badge. Neutral cadence framing ("last picked N days ago") — no
 // loss-aversion, no countdown, no urgency colour. Renders nothing at all when nothing is ready.
 //
@@ -30,10 +30,8 @@ import AmbientBandNotice from './AmbientBandNotice.jsx'
 
 const MAX_ROWS = 5
 
-// PANEL Q4 (harvest-panel-decisions-20260812.md): "+{N} more in the garden" was dead text on the
-// exact band Dave named ("that can't be lost there anywhere"). It is now a real in-place expand —
-// a pure client change: this band already holds every candidate and computes the overflow in the
-// browser. Expansion is SESSION-scoped (sessionStorage: survives an in-app remount of Today, dies
+// "+{N} more in the garden" is a real in-place expand, a pure client change: this band already
+// holds every candidate and computes the overflow in the browser. Expansion is SESSION-scoped (sessionStorage: survives an in-app remount of Today, dies
 // with the tab, never localStorage) and reveals 20 at a time above 25 hidden. The payload carries
 // no location_name, so the reveal is flat in rank order — grouping stays the watch band's affair.
 const REVEAL_KEY = 'harvest-tail:ready'
@@ -47,8 +45,7 @@ function writeReveal(n) {
   try { sessionStorage.setItem(REVEAL_KEY, String(n)) } catch { /* ignore */ }
 }
 
-// Full-width tail control, ≥48px (52 matches CareNeeded's group headers); count in the LABEL,
-// never a pill. Pattern copied from src/components/today/CareNeeded.jsx (removed with the old Today page at S8c) — copied, not refactored.
+// Full-width tail control, ≥48px; count in the LABEL, never a pill.
 const tailButtonStyle = {
   display: 'flex', alignItems: 'center', gap: 12, width: '100%', textAlign: 'left',
   minHeight: 52, padding: '12px 2px', background: 'none', border: 'none',
@@ -67,12 +64,12 @@ export default function HarvestReadyBand() {
   const setReveal = useCallback((n) => { writeReveal(n); setRevealed(n) }, [])
 
   // The server supplies the reporting-zone day-of-year; the predicate is a pure function of it.
-  // ONE ROW PER CROP, not per planting (crucible 2026-08-20 — see rollUpByCrop's header). Applied as
+  // ONE ROW PER CROP, not per planting (see rollUpByCrop's header). Applied as
   // a post-filter on the ranked output so the ranker, the score and READY_MODEL_VERSION are all
   // untouched and EventNew's live harvest tray keeps consuming the flat list.
   const ready = data ? rollUpByCrop(rankHarvestReady(data.candidates, data.et_doy)) : []
 
-  // BUG-READYBANDFETCH-001 — before the empty check, because "we could not ask" is not "nothing is
+  // Before the empty check, because "we could not ask" is not "nothing is
   // ready". Only reachable on a second consecutive failure with no data in hand.
   if (failed && !data) return <AmbientBandNotice eyebrow="In the garden" onRetry={reload} />
 
@@ -133,7 +130,7 @@ export default function HarvestReadyBand() {
         <div style={{ fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase', color: P.light }}>
           In the garden
         </div>
-        {/* Panel Q1 heading: "Due for a pick" — true by construction (every row has a recorded
+        {/* Heading "Due for a pick" — true by construction (every row has a recorded
             cadence it is past), where "Ready to pick" asserted ripeness the model cannot know. */}
         <div style={{ fontSize: '1rem', fontWeight: 700, color: P.dark }}>Due for a pick</div>
       </div>
@@ -142,12 +139,10 @@ export default function HarvestReadyBand() {
         {shown.map(renderRow)}
       </ul>
 
-      {/* THE TAIL (panel Q4) — the discharge of R8, on the band Dave actually named. Trigger first,
-          content AFTER it, so the button's top edge keeps its viewport y when it expands.
-          SINCE THE CROP ROLLUP the count is CROPS, not plantings (on prod today: 11 crop rows over 29
-          ready plantings, so "Show 6 more" rather than "Show 24 more"). Individual cultivar rows are
-          no longer reachable from this band at all — the sibling count in each row's label carries
-          the magnitude, and the per-planting list lives in EventNew's harvest tray, unchanged. */}
+      {/* THE TAIL. Trigger first, content AFTER it, so the button's top edge keeps its viewport y
+          when it expands. The count is CROPS, not plantings, because of the crop rollup. Individual
+          cultivar rows are not reachable from this band at all — the sibling count in each row's
+          label carries the magnitude, and the per-planting list lives in EventNew's harvest tray. */}
       {hidden > 0 && (
         <button
           type="button"
@@ -166,7 +161,7 @@ export default function HarvestReadyBand() {
           <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
             {shownOverflow.map(renderRow)}
           </ul>
-          {/* Second collapse control at the bottom (panel Q4). */}
+          {/* Second collapse control at the bottom. */}
           <button
             type="button"
             aria-expanded={true}
