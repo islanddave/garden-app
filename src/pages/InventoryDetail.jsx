@@ -532,12 +532,12 @@ function InventoryDetailPage() {
     } catch (e) {
       setSourcePlantId(prev)
       setSourcePlantName(prevName)
-      // V5-SEEDMULTIPARENT-001 release 2b — with the flag on this legacy write is reached only for a
-      // jar whose parent set could not be read. A coded 409 then says the jar is not what this picker
-      // shows (it has more than one plant, or it changed a moment ago), and the server's sentence asks
-      // for a reload the page can do itself: read the jar again in place. When the set arrives with
-      // it the card becomes SavedFromCard, which prints this line in its own help slot; when it still
-      // does not, nothing was saved and that is all there is to say. Flag off: today's sentence.
+      // With the multi-parent flag on this legacy write is reached only for a jar whose parent set could not be
+      // read. A coded 409 then says the jar is not what this picker shows (it has more than one plant, or it
+      // changed a moment ago), and the server's sentence asks for a reload the page can do itself: read the jar
+      // again in place. When the set arrives with it the card becomes SavedFromCard, which prints this line in
+      // its own help slot; when it still does not, nothing was saved and that is all there is to say. Flag off:
+      // the plain sentence.
       if (SEED_MULTI_PARENT && e?.status === 409 && STALE_JAR_CODES.has(e?.body?.code)) {
         setSourcePlantErr((await rereadJar()) ? CHANGED_ELSEWHERE : NOT_SAVED)
       } else {
@@ -565,11 +565,10 @@ function InventoryDetailPage() {
     }
   }
 
-  // ── V5-SEEDMULTIPARENT-001 release 2b — what the "Saved from" card hands back ───────────────────
-  // SavedFromCard writes the parent set (and the filing that rides with it) itself; these two put the
-  // stored answer where the rest of the page reads it. The patch is the server's: the set, its cache,
-  // and after a re-file the variety and the jar's name. `sourcePlantId` follows the cache, because
-  // liveLot(), the origin select and the processing chain all still read that one state.
+  // What the "Saved from" card hands back. SavedFromCard writes the parent set (and the filing that rides with
+  // it) itself; these two put the stored answer where the rest of the page reads it. The patch is the server's:
+  // the set, its cache, and after a re-file the variety and the jar's name. `sourcePlantId` follows the cache,
+  // because liveLot(), the origin select and the processing chain all still read that one state.
   function applyLotPatch(patch) {
     setItem(prev => (prev ? { ...prev, ...patch } : prev))
     if (typeof patch.name === 'string') setSavedName(patch.name)
@@ -587,30 +586,26 @@ function InventoryDetailPage() {
     setSavedName(nextName)
   }
 
-  // ── V5-SEEDCARDS-001 — after an upload, ask the server what the packet box should show ──────
-  // The photos Lambda features a lot's FIRST photo and GET /:id derives the hero from that, so the
-  // upload's own response cannot say whether the box changed; a re-read can. Only the photo fields
-  // are adopted (adoptPacketPhoto): nothing else on `item` moves because a photo landed. A failed
-  // re-read is left silent on purpose — the upload itself succeeded and PhotoUpload's preview already
-  // shows it; the box simply catches up on the next load.
+  // After an upload, ask the server what the packet box should show. The photos Lambda features a lot's FIRST
+  // photo and GET /:id derives the hero from that, so the upload's own response cannot say whether the box
+  // changed; a re-read can. Only the photo fields are adopted (adoptPacketPhoto): nothing else on `item` moves
+  // because a photo landed. A failed re-read is left silent on purpose: the upload itself succeeded and
+  // PhotoUpload's preview already shows it; the box catches up on the next load.
   function refetchPacketPhoto() {
     fetch('/api/inventory-items/' + id)
       .then(data => setItem(prev => adoptPacketPhoto(prev, data)))
       .catch(() => {})
   }
 
-  // ── Delete (soft) ──────────────────────────────────────────────────────────
-  // BUG-INVDELETEERROROFFSCREEN-001 — a failed delete says why WHERE THE TAP WAS. It used to close the
-  // dialog and put the reason in the form banner, which sits above the whole form: on a phone the
-  // dialog vanished and nothing changed near the finger. Now the dialog stays open with the reason
-  // beside its buttons — for ANY delete error, the 409 "This packet can't be removed: …" among them
-  // (BUG-INVREFSTRAND-001), whose sentence already says what to do instead.
+  // A failed delete says why WHERE THE TAP WAS: the dialog stays open with the reason beside its buttons, for
+  // ANY delete error (the 409 "This packet can't be removed: …" among them, whose sentence already says what
+  // to do instead). Putting it in the form banner would place the reason above the whole form, off screen
+  // on a phone.
   //
-  // BUG-INVDETAILDELETELATENAV-001 — he may have left while the answer was out (Back, or another lot
-  // from header Search, which re-keys this page). The delete is done either way; whether the page is
-  // still there is read NOW, not when he tapped, and a page that is gone takes him nowhere. It used to
-  // navigate regardless: a navigate(-1) from wherever he stood, or My seeds over the lot he had opened.
-  // The same `aliveRef` AddToLot and SaveSeedSheet read for their `closed`.
+  // The user may have left while the answer was out (Back, or another lot from header Search, which re-keys
+  // this page). The delete is done either way; whether the page is still there is read NOW, not when they
+  // tapped, and a page that is gone takes them nowhere. The same `aliveRef` AddToLot and SaveSeedSheet read
+  // for their `closed`.
   async function handleDelete() {
     setDeleting(true)
     setDeleteErr(null)
@@ -620,10 +615,10 @@ function InventoryDetailPage() {
     if (error) {
       setDeleteErr(error)
     } else if (item?.category === 'seeds') {
-      // V5-SEEDSTAB-001 — Back never reopens the lot just removed. Pushed by a Seeds view: go BACK to
-      // it (Seeds remounts and refetches, so the row is gone). A replace there left two identical
-      // Seeds entries in a row, and the next Back was a press that did nothing (pre-promote review).
-      // Any other arrival has nothing under it to go back to: REPLACE onto My seeds.
+      // Back never reopens the lot just removed. Pushed by a Seeds view: go BACK to it (Seeds remounts and
+      // refetches, so the row is gone); a replace there would leave two identical Seeds entries in a row, and
+      // the next Back would be a press that did nothing. Any other arrival has nothing under it to go back to:
+      // REPLACE onto My seeds.
       if (pushedFromSeeds()) navigate(-1)
       else navigate(SEEDS_MINE, { replace: true })
     } else {
@@ -631,30 +626,24 @@ function InventoryDetailPage() {
     }
   }
 
-  // ── Dirty guard (V4-DIRTYGUARDSWEEP-001) ───────────────────────────────────
-  // This whole page IS one edit form, seeded field-for-field from the loaded item, so the honest
-  // predicate is differs-from-the-row and NOT truthiness: every box arrives populated, and a
-  // truthiness guard would hold a service-worker update from the moment the item finished loading
-  // — for a user who only came to look at it. Same reading as Locations' inline edit form.
+  // Dirty guard. This whole page IS one edit form, seeded field-for-field from the loaded item, so the honest
+  // predicate is differs-from-the-row and NOT truthiness: every box arrives populated, and a truthiness guard
+  // would hold a service-worker update from the moment the item finished loading, for a user who only came to
+  // look at it. Same reading as Locations' inline edit form.
   //
-  // Compared over the baseline's own keys, which are exactly itemToForm's: `set()` only ever merges
-  // into that shape, so a key that appears on one side and not the other would be a bug in
-  // itemToForm rather than a case to tolerate here.
+  // Compared over the baseline's own keys, which are exactly itemToForm's: `set()` only ever merges into that
+  // shape, so a key that appears on one side and not the other would be a bug in itemToForm rather than a
+  // case to tolerate here.
   //
-  // Nothing else on this page carries unsaved state. PhotoUpload posts the file the instant it is
-  // chosen (there is no staged-file step, unlike EventNew's), `confirmDelete` is a transient
-  // confirmation, and the V4-SEEDLINK-001 "Saved
-  // from" picker PATCHes on selection — so its value is on the server before this could observe it.
-  // The Sow sheet (V5-SEEDSTAB-001 slice 2a, replacing the Plant-from-packet navigation) guards
-  // itself — it takes its own reload hold and writes its own stash while open — and joins only the
-  // overlay report below, which is one value per page.
-  // The seed-processing card holds nothing at all since V5-SEEDSTAGEONEPLACE-001 moved its stage
-  // control (and the count prompt that hung off it) to /seeds/saved: what is left is a read-only
-  // history panel.
+  // Nothing else on this page carries unsaved state. PhotoUpload posts the file the instant it is chosen
+  // (there is no staged-file step), `confirmDelete` is a transient confirmation, and the "Saved from" picker
+  // PATCHes on selection, so its value is on the server before this could observe it. The Sow sheet guards
+  // itself (its own reload hold, its own stash while open) and joins only the overlay report below, which is
+  // one value per page. The seed-processing card is a read-only history panel; the stage is changed on
+  // /seeds/saved.
   //
-  // Declared above the loading/error early returns because hooks cannot live below them. `form` and
-  // `baseline` are both null until the load resolves, which reads as clean — correct, there is
-  // nothing typed yet.
+  // Declared above the loading/error early returns because hooks cannot live below them. `form` and `baseline`
+  // are both null until the load resolves, which reads as clean — correct, there is nothing typed yet.
   const hasUnsavedInput = !!(
     form && baseline && Object.keys(baseline).some(k => form[k] !== baseline[k])
   )
@@ -664,11 +653,11 @@ function InventoryDetailPage() {
   // channel keeps one value per page and a second reporter would overwrite this form's.
   useReportOverlayDirty(hasUnsavedInput || !!sowPacket)
 
-  // V5-SEEDSTAB-001 slice 2a — reopen a Sow sheet an ABNORMAL exit interrupted (SW reload, hard
-  // refresh) on THIS packet. Validated against the live row, the rule SowNow applies against its
-  // buckets: the stash names a packet id, and only that packet's page — still sowable — reopens it. Once
-  // per packet id, so a later re-read of the row (the packet photo's) can never reopen a sheet the user
-  // has since closed. A deliberate close cleared the stash (SowSheet), so this never resurrects one.
+  // Reopen a Sow sheet an ABNORMAL exit interrupted (SW reload, hard refresh) on THIS packet. Validated
+  // against the live row, the rule SowNow applies against its buckets: the stash names a packet id, and only
+  // that packet's page, still sowable, reopens it. Once per packet id, so a later re-read of the row (the
+  // packet photo's) can never reopen a sheet the user has since closed. A deliberate close cleared the stash
+  // (SowSheet), so this never resurrects one.
   const restoredSowRef = useRef(null)
   useEffect(() => {
     if (!item || restoredSowRef.current === item.id) return
@@ -678,24 +667,21 @@ function InventoryDetailPage() {
     setSowPacket(sowPacketFromItem(item))
   }, [item])
 
-  // The reload-gate half. Key is per-instance for the reason EventNew.jsx:985 gives — reloadGate
-  // holds a Set, so a shared literal key would let one instance's unmount release another's hold.
-  // The cleanup release is required, not defensive: a navigated-away dirty form that kept its hold
-  // would wedge updates forever and rebuild BUG-STALECLIENT-001.
+  // The reload-gate half. Key is per-instance for the reason EventNew.jsx records: reloadGate holds a Set, so a
+  // shared literal key would let one instance's unmount release another's hold. The cleanup release is
+  // required, not defensive: a navigated-away dirty form that kept its hold would wedge updates forever.
   const reloadGateKey = `inventory-detail:${useId()}`
   useEffect(() => {
     setReloadBlocked(reloadGateKey, hasUnsavedInput)
     return () => setReloadBlocked(reloadGateKey, false)
   }, [reloadGateKey, hasUnsavedInput])
 
-  // ── A refused Save says so WHERE THE THUMB IS (2026-09-25) ─────────────────
-  // Save sits at the bottom of the form and every refusal renders beside its own field, far above it:
-  // measured in gate:seed-detail (l), a Seed count refusal landed 455-680px above the visible band at
-  // 360x640, 390x844 and 426x836, so a refused Save looked like a Save that did nothing — the shape
-  // BUG-INVDELETEERROROFFSCREEN-001 fixed for Remove. After the render that shows the refusals (the
-  // effect runs after it), the FIRST refused field in page order is brought to the middle of the
-  // screen and focused, so the correction is one keystroke away. Page-wide, every field this form
-  // refuses. The scroll is guarded for jsdom, which has no scrollIntoView.
+  // A refused Save says so WHERE THE THUMB IS. Save sits at the bottom of the form and every refusal renders
+  // beside its own field, far above it (hundreds of px above the visible band at phone sizes, measured in
+  // gate:seed-detail (l)), so a refused Save looked like a Save that did nothing. After the render that shows
+  // the refusals (the effect runs after it), the FIRST refused field in page order is brought to the middle of
+  // the screen and focused, so the correction is one keystroke away. Page-wide, every field this form refuses.
+  // The scroll is guarded for jsdom, which has no scrollIntoView.
   useEffect(() => {
     if (!refusal) return
     const target = firstRefusedControl(formRef.current)
@@ -704,7 +690,6 @@ function InventoryDetailPage() {
     if (typeof target.focus === 'function') target.focus({ preventScroll: true })
   }, [refusal])
 
-  // ── Render ─────────────────────────────────────────────────────────────────
   if (loading) return <Shell><Spinner block /></Shell>
   if (loadErr) return <Shell><ErrMsg msg={loadErr} /></Shell>
   if (!item)   return <Shell><ErrMsg msg="Item not found." /></Shell>
@@ -712,17 +697,16 @@ function InventoryDetailPage() {
   const isConsumable = form.type === 'consumable'
   const visibleCats  = CATEGORIES.filter(c => c.types.includes(form.type))
     .slice().sort((a, b) => a.label.localeCompare(b.label))
-  // V5-SEEDCARDS-001 — the seed wording on the form follows the form's own category, like the seed
-  // harvest year below does.
+  // The seed wording on the form follows the form's own category, like the seed harvest year below does.
   const isSeedForm = form.category === 'seeds'
-  // BUG-SAVEDSEEDPARENTONPRODUCE-001 — whether "Saved from" may offer a plant, per the CHECK that
-  // refuses a parent to a lot whose origin names a farm stand, a gift or a shop. The LIVE select value,
-  // so a change of origin shows or hides the picker in the same render as the change itself.
+  // Whether "Saved from" may offer a plant, per the CHECK that refuses a parent to a lot whose origin names a
+  // farm stand, a gift or a shop. The LIVE select value, so a change of origin shows or hides the picker in
+  // the same render as the change itself.
   const parentAllowed = kindAllowsParentPlant(sourceKind)
-  // V5-SEEDMULTIPARENT-001 release 2b — the jar's parent SET, when there is one to read. Null with the
-  // flag off, and for a set that is "no answer" rather than "no parents" (undefined: a row from before
-  // release 1; null: the parents read failed). Null keeps the single picker and its legacy PATCH, which
-  // the server refuses on a jar with more than one plant; an array hands the card to SavedFromCard.
+  // The jar's parent SET, when there is one to read. Null with the flag off, and for a set that is "no
+  // answer" rather than "no parents" (undefined: a row from before the set existed; null: the parents read
+  // failed). Null keeps the single picker and its legacy PATCH, which the server refuses on a jar with more
+  // than one plant; an array hands the card to SavedFromCard.
   const parentSet = SEED_MULTI_PARENT && Array.isArray(item.source_plants) ? item.source_plants.filter(Boolean) : null
   // The supplier as last SAVED, named from the registry. Null while the registry loads, for a lot
   // with no supplier, and for an id the registry no longer lists — the card then draws no stripe.
@@ -734,10 +718,9 @@ function InventoryDetailPage() {
   // seed fields both answer to, so the two cannot disagree about one jar.
   const savedLot = item.category === 'seeds' && isSavedLot(liveLot())
   const seedMeasureForm = showsSeedMeasure()
-  // The container as one yes/no — "All used up" — only while it holds a yes/no's worth: 1 jar, or 0.
-  // Any other amount (prod carries one saved lot at 272 'each') keeps the Qty on hand and Unit pair,
-  // so nothing already recorded becomes uneditable. Read from the lot AS SAVED, never the live field,
-  // so the control cannot swap under a thumb mid-edit.
+  // The container as one yes/no — "All used up" — only while it holds a yes/no's worth: 1 jar, or 0. Any
+  // other amount keeps the Qty on hand and Unit pair, so nothing already recorded becomes uneditable. Read
+  // from the lot AS SAVED, never the live field, so the control cannot swap under a thumb mid-edit.
   const usedUpToggle = seedMeasureForm
     && (baseline?.quantity_on_hand === '0' || baseline?.quantity_on_hand === '1')
 
@@ -745,8 +728,7 @@ function InventoryDetailPage() {
     <div style={{ minHeight: '100dvh', backgroundColor: P.cream }}>
       <div style={{ maxWidth: 600, margin: '0 auto', padding: '28px 16px 80px' }}>
 
-        {/* Breadcrumb — V5-SEEDSTAB-001: a seed row belongs to Seeds, which the Inventory list no
-            longer shows. */}
+        {/* Breadcrumb: a seed row belongs to Seeds, which the Inventory list no longer shows. */}
         <div style={{ fontSize: '0.82rem', color: P.light, marginBottom: 8 }}>
           {item.category === 'seeds'
             ? <Link to={SEEDS_MINE} style={{ color: P.green, textDecoration: 'none' }}>Seeds</Link>
@@ -761,10 +743,8 @@ function InventoryDetailPage() {
           <FavoriteToggle entityType="inventory_item" entityId={id} />
         </div>
 
-        {/* ── V5-SEEDCARDS-001 — the packet card: the seed's picture, big, and its facts ──────────
-            Dave, 2026-09-19: the seed-packet image "also a bigger version of it on the seed's detail
-            page", with the details filled in. SEEDS ONLY; it also takes over the Photo card below
-            (one upload control on this page, inside this card). */}
+        {/* The packet card: the seed's picture, big, and its facts. SEEDS ONLY; it also takes over the Photo
+            card below (one upload control on this page, inside this card). */}
         {item.category === 'seeds' && (
           <PacketCard
             item={item}
@@ -775,14 +755,10 @@ function InventoryDetailPage() {
           />
         )}
 
-        {/* ── V5-SEEDSTAB-001 slice 2a (§6) — Sow this ─────────────────────────────────────────
-            Replaces VARIETY-REF S4b's "Plant from this packet", which navigated to
-            /garden?source_inventory_item_id=…&variety_id=… — Garden's generic add form, with other
-            defaults (no status, no sow date, no source type) and an emoji for an icon. This opens
-            THE Sow sheet Sow now opens, on this packet, so a sow from here and a sow from there send
-            the same POST. Same visibility rule as before: seed rows with stock on hand. The page's
-            LIVE provenance rides along (a parent picked in "Saved from" a moment ago counts), since
-            it decides whether the planting records saved seed or a bought packet. */}
+        {/* Sow this. Opens THE Sow sheet Sow now opens, on this packet, so a sow from here and a sow from
+            there send the same POST. Visible for seed rows with stock on hand. The page's LIVE provenance rides
+            along (a parent picked in "Saved from" a moment ago counts), since it decides whether the planting
+            records saved seed or a bought packet. */}
         {item.category === 'seeds' && (canSowFrom(item) || sown || item.variety_id) && (
           <div data-testid="sow-actions" style={sowActions}>
             {canSowFrom(item) && (
@@ -804,13 +780,12 @@ function InventoryDetailPage() {
                 )}
               </div>
             )}
-            {/* V5-SEEDSTAB-001 slice 2a (§6) — Edit sow details. A packet's sow profile (timing,
-                depth, spacing, days to germinate) belongs to its CULTIVAR, and the variety editor is
-                the only editor of those fields; this page could only read them. A plain push: the
-                editor leaves with navigate(-1) on save and cancel, which lands back here, and it says
-                for itself when the viewer cannot edit this cultivar. Every seed row carries a variety
-                (chk_inventory_seed_requires_variety); the guard only keeps a row that somehow does
-                not from linking to /varieties/undefined/edit. */}
+            {/* Edit sow details. A packet's sow profile (timing, depth, spacing, days to germinate) belongs to
+                its CULTIVAR, and the variety editor is the only editor of those fields; this page can only read
+                them. A plain push: the editor leaves with navigate(-1) on save and cancel, which lands back here,
+                and it says for itself when the viewer cannot edit this cultivar. Every seed row carries a variety
+                (chk_inventory_seed_requires_variety); the guard only keeps a row that somehow does not from
+                linking to /varieties/undefined/edit. */}
             {item.variety_id && (
               <Link to={`/varieties/${item.variety_id}/edit`} data-testid="edit-sow-details" style={editSowDetailsLink}>
                 Edit sow details →
@@ -827,13 +802,12 @@ function InventoryDetailPage() {
           />
         )}
 
-        {/* ── V5-SEEDSTAB-001 slice 3 (§9) — the plantings sown from this packet ────────────────────
-            GET /:id's sown_from: every live planting whose source_inventory_item_id is this packet,
-            archived ones already filtered out by the route (Archive-Hiding Rule), newest sowing first.
-            One 44px link each, to the planting. Rendered only when there is one — a packet nobody has
-            sown from shows nothing, not an empty heading. Directly under Sow this, whose "Sown ✓" line
-            covers a sow made on this visit (the list is the page as loaded), and above the
-            germination record of those same sowings. */}
+        {/* The plantings sown from this packet. GET /:id's sown_from: every live planting whose
+            source_inventory_item_id is this packet, archived ones already filtered out by the route
+            (Archive-Hiding Rule), newest sowing first. One 44px link each, to the planting. Rendered only when
+            there is one: a packet nobody has sown from shows nothing, not an empty heading. Directly under Sow
+            this, whose "Sown ✓" line covers a sow made on this visit (the list is the page as loaded), and above
+            the germination record of those same sowings. */}
         {item.category === 'seeds' && Array.isArray(item.sown_from) && item.sown_from.length > 0 && (
           <div data-testid="packet-sown-from" style={sownFromCard}>
             <div style={sownFromHeading}>Sown from this packet</div>
@@ -852,18 +826,13 @@ function InventoryDetailPage() {
           </div>
         )}
 
-        {/* ── V4-SEEDGERMRATE-001 (BD-057) — this packet's germination record ─────────────────────
-            Dave wanted the rate held per PACKET rather than per variety or crop, "because packets
-            of the same variety differ by age, vendor, and lot" — so this panel is the whole point
-            of the feature, and everything else exists to fill it.
+        {/* This packet's germination record, held per PACKET rather than per variety or crop, because packets
+            of the same variety differ by age, vendor, and lot. Combined AND per-sowing: the combined number
+            alone would hide the thing worth knowing (80% in March and 45% in July from the same packet is a
+            packet going over; a single averaged 62% says nothing), so the rows stay.
 
-            Combined AND per-sowing, which is his Q2 answer verbatim ("combine them, keep the
-            history"). The combined number alone would hide the thing worth knowing: 80% in March
-            and 45% in July from the same packet is a packet going over, and a single averaged 62%
-            says nothing at all. So the rows stay.
-
-            Rendered only when there is something to say. A packet nobody has counted from shows
-            nothing rather than an empty scaffold or a 0% that reads as total failure. */}
+            Rendered only when there is something to say: a packet nobody has counted from shows nothing
+            rather than an empty scaffold or a 0% that reads as total failure. */}
         {item.germination && item.germination.sowings?.length > 0 && (
           <div data-testid="packet-germination" style={{
             marginBottom: 20, padding: '14px 16px',
@@ -885,13 +854,12 @@ function InventoryDetailPage() {
                 {item.germination.sowings.length > 1 ? ` · ${item.germination.sowings.length} sowings` : ''}
               </span>
             </div>
-            {/* BUG-GERMLISTWIDENS-001 — the rows were nowrap flex rows in a template-less grid, and a
-                grid's implicit `auto` column takes its widest row's MIN-CONTENT: one long planting name
-                made it 477px and the page scrolled sideways at 360 and 390 (the layout viewport went to
-                ~500). minmax(0, 1fr) pins the column to the card's width whatever a row holds, and the
-                name now WRAPS rather than truncating — the planting is the thing this row identifies,
-                and the "Sown from this packet" rows above wrap theirs the same way. Baseline, so the
-                rate sits on the name's first line when it wraps. gate:seed-detail (h) holds both. */}
+            {/* The rows are grid rows, and a grid's implicit `auto` column takes its widest row's MIN-CONTENT:
+                one long planting name would make it 477px and the page would scroll sideways at 360 and 390.
+                minmax(0, 1fr) pins the column to the card's width whatever a row holds, and the name WRAPS
+                rather than truncating: the planting is the thing this row identifies, and the "Sown from this
+                packet" rows above wrap theirs the same way. Baseline, so the rate sits on the name's first line
+                when it wraps. gate:seed-detail (h) holds both. */}
             {item.germination.sowings.length > 1 && (
               <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 4 }}>
                 {item.germination.sowings.map(s => {
@@ -913,37 +881,31 @@ function InventoryDetailPage() {
           </div>
         )}
 
-        {/* ── V4-SEEDLINK-001 — "Saved from": which PLANT did this lot come from? ────────────────
-            plants.source_inventory_item_id already answers the reverse ("sown FROM this packet");
-            nothing answered this direction, and the only thing the app previously offered was the
-            /seeds/saved empty state telling Dave to log a `seed_saved` event — a dead end with 0
-            events ever logged and no side effect of any kind.
+        {/* "Saved from": which PLANT did this lot come from? plants.source_inventory_item_id answers the
+            reverse ("sown FROM this packet"); this direction had no answer.
 
-            SEEDS ONLY, gated like the packet card above. It never appears on
-            tools, media or containers.
+            SEEDS ONLY, gated like the packet card above. It never appears on tools, media or containers.
 
-            THIS PAGE IS THE PLACEMENT THAT MATTERS. /seeds/saved only lists lots that carry a
-            seed_stage, and its "Track a lot" picker hard-codes `fermenting` — so attaching a parent
-            there would mean writing a false stage into seed_lot_stage_log for a dry-processed lot.
-            Every lot is reachable HERE, tracked or not.
+            THIS PAGE IS THE PLACEMENT THAT MATTERS. /seeds/saved only lists lots that carry a seed_stage, and
+            its "Track a lot" picker hard-codes `fermenting`, so attaching a parent there would mean writing a
+            false stage into seed_lot_stage_log for a dry-processed lot. Every lot is reachable HERE, tracked or
+            not.
 
-            OUTSIDE the <form> deliberately: it writes on selection, so it has no business in a
-            surface whose Save button implies unsaved state.
+            OUTSIDE the <form> deliberately: it writes on selection, so it has no business in a surface whose
+            Save button implies unsaved state.
 
-            BUG-SAVEDSEEDPARENTONPRODUCE-001 — the picker is SHOWN ONLY WHILE THE LOT MAY HAVE A
-            PARENT: the mirror of the rule below that hides the origin select while a parent is set,
-            and the same constraint read from its other side. A lot whose origin says a farm stand, a
-            gift or a shop is refused a parent by chk_inventory_seed_source_plant, so a pick here could
-            only fail. kindAllowsParentPlant is that CHECK, asked of the LIVE select, so choosing "My
-            garden" or "Not recorded" below brings the picker straight back. */}
+            The picker is SHOWN ONLY WHILE THE LOT MAY HAVE A PARENT: the mirror of the rule below that hides
+            the origin select while a parent is set. A lot whose origin says a farm stand, a gift or a shop is
+            refused a parent by chk_inventory_seed_source_plant, so a pick here could only fail.
+            kindAllowsParentPlant is that CHECK, asked of the LIVE select, so choosing "My garden" or "Not
+            recorded" below brings the picker straight back. */}
         {item.category === 'seeds' && (
           <div ref={sourcePlantCardRef} data-testid="seed-source-plant" style={{ ...card, marginBottom: 20 }}>
             <div style={groupLabel}>Saved from</div>
-            {/* V5-SEEDMULTIPARENT-001 release 2b — a jar can come off several plantings. With the set in
-                hand the card lists every one, adds and removes them through the set route, and keeps
-                the jar filed to match (SavedFromCard). Keyed on the lot, so its struck rows and its
-                "Filed as" line never outlive the jar they describe. `name` is the name FIELD as it
-                shows now: a re-file renames the jar only while that is still the automatic name. */}
+            {/* A jar can come off several plantings. With the set in hand the card lists every one, adds and
+                removes them through the set route, and keeps the jar filed to match (SavedFromCard). Keyed on the
+                lot, so its struck rows and its "Filed as" line never outlive the jar they describe. `name` is the
+                name FIELD as it shows now: a re-file renames the jar only while that is still the automatic name. */}
             {parentAllowed && parentSet && (
               <SavedFromCard
                 key={item.id}
@@ -962,16 +924,16 @@ function InventoryDetailPage() {
                   // The second argument is the chosen ROW — the picker passes it so call sites never
                   // need their own id→row lookup, and the chain panel below uses it for the name.
                   onChange={(pid, planting) => saveSourcePlant(pid || '', planting)}
-                  // The lot's own cultivar pins the list exactly — every seed row carries a variety_id
-                  // (chk_inventory_seed_requires_variety), so this collapses ~239 plantings to the one
-                  // to three of that cultivar.
+                  // The lot's own cultivar pins the list exactly: every seed row carries a variety_id
+                  // (chk_inventory_seed_requires_variety), so this collapses the plantings to the one to three of
+                  // that cultivar.
                   varietyId={item.variety_id}
                   // Succession disambiguation: three plantings of one cultivar are indistinguishable by
                   // name, and this is the case the multi-planting minority is made of.
                   labelFormat="wave"
                   // "Not recorded", not "you must choose" — the honest empty state for a bought packet
-                  // and for a saved one whose parent Dave no longer remembers.
-                  emptyMeaning="none"
+                  // "Not recorded", not "you must choose": the honest empty state for a bought packet and for a
+                  // saved one whose parent the user no longer remembers.
                   // An already-set parent stays listed and selected even if it later falls out of scope.
                   retainOutOfScopeValue
                   required={false}
@@ -994,26 +956,22 @@ function InventoryDetailPage() {
               </>
             )}
 
-            {/* ── V4-SEEDORIGIN-001 — the OTHER half of provenance ────────────────────────────
-                "Saved from" answers which of MY plants. This answers where the seed came from when
-                it came from none of them: a store-bought pepper scraped for its seed, a gift
-                packet, a u-pick fruit. Dave's founding case for it is a Carolina Reaper bought to
-                eat. Before this the only place to record that was the item's NAME — a real prod row
-                reads "Money Plant (self-saved, variety unrecorded)".
+            {/* The OTHER half of provenance. "Saved from" answers which of MY plants; this answers where the
+                seed came from when it came from none of them: a store-bought pepper scraped for its seed, a gift
+                packet, a u-pick fruit.
 
-                SHOWN ONLY WHEN NO PARENT PLANT IS SET, and that is the DB constraint made visible
-                rather than a layout preference. chk_inventory_seed_source_plant is
-                `source_kind IS NULL OR source_kind = 'own_garden' OR source_plant_id IS NULL`, so a
-                lot cannot claim it came from a shop AND from one of our plants. With a parent set,
-                the origin is answered — it is this garden — so offering a contradicting dropdown
-                would be offering a choice the database will refuse.
+                SHOWN ONLY WHEN NO PARENT PLANT IS SET, and that is the DB constraint made visible rather than a
+                layout preference. chk_inventory_seed_source_plant is
+                `source_kind IS NULL OR source_kind = 'own_garden' OR source_plant_id IS NULL`, so a lot cannot
+                claim it came from a shop AND from one of our plants. With a parent set, the origin is answered (it
+                is this garden), so offering a contradicting dropdown would offer a choice the database will refuse.
 
-                Plain Select, NOT EnumSelect, for the reason dropdownRegistry.js records: EnumSelect
-                defaults to sort=true and would alphabetize the list, burying the frequency ordering
-                the vocabulary is built on ("My garden" first). Same call PutUp.jsx makes.
+                Plain Select, NOT EnumSelect, for the reason dropdownRegistry.js records: EnumSelect defaults to
+                sort=true and would alphabetize the list, burying the frequency ordering the vocabulary is built
+                on ("My garden" first).
 
-                BUG-SAVEDSEEDPARENTONPRODUCE-001 — alone in the card when the picker above is hidden,
-                so it drops the "Or" and the extra gap, and its help names the way back to a plant. */}
+                Alone in the card when the picker above is hidden, so it drops the "Or" and the extra gap, and its
+                help names the way back to a plant. */}
             {!sourcePlantId && (
               <div style={{ marginTop: parentAllowed ? 14 : 0 }} data-testid="seed-source-kind">
                 <Field label={parentAllowed ? 'Or where did it come from?' : 'Where did it come from?'} htmlFor="inv-source-kind" optional>
@@ -1025,8 +983,8 @@ function InventoryDetailPage() {
                     aria-label="Where this seed came from"
                     data-testid="source-kind-select"
                   >
-                    {/* "Not recorded" is a first-class answer, not a prompt to choose: it is the
-                        honest state of all 260 existing packets and must stay reachable. */}
+                    {/* "Not recorded" is a first-class answer, not a prompt to choose: it is the honest
+                        state of every packet that predates this field and must stay reachable. */}
                     <option value="">Not recorded</option>
                     {PUTUP_SOURCE_OPTIONS.map(o => (
                       <option key={o.value} value={o.value}>{o.label}</option>
@@ -1050,24 +1008,15 @@ function InventoryDetailPage() {
           </div>
         )}
 
-        {/* ── V4-SEEDHISTORY-001 — this lot's processing chain ────────────────────────────────
-            GET /api/inventory-items/:id/seed-stage shipped with the write path and had ZERO
-            consumers — the log was written and never read anywhere. A two-week ferment→dry→store
-            commitment showed the user nothing back for it, which is the reinforcement loop this
-            closes.
+        {/* This lot's processing chain (GET /api/inventory-items/:id/seed-stage). READ-ONLY: a lot's stage is
+            changed in exactly one place, /seeds/saved, where every change writes a seed_lot_stage_log row and can
+            be dated to the day the lot actually entered the stage. Two writers, one of which could not log, is
+            what made the pointer and the history diverge; the server agrees now (the wide PUT and the create
+            INSERT no longer write `seed_stage`, so POST /seed-stage is the only writer). The divergence notice
+            below stays for a lot that was staged before then.
 
-            READ-ONLY SINCE V5-SEEDSTAGEONEPLACE-001. This card used to carry a stage <select> that
-            moved the pointer WITHOUT appending a log row, plus the count prompt that hung off its
-            `stored` transition. Both are gone: a lot's stage is now changed in exactly one place,
-            /seeds/saved, where every change writes a seed_lot_stage_log row and can be dated to the
-            day the lot actually entered the stage. Two writers, one of which could not log, is what
-            made the pointer and the history diverge on 3 of 3 live lots. Since
-            BUG-SEEDSTAGEHEADSHIP-001 the server agrees: the wide PUT and the create INSERT no
-            longer write `seed_stage`, so POST /seed-stage is the only writer. The divergence
-            notice below stays for a lot that was staged before then.
-
-            SEEDS ONLY, gated exactly like the two cards above. A hori-hori has no processing chain
-            and must not grow an empty one. */}
+            SEEDS ONLY, gated exactly like the two cards above. A hori-hori has no processing chain and must
+            not grow an empty one. */}
         {item.category === 'seeds' && (
           <div data-testid="seed-stage-panel" style={{ ...card, marginBottom: 20 }}>
             <div style={groupLabel}>Seed processing</div>
@@ -1098,11 +1047,9 @@ function InventoryDetailPage() {
           </div>
         )}
 
-        {/* V2-PHOTO-F1 Session 2: inventory item photo upload.
-            Belongs just below the S4b CTA per Session 2 spec (Sow this since V5-SEEDSTAB-001 slice 2a).
-            Useful for capturing seed-packet photos, durable-tool photos, etc.
-            V5-SEEDCARDS-001: not for seeds — their upload lives in the packet card above, so the
-            page never carries two. Every other category renders this card exactly as before. */}
+        {/* Inventory item photo upload, just below the Sow this CTA. Useful for capturing seed-packet photos,
+            durable-tool photos, etc. Not for seeds: their upload lives in the packet card above, so the page
+            never carries two. */}
         {item.category !== 'seeds' && (
           <div style={{
             marginBottom: 20, padding: '14px 16px',
@@ -1134,7 +1081,6 @@ function InventoryDetailPage() {
 
         <form ref={formRef} onSubmit={handleSave} noValidate style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
 
-          {/* ── Core fields ── */}
           <div style={card}>
             <div style={groupLabel}>Item details</div>
 
