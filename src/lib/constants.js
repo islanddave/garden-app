@@ -8,12 +8,12 @@ export const P = {
   green:       '#2d6a4f',
   greenLight:  '#52b788',
   greenPale:   '#d8f3dc',
-  sage:        '#7c9885',  // HG-1: muted sage. LocationDetail card borders reference P.sage (was undefined -> borderless); also tokenizes PhotoUpload's former off-palette #7c9885. Value unchanged (parity-preserving).
+  sage:        '#7c9885',  // muted sage; LocationDetail card borders and PhotoUpload reference it
   terra:       '#b7532a',
-  gold:        '#8a6e2a',  // darkened for WCAG AA contrast on cream (was #c9a84c)
+  gold:        '#8a6e2a',  // darkened for WCAG AA contrast on cream
   dark:        '#1a1a1a',
   mid:         '#4a4a4a',
-  light:       '#707070',  // V4-INKCONTRAST-001: darkened for WCAG AA (was #777 — 4.118:1 on cream, 4.478:1 on white, both under 4.5). #707070 is 4.554 / 4.952; #717171 is 4.488 on cream and fails, so this is the boundary, not a round number.
+  light:       '#707070',  // darkened for WCAG AA on cream and white; #717171 fails on cream, so this is the boundary, not a round number
   border:      '#d4c9be',
   warn:        '#fff8e6',
   warnBorder:  '#c9a84c',
@@ -23,41 +23,39 @@ export const P = {
   blue:        '#4a7fb5',
   brown:       '#7a5c3c',
   white:       '#ffffff',
-  // V200 Slice 5b — on-photo (scrim) surface tokens. The scrim GRADIENTS are rgba-black
+  // On-photo (scrim) surface tokens. The scrim GRADIENTS are rgba-black
   // literals authored inline in HeroPhoto (no palette token — they're translucent black,
   // like Lightbox's backdrop); onPhotoFg is the white ink that rides on those scrims.
   onPhotoFg:    '#ffffff',  // on-photo foreground (name/icon ink over a dark scrim)
   photoScrim:   '#000000',  // base color the hero scrim gradients fade from/to (rgba()'d inline)
-  greenDeep:    '#1f5138',  // V4-ICON-001 (Pass B V101 §11): named icon-default ink (= fTypeText value, AAA on cream).
-  // ── DESIGNSYS Pass A: drift-literal promotion (V4-DESIGNSYS-001) ──────────
+  greenDeep:    '#1f5138',  // named icon-default ink (= fTypeText value, AAA on cream)
+  // ── Drift-literal promotion ───────────────────────────────────────────────
   // Hexes lifted verbatim from status.js / formStyles bannerChrome / SeverityBadge.
-  // Parity-preserving: same exact values, now single-sourced.
+  // Same exact values, now single-sourced.
   statusInkGold:       '#7a5c00',  // status.js planning/harvesting text ink
   neutralFill:         '#eee',     // status.js harvested/ended/dormant bg
   bannerInk:           '#7a2a10',  // formStyles bannerChrome text
   severityStaleBorder: '#d4b556',  // SeverityBadge stale border/text/icon
-  severityUrgent:      '#9c2b1a',  // V4-FLAG-001 SeverityBadge sev-3 'Urgent' red (AA on cream)
-  severityStaleInk:    '#7a5e24',  // V4-A11Y-001: darker gold for stale/sev-1 badge text+border+icon (AA >=4.5 on cream+white; was #d4b556 @1.99:1 / #8a6e2a @4.44:1)
+  severityUrgent:      '#9c2b1a',  // SeverityBadge sev-3 'Urgent' red (AA on cream)
+  severityStaleInk:    '#7a5e24',  // darker gold for stale/sev-1 badge text+border+icon (AA on cream and white; #d4b556 and #8a6e2a both fail)
   preparingFill:       '#f0e9e0',  // status.js preparing stage bg
   badgeInfoBg:         '#e8f0fa',  // forms/Badge info tone bg
-  // ── Pass A follow-up (2026-08-01): the last un-promoted drift literal in the photo surfaces.
+  // ── Photo tile placeholder ──
   // Warm stone that fills a photo tile's aspect-ratio box BEFORE the image paints (and stays
-  // visible behind transparent PNGs). Was authored verbatim at 3 sites — PhotoLibrary's grid
-  // tile, LocationDetail's attached-photo tile, FacebookShareSheet's 64px thumb. Parity-preserving.
+  // visible behind transparent PNGs). Shared by PhotoLibrary's grid tile, LocationDetail's
+  // attached-photo tile and FacebookShareSheet's 64px thumb.
   photoPlaceholder:    '#e8e2da',  // photo tile fill before/behind the image
-  // ── Pass A follow-up (2026-08-26): PhotoUpload's inline upload-error ink. It was the one
-  // hex in a §2 frozen primitive that existed in NO token file, and it survived because
-  // PhotoUpload was never in the lint scope. Promoted at its EXACT value, NOT remapped to
+  // ── PhotoUpload's inline upload-error ink. Promoted at its EXACT value, NOT remapped to
   // P.terra (#b7532a) or P.severityUrgent (#9c2b1a): both are near neighbours, and swapping
-  // to one would be a visible colour change — that is a Pass B decision, not a Pass A one.
+  // to one would be a visible colour change.
   photoErrorInk:       '#b14a3c',  // PhotoUpload upload-error message text
-  // ── FACET token set (contract §4) — additive, unused until TAGSUB. AA-checked draft. ──
+  // ── FACET token set: type, group, location, freeform ──
   fTypeBg:     '#e6f0e8', fTypeText:     '#1f5138', fTypeBorder:     '#bcd7c4',
   fGroupBg:    '#eef0fa', fGroupText:    '#3a3f6b', fGroupBorder:    '#c9cdec',
   fLocationBg: '#f3ece2', fLocationText: '#6b4f2a', fLocationBorder: '#ddcdb6',
   fFreeformBg: '#f0efed', fFreeformText: '#4a4a4a', fFreeformBorder: '#d9d4cd',
-  // Lifecycle facet value palette (V4 foundation-polish; each lifecycle value gets its own
-  // cohesive token rather than the neutral freeform fallback). annual=gold, biennial=violet,
+  // Lifecycle facet value palette: each lifecycle value gets its own cohesive token
+  // rather than the neutral freeform fallback. annual=gold, biennial=violet,
   // perennial=teal, tender_perennial=mint-green. Soft bg / dark text / mid border like the
   // other facet tokens; hues chosen distinct from type(green)/group(indigo)/location(tan)/freeform(gray).
   fLcAnnualBg:    '#faf2da', fLcAnnualText:    '#6b520f', fLcAnnualBorder:    '#e8d496',
@@ -67,19 +65,16 @@ export const P = {
 }
 
 // Soft enum — suggested event types shown in dropdown, free text always accepted.
-// V3-EVENT-008: the master list moved to the canonical src/lib/eventTypes.js
-// (single source of truth). Re-exported here so the 5 existing importers of
-// EVENT_TYPES from constants.js keep working unchanged. Add new values in
-// eventTypes.js, NOT here.
+// The master list lives in the canonical src/lib/eventTypes.js (single source of truth) and is
+// re-exported here so existing importers of EVENT_TYPES from constants.js keep working.
+// Add new values in eventTypes.js, NOT here.
 export { EVENT_TYPES, SELECTABLE_EVENT_TYPES } from './eventTypes.js'
 
 // Location type_label values for UI icons/display
 export const LOCATION_TYPE_LABELS = [
-  // 'area' was MISSING from this list while being the most common value in live data (9 of 21
-  // locations, covering 200 live plantings). A <Select> whose stored value is absent from its
-  // options renders the placeholder, so those nine locations showed "— optional —" and their real
-  // type was invisible and un-editable. Found by on-device verification 2026-08-08, not by any
-  // test — the vocabulary and the data had drifted apart with nothing comparing them.
+  // 'area' is the most common value in live data. A <Select> whose stored value is absent from its
+  // options renders the placeholder, which made those locations' real type invisible and
+  // un-editable; keep this vocabulary in step with the data.
   'area',
   'zone',
   'rack',
@@ -108,7 +103,7 @@ export const PROJECT_STATUSES = [
 ]
 
 // Statuses for which a project appears in the event-logging picker (EventNew).
-// Harvest is REPEATABLE (Dave directive 2026-06-04, E3): a 'harvested' project MUST stay
+// Harvest is REPEATABLE: a 'harvested' project MUST stay
 // loggable — you can harvest many times; harvesting is not the end of the process. So
 // 'harvested' is loggable IN ADDITION to the active lifecycle stages. Only 'ended'
 // (deliberately, truly done) and the legacy pre-lifecycle 'active' value stay excluded.
@@ -134,26 +129,23 @@ export const PROJECT_STATUS_MAP = {
   ended:      { label: 'Ended'  },
 }
 
-// Plant lifecycle statuses — plants.status. The DB DOES enforce a CHECK constraint
-// `chk_plants_status` (verified live on prod Neon 2026-06-08; the earlier "free-text,
-// no CHECK" note was stale folklore). This list MUST stay a subset of that constraint —
-// adding a value here requires widening chk_plants_status first (see
-// v3-status-source-check-widen-migration-V100, V3-STATUS-002). Single source of truth for
-// the plant-status vocabulary; do NOT redefine inline (was inline in Plants.jsx).
-// V3-STATUS-003: custom lifecycle ORDER (not alpha) — StatusSelect renders plant statuses in this
-// exact sequence. Values unchanged (subset of chk_plants_status); only order + the 'harvested' label.
+// Plant lifecycle statuses — plants.status. The DB enforces CHECK constraint `chk_plants_status`;
+// this list MUST stay a subset of it — adding a value here requires widening chk_plants_status first
+// (see v3-status-source-check-widen-migration-V100). Single source of truth for the plant-status
+// vocabulary; do NOT redefine inline.
+// Custom lifecycle ORDER (not alpha) — StatusSelect renders plant statuses in this exact sequence.
 export const PLANT_STATUSES = ['seed', 'seedling', 'vegetative', 'flowering', 'fruiting', 'harvested', 'ended', 'failed', 'rooting', 'dormant']
 
 // Display mapping for plant statuses — { label, emoji }. Mirrors PROJECT_STATUS_MAP.
 // Colors live in status.js STATUS_COLORS (shared with project stages).
 export const PLANT_STATUS_MAP = {
   seed:       { label: 'Seed' },
-  rooting:    { label: 'Rooting' },  // V3-STATUS-002: cuttings/propagation
+  rooting:    { label: 'Rooting' },  // cuttings/propagation
   seedling:   { label: 'Seedling' },
   vegetative: { label: 'Vegetative' },
   flowering:  { label: 'Flowering' },
   fruiting:   { label: 'Fruiting' },
-  harvested:  { label: 'Harvesting' },  // V3-STATUS-003: label-only rename (DB value stays 'harvested')
+  harvested:  { label: 'Harvesting' },  // label-only rename (DB value stays 'harvested')
   dormant:    { label: 'Dormant' },
   ended:      { label: 'Ended' },
   failed:     { label: 'Failed' },
@@ -170,7 +162,7 @@ export function statusLabel(status) {
 // ALLOWED_KINDS. Single source for ProjectNew (user) AND ProjectsAdminClassify
 // (admin). `cultivar` is flag-gated in the USER UI until VARIETY_REF_UI_SHIPPED;
 // the admin tool always includes it. Both derive options from projectKindOptions()
-// so the gating logic lives in ONE place (was duplicated/divergent).
+// so the gating logic lives in ONE place.
 export const PROJECT_KINDS = ['campaign', 'category', 'cultivar']
 export const PROJECT_KIND_MAP = {
   campaign: { label: 'Growing this season' },
@@ -186,10 +178,9 @@ export function projectKindOptions(includeCultivar = false) {
 // Task priorities
 export const TASK_PRIORITIES = ['low', 'normal', 'high']
 
-// Inventory enums moved to src/lib/inventoryEnums.js (V3-FORMSYS-001 §4). The prior
-// item-types / subcategories / categories exports here were STALE (claimed schema-match
-// but used dead 'equipment'/'fertilizer'/'hand_tools'/'misc' values not in the live
-// inventory_items CHECK) and had zero importers. Use inventoryEnums.js.
+// Inventory enums live in src/lib/inventoryEnums.js; the item-type / subcategory / category exports
+// that used to be here were stale (dead values not in the live inventory_items CHECK) and had zero
+// importers.
 
 // Project categories — used in project_types table and ProjectTypes.jsx
 export const PROJECT_CATEGORIES = [
@@ -197,11 +188,9 @@ export const PROJECT_CATEGORIES = [
   { v: 'infrastructure', label: 'Infrastructure' },
 ]
 
-// BD-003 (Dave, stated twice): where a completed sign-in lands. Every redirect in the auth path
-// MUST use this — never a literal. The bug this exists to prevent already happened: the route table
-// was moved to /today on 2026-07-17 (9f03bc8, in prod since v3.78.0) while THREE separate literal
-// '/dashboard' redirects in the Clerk sign-in path were left behind, so signing in still landed on
-// Dashboard and the route-table fix looked like it had covered it. Keep this the single source.
+// Where a completed sign-in lands. Every redirect in the auth path MUST use this — never a literal:
+// a route-table change once left THREE literal '/dashboard' redirects behind in the Clerk sign-in
+// path, so signing in still landed on Dashboard. Keep this the single source.
 export const POST_LOGIN_ROUTE = '/today'
 
 export const APP_NAME = 'Gardens at Mathews'
@@ -212,10 +201,10 @@ export const APP_NAME = 'Gardens at Mathews'
 // behind it. BottomNav.jsx owns the CSS VARIABLE; this owns the NUMBER.
 export const BOTTOM_NAV_HEIGHT_PX = 56
 
-// TopChrome's bar height, the number the redesigned Today's sticky jump bar hangs under (plan-v2 §6.1).
-// TopChrome.jsx keeps its own literal `const BAR_H = 52` ON PURPOSE: seven layout gates parse that exact
+// TopChrome's bar height, the number the redesigned Today's sticky jump bar hangs under.
+// TopChrome.jsx keeps its own literal bar-height constant ON PURPOSE: seven layout gates parse that exact
 // source line (today-shape, page-scroll, seeds-page, seeds-scroll, seed-detail, today-shape-v2,
-// today-shell-v2), so pointing BAR_H at this constant would crash every one of them at startup.
+// today-shell-v2), so pointing it at this constant would crash every one of them at startup.
 // topChromeHeight.test.js reds if the two numbers ever disagree.
 export const TOP_CHROME_HEIGHT_PX = 52
 

@@ -1,18 +1,16 @@
 // src/lib/pageScroll.js
-// BUG-DETAILPAGESCARRYSCROLL-001 — the app-level page-scroll manager's DECISIONS, kept pure.
+// The app-level page-scroll manager's DECISIONS, kept pure.
 //
 // THE BUG. BrowserRouter never resets window scroll on a push. The arriving page paints a one-screen
 // loading shell, Chrome clamps the old offset to it, and scroll anchoring re-applies the old offset when
-// the content lands: 9 of 10 pages measured in real Chrome opened part-way down, most at their bottom
-// (Projects/Gardening/_seedstab12_20260925/measure-detailscroll.md). A reset alone breaks Back, because
-// today's "Back keeps my place" on async pages rides the SAME anchoring carry. So the fix is a pair: a
+// the content lands: most pages opened part-way down, many at their bottom. A reset alone breaks Back,
+// because "Back keeps my place" on async pages rides the SAME anchoring carry. So the fix is a pair: a
 // reset when the page tree arrives at a different page, and a restore on POP, under
 // history.scrollRestoration = 'manual' (set once in main.jsx).
 //
 // Same discipline as scrollRestore.js and backNav.js: no DOM, no React, no history here. The wiring (a
 // layout effect, a scroll listener, the rAF driver) is src/hooks/usePageScrollManager.js; everything it
-// decides is decided below, where it can be table-tested. The decision table is design-scrollmanager-
-// pwa.md §1 as amended by build-spec-scrollmanager.md (both in Projects/Gardening/_seedstab12_20260925/).
+// decides is decided below, where it can be table-tested.
 import { RESTORE_TOLERANCE_PX, hasRestoreTarget } from './scrollRestore.js'
 
 // The mirror's OWN sessionStorage key. Never useScrollRestore's 'garden.scrollRestore.v1': the two stores
@@ -28,15 +26,15 @@ export const PAGE_SCROLL_MAX_ENTRIES = 100
 // the clock, so the driver keeps re-applying until the LAST stage has landed.
 export const RESTORE_HOLD_MS = 1000
 // How close counts as ON the target: the pixel (sub-pixel scroll positions on a DPR-3 phone included). Not
+// How close counts as ON the target: the pixel (sub-pixel scroll positions on a DPR-3 phone included). Not
 // useScrollRestore's RESTORE_TOLERANCE_PX (4), which is that hook's "close enough to stop nudging" for a
 // ~20-frame loop: this driver holds until the page has settled, so it can afford the pixel, and a page that
-// ends up a few px off after the first on-target frame is pulled back onto it rather than accepted
-// (qa2-scrollmanager-confirm MINOR-2: a seed lot came back at 972 for 968 after a refused Save).
+// ends up a few px off after the first on-target frame is pulled back onto it rather than accepted.
 export const RESTORE_EXACT_PX = 1
 // VISIBLE time, not wall clock. At or above the app's own content bounds: the service worker gives an API
 // read 12 s (public/sw.js SW_TIMEOUT_MS) and src/lib/api.js allows 15 s for a cold Neon + Lambda start.
-// A change to either of those should bring someone here. Measured: a 4 s wall-clock budget lost Zones
-// (1645 → 56) at 5 s latency and the Event log (4658 → 2070) at 3 s per request.
+// A change to either of those should bring someone here. A 4 s wall-clock budget lost pages that load in
+// 3-5 s stages (Zones, the Event log).
 export const RESTORE_BUDGET_MS = 15000
 // Per-frame cap on elapsed time. rAF does not tick while the page is hidden or frozen, so the first frame
 // after a resume would otherwise spend the whole gap at once — a pocketed phone would come back to a
@@ -76,12 +74,10 @@ export function pageScrollKey(pathname, entryKey) {
  *   7    K changed, P same    POP            page   NONE
  *
  * TOP is ONE scrollTo(0, 0) in the commit, never held and never re-applied, so it cannot beat a hook's or
- * Garden's later restore (rimpact-scrollmanager BLOCKING-2). It is needed at all only because 'manual'
- * leaves a POP with no defined offset (HTML spec), and a zero is the one offset scroll anchoring never
- * carries (css-scroll-anchoring §2.1). The store never mints a 0, so "no record" on a POP means the entry
+ * Garden's later restore. It is needed at all only because 'manual' leaves a POP with no defined
+ * offset (HTML spec), and a zero is the one offset scroll anchoring never carries (css-scroll-anchoring §2.1). The store never mints a 0, so "no record" on a POP means the entry
  * was left at the top (or was never seen): rows 4 and 6 both put it there. Row 6 is the same-page case —
- * Put-Up's list left at the top → a batch (a same-path push) → Back used to keep the batch's offset
- * (rimpact-scrollmanager-built N1: y56 where the pre-manager app lands at 0).
+ * Put-Up's list left at the top → a batch (a same-path push) → Back would otherwise keep the batch's offset.
  * An entry whose mode is 'auto' gets NO zero on rows 4, 5 and 6: the browser restores it natively. That
  * happens only where the mode cannot be set (main.jsx's write threw or the property is missing) — every
  * same-document entry this bundle writes copies the 'manual' mode, and an entry the previous bundle wrote
@@ -92,8 +88,7 @@ export function pageScrollKey(pathname, entryKey) {
  * @param {boolean} i.first      The document's first commit (launch, reload, SW reload, tab restore).
  * @param {boolean} [i.fresh]    That document arrived by a fresh navigation (a launch, a typed URL, a PWA
  *                               shortcut into a running app) — not a reload, a Back or a tab restore — so
- *                               an offset its path filed in an earlier document is not its place
- *                               (rimpact-scrollmanager-built N3).
+ *                               an offset its path filed in an earlier document is not its place.
  * @param {{key:string,path:string}|null} i.prev  The page entry of the previous commit.
  * @param {{key:string,path:string}}      i.next  The page entry now committing.
  * @param {'POP'|'PUSH'|'REPLACE'} i.navType  react-router's navigation type for this commit.
@@ -149,15 +144,14 @@ export function startDriver(target, now) {
  * the content landing later (a cold Lambda, weak signal, a page that loads in two stages) finds nothing
  * putting the offset back. Each attempt also grows windowed lists (see scrollRestore.js).
  *
- * OUT OF REACH (qa-scrollmanager-built, the Event log past "Show more"). A target can be beyond what the
+ * OUT OF REACH (the Event log past "Show more"). A target can be beyond what the
  * page will ever show again — PlantingDetail forgets how many events were shown, so Back to event 55 finds
  * a page of 50. Once the page has SETTLED — its height unchanged and no API request in flight, both for
  * RESTORE_HOLD_MS of visible time — with the target still below its max, the driver stops (EXHAUSTED,
  * reason 'unreachable') at the closest reachable point instead of pulling for the whole budget. "No request
  * in flight" is load-bearing, not a nicety: a loading shell and the first stage of a two-stage page also
  * hold their height with the target beyond reach, for as long as the network takes (measured in real Chrome:
- * stopping on the height alone gives up on the loading shell and lands the Event log at 56 of 4658 at 3 s per
- * stage, and Zones at 56 of 960 at 5 s).
+ * stopping on the height alone gives up on the loading shell, landing the Event log at 56 of 4658).
  *
  * @param {{target:number, visibleMs:number, heldMs:number, settledMs:number, lastNow:number|null, lastHeight:number|null}} s
  * @param {{now:number, y:number, height:number, max?:number, ready?:boolean, quiet?:boolean}} f
@@ -178,7 +172,7 @@ export function driverStep(s, { now, y, height, max, ready = true, quiet = true 
   const counted = ready ? dt : 0
   const visibleMs = s.visibleMs + counted
   // Only the unresolved time counts toward the wait cap: after a long skeleton the restore still gets its
-  // whole budget (rimpact-scrollmanager-built N5).
+  // whole budget.
   const waitedMs = (s.waitedMs || 0) + (ready ? 0 : dt)
   const at = Math.abs(y - s.target) <= RESTORE_EXACT_PX
   const sameHeight = s.lastHeight == null || height === s.lastHeight

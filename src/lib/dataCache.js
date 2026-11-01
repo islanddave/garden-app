@@ -1,6 +1,6 @@
-// src/lib/dataCache.js — V4-IMGCACHE-001 D-1. A subscribable SWR store (module singleton) for
-// read-mostly list data. First (and only, in D-1) consumer: the photo-list fetches — the "slow-tab
-// win" (revisiting a photo surface paints from cache instead of a refetch-and-re-presign every mount).
+// src/lib/dataCache.js — a subscribable SWR store (module singleton) for read-mostly list data
+// (first consumer: the photo-list fetches, so revisiting a photo surface paints from cache instead of a
+// refetch-and-re-presign every mount).
 // Keyed by identity+path; identity isolation is the CALLER's job (key prefix) + invalidateAll() on an
 // identity change — the store itself is identity-agnostic.
 //
@@ -14,25 +14,22 @@
 //   a mid-flight unsubscribe does NOT abort (a quick remount stays warm).
 // - GENERATION GUARD: monotonic per key; a fetch captures the gen at issue and writes its result only
 //   if the gen still matches at SETTLE — discards an older-gen revalidate resolving AFTER an invalidate.
-// - MERGE-BY-ID / URL PRESERVATION (boss RES-004): a revalidate that returns the same rows with only
-//   fresh presigned URLs keeps the PRIOR `data` ref (URLs are just presigns of the same S3 object;
-//   PhotoImg owns URL freshness + heals expiry). So an unchanged list does not re-download the
-//   visible screenful. A real membership/field change adopts the fresh list.
-//   ⚠ CORRECTION (2026-07-31): this used to claim an unchanged list "yields an Object.is-equal
-//   snapshot → no re-render". FALSE. _commit unconditionally nulls e.snap, so getSnapshot builds a
-//   NEW object after every settle and useSyncExternalStore re-renders on every revalidate. What is
-//   actually stable is the `data` REF — which is what stops the re-download, via consumers' useMemo.
-//   The win is real; the stated mechanism was not. (Same class as the false claim corrected in
-//   useCacheLifecycle.js — a wrong comment here seeds wrong impact analyses later.)
+// - MERGE-BY-ID / URL PRESERVATION: a revalidate that returns the same rows with only fresh presigned
+//   URLs keeps the PRIOR `data` ref (URLs are just presigns of the same S3 object; PhotoImg owns URL
+//   freshness + heals expiry). So an unchanged list does not re-download the visible screenful. A real
+//   membership/field change adopts the fresh list.
+//   What is stable is the `data` REF, NOT the snapshot: _commit unconditionally nulls e.snap, so
+//   getSnapshot builds a NEW object after every settle and useSyncExternalStore re-renders on every
+//   revalidate. The re-download is stopped by consumers' useMemo over the stable `data` ref.
 // - ERROR ONLY WHEN NO DATA: a revalidate failure with a cached value keeps serving the value
 //   (error:null); only a COLD failure surfaces `error`.
-// - FRESHNESS CLOCK IS NETWORK-ONLY (SW-STALEAPI-001): `at` records the last time the network actually
+// - FRESHNESS CLOCK IS NETWORK-ONLY: `at` records the last time the network actually
 //   answered. A response the service worker served from its offline cache commits its data but must NOT
 //   advance `at` — see _isFromCache below.
 
 const _store = new Map()
 const _now = () => Date.now()
-// BUG-TODAYSECTIONSSTUCK-001: bumped by invalidateAll. A mounted reader subscribes to an entry OBJECT; once the store
+// Bumped by invalidateAll. A mounted reader subscribes to an entry OBJECT; once the store
 // is cleared that object is gone from the map, so nothing it waits on can ever commit to it. Readers watch the epoch
 // and re-subscribe + re-register + revalidate against the fresh entry (useCachedFetch).
 let _epoch = 0
@@ -41,7 +38,7 @@ export function epoch() { return _epoch }
 export function subscribeEpoch(cb) { _epochSubs.add(cb); return () => { _epochSubs.delete(cb) } }
 const LRU_CAP = 60
 
-// SW-STALEAPI-001. public/sw.js answers an offline /api/* fetch from API_CACHE with a plain 200, and
+// public/sw.js answers an offline /api/* fetch from API_CACHE with a plain 200, and
 // src/lib/api.js stamps that parsed value with this symbol. Read via Symbol.for rather than importing
 // api.js so this store stays dependency-free — importing api.js would drag Clerk and the routing table
 // into every consumer of the cache. The symbol's canonical definition and rationale live in api.js.
@@ -110,22 +107,20 @@ export function register(key, fetcher) { _entry(key).fetcher = fetcher }
 // from this list churns on every revalidate (fresh signature, same object), so the row compares
 // unequal, the whole list gets a new identity, and the visible screenful re-renders and
 // re-downloads — turning a background refresh into the exact cost this guard exists to avoid.
-// featured_photo_thumb_url joined at V4-PERFTHEMEA-001, when /api/plants started signing the
-// thumbs/ companion alongside featured_photo_view_url.
+// featured_photo_thumb_url is listed because /api/plants signs the thumbs/ companion alongside
+// featured_photo_view_url.
 const URL_FIELDS = ['view_url', 'thumb_url', 'featured_photo_view_url', 'featured_photo_thumb_url']
 
 // A field holding a JSON OBJECT never survives an === compare: every response is a fresh JSON.parse,
 // so two byte-identical values hold different identities. That silently defeats the whole guard for
 // any row carrying one — /api/plants rows carry TWO (`variety_ref`, a jsonb_build_object cultivar
-// join, and the `metadata` jsonb column), so an identity-only compare reported EVERY plants
+// join, and the `metadata` jsonb column), so an identity-only compare would report EVERY plants
 // revalidate as a data change: new list identity, enrichment rebuilt, fresh presign into PhotoImg's
 // initialUrl, and a re-download of the visible thumbnails on every background refresh — precisely
-// the churn URL_FIELDS exists to prevent. (Measured at 9c335bf: ref preserved = false for a row with
-// variety_ref + metadata and presign-only churn; the pre-existing unit case passed only because its
-// fixture row was flat.) Scalars keep the cheap === path. Structural compare is strictly MORE
-// accurate than ===, never more permissive: a real nested edit still compares unequal and the fresh
-// list is adopted. Key order is stable (same server projection, same parser), and any stringify
-// failure falls back to "changed", i.e. to the prior behaviour.
+// the churn URL_FIELDS exists to prevent. Scalars keep the cheap === path. Structural compare is
+// strictly MORE accurate than ===, never more permissive: a real nested edit still compares unequal
+// and the fresh list is adopted. Key order is stable (same server projection, same parser), and any
+// stringify failure falls back to "changed".
 function _sameField(a, b) {
   if (a === b) return true
   if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false
@@ -161,7 +156,7 @@ export function revalidate(key) {
       if (cur !== e || cur.gen !== gen) return            // gen-guard: invalidated mid-flight → discard; entry-guard: evicted by invalidateAll → discard
       const list = Array.isArray(fresh) ? fresh : (fresh ?? [])
       const data = _sameExceptUrls(cur.data, list) ? cur.data : list   // preserve unchanged rows' URLs
-      // SW-STALEAPI-001. A cache-served response still yields usable data (status stays 'value' — an
+      // A cache-served response still yields usable data (status stays 'value' — an
       // offline user keeps their list), but it is NOT evidence of freshness, so `at` is left untouched:
       // it keeps pointing at the last time the NETWORK answered. That is what lets revalidateLive's age
       // gate still fire on the next wake instead of being suppressed by the failure itself.
@@ -216,24 +211,24 @@ export function invalidateAll() {
   for (const cb of [..._epochSubs]) cb()
 }
 
-// ── V4-IMGCACHE-002 D-2 — boot-warm / resume-revalidate / refresh ────────────────────────────────
+// ── boot-warm / resume-revalidate / refresh ────────────────────────────────────────────────────
 
 // THE canonical key builder. Both useCachedFetch and boot-warm MUST go through this: a warm that
-// builds its key even slightly differently writes an entry no hook will ever read (V102 §B1), which
+// builds its key even slightly differently writes an entry no hook will ever read, which
 // looks like a working warm and costs a wasted request on every boot.
 export function keyFor(sub, path) { return `${sub}|${path}` }
 
-// B3 boot-warm. Seeds a key BEFORE any component mounts, so the first visit to a photo surface paints
+// Boot-warm. Seeds a key BEFORE any component mounts, so the first visit to a photo surface paints
 // from cache instead of a cold fetch. No-ops when the key already holds data or has a fetch in flight
 // (never duplicates a real mount's work).
 //
-// A FAILED warm must leave NO trace (V102 §B3: "failed warms write nothing"). revalidate() commits
+// A FAILED warm must leave NO trace ("failed warms write nothing").
 // status:'error' on a cold failure, which would make the first real mount render an error state
 // instead of a clean loading→fetch. So on a data-less error we reset the entry to 'empty' — the
 // entry OBJECT is kept (not deleted) because any subscriber that arrived mid-warm holds a reference
 // to it, and replacing it would orphan their callback.
 //
-// SW-STALEAPI-001: an OFFLINE warm is not a failed warm — the SW hands back real cached rows, so the
+// An OFFLINE warm is not a failed warm — the SW hands back real cached rows, so the
 // entry legitimately reaches status 'value' (stale:true) and survives this cleanup. It carries at:0,
 // so the first mount and the first wake both revalidate it rather than treating it as fresh.
 export function warm(key, fetcher) {
@@ -249,16 +244,16 @@ export function warm(key, fetcher) {
   return p
 }
 
-// B5 resume revalidation. Revalidates keys that something is actually WATCHING — an unsubscribed
+// Resume revalidation. Revalidates keys that something is actually WATCHING — an unsubscribed
 // entry has no viewer, so refetching it on every foreground would burn bandwidth for nobody.
 //
-// `minAgeMs` is measured against `at`, which SW-STALEAPI-001 keeps NETWORK-ONLY. An offline
-// cache-served commit leaves `at` alone, so the gate below measures "how long since real data" rather
-// than "how long since the last attempt" — the distinction the SW's silent 200 used to erase.
+// `minAgeMs` is measured against `at`, which stays NETWORK-ONLY. An offline cache-served commit leaves
+// `at` alone, so the gate below measures "how long since real data" rather than "how long since the
+// last attempt" — the distinction the SW's silent 200 would otherwise erase.
 //
 // `minAgeMs` is the elapsed gate, and it is the whole reason this isn't chatty: a 3-second
 // app-switch fires visibilitychange too, and refetching every photo list on every glance would be
-// strictly worse than the problem being solved. Mirrors PhotoImg's proactive elapsed gate (NEW-4).
+// worse than the problem being solved. Mirrors PhotoImg's proactive elapsed gate.
 // Returns the number of keys kicked (test seam + a caller-visible signal that the gate held).
 export function revalidateLive(minAgeMs = 0) {
   const now = _now()
@@ -271,35 +266,25 @@ export function revalidateLive(minAgeMs = 0) {
   return n
 }
 
-// B4 refresh primitive: force every watched key to the network while KEEPING its cached value on
+// Refresh primitive: force every watched key to the network while KEEPING its cached value on
 // screen (SWR). Unwatched entries are LEFT ALONE.
 //
 // NOT invalidateAll(): that clears watched entries too, blanking every mounted list mid-view — the
 // opposite of what a refresh gesture should feel like.
 //
-// ⚠ 2026-07-31 (crucible, 6 panels + boss): this used to `_store.delete(k)` every unwatched entry,
-// on the stated intent that "a refresh genuinely clears the app's memory". That was a latent
-// regression of the B3 boot-warm win. warm() registers NO subscriber, and the boot-warm effect is
-// deps-`[sub]` so it never re-seeds within a session — so calling refreshAll() from any surface
-// that isn't PhotosWall DELETED the boot-warmed /api/photos entry, making the next Photos visit a
-// cold fetch-and-re-presign. A control reached for to make things fresher made the app slower.
-// (OPS-BOOTWARMSTALE-001: the named reader is gone — BOOT_WARM_PATHS is now empty, so there is no
-// boot-warmed entry left to delete. The MECHANISM above is still the reason this doesn't delete;
-// read "PhotosWall" as "whatever surface reads the warmed key" if a path is ever added back.)
-// The delete was also redundant with _evict()'s LRU cap (which already skips subscribed keys), and
-// didn't even reliably shrink the store — getSnapshot() calls _entry(), which recreates entries on
-// read. Latent, not live: refreshAll has no non-test callers. Fixed now so the next session wiring
-// this documented "B4 hook-point" doesn't step on it. See the PTR re-open gate in
-// useCacheLifecycle.js before building any affordance on top of this.
+// It must not delete unwatched entries either. warm() registers NO subscriber, so a delete would drop
+// any boot-warmed entry and make the next visit a cold fetch-and-re-presign (BOOT_WARM_PATHS is
+// currently empty, so nothing is boot-warmed today). The delete was also redundant with _evict()'s
+// LRU cap (which already skips subscribed keys) and did not reliably shrink the store, since
+// getSnapshot() calls _entry(), which recreates entries on read. Only useRefreshAll calls refreshAll, and no screen uses that
+// yet; see the PTR re-open gate in useCacheLifecycle.js before building any affordance on top of this.
 //
-// V102 §B4 also asks that keys with a pending in-flight MUTATION be exempted so a refresh can't wipe
-// an unconfirmed optimistic write. That exemption is vacuous today and deliberately not built: no
-// mutation writes through this cache — photo mutations go through useUploadPhoto and then
-// invalidatePrefix — so there is no optimistic cache state to protect. Build the exemption together
-// with the first optimistic writer (the useInventory adjustQuantity path, per V102 §B2), not before.
-// The count gates on the SAME condition invalidate() re-kicks on (subs + a registered fetcher).
-// It previously counted on subs.size alone, so a subscribed-but-fetcher-less key incremented n
-// while issuing zero requests — an over-report that made the return value unsafe as UI copy.
+// No exemption for keys with an in-flight MUTATION: no mutation writes through this cache (photo
+// mutations go through useUploadPhoto and then invalidatePrefix), so there is no optimistic cache
+// state to protect. Build the exemption together with the first optimistic writer (the useInventory
+// adjustQuantity path), not before.
+// The count gates on the SAME condition invalidate() re-kicks on (subs + a registered fetcher), so a
+// subscribed-but-fetcher-less key is not counted: n must not over-report requests, or it is unsafe as UI copy.
 export function refreshAll() {
   let n = 0
   for (const k of [..._store.keys()]) {
