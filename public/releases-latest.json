@@ -1,7 +1,7 @@
 {
-  "version": "5.3.26",
+  "version": "5.3.27",
   "date": "2026-11-01",
   "highlights": [
-    "Voice harvest's plant list now shows right away when the app already has it, and the app's change history now records who archived, restored or deleted a planting or set a featured photo, instead of recording it as the system."
+    "Behind-the-scenes tidy-up of the notes in the app's server code. Nothing about how the app works or looks has changed."
   ]
 }
