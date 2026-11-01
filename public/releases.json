@@ -1,5 +1,12 @@
 [
   {
+    "version": "5.3.28",
+    "date": "2026-11-01",
+    "highlights": [
+      "Behind-the-scenes tidy-up of the notes in the app's screens and code, plus tighter checks on three date-sensitive tests. Nothing about how the app works or looks has changed."
+    ]
+  },
+  {
     "version": "5.3.27",
     "date": "2026-11-01",
     "highlights": [
