@@ -85,15 +85,16 @@ _RECORD_TMF = (
 
 
 def test_membership_pattern_has_a_negative_control_for_requester_text_in_the_photos_route_line():
-    """OPS-CODEREVIEW-001 sec 9: garden-photos logs `route <method> <rawPath>` before its gate runs, so a caller
-    can put `{"msg":"household-membership-denied"}` at the end of the path. test-patterns must require 0
-    matches on that line with the pattern provision installs."""
+    """OPS-CODEREVIEW-001 sec 9 / R-V26-2: garden-photos logs `route <method> <path>` before its gate runs, so a
+    caller can end the path with `{"msg":"household-membership-denied"}`. The Lambda percent-encodes { } " and \\
+    (logSafePath, pinned by lambda/photos/storage-key-guard.test.js); test-patterns must require 0 matches on
+    that encoded line with the pattern provision installs."""
     run = _run_defs(_RECORD_TMF + "test_patterns", check=False)
     calls = [r.split("\x1f") for r in run.stderr.splitlines() if "\x1f" in r]
     results = re.findall(r"^  FAIL  .*\(expected (\d+), got probe\)$", run.stdout, re.M)
     assert len(calls) == len(results) > 0
     provisioned = _run_defs("pattern household-membership-denied").stdout
-    forged = re.compile(r'[^\t]+\t[^\t]+\tINFO\troute GET /x\{"msg":"household-membership-denied"\}')
+    forged = re.compile(r'[^\t]+\t[^\t]+\tINFO\troute GET /x%7B%22msg%22:%22household-membership-denied%22%7D')
     controls = [want for (pat, line), want in zip(calls, results) if pat == provisioned and forged.fullmatch(line)]
     assert controls == ["0"]
 

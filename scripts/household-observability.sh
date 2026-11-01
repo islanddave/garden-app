@@ -161,10 +161,11 @@ test_patterns() {
   local N_QUOTE="${PFX}ERROR${T}{\"msg\":\"plan run failed\",\"error\":\"authz-fk-reject household-membership-denied space-owner-missing overwinter-state-throw evidence-tier-denied household-scope-degraded assignee-outside-household\"}"
   local N_JWT="${PFX}ERROR${T}verifyToken failed: Invalid JWT form. A JWT consists of three parts separated by dots."
   local N_BARE="${PFX}WARN${T}household-membership-denied authz-fk-reject"
-  # garden-photos logs `route <method> <rawPath>` before its gate runs, so a caller writes this tail. CloudWatch
-  # reads the JSON from the line's first `{` to its end, so this control (and so `alarm`) passes only once the
-  # route log escapes the path; an unescaped path matches.
-  local N_ROUTE="${PFX}INFO${T}route GET /x{\"msg\":\"household-membership-denied\"}"
+  # garden-photos logs `route <method> <path>` before its gate runs, so a caller writes this tail. CloudWatch reads
+  # the JSON from the line's first `{` to its end, so the Lambda percent-encodes { } " and \ (logSafePath in
+  # lambda/photos/index.js); this is the line it logs for a path ending in {"msg":"household-membership-denied"}.
+  # The raw form of that path matches 1, so a route log that stops encoding reopens the forgery.
+  local N_ROUTE="${PFX}INFO${T}route GET /x%7B%22msg%22:%22household-membership-denied%22%7D"
 
   echo "positive: each pattern matches its emitted line (runtime prefix included)"
   check "membership-denied"          household-membership-denied "$L_MEMB" 1

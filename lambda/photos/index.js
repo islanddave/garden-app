@@ -522,10 +522,18 @@ const EMPTY_SPACE_HERO = {
   featured_photo_view_url: null,
 };
 
+// The route line runs before the kit, so any caller writes its tail. CloudWatch reads a JSON metric filter's input from
+// a Text line's first `{` to its end, so a raw path ending in {"msg":"authz-fk-reject"} would count as that line.
+// Percent-encoding { } " and \ leaves no JSON fragment and keeps the path readable. Pinned by
+// storage-key-guard.test.js; scripts/household-observability.sh test-patterns holds the server-side control.
+export function logSafePath(text) {
+  return String(text).replace(/[{}"\\]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+}
+
 export const handler = async (event) => {
   // A-Pending-4 (T1-6, default-in): single method+path route log — makes CloudWatch invocation
   // evidence per-route (3.9/0A.6 dead-surface sheets) instead of per-function. No payloads logged.
-  console.log('route', event.requestContext?.http?.method ?? 'GET', event.rawPath ?? '');
+  console.log('route', logSafePath(event.requestContext?.http?.method ?? 'GET'), logSafePath(event.rawPath ?? ''));
   // The kit answers OPTIONS, a secrets failure (secretsUnavailable) and every sign-in refusal (401, the household
   // gate's 403) before any statement, and refetches secrets on SECRETS_TTL_MS.
   const ctx = await requestContext(event, { resp, neon, onSecretsError: secretsUnavailable, secretsTtlMs: SECRETS_TTL_MS });
