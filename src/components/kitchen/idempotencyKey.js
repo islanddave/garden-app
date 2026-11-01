@@ -1,5 +1,4 @@
-// src/components/kitchen/idempotencyKey.js
-// Put-Up release 1b (V4 §5.2, §6.5) — the one client key minter for every keyed Put-Up write (the Start
+// The one client key minter for every keyed Put-Up write (the Start
 // sheet's create, a Put it up sitting, each line it adds). A v4 uuid: the server refuses a malformed
 // key with a 400, so a timestamp fallback would be worse than none. getRandomValues exists wherever
 // randomUUID does not (older Android WebViews).
@@ -12,10 +11,10 @@ export function mintKey() {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`
 }
 
-// ── A REPLAYED CREATE (BUG-PUTUPREPLAYDROPSEDIT-001) ────────────────────────────────────────────────
+// ── A REPLAYED CREATE ───────────────────────────────────────────────────────────────────────────────
 // The server keeps a create's key and nothing of its body: a second POST under a held key is answered 200
 // `replayed: true` with the row the FIRST one made. The key does not change with the body — a second row is
-// worse than a lost change (plan R2 V2 "Retry key", RIA I-3 / QA-I2; PutUpR2Df.door.test.jsx pins it) — so a
+// worse than a lost change (PutUpR2Df.door.test.jsx pins it) — so a
 // body changed after a lost answer came back as a success that did not hold the change. The sheet that sent
 // it now READS `replayed`, and puts what it holds on that row through the entity's own update route.
 //
@@ -41,7 +40,7 @@ export function mintKey() {
 //     one now(); every later write to the row goes through its set_updated_at trigger) — EXCEPT this sheet's
 //     own update (`updatedHere`): a moved updated_at on a row that still holds what this sheet last sent it
 //     is its own, landed with its answer lost, and Save again must still be able to finish it (below).
-//     THE JAR TABLE IS THE ONE EXCEPTION TO "the two are one now()" (QA B-1). preservation_log.updated_at is
+//     THE JAR TABLE IS THE ONE EXCEPTION TO "the two are one now()". preservation_log.updated_at is
 //     nullable with no default and the create's INSERT does not name it, so a jar nobody has written to since
 //     its create carries updated_at NULL; its BEFORE UPDATE trigger stamps the first write after. The jar's two
 //     doors say so (`nullIsUntouched`), and for them a NULL updated_at beside a real created_at reads as
@@ -55,7 +54,7 @@ export function mintKey() {
 // A REFUSAL NEVER LETS GO OF THE KEY. After 'stale' or 'fixed' the sheet keeps its key and `sent`: Save again
 // replays and is refused again — it can never be a second row. Only the draft's own end retires a key.
 //
-// 'stale' IS THE STORED DRAFT'S END (pre-promote I-1). It is only ever said to a replay, so the first Save
+// 'stale' IS THE STORED DRAFT'S END. It is only ever said to a replay, so the first Save
 // landed and the draft has done its job: a sheet that keeps its key in a stored draft (Put something up, the
 // recipe sheet, the Start sheet, Put it up) takes that draft out of storage at the refusal and does not write
 // it back. (The Start sheet and Put it up say ONE refusal for 'stale' and 'fixed' alike: neither has a way
@@ -63,9 +62,9 @@ export function mintKey() {
 // open is as above; the one opened next — after a close, or a reload with no close — is clean, has no key, and
 // mints one for what is typed there as for any new thing. A draft whose answer was lost and has not been
 // refused is not touched: it restores with its key, which is what stops a second row. The sheets that hold
-// the key in memory only (the Walk, Save as recipe, How it was made) end it when they are left, as before.
+// the key in memory only (the Walk, Save as recipe, How it was made) end it when they are left.
 //
-// THE SHEET'S OWN UPDATE IS KNOWN BY WHAT IT SENT, NOT BY HAVING SENT (QA I-2). "This sheet sent an update to
+// THE SHEET'S OWN UPDATE IS KNOWN BY WHAT IT SENT, NOT BY HAVING SENT. "This sheet sent an update to
 // this row" does not make a moved updated_at its own: an update whose answer was lost may never have reached
 // the server, and the stamp was then moved by somebody else — whose change the next Save would write over. So a
 // sheet keeps the BODY of each update it sent that may have landed (`updateSent`), and `updatedHere` is true
@@ -74,7 +73,7 @@ export function mintKey() {
 // else in one of those fields was written by someone else since — or never got this sheet's update — and is
 // 'stale': nothing is written. Every sheet that puts a body onto a replayed row uses this one reading.
 //
-// EVERY ONE THAT MAY HAVE LANDED, NOT ONLY THE LAST (re-review I-B). Whichever of them arrived last is what the
+// EVERY ONE THAT MAY HAVE LANDED, NOT ONLY THE LAST. Whichever of them arrived last is what the
 // row holds: the last one sent may never have reached the server while the one before it did, and the row —
 // holding that earlier body, its stamp moved — is as much this sheet's own as one holding the last. So the
 // kept updates are a list, and the row is this sheet's while it holds ANY ONE of them IN FULL (never a field
@@ -86,10 +85,10 @@ export function mintKey() {
 // stored draft: a draft that comes back out of storage with `sent` in it is not `mine`, and nothing is ever
 // written onto its row, so there is nothing for a stored list to vouch for.
 //
-// AN ANSWERED 4xx DID NOT LAND (BUG-PUTUPREPLAYREST-001). `sent` is what MAY have landed, so a sheet that
+// AN ANSWERED 4xx DID NOT LAND (guard: PutUpReplayRest.start.test.jsx). `sent` is what MAY have landed, so a sheet that
 // reads its fixed part off the prints (the Start sheet, Put it up) takes back the print of a body the server
 // answered with a 4xx — to what `sent` was before that body went — and so does the Walk, whose one key serves
-// two routes (re-review I-A). And the updates a sheet keeps are taken back to what they were before the one
+// two routes. And the updates a sheet keeps are taken back to what they were before the one
 // the server answered with a 4xx (`answeredNo`): the row may still hold an earlier one, and that is still
 // this sheet's.
 //
@@ -129,11 +128,11 @@ export function answerLost(err) {
   return !answeredNo(err)
 }
 
-// ── The sheet's own updates (QA I-2, re-review I-B) ─────────────────────────────────────────────────
+// ── The sheet's own updates ─────────────────────────────────────────────────────────────────────────
 // How many of its own updates a sheet keeps. Each one is a Save whose create was answered and whose update was
 // not, with a change before it — eight of those in one sitting is past any connection worth retrying on.
 export const UPDATES_KEPT = 8
-// The kept list as a list: a single { id, body } (what a sheet kept before the list) reads as a list of one.
+// The kept list as a list: a single { id, body } reads as a list of one.
 const ownUpdates = (kept) => (Array.isArray(kept) ? kept : kept ? [kept] : []).filter(u => u && u.id != null && u.body && typeof u.body === 'object')
 // What a sheet keeps of the updates it sent to a row: `before` (what it kept until now) with this one — the
 // row's id and the body exactly as it went — at its end. A new list every time, so the one before is still

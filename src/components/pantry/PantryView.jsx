@@ -1,34 +1,33 @@
-// src/components/pantry/PantryView.jsx
-// Put-Up B′ release 2 (V4 §2.5 The Pantry, §6.1, §6.6) — the Pantry segment's body: ONE list of put-ups
+// The Pantry segment's body: ONE list of put-ups
 // and bought items (GET /api/pantry), grouped By place (default) or By what it is.
 //
 // ROW: name · place · where from · the batch it came from, by name ("from Petri Dish", plain words — the
 // door to that batch is in the row sheet) · how many left ("about N g left" for weighed stock) · the
 // discard-by chip with its basis words (jarWords.discardWords, through pantryRows.discardChip) · "From the garden"
 // · ONE inline action — Used one (counted, more than one left) or Used it up. The open target and the
-// inline action are SIBLINGS, never nested (V4 §6.6), each at least 48 px tall.
+// inline action are SIBLINGS, never nested, each at least 48 px tall.
 //
-// IN PLACE, for the person who acted (V4 §2.5): after Used one / Used it up / Went bad / Gave it away
+// IN PLACE, for the person who acted: after Used one / Used it up / Went bad / Gave it away
 // the row reads "3 left · used one · Undo" until their next visit — no timer. The record of what they did
 // lives in the PAGE (`recent`, handed in), so switching segments inside one visit keeps it, and a
 // used-up row the server no longer lists stays on screen for its Undo (at full opacity, words in P.mid).
 // A MOVE made from a row here is said in one line at the top — where it went, and what the server
 // answered about its discard date (pantryRows.movedWords) — until it is closed or the next move.
 //
-// Put-Up UX pass R1, on the list: grouped By place a row does not repeat the place its heading names
+// On the list: grouped By place a row does not repeat the place its heading names
 // (pantryRows.inPlaceGroup); a row whose discard date is soon or past sets its discard line on the soon
 // tint (putup/soonTint.js — the sentence is unchanged, the tint and the weight are two more channels
 // beside its words); and an EMPTY Pantry offers the two ways to fill it, as secondary buttons, when the
 // page hands them in (`onPutSomethingUp`, `onWalkPlace`) — neither handed in, it is the one line it was.
 //
-// Put-Up R2a: "Edit places", a quiet door at the right end of the Group-by row, opens the Places sheet
+// "Edit places", a quiet door at the right end of the Group-by row, opens the Places sheet
 // (PlacesSheet.jsx). It is drawn once a read of the household's PLACES has answered with at least one —
 // read when the Pantry mounts — and never from the list's own groups: a place with nothing stored has no
 // group, and a mistyped place is usually exactly that. Until that read answers, and if it fails, there is
 // no door. The sheet is handed the UNFILTERED rows, so what it counts as stored in a place is not narrowed
 // by Use soon.
 // `batchNames` (optional): the batch names a host has ALREADY read, { [batch id]: name }. Handed in (an
-// object, an empty one included), the Pantry reads none of its own; left out, it reads them as before.
+// object, an empty one included), the Pantry reads none of its own; left out, it reads them itself.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { P } from '../../lib/constants.js'
 import { T } from '../../lib/tokens.js'
@@ -74,16 +73,16 @@ export function usePantryList({ fetch, group = 'place', enabled = true }) {
   return { rows, loading, error, reload: load }
 }
 
-// THE NAMES OF THE BATCHES the listed jars came from: { [batch id]: name } (Put-Up UX pass R1). The list
+// THE NAMES OF THE BATCHES the listed jars came from: { [batch id]: name }. The list
 // read sends a jar's `batch_id` and nothing else about its batch, so the names are ONE more read — sent
 // only when some row carries a batch_id, never once per row, and again only when a batch_id turns up that
 // no earlier read was sent for (a jar given a batch by "How it was made" in this same visit). FAILURE IS
 // ISOLATED: a read that fails, or a batch it does not list, leaves that jar exactly as it reads without a
 // name — no words about its batch, no door to it. `enabled` false sends nothing.
-// A FAILED READ IS ASKED AGAIN (Put-Up R2a): the ids it was sent for are forgotten, so the next re-read of
+// A FAILED READ IS ASKED AGAIN: the ids it was sent for are forgotten, so the next re-read of
 // the list (every write on the Pantry makes one) sends the read once more. A read that ANSWERED and did
 // not list a batch is still never repeated for it.
-// A NEW SHOWING ASKS AGAIN (Put-Up R2a, pre-promote P-I3): `enabled` turned off and on again — the page's
+// A NEW SHOWING ASKS AGAIN: `enabled` turned off and on again — the page's
 // Pantry or search shown again after another segment — forgets every id asked, so the names are read once
 // for that showing and a batch renamed meanwhile is named as it is now. The names already read stay on screen
 // until that answer lands over them.
@@ -162,7 +161,7 @@ export default function PantryView({
     return () => cancelAnimationFrame(frame)
   }, [moved, yieldScroll])
   const nowDate = useMemo(() => new Date(now ?? Date.now()), [now])
-  // Each save is its own line (Put-Up R2a): a second save gets a fresh line, with its own Undo and its own
+  // Each save is its own line: a second save gets a fresh line, with its own Undo and its own
   // reload hold, never the last one's "Undone". The host hands in a new `completion` for every save, so the
   // line is keyed by which one it shows (the planting page's host keys its line per save the same way).
   const [line, setLine] = useState({ of: completion, seq: 0 })
@@ -306,7 +305,7 @@ export default function PantryView({
 export function PantryRow({ row, fetch, recent, onRecent, onRecord, onOpen, onReload, now, batchName = null }) {
   const [busy, setBusy] = useState(false)
   // A synchronous guard: two taps inside one frame both read `busy` false, and each use carries its own
-  // key, so both would land (the shipped RecordRow's usingRef, kept).
+  // key, so both would land.
   const writingRef = useRef(false)
   // The key of the use this row is trying to make: minted at the first tap, kept while that use has not
   // landed (a tap after a lost answer is then the server's replay, not a second use), dropped when it lands
@@ -379,7 +378,7 @@ export function PantryRow({ row, fetch, recent, onRecent, onRecord, onOpen, onRe
           {detail && <span style={{ display: 'block', fontSize: T.type.sm, color: P.mid }}>{detail}</span>}
           {chip && !soon && <span data-testid={`pantry-row-chip-${key}`} style={{ display: 'block', fontSize: T.type.sm, color: P.mid, overflowWrap: 'anywhere' }}>{chip}</span>}
           {/* Soon or past: the same sentence, on the soon tint. The tint hugs the words (an inline box in
-              its own line), so a long sentence wraps inside it. */}
+            * its own line), so a long sentence wraps inside it. */}
           {chip && soon && (
             <span style={{ display: 'block', margin: '2px 0' }}>
               <span data-testid={`pantry-row-chip-${key}`} data-soon="true"

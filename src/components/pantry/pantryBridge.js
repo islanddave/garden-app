@@ -1,7 +1,6 @@
-// src/components/pantry/pantryBridge.js
-// Put-Up B′ release 2 (V4 §2.5 "Rename bridge") — one inline dismissible line at the top of the Pantry:
+// One inline dismissible line at the top of the Pantry:
 // "What's put up is now the Pantry — same jars, plus things you buy". Retired on dismiss or after 2
-// visits. PER VIEWER: the key carries the signed-in person's id, so Jen's visits never retire Dave's
+// visits. PER VIEWER: the key carries the signed-in person's id, so one person's visits never retire another's
 // line on a shared phone. Every storage access is try/catch'd and a failure reads as "show it" on the
 // first visit and never throws — a lost counter costs one extra showing, a crash costs the page.
 export const BRIDGE_TEXT = 'What’s put up is now the Pantry — same jars, plus things you buy'

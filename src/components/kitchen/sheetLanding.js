@@ -1,6 +1,4 @@
-// src/components/kitchen/sheetLanding.js
-// Put-Up UX pass R1 (prep) — THE LANDING, shared. Moved here unchanged from StartBatchSheet.jsx, where it
-// was written, because more than one sheet now hands over to the page after it closes.
+// THE LANDING, shared by every sheet that hands over to the page after it closes.
 //
 // THE RULE. A caller inside an armed <Sheet armsBack> that wants the host to navigate closes the sheet
 // FIRST, waits for the sheet's own Android-Back entry to be consumed, and only THEN calls on. So the host

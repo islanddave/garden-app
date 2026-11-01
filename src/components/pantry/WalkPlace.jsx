@@ -1,11 +1,9 @@
-// src/components/pantry/WalkPlace.jsx
-// Put-Up B′ release 2 (V4 §2.2 "Walk a place", §6.2, §6.3) — the shipped freezer walk, generalised to
-// ANY place. Still a mode flag on /put-up (`?session=putup`, the shipped key kept — a phone mid-walk at
-// deploy time lands back in it), now with `&place=<id>` naming the place.
+// The freezer walk, generalised to ANY place. A mode flag on /put-up (`?session=putup`, the stash key
+// kept so a phone mid-walk at deploy time lands back in it), with `&place=<id>` naming the place.
 //
 // SETUP (required 2, nothing preselected): which place (the household's places by name, then a template
 // chip for a kind with no place yet — made once, here, so every save names a real place) and ONE date for
-// the sitting (the §3.6 estimate chips, Not sure included). The answers are stashed (putUpSession.js's
+// the sitting (the estimate chips, Not sure included). The answers are stashed (putUpSession.js's
 // localStorage walk stash) so a walk spread over evenings comes back on the same place and date.
 //
 // EACH GROUP (required 2): What is it? (the name search; a hit fills crop/variety/planting, a typed name
@@ -20,10 +18,10 @@
 // "already here" (opens it) and one at another place "That's this one → move it here".
 // No worklist, no ticks, no running count ("Picked up where you left off", with no "— N logged so far").
 //
-// Put-Up R2a: Raw · In oil are DoorParts.RawInOilChips (the one part both doors draw; nothing here looks
-// different), the canning reference line sits under the method row for the two canning methods (the door's
-// part and constant), and THE EXIT ASKS when a name is typed: the band shows a tick for the item before, so
-// he believes the one on screen is in. The first tap on "End the walk" turns the band's row into
+// Raw · In oil are DoorParts.RawInOilChips (the one part both doors draw), the canning reference line sits
+// under the method row for the two canning methods (the door's part and constant), and THE EXIT ASKS when
+// a name is typed: the band shows a tick for the item before, so the cook believes the one on screen is
+// in. The first tap on "End the walk" turns the band's row into
 // `"<name>" isn't saved.` · Save it · End without it — in place, never a modal; with nothing typed it ends at
 // once. The group's typed item is HELD by this component (WalkGroup reports it up), so "Change" — which
 // unmounts the group for the two setup questions — hides it and never clears it.
@@ -55,7 +53,7 @@ import {
 } from './putSomethingUp.js'
 
 export const WALK_TITLE = 'Walk a place'
-// The exit's question, when a name is typed and not saved (R2a).
+// The exit's question, when a name is typed and not saved.
 export const walkUnsavedText = (name) => `"${name}" isn't saved.`
 export const WALK_SAVE_IT_LABEL = 'Save it'
 export const WALK_END_WITHOUT_LABEL = 'End without it'
@@ -96,7 +94,7 @@ export default function WalkPlace({ JarEditor = null, onHowItWasMade = null, can
   const [pendingName, setPendingName] = useState('')
   const [asking, setAsking] = useState(false)
   // The name on screen is the one a refusal said is in the Pantry (or was, and has been removed since): the
-  // group is spent on it, and the exit does not ask whether it is saved (delta F-2).
+  // group is spent on it, and the exit does not ask whether it is saved.
   const [pendingSpent, setPendingSpent] = useState(false)
   const onHeld = useCallback((snap) => {
     heldRef.current = snap
@@ -431,24 +429,24 @@ function AlreadyHere({ fetch, placeId, seq, onOpen }) {
 }
 
 // One group: what · method-or-As is · how many · Save → next.
-// `held` / `onHeld` / `saveRef` (R2a): the group starts from what the walk was holding for it (the item typed
+// `held` / `onHeld` / `saveRef`: the group starts from what the walk was holding for it (the item typed
 // before "Change" unmounted it), reports what it holds after every change, and hands the walk its Save.
-// A REPLAYED ITEM (BUG-PUTUPREPLAYDROPSEDIT-001): as the Put something up door does it — the key stays, a
+// A REPLAYED ITEM: as the Put something up door does it — the key stays, a
 // replayed item that is this sitting's (made minutes ago, untouched since) and may not hold what is on screen
 // is PATCHed; one that is not is left as it is and said so, and the key is KEPT (Save again is refused again,
 // never a second item); a What that is now another planting (or none) is said, not written; and an item that
 // already holds what is on screen is a save with nothing written (itemHolds). `sent` (what has gone out under
 // the key) is held with the key, in memory only, so it is always this walk's. `onExists` is the walk's
 // re-read: the item is in the Pantry. Each refusal is brought into view above the walk's band.
-// A REPLAYED PUT-UP (BUG-PUTUPREPLAYREST-001) goes by the same rule, with the put-up's own PATCH: the name,
+// A REPLAYED PUT-UP (guard: PutUpReplayRest.jar.test.jsx) goes by the same rule, with the put-up's own PATCH: the name,
 // the method, how many, the discard date, Raw and In oil ride it; the date it was put up and the place (this
 // group's own date, or the walk's two answers behind "Change") and a planting or picked crop do not, and a
 // Save that differs from the jar in one of those writes nothing and says which (replayJarFixedText).
 // THE BAND SAYS WHAT THE SERVER ANSWERED — the row's name, count and method — never what the form held.
 // A refused group keeps its key until the walk is left (End the walk) or the page is loaded again — so a refusal
-// with no way through in the group ends by saying that way on (putSomethingUp.js WALK_NEXT_TEXT, re-review I-E).
+// with no way through in the group ends by saying that way on (putSomethingUp.js WALK_NEXT_TEXT).
 // Such a refusal names a row that IS in the Pantry (or was, and has been removed since): the group reports that
-// row's name as `spent`, and while it is the name on screen End the walk does not ask whether it is saved (delta F-2).
+// row's name as `spent`, and while it is the name on screen End the walk does not ask whether it is saved.
 function WalkGroup({
   walk, fetch, online, stock, now, bandH = WALK_BAND_FALLBACK_PX, onSaved, onExists = null, onOpenExisting, onMoveHere,
   held = null, onHeld = null, saveRef = null,
@@ -474,7 +472,7 @@ function WalkGroup({
   const [field, setField] = useState(null)
   const writingRef = useRef(false)
   // The row a create under this key is KNOWN to have made, and on which route: set when a Save here is answered
-  // `replayed`. It is what the other-route refusal names (QA I-1).
+  // `replayed`. It is what the other-route refusal names.
   const existsRef = useRef(null)
   const methodRef = useRef(null)
   const whatRef = useRef(null)
@@ -527,7 +525,7 @@ function WalkGroup({
     const dErr = doorError({ what, place, method, discard })
     if (dErr) { setErr(dErr.error); setField(dErr.field); setMoreOpen(true); setRefusedSeq(s => s + 1); return }
     const route = routeFor(method)
-    // ONE KEY, TWO TABLES (QA I-1; putSomethingUp.js): a Save has gone out under this group's key the other way.
+    // ONE KEY, TWO TABLES (putSomethingUp.js): a Save has gone out under this group's key the other way.
     // Nothing is sent and no key is minted — this would be a second thing for one sitting.
     const otherWay = otherRouteSent(sent, route)
     if (otherWay) {
@@ -540,7 +538,7 @@ function WalkGroup({
     if (!key) setKey(useKey)
     writingRef.current = true
     // This Save goes out: the group is spent only on what THIS answer refuses (refusal(), above) — not on a line
-    // an earlier Save left, or a change that then fails here would be left at the exit with no question (M-1).
+    // an earlier Save left, or a change that then fails here would be left at the exit with no question.
     setSaving(true); setErr(null); setField(null); setSpent(null)
     // The item or jar a replay answered with, once it is being written onto.
     let onRow = null
@@ -559,7 +557,7 @@ function WalkGroup({
         if (saved?.replayed === true) existsRef.current = { route, row: saved }
         const read = { whenMoved: jarWhenMoved(sentNow, print) }
         const part = jarFixedPart(body, saved, what, read)
-        // A replayed row that was REMOVED since is not a save, whatever went out under the key (QA M-5).
+        // A replayed row that was REMOVED since is not a save, whatever went out under the key.
         const todo = saved?.replayed === true && saved.deleted_at ? 'stale' : afterReplay(saved, sentNow, print, {
           row: saved, updatedHere: holdsOwnUpdate(saved, patched, JAR_PATCH_READS), fixed: part != null, holds: jarHolds(body, saved, what, read),
           nullIsUntouched: true,
@@ -630,7 +628,7 @@ function WalkGroup({
         onExists?.()
       } else {
         // An ANSWERED 4xx wrote nothing, so this body is not one that may have landed: `sent` is as it was before
-        // it went — the group is not bound to a route no Save of it can be on (re-review I-A). The key stays.
+        // it went — the group is not bound to a route no Save of it can be on. The key stays.
         if (answeredNo(e)) setSent(sent)
         setErr(refusalOf(e, "Couldn't save it — what you entered is kept. Try again.")); setRefusedSeq(s => s + 1)
       }
@@ -668,7 +666,7 @@ function WalkGroup({
       {moreOpen && (
         <div data-testid="walk-more-panel" style={{ display: 'flex', flexDirection: 'column', gap: T.space.md }}>
           {/* Raw · In oil are a put-up's (the engine reads both; a bought item's date is only ever typed).
-              Raw is offered only where the engine allows it; a chip that is not shown is never sent. */}
+            * Raw is offered only where the engine allows it; a chip that is not shown is never sent. */}
           {method !== AS_IS && (
             <RawInOilChips method={method} isRaw={isRaw} inOil={inOil} idPrefix="walk" disabled={saving}
               onRaw={() => setIsRaw(v => !v)} onOil={() => setInOil(v => !v)} />
@@ -692,8 +690,8 @@ function WalkGroup({
       )}
       {preview && <p role="status" data-testid="walk-preview" style={{ margin: 0, color: P.mid, fontSize: T.type.sm }}>{preview}</p>}
       {/* scroll-margin = the band's MEASURED height: anything scrolled into view (a focused field, the
-          button itself, the refusal with its Save) stops above the fixed band rather than under it, at the
-          band's tallest too. */}
+        * button itself, the refusal with its Save) stops above the fixed band rather than under it, at the
+        * band's tallest too. */}
       <div ref={endRef} data-testid="walk-end" style={{ display: 'flex', flexDirection: 'column', gap: T.space.md, scrollMarginBottom: bandH + 12 }}>
         <RefusalLine err={err} testId="walk-error" />
         <Button variant="primary" data-testid="walk-save" loading={saving} loadingLabel="Saving…" onClick={save}
@@ -705,9 +703,7 @@ function WalkGroup({
   )
 }
 
-// "From the garden, not put up yet" (the shipped walk's "What haven't I put up?", design §6 Q4, moved
-// here unchanged in behaviour; reworded in the Put-Up UX pass R1 — a disclosure named for what it holds
-// reads better than one named as a question) — ONE collapsed line, no ticks, no denominator. Collapsed it
+// "From the garden, not put up yet" (a disclosure named for what it holds, not a question) — ONE collapsed line, no ticks, no denominator. Collapsed it
 // makes no accusation and costs no season scan; every crop is dismissible and the dismissal sticks ("Not
 // one I put up", never "done").
 export const UNRECORDED_LABEL = 'From the garden, not put up yet'

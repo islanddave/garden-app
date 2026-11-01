@@ -1,14 +1,13 @@
-// src/components/pantry/PantrySearch.jsx
-// Put-Up B′ release 2 (V4 §2.5 "One search at page level", §6.1) — the page header's search field and
+// The page header's search field and
 // the results that REPLACE the segment body while it holds text (× or Back clears it: the text lives in
 // the page's `?find=` param, so Back pops it). Corpus: the Pantry list plus whatever the page hands in as
-// `extraSearchItems` (the recipes lane's loaded recipes); NAME/LABEL match only. A tap opens the jar row
+// `extraSearchItems` (the loaded recipes); NAME/LABEL match only. A tap opens the jar row
 // or item (its row sheet) or the extra item (its own onOpen). No hit → "Put something up: <text> →".
 // Batches are not in it (Going now is their list).
-// `onOpenBatch` (the page's opener, Put-Up UX pass R1): a jar hit's row sheet offers What went in → for a
+// `onOpenBatch` (the page's opener): a jar hit's row sheet offers What went in → for a
 // batch this host can name, exactly as the Pantry's does. The names are read only when it is handed in.
-// `batchNames` (optional, Put-Up R2a): the names a host has ALREADY read, { [batch id]: name }. Handed in
-// (an object, an empty one included), the results read none of their own; left out, they read them as before.
+// `batchNames` (optional): the names a host has ALREADY read, { [batch id]: name }. Handed in
+// (an object, an empty one included), the results read none of their own; left out, they read them themselves.
 import React, { useMemo, useState } from 'react'
 import { P } from '../../lib/constants.js'
 import { T } from '../../lib/tokens.js'
@@ -19,12 +18,12 @@ import { searchHits, leftWords, extraLabel } from './pantryRows.js'
 
 export const SEARCH_LABEL = 'Search pantry and recipes'
 
-// ONE CLEAR BUTTON (Put-Up UX pass R1). A native `type="search"` field draws its own cancel × in Chrome
-// and Safari, right beside this component's × — two clear buttons side by side on Dave's phone. The field
+// ONE CLEAR BUTTON. A native `type="search"` field draws its own cancel × in Chrome
+// and Safari, right beside this component's × — two clear buttons side by side. The field
 // is a text input that SAYS it is a searchbox (the same role a native one has, so it is found and announced
 // the same way), asks for the search keyboard and its Search key, and leaves the one × below as the only
 // clear control.
-// THE SEARCH KEY (Put-Up R2a): the results are already on screen as each letter is typed, so the key has
+// THE SEARCH KEY: the results are already on screen as each letter is typed, so the key has
 // nothing left to send. It puts the keyboard away — Enter blurs the field — and the text stays.
 export function PantrySearchBox({ value, onChange, onClear }) {
   return (

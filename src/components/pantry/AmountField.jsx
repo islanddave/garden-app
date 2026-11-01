@@ -1,8 +1,6 @@
-// src/components/pantry/AmountField.jsx
-// Put-Up R2a (prep) — an amount and its unit: the size of each container on a put-up, "How much" on an as-is
+// An amount and its unit: the size of each container on a put-up, "How much" on an as-is
 // item. One control for the door, the item's Edit and the jar's Edit, so there is one unit list of each kind
 // and one reading of a typed number. Controlled: the host holds { value, unit } and passes its own words.
-// FROZEN for the lanes of R2a; mounted nowhere by prep.
 //
 //   value   the typed text, as typed ('' when empty) — parseAmount reads it
 //   unit    a stored unit (the server's singular: 'qt', never 'quart'), or null
