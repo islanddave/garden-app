@@ -1,53 +1,38 @@
-// The per-jar rules — Put-Up release 1a (the V4 design's "shelfLife.js / jarRules.js extraction"): the
-// method vocabulary the write gate accepts, the validators every jar write passes, and the one read
-// projection every preservation GET returns.
+// The per-jar rules: the method vocabulary the write gate accepts, the validators every jar write
+// passes, and the one read projection every preservation GET returns.
 //
-// WHY ITS OWN MODULE. Same reason as ./shelfLife.js: these were module-private inside index.js, and a
-// second jar writer (release 1b's Put it up, in kitchenRoutes.js, which index.js imports) must apply
-// the same rules and return the same row shape. Dependency-free apart from its pure siblings, so it is
+// Its own module, like ./shelfLife.js, so a second jar writer (Put it up, in kitchenRoutes.js) applies
+// the same rules and returns the same row shape. Dependency-free apart from its pure siblings, so it is
 // importable by kitchenRoutes.js and executable under the root vitest run.
-//
-// Moved verbatim from index.js; the only edits in the move are `export` on VALID_METHODS,
-// validateCommon and projectRow, which were module-private.
 import { validateProvenance } from './provenance.js';
 import { classifyUseBy } from './useBy.js';
 import { isMassUnit } from './kitchenBatch.js';
 
-// Mirrors chk_preservation_log_method — belt-and-suspenders over the DB CHECK (L5 vocab).
+// Mirrors chk_preservation_log_method (belt-and-suspenders over the DB CHECK).
 export const VALID_METHODS = [
   'roast_freeze', 'whole_freeze', 'blanch_freeze', 'dehydrate', 'powder', 'passata',
   'can_water_bath', 'can_pressure', 'jam_preserve', 'ferment', 'cure_store', 'cold_store',
-  // D6 (V4-PUTUPPROV-001): bought already preserved. No method was performed here — every other
-  // value in this list asserts an action Dave took, so store-bought frozen fruit previously had to
-  // be logged as 'other', overloading that escape hatch until it meant two unrelated things.
+  // purchased_preserved: bought already preserved. No method was performed; every other value asserts an
+  // action taken, so store-bought frozen fruit would otherwise overload 'other'.
   'purchased_preserved',
-  // V4-PUTUPTAXONOMY-001 (BD-034). Four values Dave's practice needed and this list did not have.
-  // quick_pickle: vinegar pickling — NOT a ferment (no lactic culture) and not necessarily
-  //   processed (a fridge pickle never is). It was already the ONLY method='other' row in prod
-  //   ('Vinegar dill pickles'), i.e. a food-safety-distinct process living in the escape hatch.
-  // pesto / hot_sauce: named by Dave. Both name a DISH rather than a process and so fail the strict
-  //   "does it move the shelf-life number" axis test — recorded in the migration header rather than
-  //   silently resolved. They ship because this is the field he reads back, and 2 of 5 live rows are
-  //   pesto currently mis-filed as passata.
-  // ferment_mash: an UNFINISHED intermediate — still working, not a finished preserve.
+  // quick_pickle: vinegar pickling, NOT a ferment (no lactic culture) and not necessarily processed.
+  // pesto / hot_sauce name a DISH rather than a process, so they fail the strict "does it move the
+  // shelf-life number" test; they ship because they are what the cook reads back.
+  // ferment_mash: an UNFINISHED intermediate, still working, not a finished preserve.
   'quick_pickle', 'pesto', 'hot_sauce', 'ferment_mash',
-  // V5-PUTUPCANDY-001. Sugar-preserved confection — the staged-syrup candying method. Passes the
-  // strict axis test pesto and hot_sauce failed: it names a PROCESS that genuinely moves the
-  // shelf-life number (weeks dusted at room temperature against months undusted frozen), not a dish.
-  // Its shelf-life figures are HOUSE-SOURCED — see HOUSE_SOURCED_SHELF_LIFE in ./shelfLife.js before
-  // touching them, and note that its entry in SHELF_LIFE_MONTHS is a hard precondition of this value
-  // existing at all: a method absent from that table never gets a use_by_target and vanishes from
-  // use-soon.
+  // candy: sugar-preserved confection (staged-syrup candying). It names a PROCESS that moves the
+  // shelf-life number. Its figures are HOUSE-SOURCED (see HOUSE_SOURCED_SHELF_LIFE in ./shelfLife.js), and
+  // its entry in SHELF_LIFE_MONTHS is a hard precondition of this value: a method absent from that table
+  // never gets a use_by_target and vanishes from use-soon.
   'candy',
   'other',
 ];
 
 export function validateCommon(body) {
   if (!body || typeof body !== 'object') return 'body required';
-  // L7: at least one of {crop_type_slug, variety_id, plant_id}. The DB CHECK only knows about the
-  // first two (chk_preservation_log_attribution) — plant_id is accepted here because the handler
-  // DERIVES crop+variety from the planting before insert, so the CHECK is always satisfied by the
-  // time the row lands. Picking a planting alone is complete attribution from the user's side.
+  // At least one of {crop_type_slug, variety_id, plant_id}. The DB CHECK (chk_preservation_log_attribution)
+  // only knows the first two; plant_id is accepted because the handler DERIVES crop+variety from the
+  // planting before insert, so the CHECK is always satisfied.
   if (!body.crop_type_slug && !body.variety_id && !body.plant_id) {
     return 'at least one of crop_type_slug, variety_id or plant_id is required';
   }
@@ -59,11 +44,9 @@ export function validateCommon(body) {
   if (!body.quantity_unit || !String(body.quantity_unit).trim()) return 'quantity_unit is required';
   if (body.package_count != null && Number(body.package_count) < 1) return 'package_count must be >= 1';
   if (!body.preserved_at) return 'preserved_at is required';
-  // V4-PUTUPSESSION-001 slice 1. Shape-only, and absent stays legal on BOTH verbs — the column is
-  // nullable with NULL meaning "nobody was ever asked", and a service-worker-cached bundle from
-  // before this ship never sends the key. Rejecting a non-boolean matters because Postgres would
-  // silently accept 'yes'/'on'/'t' through a ::boolean cast, so a client typo would land as TRUE and
-  // stamp a date the user picked as an estimate — the defect inverted.
+  // Shape-only, and absent stays legal on both verbs: NULL means "nobody was ever asked", and a cached
+  // bundle from before this key never sends it. A non-boolean is rejected because a ::boolean cast would
+  // silently accept 'yes'/'on'/'t' and stamp a date the user picked as an estimate.
   if (body.preserved_at_approx != null && typeof body.preserved_at_approx !== 'boolean') {
     return 'preserved_at_approx must be true or false';
   }
@@ -71,9 +54,8 @@ export function validateCommon(body) {
   return null;
 }
 
-// ── Put-Up release 1b: the jar vocabularies and the relaxed create gate ───────────────────────────────
-// Every list below mirrors a CHECK in migrations/v5-putupmake-001/0a-additive-ddl.sql, the same
-// belt-and-suspenders VALID_METHODS is: a raw 23514 is not something a cook can act on.
+// The jar vocabularies and the relaxed create gate. Every list below mirrors a CHECK in
+// migrations/v5-putupmake-001/0a-additive-ddl.sql, like VALID_METHODS: a raw 23514 is not actionable.
 
 // chk_preservation_log_quantity_unit — THE PERMISSIVE UNION (V4 "Units"): the 25 KITCHEN_UNITS plus the
 // ten legacy plurals the shipped picker writes. Never narrowed. New writers store the singular
@@ -94,9 +76,9 @@ export function normalizeJarUnit(u) {
   return JAR_UNIT_PLURALS[t] ?? t;
 }
 
-// chk_preservation_log_preserved_at_precision. On this table the date is NOT NULL, so 'after' means
-// "the stored date is the earliest it could be" (Put it up's Not sure) and 'unknown' means "the stored
-// date is only the day it was logged" (the Walk's Not sure) — V4's estimated-dates section.
+// chk_preservation_log_preserved_at_precision. The date is NOT NULL on this table, so 'after' means "the
+// stored date is the earliest it could be" (Put it up's Not sure) and 'unknown' means "the stored date
+// is only the day it was logged" (the Walk's Not sure).
 export const JAR_PRECISIONS = ['exact', 'hour', 'day', 'week', 'month', 'season', 'year', 'after', 'unknown'];
 // chk_preservation_log_texture / _texture_method.
 export const JAR_TEXTURES = ['snaps', 'bends', 'still_soft'];
@@ -142,8 +124,8 @@ export function jarQuantityError(value, unit) {
   return null;
 }
 
-// chk_preservation_log_ph_pairing + _ph_scale, and nothing else (FOODSAFETY-RULING-V101 §2 — see
-// kitchenBatch.js's KITCHEN_PH_SCALE_MIN). The reading stays the STRING that was sent.
+// chk_preservation_log_ph_pairing + _ph_scale, and nothing else (see kitchenBatch.js's
+// KITCHEN_PH_SCALE_MIN). The reading stays the STRING that was sent.
 export function jarPhError(reading, readAt, { readAtRequired = true } = {}) {
   if (reading == null && readAt == null) return null;
   if (reading == null) return 'a pH time needs a pH reading';
@@ -156,7 +138,7 @@ export function jarPhError(reading, readAt, { readAtRequired = true } = {}) {
   return null;
 }
 
-// The 1b facts a jar row carries, shape-checked the same way on every 1b writer (Put it up rows, the
+// The 1b facts a jar row carries, shape-checked the same way on every writer (Put it up rows, the
 // create, the PATCH). `method` is the jar's method AFTER the write, for the texture rule.
 export function jarFactsError(body, method) {
   for (const k of ['is_raw', 'in_oil']) {
@@ -166,8 +148,8 @@ export function jarFactsError(body, method) {
     if (!JAR_TEXTURES.includes(body.texture)) return `texture must be one of: ${JAR_TEXTURES.join(', ')}`;
     if (!JAR_TEXTURE_METHODS.includes(method)) return 'texture only applies to a dried food (dehydrate or powder)';
   }
-  // Release F: a jar's typed heat estimate (chk_preservation_log_shu_est_range) and "Cooked after
-  // blending?" (a record only; shelfLife.js never reads it).
+  // The jar's typed heat estimate (chk_preservation_log_shu_est_range) and "Cooked after blending?" (a
+  // record only; shelfLife.js never reads it).
   if (body.shu_est_low != null || body.shu_est_high != null) {
     if (body.shu_est_low == null) return 'a heat estimate needs its low end';
     if (!Number.isInteger(Number(body.shu_est_low)) || Number(body.shu_est_low) < 0) return 'shu_est_low must be a whole number, 0 or more';
@@ -183,11 +165,9 @@ export function jarFactsError(body, method) {
   return jarLabelError(body.label) ?? jarLabelError(body.container_label, 'container_label');
 }
 
-// POST /api/preservation from release 1b (V4 API table, row "POST /api/preservation"). The 1a gate
-// (validateCommon) required a crop, a variety or a planting, a named Other and a size; 1b's DDL relaxes
-// each of those under its own name, and this gate relaxes with it: a label attributes a jar and names an
-// Other, and a jar may be logged with no size. The messages keep their 1a words where 1a had one, so an
-// integration assertion on the old text still reads true about the new rule.
+// POST /api/preservation (V4 API table). Relaxes the 1a gate (validateCommon) with the DDL: a label
+// attributes a jar and names an Other, and a jar may be logged with no size. Messages keep their 1a
+// words where 1a had one, so an integration assertion on the old text still reads true.
 export function validateCreate(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return 'body required';
   const label = normalizeJarText(body.label);
@@ -219,12 +199,11 @@ export function validateCreate(body) {
     ?? validateProvenance(body);
 }
 
-// The legacy full-replace PUT from release 1b (V4's legacy-PUT section, "From 1b"). An ABSENT key is
-// unchanged, so nothing here requires a key; a PRESENT key is shape-checked as 1a checked it. The
-// attribution and method-other rules are judged on the EFFECTIVE row by the database (the relaxed
-// CHECKs), because this gate cannot see the stored label: a label-only jar from Put it up echoes
-// crop_type_slug: null and must still take a Mark used. method is never WRITTEN by this PUT from 1b —
-// a differing one is a stale tab (409) — so it is checked for shape only.
+// The legacy full-replace PUT (V4's legacy-PUT section). An ABSENT key is unchanged, so nothing here
+// requires a key; a PRESENT key is shape-checked as 1a did. The attribution and method-other rules are
+// judged on the EFFECTIVE row by the database (the relaxed CHECKs), because this gate cannot see the
+// stored label: a label-only jar echoes crop_type_slug: null and must still take a Mark used. method is
+// never WRITTEN by this PUT, so a differing one is a stale tab (409) and it is checked for shape only.
 export function validateLegacyPut(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return 'body required';
   if (hasKey(body, 'method') && (!body.method || !VALID_METHODS.includes(body.method))) {
@@ -253,28 +232,21 @@ export function validateLegacyPut(body) {
   return body.source_kind === undefined ? null : validateProvenance(body);
 }
 
-// PUT is "replace editable fields" (frontend sends a complete payload) INCLUDING the minimal
-// decrement (remaining_count / consumed_at).
+// PUT is "replace editable fields" INCLUDING the minimal decrement (remaining_count / consumed_at).
 //
-// validateUpdate is NO LONGER an alias for validateCreate (V4-PUTUPPROV-001). It was
-// `export const validateUpdate = validateCreate`, which meant every rule added to create became a
-// hard requirement on every PUT — including the one-tap "Mark used" decrement the user never
-// experiences as a form submit. A service-worker-cached bundle built before this ship omits
-// source_kind entirely, so aliasing would 400 every decrement for the length of the cache window.
-// Rule: a payload that never mentions provenance is not judged on it. Pairs with the
-// COALESCE-preserve UPDATE in index.js's PUT — absent key means "unchanged", at both layers.
+// validateUpdate is not an alias for validateCreate: that would make every rule added to create a hard
+// requirement on the one-tap "Mark used" decrement, and a cached bundle that omits source_kind would
+// 400 every decrement. A payload that never mentions provenance is not judged on it; this pairs with
+// the COALESCE-preserve UPDATE in index.js's PUT (absent key means "unchanged", at both layers).
 export function validateUpdate(body) {
   return validateCommon(body) ?? (body.source_kind === undefined ? null : validateProvenance(body));
 }
 
-// Put-Up release 1a — A DATE COLUMN LEAVES AS THE CALENDAR DAY IT IS ('YYYY-MM-DD'), never as a Date.
-// The driver parses a DATE into a Date at local midnight of that day in the LAMBDA's zone (UTC), and
-// JSON turns that into "...T00:00:00.000Z": an instant, which a phone west of Greenwich reads as the
-// evening BEFORE. So every put-up and use-by date showed a day early in ET, and RecordRow's full-replace
-// PUT echoed the earlier day back — each Mark used moved preserved_at and use_by_target back one day.
-// Proved, and pinned, in src/__tests__/putUpDateEcho.tz.test.js. A plain day has no zone to misread.
-// The LOCAL getters read the driver's Date back exactly in any process zone (toISOString would agree
-// only in UTC); a value that is already text keeps its first ten characters, the day.
+// A DATE COLUMN LEAVES AS THE CALENDAR DAY IT IS ('YYYY-MM-DD'), never as a Date. The driver parses a
+// DATE at local midnight in the Lambda's zone (UTC) and JSON makes that an instant, which a phone west
+// of Greenwich reads as the evening BEFORE (each Mark used then moved preserved_at back a day).
+// Pinned in src/__tests__/putUpDateEcho.tz.test.js. The LOCAL getters read the driver's Date back
+// exactly in any process zone; a value that is already text keeps its first ten characters.
 function calendarDay(v) {
   if (v == null) return null;
   if (v instanceof Date) {
@@ -292,17 +264,15 @@ export function projectRow(r) {
     crop_type_slug: r.crop_type_slug,
     variety_id: r.variety_id,
     plant_id: r.plant_id,
-    // Planting provenance for display (present only on reads that JOIN garden_node). Lets the
-    // record row say WHICH wave a put-up came from without a second round-trip.
+    // Planting provenance for display (only on reads that JOIN garden_node): which wave a put-up came from.
     planting_name: r.planting_name ?? null,
     planting_sown_at: calendarDay(r.planting_sown_at),   // garden_node.sown_at is a DATE too
     planting_succession_order: r.planting_succession_order ?? null,
     harvest_log_id: r.harvest_log_id,
-    // V5-INFLIGHTBATCH-001 / BUG-JARSTEAL-001. READ-ONLY here and nowhere else: batch_id stays out of
-    // PRESERVATION_EDITABLE_COLUMNS (see kitchen-batch-id-guard.test.js — a stale cached bundle's
-    // full-replace PUT would NULL it and return 200), but it must be READABLE or no picker can tell a
-    // linked jar from an unlinked one, and a close that re-points another batch's jar is undetectable
-    // by any client. Written only by the kitchen-batch close / outputs routes, server-side.
+    // READ-ONLY here and nowhere else: batch_id stays out of PRESERVATION_EDITABLE_COLUMNS (see
+    // kitchen-batch-id-guard.test.js; a stale bundle's full-replace PUT would NULL it and return 200), but
+    // it must be READABLE or no picker can tell a linked jar from an unlinked one. Written only by the
+    // kitchen-batch close / outputs routes.
     batch_id: r.batch_id ?? null,
     preserved_at: calendarDay(r.preserved_at),
     method: r.method,
@@ -316,22 +286,18 @@ export function projectRow(r) {
     consumed_at: r.consumed_at,
     notes: r.notes,
     photo_id: r.photo_id,
-    // V4-PUTUPSESSION-001 slice 1 — the whole point of the slice reaches the UI through THIS LINE.
-    // Every read surface that prints a put-up date (RecordRow, PutUpFromPlanting) goes through the
-    // four GET routes, so without this key an estimate reads back as a date the user chose and the
-    // column changes nothing the user can see. `?? null` and never `?? false`: NULL means unrecorded
-    // and FALSE means chosen, and the read path must not invent the second.
+    // Every read surface that prints a put-up date goes through the four GET routes, so without this key
+    // an estimate reads back as a date the user chose. `?? null` and never `?? false`: NULL means
+    // unrecorded and FALSE means chosen.
     preserved_at_approx: r.preserved_at_approx ?? null,
-    // V4-PUTUPPROV-001. projectRow is an explicit whitelist and is the ONLY projection for all four
-    // GET routes, while POST/PUT return raw rows[0] from RETURNING *. So omitting these here is
-    // INVISIBLE to create-path smoke testing: the POST echoes them back correctly while every read
-    // surface renders blank. That asymmetry is why this line has a comment.
+    // projectRow is an explicit whitelist and the ONLY projection for the four GET routes, while
+    // POST/PUT return raw rows[0] from RETURNING *: omitting a key here is invisible to create-path
+    // smoke testing (the POST echoes it while every read surface renders blank).
     source_kind: r.source_kind ?? null,
     source_label: r.source_label ?? null,
-    // Put-Up release 1b. READ-ONLY on every legacy surface: none of these is in
-    // PRESERVATION_EDITABLE_COLUMNS or buildFullPayload, so the full-replace PUT never echoes them —
-    // they are written by Put it up, the create, PATCH /api/preservation/:id and Move only. `?? null`
-    // throughout: a pre-1b row has none of them, and NULL is what "never asked" means.
+    // READ-ONLY on every legacy surface: none of these is in PRESERVATION_EDITABLE_COLUMNS or
+    // buildFullPayload, so the full-replace PUT never echoes them. `?? null` throughout: a pre-1b row has
+    // none of them, and NULL is what "never asked" means.
     label: r.label ?? null,
     container_label: r.container_label ?? null,
     use_by_basis: r.use_by_basis ?? null,
@@ -343,32 +309,28 @@ export function projectRow(r) {
     ph_reading: r.ph_reading ?? null,
     ph_read_at: r.ph_read_at ?? null,
     put_up_stage_id: r.put_up_stage_id ?? null,
-    // Release F. Read-only here too (never in PRESERVATION_EDITABLE_COLUMNS or buildFullPayload):
-    // the heat estimate and "cooked" are written by Put it up, the create, the PATCH and
-    // shu-estimate/save; remaining_amount only by draws and uses. stock_mode is derived — weighed when
-    // one container was logged in a mass unit (the route rule; readers show "about N g left" only then).
+    // Read-only too (never in PRESERVATION_EDITABLE_COLUMNS or buildFullPayload); remaining_amount is
+    // written only by draws and uses. stock_mode is derived: weighed when one container was logged in a
+    // mass unit (readers show "about N g left" only then).
     shu_est_low: r.shu_est_low ?? null,
     shu_est_high: r.shu_est_high ?? null,
     shu_est_basis: r.shu_est_basis ?? null,
     cooked: r.cooked ?? null,
     remaining_amount: r.remaining_amount ?? null,
     stock_mode: Number(r.package_count) === 1 && isMassUnit(r.quantity_unit) ? 'weighed' : 'counted',
-    // A3: the place's kind, read-only, where the read joined it (the discard-by basis words say
-    // "general figure: hot sauce, fridge"). NULL on a write's RETURNING, which joins nothing.
+    // The place's kind, read-only, where the read joined it (NULL on a write's RETURNING, which joins nothing).
     storage_kind: r.storage_kind ?? null,
     created_at: r.created_at,
     updated_at: r.updated_at,
-    // From the driver's values, not the projected text: classifyUseBy reads either, and leaving its
-    // input as it was keeps the status byte-identical to what it computed before the dates were fixed.
+    // From the driver's values, not the projected text: classifyUseBy reads either, and this keeps the
+    // status identical to what it computed before the dates were fixed.
     use_by_status: classifyUseBy(r.preserved_at, r.use_by_target),
   };
 }
 
-// Put-Up release 1a — the words for a legacy PUT the count rule refused (see the PUT in index.js).
-// The UPDATE decides; this only explains, from the statement's own snapshot of the stored counts,
-// which of the two refusals it was. Every refusal is a 409 carrying a `code` for the client to
-// branch on and a plain-words `message` (mirrored in `error`, which apiFetch surfaces as the
-// Error's message) that can be shown as it is.
+// The words for a legacy PUT the count rule refused. The UPDATE decides; this only explains, from the
+// statement's own snapshot of the stored counts, which refusal it was. Every refusal is a 409 carrying a
+// `code` for the client to branch on and a plain-words `message` (mirrored in `error`).
 function coded(code, message) {
   return { error: message, code, message };
 }
@@ -387,14 +349,12 @@ export function countRefusal({ storedCount, storedRemaining, packageCount, remai
     return coded('remaining_above_count',
       "That would leave more left than there are containers. Refresh and try again.");
   }
-  // The snapshot says the write would have passed, so the jar changed between the statement's
-  // snapshot and its row lock (another tap, another phone). The words say so.
+  // The snapshot says the write would have passed, so the jar changed between the snapshot and its row lock.
   return clientStale();
 }
 
-// Put-Up release 1b — the preservation_log CHECKs 1b relaxes or adds, given words. Returns null for
-// anything else, so index.js's existing PG-code map keeps its behaviour. The two provenance CHECKs keep
-// their own mapping in index.js (chk_preservation_log_source*), which this map does not shadow.
+// The preservation_log CHECKs 1b relaxes or adds, given words. Returns null for anything else, so
+// index.js's PG-code map keeps its behaviour; the two provenance CHECKs keep their own mapping there.
 const JAR_CONSTRAINT_MESSAGES = {
   chk_preservation_log_attribution: 'Say what this is — a crop, a variety, a planting or a name.',
   chk_preservation_log_method_other: "Name an 'Other' put-up — give it a name or say what was done.",
@@ -418,9 +378,8 @@ export function jarErrorMessage(err) {
   return JAR_CONSTRAINT_MESSAGES[String(err.constraint ?? '')] ?? null;
 }
 
-// Put-Up release 1b: the refusal for a tab older than the row — the legacy PUT's echo rule and count
-// race, and the optimistic guard on PATCH / Move. The same code and words as countRefusal's fall-through,
-// so the shipped client's CLIENT_STALE_TEXT and its Refresh door apply unchanged.
+// The refusal for a tab older than the row: the legacy PUT's echo rule and count race, and the guard on
+// PATCH / Move. Same code and words as countRefusal's fall-through, so the client's Refresh door applies.
 export function clientStale() {
   return coded('client_stale', 'This jar just changed. Refresh and try again.');
 }

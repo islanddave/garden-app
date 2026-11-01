@@ -1,40 +1,33 @@
-// Release F — GET /api/kitchen-batches/line-search?q= (06 §1.2 "Line linking", §4; contract-F §2.2).
-// B′ release 3 widens the corpus to V4 §2.5a's whole name search: every planting (ended and archived
-// ones included), what we have (put-ups AND pantry items), and crops and varieties.
+// GET /api/kitchen-batches/line-search?q= (06 §1.2 "Line linking", §4; contract-F §2.2). The corpus is
+// V4 §2.5a's whole name search: every planting (ended and archived included), what we have (put-ups AND
+// pantry items), and crops and varieties.
 //
-// THE RESPONSE (additive — F's two keys keep their shape, so a stale bundle still reads them):
-//   { plantings, put_ups,                 ← F's arms, unchanged keys (plantings gain status words)
-//     pantry_items, crops, varieties,     ← B′'s arms
-//     hits,                               ← every arm merged and RANKED once (rankHits below)
-//     resolved_crop }                     ← the typed text's crop by V4 §2.5a's rule, or null
-// RANKING, stated once (V4 §2.5a): exact whole-name matches, then names starting with the text, then
-// names containing it; within each, live plantings, ended plantings, what we have (put-ups, pantry
-// items), then crops and varieties; ties by most recent (then by name, then key, so it is total).
+// Response (additive, so a stale bundle still reads F's two keys):
+//   { plantings, put_ups,               F's arms (plantings gain status words)
+//     pantry_items, crops, varieties,   B′'s arms
+//     hits,                             every arm merged and RANKED once (rankHits below)
+//     resolved_crop }                   the typed text's crop by V4 §2.5a's rule, or null
+// Ranking (V4 §2.5a): exact whole-name matches, then names starting with the text, then names containing
+// it; within each, live plantings, ended plantings, what we have, then crops and varieties; ties by most
+// recent, then name, then key, so it is total.
 //
-// Plantings carry their recent picks inline, so "Which pick?" needs no second round trip. Household
-// only, on the same strict dialect every planting loader in this Lambda uses. Varieties are the
-// household's own (created by a member) or ones a household planting grows; crops are the shared list.
+// Plantings carry their recent picks inline, so "Which pick?" needs no second round trip, and
+// `succession_order` and `sown_at` (the columns GET /api/plants?view=picker sends) so same-named plantings
+// can be told apart; both are last in the row. Household only, on the strict dialect every planting loader
+// here uses. Varieties are the household's own or ones a household planting grows; crops are the shared list.
 //
-// Put-Up R2a (contract 6): a planting also carries `succession_order` (integer or null) and `sown_at`,
-// the two bare columns GET /api/plants?view=picker sends, so a reader can tell same-named plantings
-// apart with the function the planting chooser already uses (plantingWaveLabel). Additive and last in
-// the row: every earlier key and its order are as they were. rankHits spreads the row, so a planting
-// hit carries them too.
+// Matched as a LITERAL path before any `:id` capture (kitchenBatch.js parseKitchenRoute).
 //
-// Matched as a LITERAL path before any `:id` capture (kitchenBatch.js parseKitchenRoute), so
-// 'line-search' can never be read as a batch id.
-//
-// Put-ups exclude soft-deleted jars and (boss F2) jars that are used up — remaining_count = 0 or
-// consumed_at set: a draw from one would be refused (409 jar_used_up), so it is not offered. Pantry
-// items exclude removed and used-up items for the same reason.
-// suggested_form follows 06 §2.6.6 — from the jar's METHOD first (dehydrate/powder → dried;
-// roast_freeze → cooked; the other *_freeze methods → frozen), and only for other / purchased_preserved
-// from the place (a freezer → frozen). It is a suggestion; the line's form is always editable.
+// Put-ups exclude soft-deleted and used-up jars (remaining_count = 0 or consumed_at set): a draw from one
+// would be refused (409 jar_used_up). Pantry items exclude removed and used-up items. suggested_form
+// follows 06 §2.6.6: from the jar's METHOD first (dehydrate/powder -> dried; roast_freeze -> cooked; other
+// *_freeze -> frozen), and only for other / purchased_preserved from the place (a freezer -> frozen). It is
+// a suggestion; the line's form is always editable.
 import { MASS_G } from './kitchenBatch.js';
 import { ET_TZ } from './useBy.js';
 
-// Per arm. Wide enough that a household with many jars of one crop still sees every live one (a
-// short cap silently hid the jar he meant — integration run 36631452977); the list is the search.
+// Per arm. Wide enough that a household with many jars of one crop still sees every live one (a short cap
+// once hid the jar meant); the list is the search.
 export const LINE_SEARCH_LIMIT = 50;
 export const RECENT_PICKS = 5;
 const MASS_UNITS = Object.keys(MASS_G);
@@ -49,13 +42,13 @@ export function suggestedForm(method, storageKind) {
   return null;
 }
 
-// LIKE metacharacters in what he typed are literal.
+// LIKE metacharacters in the typed text are literal.
 export const likePattern = (q) => `%${String(q).replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 
 // A planting has ENDED when it is archived or its status says it is over. Everything else is live.
 export const ENDED_STATUSES = ['ended', 'failed'];
 
-// ── ranking (pure; executed by lineSearch.test.js) ───────────────────────────────────────────────
+// Ranking (pure; executed by lineSearch.test.js).
 const TIER = { exact: 0, starts: 1, contains: 2 };
 // V4 §2.5a's groups, in order.
 const GROUP = { live: 0, ended: 1, stock: 2, catalog: 3 };
@@ -104,9 +97,8 @@ export function rankHits(q, { plantings = [], put_ups = [], pantry_items = [], c
     || a.key.localeCompare(b.key));
 }
 
-// V4 §2.5a "Resolved crop", for a TYPED name: an exact whole-name cultivar match to ONE crop, else
-// none. (A planting hit resolves through its variety and a stock hit through its row's crop — both are
-// already on those hits as crop_type_slug.)
+// V4 §2.5a "Resolved crop", for a TYPED name: an exact whole-name cultivar match to ONE crop, else none
+// (planting and stock hits already carry crop_type_slug).
 export function resolvedCropOf(q, varieties = []) {
   const t = lc(q);
   const slugs = new Set(varieties.filter((v) => lc(v.label) === t && v.crop_type_slug).map((v) => v.crop_type_slug));

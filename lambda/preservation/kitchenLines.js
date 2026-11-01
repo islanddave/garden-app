@@ -1,9 +1,7 @@
-// Release F — the rules for a batch LINE and a stage EDIT (contract-F §2.2, §2.3; 06 §1.4, §3.2, §3.7).
-// PURE: shape and cross-field rules only, executed by kitchenLines.test.js. What needs a row (the jar's
-// stock mode, whether a pick or a planting is the household's) is lineRoutes.js's, after these pass.
-//
-// Every rule here mirrors a CHECK in migrations/v5-fermentpath-001 (or 1b's), the belt-and-suspenders
-// pattern the rest of kitchenBatch.js uses: a raw 23514 is not something a cook at a counter can act on.
+// Release F: the rules for a batch LINE and a stage EDIT (contract-F §2.2, §2.3; 06 §1.4, §3.2, §3.7).
+// PURE shape and cross-field rules, executed by kitchenLines.test.js; what needs a row (a jar's stock
+// mode, whether a pick or a planting is the household's) is lineRoutes.js's, after these pass. Every rule
+// mirrors a CHECK in migrations/v5-fermentpath-001 (or 1b's); see kitchenBatch.js for why.
 import {
   KITCHEN_UUID_RE, KITCHEN_UNITS, KITCHEN_FORMS, KITCHEN_ROLES, KITCHEN_SALT_BASES, KITCHEN_SALT_METHODS,
   KITCHEN_BASE_FROM, KITCHEN_LINE_KINDS, KITCHEN_ACTS, KITCHEN_ENTERED_PRECISIONS, isMassUnit, normalizeText,
@@ -20,7 +18,7 @@ export const LINE_BODY_KEYS = [
   'shu_rating_low', 'shu_rating_high', 'role', 'salt_pct', 'salt_base', 'base_g', 'salt_method', 'base_from',
   'ordinal', 'crop_type_slug', 'plant_id', 'harvest_log_id', 'preservation_log_id', 'count_drawn',
   'put_up_stage_id', 'output_id',
-  // B′ (release 2): a line that names a pantry item — accepted by the keyed line POST only ({ pantry }).
+  // A line that names a pantry item: accepted by the keyed line POST only ({ pantry }).
   'pantry_item_id',
 ];
 
@@ -50,7 +48,7 @@ function qtyError(qty, unit) {
 }
 
 // chk_kbi_shu_rating_range: whole SHU, low >= 0; high needs low and is >= it. The typed rating is the
-// FRESH pepper's (Dave 17:1x) — a dried line is counted x7..x10 by the estimator, never stored scaled.
+// FRESH pepper's; the estimator counts a dried line x7..x10, never stored scaled.
 function ratingError(low, high) {
   if (low == null && high == null) return null;
   if (low == null) return 'a heat rating needs its low end';
@@ -101,17 +99,16 @@ function roleFormError(l) {
   return null;
 }
 
-// One line of a keyed POST or a put-up sitting. { keyed } requires the idempotency_key. { pantry } (B′,
-// the keyed line POST only) also admits input_kind 'pantry' with its pantry_item_id: a bought or kept
-// thing from the Pantry, which moves no stock. A put-up sitting does not pass it, so a sitting line of
-// kind 'pantry' keeps F's refusal (its INSERT binds no pantry_item_id).
+// One line of a keyed POST or a put-up sitting. { keyed } requires the idempotency_key. { pantry } (keyed
+// line POST only) admits input_kind 'pantry' with its pantry_item_id (moves no stock). A put-up sitting
+// does not pass it, so a sitting line of kind 'pantry' keeps F's refusal (its INSERT binds no pantry_item_id).
 export function lineError(line, { keyed = true, where = 'line', pantry = false } = {}) {
   if (!isObj(line)) return `${where}: each line must be an object`;
   const unknown = Object.keys(line).filter((k) => !LINE_BODY_KEYS.includes(k));
   if (unknown.length) return `${where}: unknown field(s): ${unknown.join(', ')}`;
   const kind = line.input_kind;
-  // 'pantry' is in KITCHEN_LINE_KINDS (B′ release 3); only a put-up sitting refuses it (putUp.js), so
-  // { pantry } is kept for the keyed line POST's call site and admits nothing extra.
+  // 'pantry' is in KITCHEN_LINE_KINDS; only a put-up sitting refuses it (putUp.js), so { pantry } admits
+  // nothing extra.
   const kinds = KITCHEN_LINE_KINDS;
   if (!kinds.includes(kind)) return `${where}: input_kind must be one of: ${kinds.join(', ')}`;
   if (line.pantry_item_id != null && !isUuid(line.pantry_item_id)) return `${where}: pantry_item_id must be a uuid`;
@@ -152,8 +149,8 @@ export function lineError(line, { keyed = true, where = 'line', pantry = false }
   return e ? `${where}: ${e}` : null;
 }
 
-// Many lines at once: each valid, and ONE draw per jar per request (API-I3) — the statement aggregates
-// per jar anyway (boss F1), but a repeated jar in one POST is a client bug.
+// Many lines at once: each valid, and ONE draw per jar per request (API-I3); a repeated jar in one POST
+// is a client bug.
 export function linesError(lines, { keyed = true, pantry = false } = {}) {
   if (!Array.isArray(lines) || lines.length === 0) return 'inputs must be a non-empty array';
   for (const [i, l] of lines.entries()) {
@@ -193,8 +190,7 @@ export function drawPlan(line, jar) {
   return { weighed: false, count: line.count_drawn == null ? 1 : Number(line.count_drawn) };
 }
 
-// ── line PATCH ────────────────────────────────────────────────────────────────────────────────────
-// `stored` is the live line (with the drawn jar's stock mode resolved by the route as `weighed`).
+// line PATCH. `stored` is the live line (with the drawn jar's stock mode resolved by the route as `weighed`).
 export function linePatchError(body, stored) {
   if (!isObj(body)) return 'body required';
   const unknown = Object.keys(body).filter((k) => !LINE_PATCH_KEYS.includes(k));
@@ -221,8 +217,7 @@ export function linePatchError(body, stored) {
     ?? roleFormError(next) ?? ratingError(next.shu_rating_low, next.shu_rating_high) ?? saltFactsError(next);
 }
 
-// ── stages (contract-F §2.3) ──────────────────────────────────────────────────────────────────────
-// acts: tended only, de-duplicated, from the three words.
+// stages (contract-F §2.3). acts: tended only, de-duplicated, from the three words.
 export function actsOf(acts) {
   if (acts == null) return { acts: null };
   if (!Array.isArray(acts) || !acts.length) return { error: 'acts must be a non-empty list, or absent' };

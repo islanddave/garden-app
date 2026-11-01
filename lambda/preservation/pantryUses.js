@@ -1,20 +1,19 @@
-// Release F — POST /api/pantry/uses: "Mark used" / "Used up" on a jar (06 §1.3; contract-F §2.6).
+// POST /api/pantry/uses: "Mark used" / "Used up" on a jar (06 §1.3; contract-F §2.6).
 //
-// WHY IT SHIPS IN F. A draw from a jar stamps delta_at, and from F the legacy PUT refuses a
-// remaining_count on a jar whose delta_at is set (the stale-bundle refusal). The F client therefore
-// stops sending remaining_count in its PUT and posts here instead — otherwise every drawn jar would 409
-// forever. F accepted only `fate` NULL (eaten); B′ adds 'discarded' (Went bad) and 'given_away' (Gave it
-// away) — each a count, or all that is left. 'batch' is written only by the line routes. The undo route
-// is B′'s, in pantryRoutes.js (POST /api/pantry/uses/:id/undo).
+// Why it exists: a draw from a jar stamps delta_at, and the legacy PUT refuses a remaining_count on a jar
+// whose delta_at is set (the stale-bundle refusal). The client therefore posts here instead of sending
+// remaining_count in its PUT; otherwise every drawn jar would 409 forever. Fates: NULL (eaten),
+// 'discarded' (Went bad), 'given_away'; 'batch' is written only by the line routes. The undo route is in
+// pantryRoutes.js (POST /api/pantry/uses/:id/undo).
 //
 // ONE STATEMENT. `pre` reads and LOCKS the jar (household-scoped, live), `want` fixes how many this tap
 // uses (all_remaining = what is left right now), the UPDATE moves the count only if that many are left
 // (the WHERE is the race guard: two phones cannot both take the last jar), and the pantry_use row is
-// inserted from the UPDATE's RETURNING — so a refused tap writes no use. 0 rows → 409 only_n_left with
-// the number the jar really has, which `pre` carries in the same statement.
-//   * delta_at = now() on every move (06 §1.3 item 5); consumed_at stamped (kept) at 0 left.
-//   * boss F2: on a WEIGHED jar (one container, a mass unit) that reaches 0 left, remaining_amount is
-//     set to 0 in the same UPDATE, so the batch line never reads "about 92 g left" beside "used up".
+// inserted from the UPDATE's RETURNING, so a refused tap writes no use. 0 rows -> 409 only_n_left with the
+// number the jar really has, which `pre` carries.
+//   * delta_at = now() on every move; consumed_at stamped (kept) at 0 left.
+//   * On a WEIGHED jar (one container, a mass unit) reaching 0 left, remaining_amount is set to 0 in the
+//     same UPDATE, so the line never reads "about 92 g left" beside "used up".
 //   * The key is the tap's (V4 "Idempotency"): a 23505 on uq_pantry_use_idempotency_key is a replay.
 //   * preservation_log is audited, so the statement rides the actor GUC in one transaction.
 import { withActor } from './audit-actor.js';
@@ -25,8 +24,8 @@ const bad = (error) => ({ status: 400, body: { error } });
 const isUuid = (v) => typeof v === 'string' && KITCHEN_UUID_RE.test(v);
 const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 
-// Release B′ widens the fates this route writes (V4 §2.5 "Went bad" / "Gave it away"). NULL = eaten.
-// F's chk_pantry_use_fate already admits both; v5-pantry-001 gates.yml pins that it still does.
+// The fates this route writes (V4 §2.5 "Went bad" / "Gave it away"); NULL = eaten. v5-pantry-001
+// gates.yml pins that chk_pantry_use_fate still admits both.
 export const USE_FATES = ['discarded', 'given_away'];
 
 export function isPantryUsesPath(rawPath) {
@@ -40,7 +39,7 @@ export function validateUse(body) {
   if (unknown.length) return `unknown field(s): ${unknown.join(', ')}`;
   if (!isUuid(body.idempotency_key ?? null)) return 'idempotency_key must be a uuid';
   if (!isUuid(body.preservation_log_id ?? null)) return 'preservation_log_id must be a uuid';
-  // B′ (V4 §2.5): the row sheet's two fates. 'batch' stays the line routes' alone.
+  // The row sheet's two fates; 'batch' stays the line routes' alone.
   if (has(body, 'fate') && body.fate != null && !USE_FATES.includes(body.fate)) {
     return `fate must be one of: ${USE_FATES.join(', ')} (or absent, for eaten)`;
   }

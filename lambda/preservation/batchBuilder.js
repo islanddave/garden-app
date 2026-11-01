@@ -1,12 +1,7 @@
-// B′ release 3 (the batch builder) — the PURE rules for "How it was made →" and the planting read.
-// No driver, no clock except what a caller passes: every rule here is executed by batchBuilder.test.js.
-// batchBuilderRoutes.js owns the statements that carry them.
-//
-// V4 §2.2 "How it was made →": from a jar row, the Start-a-batch sheet in retrospective posture. One
-// write: a CLOSED batch + its lines + links the chosen jars (all or nothing), its started, put_up and
-// finished rows (V4 §5.1: dated the jars' date), "How many did you make?" (optional; raises the made
-// count, never what is left), the jars' "Next time…" lines copied into the batch. It never touches a
-// jar's own where-from (source) fields.
+// Pure rules for "How it was made" (V4 §2.2) and the planting read; no driver, no clock except what a
+// caller passes (batchBuilder.test.js runs every rule). batchBuilderRoutes.js owns the statements.
+// The from-jars write makes one CLOSED batch with its lines and links; it never touches a jar's own
+// where-from (source) fields.
 import { KITCHEN_UUID_RE, KITCHEN_BATCH_KINDS, KITCHEN_START_PRECISIONS, normalizeText, isMassUnit } from './kitchenBatch.js';
 import { lineError } from './kitchenLines.js';
 
@@ -87,10 +82,10 @@ export function validateFromJars(body) {
   return null;
 }
 
-// The jars' date → a stage row's (entered_at, entered_precision). One vocabulary (V4 §3.6), two words
-// differ by table: on preservation_log 'after' / 'unknown' keep a date that is only a floor or the day
-// it was logged; on kitchen_stage_log 'unknown' means NO date (chk_ksl_entered_pairing), and 'after' is
-// not a stage word. A pre-1b jar (NULL precision) is a day, or unknown when it was marked approximate.
+// The jars' date -> a stage row's (entered_at, entered_precision). On preservation_log 'after'/'unknown'
+// keep a date that is only a floor or the day it was logged; on kitchen_stage_log 'unknown' means NO
+// date (chk_ksl_entered_pairing) and 'after' is not a stage word. A pre-1b jar (NULL precision) is a
+// day, or unknown when marked approximate.
 export function jarStageDate(jar) {
   const p = jar?.preserved_at_precision ?? null;
   const day = jar?.preserved_at == null ? null
@@ -101,8 +96,8 @@ export function jarStageDate(jar) {
   return { entered_at: dayInstant(day), entered_precision: p ?? 'day' };
 }
 
-// "Next time…" lines in a batchless jar's (or a pantry item's) notes: V4 §2.5 appends them as dated
-// lines. Any notes line that says "next time" is one; returned as written, in order, de-duplicated.
+// "Next time…" lines in a batchless jar's (or a pantry item's) notes: any line that says "next time",
+// as written, in order, de-duplicated.
 export const NEXT_TIME_RE = /\bnext time\b/i;
 export function nextTimeLines(notes) {
   if (notes == null) return [];
@@ -114,10 +109,9 @@ export function nextTimeLines(notes) {
   return out;
 }
 
-// made_count (V4 §2.2): raises the made count (package_count), never what is left — so a jar with no
-// stored remaining_count has it pinned to its old package_count in the same UPDATE. A weighed jar (one
-// container logged in a mass unit) has no "how many"; a count BELOW what was made is a lower, which is
-// the count edit, not this.
+// made_count raises package_count, never what is left, so a jar with no stored remaining_count has it
+// pinned to its old package_count in the same UPDATE. A weighed jar has no "how many"; a count BELOW
+// what was made is the count edit, not this.
 export function madeCountError(jar, madeCount) {
   if (madeCount == null) return null;
   if (Number(jar.package_count) === 1 && isMassUnit(jar.quantity_unit)) {
@@ -129,16 +123,13 @@ export function madeCountError(jar, madeCount) {
   return null;
 }
 
-// The stage rows the write inserts, in order: started (the sheet's start, mirroring the batch), put_up
-// and finished (the jars' date), then one noted row per "Next time…" line (now, exact — a note's own
-// time, V4 Appendix A). ids are the caller's.
+// The stage rows the write inserts, in order: started, put_up, finished, then one noted row per
+// "Next time…" line. ids are the caller's.
 //
-// tick — the row's created_at is the statement's now() + tick µs. ONE statement writes every row, so a
-// bare DEFAULT now() gives them all one created_at and every reader's write-order tiebreak (entered_at,
-// created_at, id) falls to a random uuid: the view's current stage could read "started" on this closed
-// batch whenever the start and the jars share a day (or are both unknown), and two "Next time…" lines
-// could swap. put_up and finished keep ONE instant, as Put it up writes them: "the finished row this
-// sitting wrote" is the finished row with the put_up row's created_at (kitchenRoutes.js undoPutUp).
+// tick: created_at is the statement's now() + tick µs. One statement writes every row, so a bare DEFAULT
+// now() would give them one created_at and the (entered_at, created_at, id) tiebreak would fall to a
+// random uuid (the current stage could read "started"; notes could swap). put_up and finished keep ONE
+// instant: kitchenRoutes.js undoPutUp finds "the finished row this sitting wrote" by the put_up created_at.
 export function planFromJarsStages({ startedAt, startPrecision, jarDate, notes, newId }) {
   const rows = [
     { id: newId(), kind: 'started', at: startedAt, precision: startPrecision, note: null, tick: 0 },
@@ -149,21 +140,16 @@ export function planFromJarsStages({ startedAt, startPrecision, jarDate, notes, 
   return rows;
 }
 
-// ── the planting read (V4 §2.5 "Planting page") ──────────────────────────────────────────────────
-// A batch "used" the planting directly (a garden or pick line from it) or through a drawn jar from it.
-// A single-planting batch is one whose every planting-attributed line names THIS planting and nothing
-// else — its jars already show on the planting's put-up list, where it reads "from <batch> →".
+// A batch "used" a planting directly (a garden or pick line) or through a drawn jar from it. A
+// single-planting batch has every planting-attributed line naming THIS planting; its jars already show
+// on the planting's put-up list.
 export function usedVia(direct, indirect) {
   if (direct && indirect) return 'both';
   return direct ? 'garden' : indirect ? 'jar' : null;
 }
 
-// ── "Finished — none kept" (V4 §2.2 "A make with nothing kept") ─────────────────────────────────
-// The shipped close already records a make that kept nothing ("Did it make anything you kept? No" →
-// Ate it · Gave it away · It spoiled · Gave up on it) and writes its `finished` row in the same statement.
-// What it lacked is the close sheet's When (V4 Appendix A: finished — "the close sheet's When"): a make
-// logged afterwards was dated the moment it was logged. `when` is optional; absent keeps the shipped row
-// (now, no precision). Returns { at, precision } | null | { error }.
+// closeWhenOf: the close sheet's optional When for a make that kept nothing; absent keeps the shipped
+// row (now, no precision). Returns { at, precision } | null | { error }.
 export function closeWhenOf(body) {
   if (!isObj(body) || body.when == null) return null;
   const e = startedError(body.when);
