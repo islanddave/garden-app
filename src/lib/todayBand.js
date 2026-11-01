@@ -1,27 +1,26 @@
 import { P } from './constants.js'
 import { severityTier, SEVERITY_STYLES, overdueLabel } from './waterDue.js'
 
-// "Today" band item model (Inc 1 — full band). Merges the actionable "what needs me now?"
-// signals ALREADY returned by /api/dashboard — watering overdue and long-unseen
-// (stale) projects — into ONE ranked, de-duplicated, capped list, each row.
-// FLAG-REMOVAL (2026-06-10): flagged-issue rows are no longer surfaced; the planting-flagging
-// UI was retired (server still emits reason='flagged' heads_up rows — ignored here).
-// V3-HARVEST-001 (2026-06-08): harvest-ready is INTENTIONALLY EXCLUDED from this above-nav band —
+// "Today" band item model. Merges the actionable "what needs me now?" signals ALREADY returned by
+// /api/dashboard — watering overdue and long-unseen (stale) projects — into ONE ranked,
+// de-duplicated, capped list.
+// Flagged-issue rows are not surfaced (the server still emits reason='flagged' heads_up rows —
+// ignored here). V3-HARVEST-001: harvest-ready is INTENTIONALLY EXCLUDED from this above-nav band —
 // a harvesting project stays harvest-ready for weeks, so surfacing it here was a constant nag.
 //
-// V3-ATTN-001 (2026-06-23): alerts should name the PLANTING, not the project/container grouping
-// ("Houseplants needs water" -> "Dracaena needs water"). The dashboard rows now carry a `plantings`
-// array (each actionable garden_node in the container: {id,name}). Rule: a container that holds
-// EXACTLY ONE actionable planting collapses to that planting (name + planting-scoped deep-link) — the
-// reported case. A container with MANY plantings (e.g. a "Peppers" bed of 50+) stays a single grouped
-// row keyed by the container (expanding would flood the 5-item band; the bed shares one care cadence,
-// so it is genuinely one action). Rows without a `plantings` array (older payloads / safety) fall back
-// to the legacy project-level row so the band never goes blank.
+// V3-ATTN-001: alerts name the PLANTING, not the project/container grouping ("Dracaena needs water",
+// not "Houseplants needs water"). The dashboard rows carry a `plantings` array (each actionable
+// garden_node in the container: {id,name}). Rule: a container that holds EXACTLY ONE actionable
+// planting collapses to that planting (name + planting-scoped deep-link). A container with MANY
+// plantings (e.g. a "Peppers" bed of 50+) stays a single grouped row keyed by the container
+// (expanding would flood the 5-item band; the bed shares one care cadence, so it is genuinely one
+// action). Rows without a `plantings` array (older payloads / safety) fall back to the legacy
+// project-level row so the band never goes blank.
 //
-// V4-ICON-001 (2026-08-26): rows carry `iconName` (a registry key) instead of the former `emoji`
-// literal. The two reasons map to `care.drop` (water) and `status.unseen` (long-unseen); both are
-// drawn SVGs with their own accessibleName, so the row's meaning survives a font that has no
-// pictographs and is not carried by hue alone. TodayBand.jsx renders them through <Icon>.
+// V4-ICON-001: rows carry `iconName` (a registry key). The two reasons map to `care.drop` (water) and
+// `status.unseen` (long-unseen); both are drawn SVGs with their own accessibleName, so the row's
+// meaning survives a font that has no pictographs and is not carried by hue alone. TodayBand.jsx
+// renders them through <Icon>.
 //
 // Each row carries a reason-label + a tap-to-log route. OPERATIONAL surface (harm-prevention +
 // time-sensitive opportunity), NOT a reward surface: no streaks/badges/celebration; recent-activity
@@ -31,7 +30,7 @@ import { severityTier, SEVERITY_STYLES, overdueLabel } from './waterDue.js'
 export const TODAY_RENDER_CAP = 5
 
 // Priority — lower sorts first. Watering overdue = harm imminent (plants drying); stale =
-// gentle "haven't looked" nudge. (harvest removed per V3-HARVEST-001; flag removed 2026-06-10.)
+// gentle "haven't looked" nudge.
 const KIND_PRIORITY = { water: 0, stale: 1 }
 
 const STALE_STYLE   = SEVERITY_STYLES.gold
@@ -92,7 +91,7 @@ export function buildTodayItems(dashboard) {
   const d = (dashboard && !Array.isArray(dashboard)) ? dashboard : {}
   const items = []
   for (const r of (d.water_due || []))     if (r && r.project_id) items.push(waterItem(r))
-  // V3-HARVEST-001: harvest_ready deliberately NOT merged. FLAG-REMOVAL: reason='flagged' ignored.
+  // harvest_ready deliberately NOT merged (V3-HARVEST-001); reason='flagged' ignored.
   for (const r of (d.heads_up || []))      if (r && r.project_id && r.reason === 'stale') items.push(staleItem(r))
 
   const byTarget = new Map()

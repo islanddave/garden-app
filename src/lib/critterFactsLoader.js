@@ -1,16 +1,13 @@
-// V4-COLLECTIONSPLIT-001 — lazy access to critter-facts.json (~138 KB rendered), which was a
-// static import in BOTH Collection.jsx and CritterOfDay.jsx and therefore sat in the ENTRY bundle
-// for every user on every route, including the ones who never open /collection.
+// V4-COLLECTIONSPLIT-001 — lazy access to critter-facts.json (~138 KB rendered), so it stays out of
+// the ENTRY bundle that every user loads on every route, including those who never open /collection.
 //
-// WHY A DYNAMIC import() AND NOT React.lazy. The ledger row proposed lazifying the whole /collection
-// route. The objection it records as closed is only the STALE-CLIENT one (deploy.yml:209-213 carries
-// --exclude assets/* before --delete, so old hashed chunks are never pruned). That is a different
-// hazard from OFFLINE, which is not closed: sw.js precaches only '/' and the manifest, and serves JS
-// cache-first POPULATED ON DEMAND from a STATIC_CACHE that is purged on every deploy. So after any
-// deploy, the first offline visit to a lazily-routed page finds no chunk and no network — and a
-// React.lazy rejection throws into the route ErrorBoundary and replaces the whole page. That is
-// exactly the failure CropCard.jsx:17 forbids React.lazy at/above that card to avoid, in an app Dave
-// uses standing in a garden with no signal.
+// WHY A DYNAMIC import() AND NOT React.lazy. The stale-client hazard of lazy chunks is closed (the
+// deploy never prunes old hashed chunks), but OFFLINE is not: sw.js precaches only '/' and the
+// manifest, and serves JS cache-first POPULATED ON DEMAND from a STATIC_CACHE that is purged on every
+// deploy. So after any deploy, the first offline visit to a lazily-routed page finds no chunk and no
+// network — and a React.lazy rejection throws into the route ErrorBoundary and replaces the whole
+// page. That is the failure CropCard.jsx forbids React.lazy at/above that card to avoid, in an app
+// used standing in a garden with no signal.
 //
 // This module is that comment's sanctioned alternative: a plain import() whose failure branch is a
 // VALUE, not a throw. A cold offline miss degrades to "no facts text", which is a state both call

@@ -1,21 +1,15 @@
 // Harvest Totals ordering — client-side, pure, and the SINGLE source of display order.
 //
-// WHY THIS EXISTS. v4.32.0 replaced the alphabetical crop/variety order with a weight-descending
-// one, because alphabetical actively misled on the comparison question (Moskvich Heirloom 8,233 g
-// sorted BELOW Cherry Falls 763 g — a currant tomato reading as the top producer). That fix was
-// right about the defect and wrong about the remedy: it swapped one fixed order for another fixed
-// order. Dave, verbatim: "having it weighted first and only is not all that useful when I'm trying
-// to find specific items - alphanumeric is better sort for that and the default I want."
-//
-// Ranking and retrieval are two different jobs. Weight answers "what produced?"; name answers
-// "where is my chard?". A list has to do both, so the order becomes a control and NAME is the
-// default — you cannot scan for a known item in a ranked list, but you can always rank on demand.
+// WHY A CONTROL. Ranking and retrieval are two different jobs: weight answers "what produced?", name
+// answers "where is my chard?". A single fixed order fails one of them (alphabetical misleads on the
+// comparison question; weight-first is useless for finding a known item), so the order is a control
+// and NAME is the default — you cannot scan for a known item in a ranked list, but you can always
+// rank on demand.
 //
 // WHY CLIENT-SIDE. The page already holds every field this needs (grams via the V4-HARVGRAIN-001
-// weight merge, pick counts via units[].count). Sorting here is instant, needs no refetch, and —
-// the deciding reason — needs no Lambda deploy, so it ships as a pure frontend change. The server's
-// own weight-desc order in applyWeights() is left untouched and simply becomes the base ordering
-// this re-sorts; it is still the deterministic tie-break every weightless row falls back to.
+// weight merge, pick counts via units[].count), so sorting is instant, needs no refetch and needs no
+// Lambda deploy. The server's own weight-desc order in applyWeights() becomes the base ordering this
+// re-sorts; it is still the deterministic tie-break every weightless row falls back to.
 //
 // WHY IT MUST BE SHARED. The Totals EXPORT owns a SEPARATE fetch (HarvestExportSheet), so it does
 // not inherit the page's array. If only the page sorted, a copied export would silently disagree
@@ -61,7 +55,7 @@ function nameOf(node) {
 }
 
 // Locale-aware and NUMERIC — `numeric: true` is what makes this alphanumeric rather than merely
-// alphabetic, so "Bed 2" precedes "Bed 10" instead of following it. Dave asked for alphanumeric.
+// alphabetic, so "Bed 2" precedes "Bed 10" instead of following it.
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
 
 function byName(a, b) { return collator.compare(nameOf(a), nameOf(b)) }
@@ -101,12 +95,12 @@ export function harvestComparator(mode = DEFAULT_SORT_MODE, dir = DEFAULT_SORT_D
  * The two copies are NOT equally load-bearing, which matters to anyone tempted to tidy them:
  * `[...aggregates.crops]` is belt-and-braces, because the `.map()` that follows already returns a
  * fresh array for `.sort()` to work on. `[...c.varieties]` is the one that counts — without it,
- * `.sort()` reorders the caller's own varieties array in place. Mutation-checked both ways.
+ * `.sort()` reorders the caller's own varieties array in place.
  *
  * `other[]` is deliberately NOT sorted: it is the unattributed bucket, grouped by project rather
- * than by crop, carries no weight field at all, and is rendered as a footnote below the crops. A
- * weight sort over rows with no weight is meaningless, and reordering a 2-row footnote to match a
- * control that visually sits above the crop list would imply a relationship that isn't there.
+ * than by crop, carries no weight field at all, and is rendered as a footnote below the crops.
+ * Reordering it to match a control that sits above the crop list would imply a relationship that
+ * isn't there.
  */
 export function sortAggregates(aggregates, mode = DEFAULT_SORT_MODE, dir = DEFAULT_SORT_DIR) {
   if (!aggregates || !Array.isArray(aggregates.crops)) return aggregates
@@ -119,11 +113,9 @@ export function sortAggregates(aggregates, mode = DEFAULT_SORT_MODE, dir = DEFAU
   }
 }
 
-// ── V4-HARVPLANTSORT-001 — column sorting INSIDE one expanded crop ─────────────────────────────────
-//
-// Dave, 2026-08-21: "the sort I really want is WITHIN each expanded crop block... I wanna be able to
-// sort all other columns within an expanded crop block", defaulting to plant name. Deliberately
-// separate from the page-level control above, which orders CROP CARDS and their varieties.
+// V4-HARVPLANTSORT-001 — column sorting INSIDE one expanded crop, defaulting to plant name.
+// Deliberately separate from the page-level control above, which orders CROP CARDS and their
+// varieties.
 //
 // It is a separate comparator rather than a fourth mode on harvestComparator() because ONE column
 // means something different here, and quietly reusing the other meaning is how a sort ends up
@@ -140,12 +132,9 @@ export function sortAggregates(aggregates, mode = DEFAULT_SORT_MODE, dir = DEFAU
 // has no meaningful "how many did I pick", and its weight already speaks one column over. Rows that
 // filter to nothing sort as null (last in both directions), never as zero.
 //
-// isMassUnit is IMPORTED, not re-declared. The first draft of this duplicated the set locally to
-// "avoid depending on the render layer" — and got it wrong on 11 of 15 entries, because the
-// canonical set is exactly four keys (g/kg/lb/oz) and the copy invented gram/grams/pounds/ounces
-// that isMassUnit has never recognised. The sort would then have kept a 'grams' row in the Count
-// ranking while countCell dashed the very same row. There is no cycle to avoid here — harvestSummary
-// imports nothing — so the duplication bought nothing and cost correctness.
+// isMassUnit is IMPORTED, not re-declared: a local copy of the set drifts from the canonical four
+// keys (g/kg/lb/oz), and the sort would then keep a row in the Count ranking that countCell dashes.
+// harvestSummary imports nothing, so there is no cycle to avoid.
 function countedQuantity(node) {
   const units = Array.isArray(node?.units) ? node.units : null
   if (!units) return null
@@ -165,9 +154,7 @@ export const PLANTING_SORT_COLUMNS = [
 
 // Same principle as NATURAL_DIR above: picking a column gives you the direction that column is
 // actually useful in. Name reads A-Z; the two magnitude columns lead with the biggest; first pick
-// leads with the EARLIEST, because the question that column answers is "what came in first" — and
-// because ascending by date is the order the table already shipped in, so the default render does
-// not move under anyone who was used to it.
+// leads with the EARLIEST, because the question that column answers is "what came in first".
 export const PLANTING_NATURAL_DIR = { name: 'asc', count: 'desc', weight: 'desc', first_pick: 'asc' }
 export const PLANTING_DEFAULT_SORT = { key: 'name', dir: 'asc' }
 

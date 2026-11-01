@@ -1,44 +1,35 @@
 // V4-RIPENESSCUES-001 — harvest COLOUR WINDOWS, resolved for a planting's variety_ref.
 //
-// Design: `project-state/harvest-colour-window-V100-20260811.md` (gardening-docs).
-//
 // WHY THIS EXISTS SEPARATELY FROM ripenessCues.js. That module answers "what colour is ripe" with a
 // single corrective sentence, and it is SPARSE ON PURPOSE — a cultivar cue has to correct a wrong
 // intuition to earn its pixels, which is asserted by name for 24 ordinary-red tomatoes in
-// `ripenessCues.test.js` §"sparse by design". This module answers a different question, Dave's actual
-// one (2026-08-11):
-//
-//   "I want to know when I CAN pick them… a jalapeño should be the correct green range all the way up
-//    through red. Details should describe the points of the colour pick — what you get at each point,
-//    e.g. more heat, less sweet, less heat… What do I get if I take a Piri Piri at orange or green?"
+// `ripenessCues.test.js` §"sparse by design". This module answers a different question: "when CAN I
+// pick this, and what do I get at each colour point?" (more heat, less sweet, ...).
 //
 // That question wants the OPPOSITE density: every live cultivar, because the early end of the window
-// is exactly what he does not know and it varies by cultivar. Two questions, two densities, two
-// structures — so Celebrity gains a full breaker→red window while still carrying no corrective
-// one-liner, and the sparse-by-design assertions keep passing untouched. Merging the two would have
-// forced a choice between them.
+// is what varies by cultivar and what the gardener does not know. Two questions, two densities, two
+// structures — so Celebrity has a full breaker→red window while still carrying no corrective
+// one-liner. Merging the two would force a choice between them.
 //
-// THE WINDOW IS HARVESTABILITY, NOT PREFERENCE. An earlier framing (vault
-// `reference/dave-harvest-stage-practice.md`, 2026-08-06) built this around the range at which DAVE
-// would pick — tomatoes at first blush, peppers at full ripe. He rejected that on 2026-08-11: his
-// habits are not what he wants the app to tell him. Tomato windows open at BREAKER, pepper windows at
-// correct MATURE GREEN, and he chooses inside them.
+// THE WINDOW IS HARVESTABILITY, NOT PREFERENCE. It is not built around the range at which Dave
+// happens to pick; his habits are not what he wants the app to tell him. Tomato windows open at
+// BREAKER, pepper windows at correct MATURE GREEN, and he chooses inside them.
 //
-// CONTENT RULE WITH TEETH — `gives` is a consequence, never a permission. Dave on the shipped cues:
-// "The 'and you never have to wait for red' on the harvest notes is not really useful. I know that."
-// A `gives` that grants permission or reassures is filler and is rejected by the test suite.
+// CONTENT RULE WITH TEETH — `gives` is a consequence, never a permission. A `gives` that grants
+// permission or reassures ("you never have to wait for red") is filler and is rejected by the test
+// suite.
 //
-// THE GREEN-WHEN-RIPE FIELD is the reason the pass exists. Cherokee Green ripens green and Dave asked
-// "what is first blush for a green?" Any cultivar whose ripe state is confusable with unripe carries
-// `ripe_vs_unripe`: the shade/tone shift, where it shows first, gloss, ground spot or shoulder, and
-// the give under thumb pressure. Same class: Black Krim's green shoulders, Gold Rush wax bean (yellow
-// is cultivar identity, not ripeness), Zephyr squash's green tip.
+// THE GREEN-WHEN-RIPE FIELD: Cherokee Green ripens green. Any cultivar whose ripe state is
+// confusable with unripe carries `ripe_vs_unripe`: the shade/tone shift, where it shows first,
+// gloss, ground spot or shoulder, and the give under thumb pressure. Same class: Black Krim's green
+// shoulders, Gold Rush wax bean (yellow is cultivar identity, not ripeness), Zephyr squash's green
+// tip.
 //
 // SOURCING. Every window traces to a fetched page. Where only the market class could be sourced
 // (cayenne-type, beefsteak, grape tomato) the record is `confidence: 'low'` and carries a `caveat`
-// that RENDERS ON SCREEN. That is what makes complete coverage safe: the 2026-08-04 crucible's rule
-// was that a confidently wrong cue is worse than none, "because Dave will trust it against his own
-// eyes" — a labelled derivation is not a confident claim. Never fill a gap from general knowledge.
+// that RENDERS ON SCREEN. That is what makes complete coverage safe: a confidently wrong cue is
+// worse than none, because Dave will trust it against his own eyes, while a labelled derivation is
+// not a confident claim. Never fill a gap from general knowledge.
 //
 // SHAPE — mirrors the eventual DB rows (`crop_types.harvest_window` jsonb + a cultivar override) so
 // the lift is mechanical, per the crucible's Slice 1 sketch:

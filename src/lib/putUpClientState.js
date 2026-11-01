@@ -1,5 +1,5 @@
 // src/lib/putUpClientState.js
-// Put-Up (V4 §5.6 / §6.5, review-2 B70) — THE PERSISTED-CLIENT-STATE REGISTRY for the Put-Up page: every
+// Put-Up (V4 §5.6 / §6.5) — THE PERSISTED-CLIENT-STATE REGISTRY for the Put-Up page: every
 // URL param it reads and every storage key it (or a sheet on it) writes, in one list.
 //
 // WHY A REGISTRY. After every promote the NEW bundle boots on URLs and drafts the OLD bundle wrote (the
@@ -27,14 +27,14 @@ export const PUT_UP_URL_PARAMS = Object.freeze({
 
 // ── Storage keys ──────────────────────────────────────────────────────────────────────────────────
 export const PUT_UP_STORAGE_KEYS = Object.freeze({
-  // sessionStorage via draftStash.js — the "Log a put-up" form's draft. RETIRED with the form (Put-Up R2b):
-  // nothing reads or writes it, and the page clears it once at mount. The row stays, as retired, because
-  // phones still hold the key (never rename: PutUp.jsx DRAFT_KEY).
+  // sessionStorage via draftStash.js — the retired "Log a put-up" form's draft: nothing reads or
+  // writes it, and the page clears it once at mount. The row stays because phones still hold the key
+  // (never rename: PutUp.jsx DRAFT_KEY).
   'put-up': { store: 'sessionStorage (draftStash)', shape: 'RETIRED — was the log form\'s snapshot; cleared at mount, never read' },
-  // localStorage — the walk's stash (putUpSession.js WALK_KEY). v1 records from the shipped freezer walk
-  // ({storageId, date, dateApprox, …}) still read; B′ writes {place:{key,id,label,kind}, whenChoice,
-  // pickedDate, when:{date,precision}, whenWords, date} under the same key and version, and a record
-  // without `when` only preselects its place (WalkPlace.resumableWalk).
+  // localStorage — the walk's stash (putUpSession.js WALK_KEY). Legacy v1 records
+  // ({storageId, date, dateApprox, …}) still read; current writes are {place:{key,id,label,kind},
+  // whenChoice, pickedDate, when:{date,precision}, whenWords, date} under the same key and version,
+  // and a record without `when` only preselects its place (WalkPlace.resumableWalk).
   'garden:putup-walk:v1': { store: 'localStorage', shape: '{v:1, place, whenChoice, pickedDate, when, whenWords, date} | legacy {v:1, storageId, date, dateApprox, …}' },
   'garden:putup-not-mine:v1': { store: 'localStorage', shape: '{v:1, slugs: string[]}' },
   // localStorage via kitchen/sheetDraft.js — one key per sheet per person: <prefix><sub>:<sheet>:<id|new>.

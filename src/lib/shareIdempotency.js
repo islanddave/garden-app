@@ -1,12 +1,11 @@
-// Reload-durable idempotency keys for social publishing (V4-FBSHARE-001 hardening).
+// Reload-durable idempotency keys for social publishing (V4-FBSHARE-001).
 //
-// WHY THIS EXISTS. The key used to live in a React useRef inside useShareToFacebook. A useRef dies
-// on reload — and a reload is precisely what happens in the failure the key exists to prevent:
-// the client aborts at its own fetch timeout while the Lambda keeps running to its 180s budget and
-// posts anyway, so the user sees a failure for a post that succeeded, reloads the PWA, and retries.
-// With a freshly-minted id the server's replay lookup (`WHERE client_request_id = ...`) misses and
-// the same photos post to the public Page a SECOND time. The server-side replay check is correct;
-// it was being handed a key that could not survive the one event it had to survive.
+// WHY THIS EXISTS. The key cannot live in a React useRef: a useRef dies on reload — and a reload is
+// precisely what happens in the failure the key exists to prevent: the client aborts at its own
+// fetch timeout while the Lambda keeps running to its 180s budget and posts anyway, so the user sees
+// a failure for a post that succeeded, reloads the PWA, and retries. With a freshly-minted id the
+// server's replay lookup (`WHERE client_request_id = ...`) misses and the same photos post to the
+// public Page a SECOND time. The key has to survive the one event it exists for.
 //
 // KEYED BY CONTENT, NOT BY ATTEMPT. The slot key is the canonical (target, sorted photo ids,
 // caption) tuple, which gives all three behaviours at once:
@@ -36,7 +35,7 @@ export const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
 // selecting the same photos in a different order is the same post for idempotency purposes, and
 // caption is normalised the same way the request body normalises it (trimmed, blank -> null).
 // The field separator is NUL, written as the two-character escape `\x00` (a RAW NUL byte here trips
-// OPS-NULBYTESRC-001, which keeps source greppable — and it did). NUL is the separator because it is
+// OPS-NULBYTESRC-001, which keeps source greppable). NUL is the separator because it is
 // the one character that cannot appear in either field: photo ids are UUIDs, and a caption comes
 // from a textarea, which browsers never populate with NUL. A visible delimiter like `|` or a space
 // could appear inside a caption and let two different posts collide onto one slot — which would

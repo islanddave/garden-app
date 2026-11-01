@@ -13,12 +13,10 @@
 
 const CRITTER_BASE = (import.meta.env.VITE_API_CRITTERS ?? '').replace(/\/$/, '')
 
-// awardCritter() and its buildSeed() helper were REMOVED 2026-08-12 with the server route they
-// called (POST /api/critters — BUG-CRITTERSELFGRANT-001; the tombstone in lambda/critter/index.js
-// has the evidence). awardCritter had had zero call sites since the events Lambda's server-side
-// hook replaced it (EventNew.jsx:1041), and buildSeed existed only to feed it. The SERVER seed
-// builder in lambda/events/critterAward.js is independent and unchanged — it is what produces
-// meta.deterministic_seed on all 1277 live critter_state rows.
+// There is deliberately NO client-side award call: the server route was removed
+// (BUG-CRITTERSELFGRANT-001; the tombstone in lambda/critter/index.js has the evidence). Awards are
+// made by the events Lambda's server-side hook, and the seed builder in
+// lambda/events/critterAward.js is what produces meta.deterministic_seed.
 
 // fetchActiveCritters — GETs /api/critters/active for the Stage 3 dot.
 // Returns array (possibly empty) on success, [] on no-op or failure (NEVER throws).

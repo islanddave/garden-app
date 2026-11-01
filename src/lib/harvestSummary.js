@@ -81,19 +81,12 @@ function aggregate(rows) {
  * opts.windowDays: size of the "recent" window, INCLUSIVE of today (14 => today and the 13
  *   calendar days before it; a harvest dated today-13 is IN, today-14 is OUT).
  *
- * RETIRED 2026-08-14 (M3, after V4-SEASONCONV-001): `opts.seasonStart` and the `.year` /
- * `.seasonStart` keys on the result. They implemented a CALENDAR-year bucket that no production
- * surface read any more, and that could not be widened into the app's real season without a
- * `seasonEnd`: seasonEnd was derived as `${seasonStart.slice(0,4)}-12-31`, so a caller passing a
- * grow-year start ('2025-11-01', hoping for Nov 1 - Oct 31) silently got the two-month window
- * 2025-11-01..2025-12-31 — wrong end, no error. The app's season IS the grow year (Nov 1 - Oct 31,
- * src/lib/growYear.js). The one consumer that needed a season bucket,
- * src/components/planting/HarvestFromPlanting.jsx, derives it by pre-filtering rows to
- * growYearSpan() and reading THIS function's `allTime` over the subset — it converges there rather
- * than here because growYear.js imports etDay FROM this file, so importing growYear back would
- * close a cycle. That cycle is still the reason a season bucket does not belong in this file.
- * If a season bucket is ever wanted here, it needs an explicit seasonEnd; do not resurrect a
- * bucket keyed on seasonStart's calendar year.
+ * There is deliberately NO season bucket here. The app's season IS the grow year (Nov 1 - Oct 31,
+ * src/lib/growYear.js), and growYear.js imports etDay FROM this file, so importing it back would
+ * close a cycle. A consumer that needs a season bucket (src/components/planting/HarvestFromPlanting.jsx)
+ * pre-filters rows to growYearSpan() and reads `allTime` over the subset. A bucket keyed on a
+ * calendar year would silently give a grow-year caller the wrong end date; if one is ever wanted
+ * here it needs an explicit seasonEnd.
  */
 export function summarizeHarvests(rows, opts = {}) {
   const { today, windowDays = 14, timeZone = 'America/New_York' } = opts
@@ -137,16 +130,14 @@ function emptySummary(windowDays) {
   }
 }
 
-// ── V4-HARVESTSURF-001 (remainder) — the OBSERVED per-plant harvest window ───────────────────
-// The original ask was a "per-plant harvest window". A PREDICTED window was measured and killed:
-// only 22 of 233 live plantings (9.4%) carry BOTH a fruit_set anchor and a crop
-// set_to_first_pick_days, so a predicted first-pick date would be silent for 90% of the garden and
-// speculative on the rest. (The prior session killed prediction at 20% coverage; this substrate is
-// thinner, not richer.)
+// V4-HARVESTSURF-001 — the OBSERVED per-plant harvest window.
+// A PREDICTED window is deliberately not offered: few plantings carry both a fruit_set anchor and a
+// crop set_to_first_pick_days, so a predicted first-pick date would be silent for most of the garden
+// and speculative on the rest.
 //
 // What IS fully supported is the OBSERVED window — the span this planting has actually produced
-// over, which is evidence, not a forecast, and is defined for 100% of plantings that have any
-// harvest at all. Same posture as the readiness predicate: never assert what wasn't recorded.
+// over, which is evidence, not a forecast, and is defined for every planting that has any harvest at
+// all. Same posture as the readiness predicate: never assert what wasn't recorded.
 //
 // PURE and clock-free: both anchors come from summarizeHarvests and are already reporting-zone
 // 'YYYY-MM-DD' days, so this is calendar arithmetic on UTC anchors with no zone math and no `new
@@ -238,9 +229,8 @@ export function seasonTotalPhrase(crop) {
 }
 
 // V4-HARVEXPORT-001: the per-unit total line for an aggregates `units[]` array
-// ([{unit, total}] off GET /api/harvests). Lifted out of Harvests.jsx so the Totals VIEW and the
-// Totals EXPORT render the same string from the same code — the export's whole claim is that it
-// reconciles with the page, and two call sites of formatEntry drift the moment one adds a rule.
+// ([{unit, total}] off GET /api/harvests), shared so the Totals VIEW and the Totals EXPORT render
+// the same string from the same code — the export's whole claim is that it reconciles with the page.
 // '' (not '—') on empty: callers substitute their own "+N unrecorded" fallback.
 export function unitsLine(units, cropName) {
   if (!Array.isArray(units) || units.length === 0) return ''

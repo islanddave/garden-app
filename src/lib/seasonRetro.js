@@ -7,41 +7,32 @@
 //
 // WHY IT NEEDS NOTHING NEW. Every figure below comes from the aggregates block that
 // GET /api/harvests?timeframe=season:YYYY&include=aggregates already returns, unpaginated over the
-// full range (the ENTRIES side is keyset-paged at 50 and would have needed ~16 round trips for a
-// 796-pick season; the aggregates side has no cursor and no limit by design). No new column, no new
-// endpoint, no Meta dependency, and nothing to capture that Dave is not already logging.
+// full range (the ENTRIES side is keyset-paged at 50; the aggregates side has no cursor and no limit
+// by design).
 //
 // The non-obvious enabler: `serializeUnits` emits a per-unit `count`, which is an EVENT count, not a
 // quantity. So picks-per-variety is `sum(units[].count) + unquantified` and the "showed up once"
-// line is computable client-side. Without that field this file would have needed a Lambda change,
-// a deploy and a promote to say anything about varieties.
+// line is computable client-side.
 //
 // TWO THINGS THIS FILE REFUSES TO DO, both because it is a PUBLIC-OUTPUT surface:
 //
-//   1. It never claims the season is over. Measured on prod 2026-08-21: the season's last pick IS
-//      today, because it is August and the garden is still producing. A retrospective that opened
-//      "This season we grew..." would be writing an obituary for a garden mid-harvest. When the last
+//   1. It never claims the season is over. A retrospective that opened "This season we grew..." in
+//      the middle of the season would be writing an obituary for a garden mid-harvest. When the last
 //      pick is recent the copy says "so far"; only a genuinely finished season gets past tense.
 //   2. It never publishes a name carrying identification uncertainty. Same `isUncertainName`
-//      predicate the composer uses, imported rather than copied — prod really does hold
-//      "Onion — scallion-type (thick blue-green, ID pending)", and a year-end summary is the worst
+//      predicate the composer uses, imported rather than copied — a year-end summary is the worst
 //      possible place to assert an ID nobody has actually made.
 //
-// FIRSTS COME FROM `first_pick[]`, NEVER FROM THE `first_harvest` EVENT TYPE. This looks like a
-// detail and is the difference between a feature and an empty list: prod carries 796 harvest events
-// of which exactly FIVE are typed `first_harvest`, against 87+ plantings that were actually picked.
-// The marker is something Dave sets by hand and mostly does not. `first_pick[]` is derived server-
-// side as min(day_key) per planting, which is the honest answer to "when did this start". The
-// harvests aggregate already made this choice (design §3b); this file inherits it rather than
-// re-deriving it, and says so here because "use the event named first_harvest" is the obvious wrong
-// move for the next person.
+// FIRSTS COME FROM `first_pick[]`, NEVER FROM THE `first_harvest` EVENT TYPE. That marker is set by
+// hand and mostly isn't, so using it yields an almost empty list. `first_pick[]` is derived
+// server-side as min(day_key) per planting, which is the honest answer to "when did this start".
+// The harvests aggregate already made this choice (design §3b); this file inherits it.
 
 import { normalizeVarietyName, pluralizeCrop, isUncertainName } from './harvestPost.js'
 
 // A season still counts as running if something was picked within this many days of "today". Chosen
-// from Dave's own cadence rather than a round number: the longest gap between consecutive harvest
-// days in the 2026 season to date is under a week, so 14 days is comfortably past "he just hasn't
-// been out lately" and well short of declaring a running garden finished.
+// from Dave's own cadence: gaps between harvest days run under a week, so 14 days is comfortably
+// past "he just hasn't been out lately" and well short of declaring a running garden finished.
 export const IN_PROGRESS_DAYS = 14
 
 // Below this, "N varieties" is not a fact worth printing — it is a list, and the list is shorter.

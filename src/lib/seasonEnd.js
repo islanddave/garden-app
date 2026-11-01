@@ -5,10 +5,9 @@
 // ticked set in one go, as status `ended` — the ONE outcome. Never `failed` (a frost ending a crop
 // grown as an annual is its expected end, and a bulk "failed" would turn a productive season into
 // losses), never a loss reason, and never an archive: archiving hides a planting's harvests from the
-// season totals, and these plantings hold ~70% of 2026's harvest weight (seat-hort-data.md D1, D3).
+// season totals, and these plantings hold most of the season's harvest weight.
 //
-// THE LIST RULE (seat-hort-data.md D4, as decided in the build brief). A planting is FINISHED — listed,
-// group-selectable — when all of these hold:
+// THE LIST RULE. A planting is FINISHED — listed, group-selectable — when all of these hold:
 //   · it is a live planting: kind 'planting', not deleted, not archived, container live (the server
 //     read applies the last three; `kind` is checked here);
 //   · its crop's frost band is `tender` or `chill_sensitive`, read DIRECTLY from the band map
@@ -21,8 +20,8 @@
 //     only live locations, so a deleted location ends the walk exactly as the SQL join does;
 //   · its status is not ended, failed or dormant — and it has one: a planting with no status could be
 //     ended but never put back by Undo, so it is not listed.
-// On prod (2026-09-29) that is 114 plantings, and it catches no perennial, fruit, houseplant or
-// succulent: those are banded hardy or tropical, or sit under a roof.
+// That catches no perennial, fruit, houseplant or succulent: those are banded hardy or tropical, or
+// sit under a roof.
 //
 // STILL GROWING THROUGH FROST — a second, collapsed group, ticked one at a time and never by group:
 // outdoor live plantings whose band is `light_frost_tolerant`, whatever the crop's lifecycle (petunia's
@@ -32,8 +31,8 @@
 // freezes. A hardy perennial (fruit, herbs, the peach) is not listed at all: it goes dormant, it is not
 // ended.
 //
-// "Last logged" is SHOWN on every row and never filtered on: on prod, 89 of the 114 frost-finished
-// plantings were worked in the last 14 days, so recent activity runs opposite to frost kill.
+// "Last logged" is SHOWN on every row and never filtered on: most frost-finished plantings were
+// worked recently, so recent activity runs opposite to frost kill.
 import { FROST_BAND_BY_SLUG } from './frostBands.generated.js'
 import { toLocalISO } from './dateLocal.js'
 import { formatDate } from './format.js'
@@ -51,8 +50,8 @@ export const LIFECYCLE_GATED_BANDS = Object.freeze(['hardy'])
 export const SHORT_LIFECYCLES = Object.freeze(['annual', 'biennial'])
 export const CLOSED_STATUSES = Object.freeze(['ended', 'failed', 'dormant'])
 
-// "3-4 in flight". Each PUT is one short transaction on the plants Lambda; 3 keeps a 114-row batch
-// near 20 s without stacking Neon connections.
+// "3-4 in flight". Each PUT is one short transaction on the plants Lambda; 3 keeps a large batch
+// moving without stacking Neon connections.
 export const WRITE_CONCURRENCY = 3
 
 export const GROUP_FINISHED = 'finished'
@@ -248,10 +247,10 @@ export async function runPool(items, worker, { concurrency = WRITE_CONCURRENCY, 
 
 export const progressLine = (verb, done, total) => `${verb} ${Math.min(done + 1, total)} of ${total}…`
 
-// After a batch: what the bar says. Today reads a stored plan that runs hourly only by day (cron
-// 0 0-1,3,5,9-23 UTC, deploy-lambda.yml: hourly to 9 pm EDT, then 11 pm and 1 am, then 5 am), so the
-// wait is up to 2 h in the evening and 4 h overnight. The copy says the rows leave Today's list at its
-// next update — it does not claim they already left, nor that it happens within the hour.
+// After a batch: what the bar says. Today reads a stored plan that is rebuilt hourly only by day
+// (cron in deploy-lambda.yml), so the wait can be several hours overnight. The copy says the rows
+// leave Today's list at its next update — it does not claim they already left, nor that it happens
+// within the hour.
 export const TODAY_LAG_LINE = "They leave Today's list at its next update, within a few hours."
 
 export function endResultLine(landed, failed) {

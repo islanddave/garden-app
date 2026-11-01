@@ -3,14 +3,13 @@
 // source for PlantingSelect's crop-chip band order. The client has NO last-event data on the
 // picker surface (list /api/plants carries no event timestamps; EventNew fetches no events), so
 // ranking is fed from where the client already remembers what was just logged: the same save
-// moments that write logone.lastPlant / lastHarvestUnit:<slug>. Zero server change.
+// moments that write logone.lastPlant / lastHarvestUnit:<slug>.
 //
 // STATISTIC — distinct-log-days per crop, read over a trailing window (default 60d). The WRITE
 // SHAPE makes distinct-log-days the ONLY representable statistic: one day-key per (slug, day),
 // idempotent, so batch skew is unreintroducible by construction — 30 events logged on 2 days can
-// never outrank 5 events spread over 5 days. Raw event counts were disqualified in the consult:
-// the batch path emits one row per planting per batch, which measures planting count, not
-// attention.
+// never outrank 5 events spread over 5 days. Raw event counts are wrong here: the batch path emits
+// one row per planting per batch, which measures planting count, not attention.
 //
 // LogMany is DELIBERATELY EXCLUDED from ledger writes, for two independent reasons:
 //   1. Mechanical — LogMany's batch scope carries no crop_type_slug; there is nothing to record.
@@ -26,9 +25,8 @@
 // ranking (pins + alphabetical), never to an error on the save path. A corrupt or wrong-version
 // store is discarded wholesale rather than half-trusted.
 //
-// Phase 2 (explicitly NOT v1): entity_memory.last_event_at LEFT JOINed into the plants list
-// SELECTs — read the BUG-HEROLISTPERF-001 rationale (lambda/plants/index.js:884-905) first if
-// that is ever attempted.
+// Not done here: entity_memory.last_event_at LEFT JOINed into the plants list SELECTs — read the
+// BUG-HEROLISTPERF-001 rationale in lambda/plants/index.js first if that is ever attempted.
 import { etDay, addDays } from './harvestSummary.js'
 
 const KEY = 'croprank.v1'

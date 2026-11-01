@@ -1,8 +1,7 @@
 // V4-APPBANNER-001 — curated header-banner pool. Provenance keys back to Photos/photo-index.json
 // (gardening-docs repo). Assets are pre-graded band crops (peach wash + desaturate + luminance
 // normalize, 1800x198 WebP <=80KB) produced + gated by scripts/banner_contrast.py — re-run it after
-// ANY pool change. Seasonal pools fill at season-boundary re-curation passes; a season with no
-// photos falls back to the full pool (pickBanner). V4-PHOTOFIRSTCLASS-001 supersedes this bundle.
+// ANY pool change. A season with no photos falls back to the full pool (pickBanner).
 import goldenHourRow from '../assets/banners/golden-hour-row.webp'
 import meadowFence from '../assets/banners/meadow-fence.webp'
 import indoorRack from '../assets/banners/indoor-rack.webp'

@@ -1,13 +1,12 @@
 // Stage 1 inline-announcement copy variants — MVP-Critter.
 // Canonical source: critter-stage1-copy-variants-V001-20260528.1530.md §2-§4.
-// Spec gate: revision §3.18 (emoji aria-label override), §3.19 (drop task 5),
-//            §3.20 (rewordings), §3.21 (fold opt-in copy into walkthrough).
+// Spec gate: revision §3.18 (emoji aria-label override).
 //
 // Variant pool size & order are walkthrough-stable: changing them affects what
 // Jen has reacted to. Drops/adds go through the walkthrough log (jen-walkthrough-log.md).
 //
 // Verb discipline: ZERO references to "task", "job", "chore", "earned", "unlocked",
-// "achievement", "XP", or any internal app terminology. See packet §2 verb audit.
+// "achievement", "XP", or any internal app terminology.
 //
 // Species name interpolation: `{species}` placeholder is replaced by the species'
 // `aria_announce_name` (e.g., "a blue jay", "an American robin") from critterSpecies.BY_ID.

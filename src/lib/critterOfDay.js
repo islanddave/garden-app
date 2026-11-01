@@ -2,7 +2,7 @@
 // Household-coherent: every device computes the SAME pick for a given UTC date (no server
 // coordination), so the shared-state PUT race is harmless (all members write the identical
 // payload). Seeded permutation indexed by epoch-day -> full N-day no-repeat cycle, no
-// consecutive repeats (review-mandated anti-repetition; verified node-side over the 168 roster).
+// consecutive repeats (anti-repetition).
 
 // mulberry32 deterministic PRNG (constant seed -> identical sequence on every client/build).
 function mulberry32(seed) {

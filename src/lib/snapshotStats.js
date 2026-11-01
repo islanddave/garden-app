@@ -8,13 +8,11 @@
 //                      when single-unit, or fall back to a count phrase when mixed.
 //   (c) seasonCropCount — distinct crops this season (aggregates.crop_list length; denominator-free).
 //
-// BUG-HARVSNAPSHOT7D-001 — (b) IS DERIVED FROM AN AGGREGATE, NOT FROM ENTRIES. It used to filter
-// the season entries array by day_key, and that array is a 50-row PAGE: the tile read 50 against a
-// true 163 on live prod, and the crop phrase beside it was computed from the ~3.5 days those rows
-// happened to cover. `aggregates` is the uncapped half of the same response (no cursor, no limit),
-// so asking the server for `timeframe=7d&include=aggregates` makes the number structurally
-// un-truncatable rather than merely larger. The window keys this function used to take are gone
-// with it — a client-side window over a server-truncated list is the whole defect in one line.
+// BUG-HARVSNAPSHOT7D-001 — (b) IS DERIVED FROM AN AGGREGATE, NOT FROM ENTRIES. The season entries
+// array is a 50-row PAGE, so a count or crop phrase filtered from it under-reports. `aggregates` is
+// the uncapped half of the same response (no cursor, no limit), so asking the server for
+// `timeframe=7d&include=aggregates` makes the number structurally un-truncatable. A client-side
+// window over a server-truncated list is the whole defect in one line.
 export function snapshotStats(entries, aggregates, last7Aggregates) {
   const list = Array.isArray(entries) ? entries : []
   const lastHarvest = list[0] ?? null
