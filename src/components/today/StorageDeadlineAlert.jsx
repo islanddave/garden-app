@@ -1,45 +1,36 @@
-// src/components/today/StorageDeadlineAlert.jsx — V4-STORAGEDEADLINE-001.
+// An OPERATIONAL ALERT for storage-crop deadlines, deliberately not a band. HarvestReadyBand (a
+// standing "these look ready" list, always there and mostly speculative, handing the reader a triage
+// job) has ZERO render sites; building into it would ship an inert feature. "Dig the sweet potatoes
+// this week or lose them" is categorically different: time-bounded, actionable, and failing to act
+// destroys the crop. `gardening.md` §Reward UX draws exactly that line: frost/heat/watering-crisis/
+// disease warnings are operational alerts, explicitly NOT reward surfaces.
 //
-// WHAT THIS IS, AND WHAT IT DELIBERATELY IS NOT. The ledger row asked for these deadlines inside
-// HarvestReadyBand. That band has ZERO render sites: Dave unmounted it from Today on 2026-08-13
-// (BD-008 / V4-HIDEREADYBAND-001) precisely because he was ignoring it, and ignoring it was the
-// right call — a standing "these look ready" list is always there, mostly speculative, and hands
-// the reader a triage job. Building into it would have shipped an inert feature.
-//
-// Dave's ruling 2026-08-14: build this as an OPERATIONAL ALERT, not a band. "Dig the sweet potatoes
-// this week or lose them" is a categorically different statement from "these look ready" — it is
-// time-bounded, actionable, and failing to act destroys the crop. `gardening.md` §Reward UX draws
-// exactly that line: frost/heat/watering-crisis/disease warnings are operational alerts, explicitly
-// NOT reward surfaces.
-//
-// THE SHAPE IS THE FEATURE: it renders NOTHING unless a sourced deadline is actually near. On
-// 2026-08-14 that means it renders nothing at all, and will keep rendering nothing until Sep 11.
-// The absence is what makes the presence mean something. Do not "fix" the silence by widening the
-// criteria — the moment this shows a row that is merely plausible, it is the ready band again.
+// THE SHAPE IS THE FEATURE: it renders NOTHING unless a sourced deadline is actually near. The
+// absence is what makes the presence mean something. Do not "fix" the silence by widening the
+// criteria: the moment this shows a row that is merely plausible, it is the ready band again.
 //
 // AMBIENT, NOT AN INTERRUPT. The interrupt-exception in §Reward UX PERMITS an interrupt for
 // simultaneously time-sensitive + actionable + harm-on-inaction events (imminent plant loss is
-// named), but permitting is not requiring, and any interrupt needs explicit Dave approval which has
-// NOT been given. So: an in-flow note on the surface he already opens daily. No push, no modal, no
-// toast, no sheet, no overlay, no sound, no haptic, no count badge, and no call to
-// Notification.requestPermission(). If an interrupt is ever wanted, that is a separate Dave call.
+// named), but permitting is not requiring, and any interrupt needs explicit approval, which has NOT
+// been given. So: an in-flow note on the surface opened daily. No push, no modal, no toast, no
+// sheet, no overlay, no sound, no haptic, no count badge, and no call to
+// Notification.requestPermission().
 //
 // TWO TIME BOUNDS, BOTH LOAD-BEARING:
-//  • `upcoming` is silent, from the lib — before the check window opens there is nothing honest to
+//  • `upcoming` is silent, from the lib: before the check window opens there is nothing honest to
 //    say, and a countdown would be the assertion form wearing a clock.
 //  • `past` is silent again after PAST_GRACE_DAYS. storageDeadlines' own `past` phase runs from the
 //    deadline to Dec 31 (the year rolls at New Year), so rendering every past record would leave a
-//    "window has passed" line standing on Today for 77 days. That is a standing list with extra
-//    steps — the exact thing this component exists to not be.
+//    "window has passed" line standing on Today for weeks: a standing list with extra steps.
 //
-// STATUS GATE. `ended`/`failed` plantings are dropped: telling Dave to lift a planting he has
-// already closed out is the fastest way to make the alert ignorable. `harvested` is deliberately
-// NOT dropped — constants.js labels that DB value "Harvesting" (V3-STATUS-003), i.e. picking is in
-// progress, which for a storage crop does not mean the ground is empty.
+// STATUS GATE. `ended`/`failed` plantings are dropped: telling the user to lift a planting they
+// have already closed out makes the alert ignorable. `harvested` is deliberately NOT dropped:
+// constants.js labels that DB value "Harvesting", i.e. picking is in progress, which for a storage
+// crop does not mean the ground is empty.
 //
 // COPY IS THE DATASET'S, VERBATIM. `src/data/storageDeadlines.json` owns the words and carries the
 // provenance rule; this file renders `check_copy`/`past_copy` and adds no claim of its own. Copy is
-// check-form ("start checking X"), never assertion-form ("X is ready") — the one date in the
+// check-form ("start checking X"), never assertion-form ("X is ready"): the one date in the
 // dataset is a regional proxy for vine kill, an observed plant state nobody is recording.
 //
 // Ambient posture matches its neighbours on Today: self-fetching, error swallowed, hidden when
@@ -82,11 +73,11 @@ function plantingLabel(p) {
  * repeating the same sourced sentence twice would read as two separate problems. Returns [] for
  * junk input and never throws; [] is the overwhelmingly common and CORRECT result.
  *
- * V5-TODAYREDESIGN-001 S5 — each group also carries the window's own dates (`checkFromISO`,
- * `deadlineISO`, from storageDeadlineStatus) and the dataset's `displayName`, which the redesigned
- * Today's Heads-up reads: its auto-open keys on the day the window opens and the last two days before
- * the deadline, and its date plate names the deadline. ADDITIVE ONLY — this component renders none of
- * them, so V1's alert is unchanged.
+ * Each group also carries the window's own dates (`checkFromISO`, `deadlineISO`, from
+ * storageDeadlineStatus) and the dataset's `displayName`, which the redesigned Today's Heads-up
+ * reads: its auto-open keys on the day the window opens and the last two days before the deadline,
+ * and its date plate names the deadline. ADDITIVE ONLY: this component renders none of them, so
+ * V1's alert is unchanged.
  */
 export function storageDeadlineGroups(plantings, todayISO, cap = STORAGE_DEADLINE_CAP) {
   if (!Array.isArray(plantings) || plantings.length === 0) return []
@@ -123,11 +114,11 @@ export function storageDeadlineGroups(plantings, todayISO, cap = STORAGE_DEADLIN
 
 export default function StorageDeadlineAlert({ todayISO = null }) {
   // Shares ONE /api/plants request with CareNeeded rather than issuing a second copy of the same
-  // ~0.5-1 MB / 243-row list on the same paint (dataCache's in-flight dedup — both mount inside one
-  // tick, so the second register/revalidate joins the first's promise). Still ambient and still
-  // self-fetching: the hook owns the request, this component owns nothing but the render.
-  // Error stays SWALLOWED — a cold failure leaves `data` undefined, and storageDeadlineGroups
-  // returns [] for anything that isn't an array, so the alert renders nothing exactly as before.
+  // large list on the same paint (dataCache's in-flight dedup: both mount inside one tick, so the
+  // second register/revalidate joins the first's promise). Still ambient and self-fetching: the
+  // hook owns the request, this component owns nothing but the render.
+  // Error stays SWALLOWED: a cold failure leaves `data` undefined, and storageDeadlineGroups
+  // returns [] for anything that isn't an array, so the alert renders nothing.
   const { data: plantings } = useCachedFetch('/api/plants')
 
   const day = todayISO ?? todayLocalISO()

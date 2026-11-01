@@ -5,51 +5,35 @@ import { P, tokens, ICON, ICON_COLORS } from '../../lib/tokens.js'
 import { rainSentences, basisTimeLabel } from '../../lib/rainSentences.js'
 import ColdRangeNote from './ColdRangeNote.jsx'
 
-// Weather widget — V200 Slice 6 reskin (V4-THEME-001). The watering-can scale
-// (computeWateringScale/canRail/pillState) is byte-identical to LOCKED v1, as are the
-// probability-gated rain note (DRG-WXPROB-001) and the freshness/stale/uncertain caveats.
-// The V200 pass was PRESENTATION ONLY: hardcoded PAL hexes -> V200 tokens, the two side-by-side
-// pills became stacked full-width lanes, a NET-NEW no-wrap derived headline was added, and the card
-// shed its hard 330px width (now 100% / border-box, no 320px overflow).
-//
-// V4-WATERWHY-002 (2026-07-16): the "Why?" lane expander is REMOVED — explicit supersede of
-// V3-WATERWHY-001 by Dave's call (see wateringScale.js header). The lane was a <button> whose ONLY
-// job was toggling that panel, so it is now a plain <div>: no aria-expanded/aria-controls, no
-// chevron, no reduced-motion transition. Each lane gained an aria-label stating its actual
-// recommendation — previously the button's "Why this…" aria-label MASKED the rail from screen
-// readers, so the intensity is now announced where it wasn't before. headlineFor() is untouched and
-// remains WCAG-load-bearing. DrG (drgReasoning.js) stays the WHY surface; Today is the ACTION surface.
+// Weather widget. The watering-can scale (computeWateringScale/canRail/pillState) is byte-identical
+// to LOCKED v1, as are the probability-gated rain note and the stale/uncertain caveats' wording.
 //   Tier 1: condition icon + highToday (bold) / tonightLow (medium), sun/moon minis, no labels.
-//   Tier 2: two STACKED lanes [target icon] [label] [can rail | pause shape];
+//   Tier 2: two STACKED full-width lanes [target icon] [label] [can rail | pause shape];
 //           pot = containers, mound+sprout = in-ground. N filled cans of 3 = water at intensity N;
 //           pause SHAPE = hold/skip (3-channel: count + text + color + shape). level>=0.5 -> sage "do",
 //           level 0 -> gold-tint "wait". Headline + rain note restate the guidance (WCAG 1.4.10).
-// Operational surface (Reward-UX V101 §7): semantic state color is appropriate; no reward-surface rules.
+// Operational surface (Reward-UX §7): semantic state color is appropriate; no reward-surface rules.
 //
-// BUG-WXLIVESTAMPSTALE-001 (2026-09-13) — supersedes the line above for the stale/uncertain caveats:
-// they are no longer byte-identical to LOCKED v1, because as shipped they hid behind the live overlay.
-// Dave's gauge read 0.79" by midday while the card read `0.07" fallen · 0.38" more expected · 83%`
-// under `Updated 12:10 · live forecast`. Every number was honest; the presentation was not. Two
-// separate faults, fixed together because they are the same mistake — treating a client-side forecast
-// fetch as if it refreshed the whole card:
-//   1. A current timestamp sat over a measurement frozen at plan generation. The measured figure now
-//      carries its own `as of {time}` inline, in Today.jsx's existing V4-TODAYBASIS-001 grammar.
-//   2. The `!live` gate on `uncertain` (and on `stale`) suppressed the one caveat that explained the
-//      gap. The overlay replaces ONE informational figure; it refreshes neither the plan nor the
-//      weather pattern, so it no longer silences statements about either.
+// There is no "Why?" lane expander: each lane is a plain <div> (not a <button>) whose aria-label
+// states its actual recommendation. headlineFor() is WCAG-load-bearing. DrG (drgReasoning.js) is the
+// WHY surface; Today is the ACTION surface.
 //
-// V4-WEATHERWIDGETICONS-001 (2026-09-02) — icon debt. This file held ELEVEN hand-rolled SVGs with
-// seven off-token stroke widths on the post-login home screen. Five now render through the shared
-// <Icon>: the watering can (care.wateringCanFill), the hold shape (care.pause), the `clear`
-// condition and the day-high mini (care.sun), and the rain-note mini (care.rainPct). Six stay
-// inline and say why at their site — five of them because the whole ConditionIcon family occupies
-// ONE slot and must stay internally consistent, and the only twins for its cloud members are mono
-// LINE glyphs. Every surviving stroke is now an ICON token; fog's off-token 5 is gone entirely.
+// The stale/uncertain caveats are NOT gated on the live overlay. The overlay replaces ONE
+// informational figure (the rain line); it refreshes neither the plan nor the weather pattern, so it
+// must not silence statements about either. A stale gauge-vs-card gap was the failure shape: a
+// current timestamp over a measurement frozen at plan generation, with the one caveat that explained
+// the gap suppressed. The measured figure therefore carries its own `as of {time}` inline.
+//
+// Icons: the watering can (care.wateringCanFill), the hold shape (care.pause), the `clear`
+// condition and the day-high mini (care.sun), and the rain-note mini (care.rainPct) render through
+// the shared <Icon>. Six stay inline and say why at their site (five because the whole
+// ConditionIcon family occupies ONE slot and must stay internally consistent, and the only twins
+// for its cloud members are mono LINE glyphs). Every surviving stroke is an ICON token.
 // COLOUR IS NEVER FLATTENED HERE: the gold sun keeps its ICON_COLORS regions, and every mono glyph
-// is coloured by the CONSUMER (iconAnchors §6 — "the weather surface sets `color` per condition,
-// so hue is never baked"), which is the same blue/gold/grey it painted before.
+// is coloured by the CONSUMER (iconAnchors: the weather surface sets `color` per condition, so hue
+// is never baked).
 
-// V200 token surface — sage "do" family, gold-tint "wait" family, BLUE watering can (water != green).
+// Token surface: sage "do" family, gold-tint "wait" family, BLUE watering can (water != green).
 const PAL = {
   cardBg: P.white, cardBorder: P.border,
   tempHi: P.dark, tempLo: P.mid, micro: P.light,
@@ -62,13 +46,9 @@ const PAL = {
   warnBg: '#fbf3df', warnBorder: P.gold, warnInk: P.gold,
 }
 
-// One rail can. Was a 64-viewBox hand-roll with four off-token strokes (2.6/3.4/3.6/2.2), a
-// module-level mutable counter minting a per-instance clipPath id, and a partial state faked by
-// clipping the LEFT HALF of a solid can. care.wateringCanFill is the registry glyph drawn for
-// exactly this job — §9's "ONE parametric glyph, water level driven by a --fill CSS var", not N
-// pre-rendered assets — so a half can is now an actual half-full can. Colour stays on the consumer
-// per iconAnchors §6: blue once there is water in it, border-grey when there is not, which is the
-// same two hues and the same empty/filled read the hand-roll carried.
+// One rail can: care.wateringCanFill is the registry glyph drawn for this job (one parametric
+// glyph, water level driven by a --fill CSS var), so a half can is an actual half-full can. Colour
+// stays on the consumer: blue once there is water in it, border-grey when there is not.
 const Can = ({ fill = 1, color, ghost }) => (
   <Icon name="care.wateringCanFill" size={24} decorative
     style={{ color: fill === 0 ? ghost : color, '--fill': `${Math.round(fill * 100)}%` }} />
@@ -76,13 +56,11 @@ const Can = ({ fill = 1, color, ghost }) => (
 
 const PotIcon = ({ color }) => <Icon name="care.containers" size={23} decorative style={{ color }} />
 const BedIcon = ({ color }) => <Icon name="care.inground" size={23} decorative style={{ color }} />
-// Pause SHAPE for level 0 — distinct glyph (not mere can-absence): 3-channel hold cue tinted to the gold-tint
-// wait family so the shape + the "Hold" text + the gold color all read the same verdict.
-// The two bars are care.pause now; the ring that gives the mark its mass against a 3-can rail is
-// CSS rather than a hand-drawn <circle>, so the visual is unmoved and the off-token 1.6 stroke
-// became the ICON.minStroke token it was already numerically equal to. aria-hidden, not labelled:
-// the lane above is role="img" with the full verdict in its name, so descendants are presentational
-// and the old aria-label="hold" never reached the a11y tree in the first place.
+// Pause SHAPE for level 0: a distinct glyph (not mere can-absence), a 3-channel hold cue tinted to
+// the gold-tint wait family so the shape + the "Hold" text + the gold color all read the same
+// verdict. The ring that gives the mark its mass against a 3-can rail is CSS; the stroke is the
+// ICON.minStroke token. aria-hidden, not labelled: the lane above is role="img" with the full
+// verdict in its name, so descendants are presentational.
 const PauseIcon = ({ color }) => (
   <span aria-hidden="true" style={{
     width: 24, height: 24, boxSizing: 'border-box', borderRadius: '50%',
@@ -95,30 +73,26 @@ const PauseIcon = ({ color }) => (
 
 // The condition slot ships at 44px and its glyphs are authored in a 64 viewBox. Icon.jsx's rule for
 // size >= 32 is ICON.strokeHero DEVICE px, so the 64-space equivalent of that one token is the token
-// scaled by viewBox/size. Every stroke that survives in this family is this constant — it replaces
-// the hand-picked 4 (clear), 3 (partly cloudy), 3 (rain) and 5 (fog).
+// scaled by viewBox/size. Every stroke that survives in this family is this constant.
 const WX_VIEWBOX = 64, WX_SIZE = 44
 const WX_STROKE = +(ICON.strokeHero * WX_VIEWBOX / WX_SIZE).toFixed(2)
 
 // WMO weather code -> condition glyph (44px). Coarse buckets cover the Conway range; unknown -> overcast.
 //
-// V4-WEATHERWIDGETICONS-001 — `clear` routes to the registry, the other five deliberately do not,
-// and the reason is that this is ONE SLOT rendering one member per day. care.sun is a
-// color-candidate whose regions resolve to the very ICON_COLORS this file was already painting with,
-// so swapping it changes nothing a user could see. The only twins the cloud members have —
-// care.cloud and event.rain — are mono LINE glyphs, and rendered side by side against these solid
-// fills (measured, not assumed) they are markedly lighter. Routing one of six would put a solid
-// cloud in this slot on Tuesday and an outline cloud on Wednesday, which is worse than either
-// uniform choice; and rain/snow are TWO-hue (green cloud + blue water), which a single currentColor
-// cannot carry at all. Levelling these up properly means filled colour VARIANTS on care.cloud and
-// event.rain in the house data-region/colorFills pattern — a shared-registry change that belongs in
-// its own row, not a silent downgrade taken here because a mono twin happened to exist.
+// `clear` routes to the registry, the other five deliberately do not: this is ONE SLOT rendering
+// one member per day. care.sun is a color-candidate whose regions resolve to the very ICON_COLORS
+// this file paints with, so swapping it changes nothing visible. The only twins the cloud members
+// have (care.cloud and event.rain) are mono LINE glyphs, markedly lighter than these solid fills;
+// routing one of six would put a solid cloud in this slot on Tuesday and an outline cloud on
+// Wednesday. Rain/snow are also TWO-hue (green cloud + blue water), which a single currentColor
+// cannot carry. Levelling these up properly means filled colour VARIANTS on care.cloud and
+// event.rain in the data-region/colorFills pattern, a shared-registry change.
 //
-// BUG-WXICONNULLCLEAR-001 — "unknown" includes a stored null, not only an absent key. fetchNWS starts the
-// cosmetic Open-Meteo call at `code = null` and keeps it on a timeout, a network error or an HTML 503, and
-// engine.generatePlan stores it verbatim. The old `{ code = 3 }` default covered undefined only, so a null
-// reached Number(null) === 0 — WMO "clear sky" — and a failed fetch drew a sun titled "clear". `??` sends
-// null down the same overcast path as an absent code; a real 0 is still a finite code and still clear.
+// "unknown" includes a stored null, not only an absent key. fetchNWS starts the cosmetic Open-Meteo
+// call at `code = null` and keeps it on a timeout, a network error or an HTML 503, and
+// engine.generatePlan stores it verbatim. A `{ code = 3 }` default covers undefined only, so a null
+// would reach Number(null) === 0 (WMO "clear sky") and a failed fetch would draw a sun titled
+// "clear". `??` sends null down the same overcast path as an absent code; a real 0 is still clear.
 export function ConditionIcon({ code }) {
   const c = Number(code ?? 3)
   if (c === 0 || c === 1) return <Icon name="care.sun" size={WX_SIZE} title="clear" />
@@ -141,10 +115,9 @@ export function ConditionIcon({ code }) {
       <g fill={ICON_COLORS.dropBody}><circle cx="20" cy="50" r="2" /><circle cx="32" cy="52" r="2" /><circle cx="44" cy="50" r="2" /></g>
     </svg>
   )
-  // Fog's three bars were the one member drawn as STROKES, at an off-token 5. They were never a
-  // line read — they are this family's mass, the job every sibling does with a fill — so they are
-  // rects at the identical geometry rather than a stroke retuned to WX_STROKE, which would have
-  // thinned the only glyph here that has nothing else to carry it.
+  // Fog's three bars are rects, not strokes: they are this family's mass, the job every sibling does
+  // with a fill, so they keep their geometry rather than a stroke retuned to WX_STROKE, which would
+  // thin the only glyph here that has nothing else to carry it.
   if (c >= 45 && c <= 48) return (
     <svg width={WX_SIZE} height={WX_SIZE} viewBox={`0 0 ${WX_VIEWBOX} ${WX_VIEWBOX}`} aria-label="fog">
       <g fill={P.greenLight}>
@@ -162,9 +135,9 @@ export function ConditionIcon({ code }) {
   )
 }
 
-// V3-WXFRESH-001 — honest presentation (unchanged). Frozen nightly snapshot, NOT a live reading.
-// EXPORTED 2026-07-31 so Today's care list can stamp its basis time in the SAME copy grammar. A
-// second vocabulary for "how old is this" would add cognitive load rather than remove it.
+// Honest presentation: a frozen nightly snapshot, NOT a live reading. Exported so Today's care list
+// can stamp its basis time in the SAME copy grammar; a second vocabulary for "how old is this"
+// would add cognitive load rather than remove it.
 export function asOfLabel(generatedAt) {
   if (!generatedAt) return null
   const d = new Date(generatedAt)
@@ -172,38 +145,37 @@ export function asOfLabel(generatedAt) {
   const f = (opts) => new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', ...opts }).format(d)
   return `${f({ month: 'short', day: 'numeric' })} · ${f({ hour: 'numeric', minute: '2-digit' })}`
 }
-// DRG-WXSTATION-002 (V200 §3 "surface source on Today") — turn the hardcoded "Open-Meteo" attribution into
-// the truth. `st` is the stored plan's `hydrology.station` provenance bag written by handler.js:389 from
-// station.mergeStationHydrology/mergeStationWeather; it is ABSENT entirely when no WS-2902 binds to the
-// Space (handler only spreads the key when prov has entries), which is the degrade path: return null, the
-// caller keeps the pre-existing copy, and we never invent a provenance we were not told.
+// Turns the "Open-Meteo" attribution into the truth. `st` is the stored plan's `hydrology.station`
+// provenance bag (station.mergeStationHydrology/mergeStationWeather); it is ABSENT entirely when no
+// WS-2902 binds to the Space, which is the degrade path: return null, the caller keeps the
+// pre-existing copy, and we never invent a provenance we were not told.
 //
-// Forecast is ALWAYS part of the picture when the gauge is contributing — a rain gauge cannot report
-// tomorrow_/upcoming_ (V200 B2) and those fields drive both the rain note and the lanes — so the gauge case
-// is "rain gauge + forecast", never a bare "rain gauge" that would over-claim the forecast half.
-// BUG-WXOUTAGESTAMPCOPY-001 — except when the forecast came back EMPTY (see forecastMissing). Then there is
-// no forecast half to claim: tomorrow_/upcoming_ are null and no figure in the snapshot came from a forecast,
-// so the caller passes `forecast: false` and the gauge is named alone.
+// Forecast is ALWAYS part of the picture when the gauge is contributing: a rain gauge cannot report
+// tomorrow_/upcoming_ and those fields drive both the rain note and the lanes, so the gauge case is
+// "rain gauge + forecast", never a bare "rain gauge" that would over-claim the forecast half. The
+// exception is when the forecast came back EMPTY (see forecastMissing): there is no forecast half to
+// claim, so the caller passes `forecast: false` and the gauge is named alone.
 //
-// Deliberately NOT surfaced here (Jen-invisible rule): station_mac, station_age_min, station_fresh,
-// today_remaining_basis/_from_hour/_fallback, station_temp_f, microclimate_offset, low_source, and the raw
-// enum values themselves. Those are engine internals and belong in the admin-gated Garden Activity view.
+// Deliberately NOT surfaced here: station_mac, station_age_min, station_fresh,
+// today_remaining_basis/_from_hour/_fallback, station_temp_f, microclimate_offset, low_source, and
+// the raw enum values themselves. Those are engine internals and belong in the admin-gated Garden
+// Activity view.
 export function hydrologySourceLabel(st, { forecast = true } = {}) {
   if (!st) return null
   const gauged = st.recent_source === 'station' || st.today_source === 'station' || st.today_source === 'station+forecast'
   if (gauged) return forecast ? 'rain gauge + forecast' : 'rain gauge'
-  // No gauge contribution. Say so, and say why — a silent fallback is the defect this exists to remove.
-  // 'stale' means the station stopped reporting; 'warmup' means it is reporting but has no lookback yet.
-  // Calling warmup "offline" would be a false statement about the hardware, so the two do not share copy.
+  // No gauge contribution. Say so, and say why: a silent fallback is the defect. 'stale' means the
+  // station stopped reporting; 'warmup' means it is reporting but has no lookback yet. Calling
+  // warmup "offline" would be a false statement about the hardware, so the two do not share copy.
   if (st.recent_source !== 'forecast' && st.today_source !== 'forecast') return null // nothing usable — claim nothing
   if (st.station_uncertainty === 'stale') return 'forecast · gauge offline'
   if (st.station_uncertainty === 'warmup') return 'forecast · gauge warming up'
   return 'forecast'
 }
-// BUG-WXBANNERSHOWERYCOPY-001 — the caveat for the OTHER thing engine.hydrologyStatus flags. The flag is
-// raised for a showery regime (status.ok true: the figures exist and can still move) AND for missing
-// precip data (status.ok false: some figures do not exist). The banner said "Showery pattern" for both,
-// which on a forecast-outage day asserted a weather pattern nobody had forecast.
+// The caveat for the OTHER thing engine.hydrologyStatus flags. The flag is raised for a showery
+// regime (status.ok true: the figures exist and can still move) AND for missing precip data
+// (status.ok false: some figures do not exist). "Showery pattern" for both would, on a
+// forecast-outage day, assert a weather pattern nobody had forecast.
 // "The watering call above" is the two lanes, so the sentence is keyed on what THEY read:
 // wateringScale.measuredWater = recent_precip_in + today_observed_in. The gauge is named when it
 // supplied either (station.mergeStationHydrology: recent_source 'station', or today_observed_in, which
@@ -218,19 +190,21 @@ export function incompleteForecastCopy(hydrology) {
   if (Number.isFinite(hydrology?.recent_precip_in)) return `${lead}. The watering call above still counts recent rain.`
   return `${lead}, so the watering call above doesn’t count on any rain.`
 }
-// BUG-WXOUTAGESTAMPCOPY-001 — did the forecast fetch return NOTHING that this snapshot shows? The incomplete
-// banner (incompleteForecastCopy, above) says so in words; this keeps the stamp and the rain line beside it
-// from saying otherwise. On the 2026-09-02 error body (fetchPrecip -> null since BUG-FETCHPRECIPZERO-001)
-// the card still printed "· Open-Meteo" with no gauge bound, and with one "rain gauge + forecast" plus
-// "none more expected" — the last read off the 0 that station.mergeStationHydrology writes for today's
-// remainder when there is no forecast to subtract from (station.test.js "no forecast to add"). That 0 is
-// an absence, not a forecast of a dry evening.
-// Gated on the engine's own incomplete verdict (hydrologyStatus ok:false), so a complete snapshot never moves.
-// Then "nothing" means: none of the fields only a forecast can supply, and no figure the provenance bag credits
-// to the forecast — or, with no bag, no rain figure at all (every one of them would have been Open-Meteo's).
-// A PARTIAL forecast is not missing: whatever did arrive keeps its source, as it did before.
-// Keyed on the figures, never on today_remaining_basis/_fallback: a complete snapshot with no hourly block
-// carries the same 'wholeday'/'no_hourly' pair, and its "none more expected" is a real forecast statement.
+// Did the forecast fetch return NOTHING that this snapshot shows? The incomplete banner
+// (incompleteForecastCopy, above) says so in words; this keeps the stamp and the rain line beside it
+// from saying otherwise. On an error body (fetchPrecip -> null) the card would otherwise still print
+// "· Open-Meteo" with no gauge bound, and with one "rain gauge + forecast" plus "none more
+// expected", the last read off the 0 that station.mergeStationHydrology writes for today's remainder
+// when there is no forecast to subtract from (station.test.js "no forecast to add"). That 0 is an
+// absence, not a forecast of a dry evening.
+// Gated on the engine's own incomplete verdict (hydrologyStatus ok:false), so a complete snapshot
+// never moves. Then "nothing" means: none of the fields only a forecast can supply, and no figure
+// the provenance bag credits to the forecast; or, with no bag, no rain figure at all (every one of
+// them would have been Open-Meteo's). A PARTIAL forecast is not missing: whatever did arrive keeps
+// its source.
+// Keyed on the figures, never on today_remaining_basis/_fallback: a complete snapshot with no hourly
+// block carries the same 'wholeday'/'no_hourly' pair, and its "none more expected" is a real
+// forecast statement.
 const FORECAST_ONLY = ['today_pop', 'tomorrow_precip_in', 'tomorrow_pop', 'upcoming_precip_in']
 export function forecastMissing(hydrology) {
   if (hydrology?.status?.ok !== false) return false
@@ -249,27 +223,25 @@ function isStaleSnapshot(generatedAt, planDate) {
   const genEtDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d)
   return genEtDate < planDate
 }
-// The V2 glance card derives the rain line's `uncertain` flag exactly as this card does (V5-TODAYREDESIGN-001).
+// The V2 glance card derives the rain line's `uncertain` flag exactly as this card does.
 export { isStaleSnapshot }
-// basisTimeLabel (src/lib/rainSentences.js, the ET time half of asOfLabel's grammar) plus the 'just now'
-// fallback — one formatter for the stamp and the rain line, not two.
+// basisTimeLabel (src/lib/rainSentences.js, the ET time half of asOfLabel's grammar) plus the 'just
+// now' fallback: one formatter for the stamp and the rain line, not two.
 function liveTimeLabel(refreshedAt) {
   return basisTimeLabel(refreshedAt) || 'just now'
 }
 
-// NET-NEW — derive the no-wrap headline sentence from the two lane verdicts.
+// Derives the no-wrap headline sentence from the two lane verdicts.
 //
-// BUG-TODAYWATER-001 honesty guard (2026-08-12, Dave's call). `waterDueCount` is the length of the
-// SAME plan's water_due list, rendered by <CareNeeded> two components below this headline. Today has
-// carried two independently-thresholded watering models since the widget shipped — this one zeroes
-// both lanes at wetNow >= 0.8 with NO PoP gate, the engine suppresses at 1.0" gated on PoP >= 60 —
-// so any morning landing between them printed the ABSOLUTE sentence "All set — no watering needed
-// today." directly above a full watering list. It happened on 2026-08-03 (0.98") and again on
-// 2026-08-08 (0.99" over 78 listed plantings); the 0.02-class near-miss is what Dave actually sees.
+// Honesty guard: `waterDueCount` is the length of the SAME plan's water_due list, rendered by
+// <CareNeeded> below this headline. Today carries two independently-thresholded watering models
+// (this one zeroes both lanes at wetNow >= 0.8 with NO PoP gate; the engine suppresses at 1.0" gated
+// on PoP >= 60), so a morning landing between them would print the ABSOLUTE sentence "All set — no
+// watering needed today." directly above a full watering list.
 //
-// This guard does not adjudicate which model is right — the harmonization does that. It only forbids
-// the one sentence that is unconditionally FALSE while the list is non-empty. Deliberately scoped to
-// the both-hold branch: the other three sentences are lane advice, not a claim about the whole page.
+// This guard does not adjudicate which model is right. It only forbids the one sentence that is
+// unconditionally FALSE while the list is non-empty. Scoped to the both-hold branch: the other
+// three sentences are lane advice, not a claim about the whole page.
 // Copy is length-budgeted for a 390px Android viewport (the visible line is nowrap + ellipsis; the
 // full sentence ships as sr-only text, so the a11y contract is never the truncated one).
 function headlineFor(containersDo, bedsDo, waterDueCount = 0) {
@@ -279,7 +251,7 @@ function headlineFor(containersDo, bedsDo, waterDueCount = 0) {
   if (waterDueCount > 0) return `Rain may cover today's list — ${waterDueCount} still due.`
   return 'All set — no watering needed today.'
 }
-// The V2 glance card prints this verdict verbatim (V5-TODAYREDESIGN-001).
+// The V2 glance card prints this verdict verbatim.
 export { headlineFor }
 
 export default function WeatherWidget({
@@ -295,72 +267,63 @@ export default function WeatherWidget({
   headline: headlineShown = null,
   coldRangePhrase = undefined,
 }) {
-  // V5-FROSTTWOMODELS-001 — `lowShown` is DISPLAY ONLY: the night-low figure below prints it when set
-  // (Today passes the one low it prints for tonight, src/lib/tonightLow.js). It never reaches the
-  // watering scale — the lanes are the nightly plan's verdict, and a display change must not move care.
+  // `lowShown` is DISPLAY ONLY: the night-low figure below prints it when set (Today passes the one
+  // low it prints for tonight, src/lib/tonightLow.js). It never reaches the watering scale; the
+  // lanes are the nightly plan's verdict, and a display change must not move care.
   const scale = computeWateringScale(hydrology, weather)
 
-  // DRG-WXROLL-001 — intraday freshness (unchanged). Live precip overlays the INFORMATIONAL rain figure +
-  // stamp ONLY; the watering recommendation (lanes/scale) STAYS on the nightly hydrology.
+  // Intraday freshness: live precip overlays the INFORMATIONAL rain figure + stamp ONLY; the
+  // watering recommendation (lanes/scale) STAYS on the nightly hydrology.
   const live = !!(liveHydrology && (liveHydrology.today_precip_in != null || liveHydrology.tomorrow_precip_in != null))
   const asOf = asOfLabel(generatedAt)
   const liveAt = live ? liveTimeLabel(refreshedAt) : null
-  // BUG-WXLIVESTAMPSTALE-001 — both caveats used to carry a `!live` gate, so the overlay hid them
-  // precisely when the card looked freshest. Neither caveat is about the rain figure the overlay
-  // replaces: `stale` is about the PLAN (a previous-day generation still driving the lanes and the
-  // measured totals) and `uncertain` is the engine's verdict on the WEATHER PATTERN, which a showery
-  // day has whatever time you read it. A client-side forecast fetch refreshes neither, so neither is
-  // gated on it now. Measured 2026-09-13: a morning the gauge finished at 0.79" read
-  // `0.07" fallen · 0.38" more expected · 83%` under a live stamp, with the stored caveat — "showery
-  // today … amounts shift through the day", the one line that explained the gap — suppressed.
-  // `stale` still wins over `uncertain`: one banner, not two (unchanged precedence). The other two
-  // readers of `uncertain` — `showToday` and the rain-line render gate — are unmoved by the ungating:
-  // both already OR it with `live`, so the branch it newly reaches was one `live` had covered anyway.
+  // Neither caveat is gated on `live`: `stale` is about the PLAN (a previous-day generation still
+  // driving the lanes and the measured totals) and `uncertain` is the engine's verdict on the
+  // WEATHER PATTERN, which a showery day has whatever time you read it. A client-side forecast fetch
+  // refreshes neither. `stale` still wins over `uncertain`: one banner, not two. The other two
+  // readers of `uncertain` (`showToday` and the rain-line render gate) already OR it with `live`.
   const stale = isStaleSnapshot(generatedAt, planDate)
   const uncertain = !!(hydrology?.status?.uncertainty?.flag) && !stale
-  // BUG-WXBANNERSHOWERYCOPY-001 — the flag covers two different states, so split it by what it means.
-  // `incomplete` is hydrologyStatus's missing-data verdict (ok:false), `showery` is everything else it
-  // flags. Only showery may drive the "could climb" note or open the rain line on its own: on an
-  // incomplete snapshot there is nothing to hedge, and the line would print a chance floored from null.
+  // The flag covers two different states, so split it by what it means. `incomplete` is
+  // hydrologyStatus's missing-data verdict (ok:false), `showery` is everything else it flags. Only
+  // showery may drive the "could climb" note or open the rain line on its own: on an incomplete
+  // snapshot there is nothing to hedge, and the line would print a chance floored from null.
   const incomplete = uncertain && hydrology?.status?.ok === false
   const showery = uncertain && !incomplete
 
-  // DRG-WXSTATION-002 — provenance rides on the NIGHTLY hydrology (the live overlay is a client-side
-  // Open-Meteo fetch and carries none), so read it off `hydrology` regardless of the live branch.
-  // Absent bag -> the pre-existing hardcoded copy, unchanged; present bag -> whatever it actually says.
+  // Provenance rides on the NIGHTLY hydrology (the live overlay is a client-side Open-Meteo fetch
+  // and carries none), so read it off `hydrology` regardless of the live branch. Absent bag -> the
+  // pre-existing hardcoded copy; present bag -> whatever it actually says.
   const stationProv = (hydrology && typeof hydrology.station === 'object' && hydrology.station) || null
-  // BUG-WXOUTAGESTAMPCOPY-001 — an empty forecast is named by nobody: the gauge alone when it contributed,
-  // otherwise nothing (DRG-WXSTATION-002's "claims no source at all"). Not gated on `stale` or `live`: a
-  // previous-day snapshot names its sources as truly as today's does, and the live stamp never shows this.
+  // An empty forecast is named by nobody: the gauge alone when it contributed, otherwise nothing.
+  // Not gated on `stale` or `live`: a previous-day snapshot names its sources as truly as today's
+  // does, and the live stamp never shows this.
   const noForecast = forecastMissing(hydrology)
   const sourceLabel = stationProv ? hydrologySourceLabel(stationProv, { forecast: !noForecast }) : (noForecast ? null : 'Open-Meteo')
 
-  // The rain line and the following-day line (BUG-RAINCARDFORECASTONLY-001, BUG-RAINFCSTONEMODEL-001 and
-  // the rest of their history) are composed in src/lib/rainSentences.js, lifted out of this spot verbatim
-  // (V5-TODAYREDESIGN-001) so the V2 glance card prints the same sentences. rainNote comes back null while
-  // its display gate is shut; gaugeMeasured also qualifies the live stamp below.
+  // The rain line and the following-day line are composed in src/lib/rainSentences.js (shared with
+  // the V2 glance card). rainNote comes back null while its display gate is shut; gaugeMeasured also
+  // qualifies the live stamp below.
   const { rainNote, nextNote, gaugeMeasured } = rainSentences({ hydrology, liveHydrology, live, uncertain, showery, noForecast, generatedAt })
 
-  // Derived headline (NET-NEW). Both lane verdicts -> one no-wrap sentence; the lanes + rain note restate it.
+  // Derived headline. Both lane verdicts -> one no-wrap sentence; the lanes + rain note restate it.
   const containersDo = pillState(scale.containers) === 'do'
   const bedsDo = pillState(scale.beds) === 'do'
-  // `headline` is DISPLAY ONLY, like `lowShown`: the V2 glance card passes the verdict its closed state prints
-  // (verdict.js glanceHeadline), so opening the card never changes the sentence (Today finish plan D-2). Absent
-  // (V1), the sentence is computed here exactly as before.
+  // `headline` is DISPLAY ONLY, like `lowShown`: the V2 glance card passes the verdict its closed
+  // state prints (verdict.js glanceHeadline), so opening the card never changes the sentence. Absent
+  // (V1), the sentence is computed here.
   const headline = headlineShown || headlineFor(containersDo, bedsDo, waterDueCount)
 
   // A full-width stacked lane: [leading target icon] [label flex:1 min-width:0] [3-can rail OR pause shape].
-  // V4-WATERWHY-002: non-interactive (was a <button> only to toggle the removed Why panel).
+  // Non-interactive.
   //
   // role="img" is REQUIRED here, not decoration. A bare <div aria-label> is prohibited ARIA: a
-  // role-less div maps to role=generic, generic cannot be named, and the label is IGNORED — with the
-  // children aria-hidden that renders the whole lane silent. (Shipped exactly that to dev in 2851779
-  // and caught it in the pre-promote regression pass; an a11y-tree dump showed ZERO roles and the
-  // words "Containers"/"In-ground beds" absent entirely.) role="img" supports naming and announces
+  // role-less div maps to role=generic, generic cannot be named, and the label is IGNORED; with the
+  // children aria-hidden that renders the whole lane silent. role="img" supports naming and announces
   // the lane as one atomic unit, which is what it is: icon + rail are a single graphic.
   // BEWARE: getByLabelText matches the ATTRIBUTE and passes even when the name never reaches the
-  // a11y tree — assert these lanes with getByRole('img', { name }), which is the real contract.
-  // minHeight 44 is kept: it's the lane's visual rhythm, not a tap target.
+  // a11y tree; assert these lanes with getByRole('img', { name }), which is the real contract.
+  // minHeight 44 is the lane's visual rhythm, not a tap target.
   const Lane = ({ level, Target, label }) => {
     const isDo = pillState(level) === 'do'
     const c = isDo
@@ -392,8 +355,8 @@ export default function WeatherWidget({
   }
 
   return (
-    // V5-TODAYSHAPE-001 — region anchor for the Today layout gate's ordered census. See the note in
-    // Today.jsx: testid, not heading text, so a copy rename reds the census rather than emptying it.
+    // Region anchor for the Today layout gate's ordered census (testid, not heading text, so a copy
+    // rename reds the census rather than emptying it). See the note in Today.jsx.
     <div data-testid="today-weather" style={{
       width: '100%', maxWidth: '100%', boxSizing: 'border-box', margin: '0 auto',
       borderRadius: tokens.radius.card, padding: tokens.space.md,
@@ -403,40 +366,34 @@ export default function WeatherWidget({
         <ConditionIcon code={weather.code} />
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 1, lineHeight: 1 }}>
           <span style={{ fontWeight: 800, letterSpacing: '-0.02em', fontSize: 36, color: PAL.tempHi }}>{weather.highToday}&deg;</span>
-          {/* Same gold sun as the `clear` condition, so it is the same registry entry. The label now
-              actually reaches the a11y tree: <Icon title> emits role="img", where the hand-rolled
-              svg carried a bare aria-label that role=graphics-document cannot be named by — this
-              mini and its moon sibling had been silent, the WATERWHY blackout shape.
-              16, NOT the hand-roll's 13. The hand-roll inked its rays at 1.08 device px, which is
-              BELOW ICON.minStroke — normalising to the 2.0 floor at 13px closes the aperture between
-              disc and rays and the mark reads as an asterisk beside the numeral. Rendered at 13/14/
-              15/16/18/20 on cream before picking: 16 is the first size where it reads as a sun. The
-              moon opposite stays 11 — it is a single crescent with no counter-space to lose. */}
+          {/* Same gold sun as the `clear` condition, so it is the same registry entry. <Icon title>
+              emits role="img", so the label reaches the a11y tree (a bare aria-label on an svg
+              cannot name it).
+              16, NOT 13: a 13px render normalises the rays to the 2.0 stroke floor, which closes
+              the aperture between disc and rays so the mark reads as an asterisk beside the
+              numeral; 16 is the first size where it reads as a sun. The moon opposite stays 11: it
+              is a single crescent with no counter-space to lose. */}
           <Icon name="care.sun" size={16} title="day high" style={{ marginTop: 3 }} />
         </div>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 1, lineHeight: 1, marginLeft: 2 }}>
           <span data-testid="weather-night-low" style={{ fontWeight: 600, letterSpacing: '-0.02em', fontSize: 23, color: PAL.tempLo }}>{lowShown ?? weather.tonightLow}&deg;</span>
-          {/* Crescent moon — the one glyph in this file with NO registry twin of any kind. care.tempLow
-              is the nearest key by meaning and it is a thermometer with a falling arrow, a different
-              object entirely, so pointing at it would be a redraw wearing a swap's clothes. Kept
-              inline as a genuine single-use mark; it is a bare fill, so there is no stroke here to
-              be off-token. Drawing a care.moon is the follow-up if the weather family ever grows. */}
+          {/* Crescent moon: the one glyph in this file with NO registry twin of any kind. care.tempLow
+              is the nearest key by meaning but it is a thermometer with a falling arrow, a different
+              object entirely. Kept inline as a genuine single-use mark; it is a bare fill, so there
+              is no stroke to be off-token. Drawing a care.moon is the follow-up if the weather
+              family ever grows. */}
           <svg width="11" height="11" viewBox="0 0 24 24" style={{ marginTop: 2 }} role="img" aria-label="night low"><path d="M20 14.5A8 8 0 1 1 10.5 4 6.3 6.3 0 0 0 20 14.5Z" fill={P.mid} /></svg>
         </div>
-        {/* V5-WXCOLDBAND-001: the forecast's cold end, only when it is colder than the low above. */}
-        {/* `coldRangePhrase`: the V2 glance card's "could reach" (finish plan §3.2); absent (V1), the note's own words. */}
+        {/* The forecast's cold end, only when it is colder than the low above. */}
+        {/* `coldRangePhrase`: the V2 glance card's "could reach"; absent (V1), the note's own words. */}
         <ColdRangeNote coldRange={coldRange} planDate={planDate} lowShown={lowShown ?? weather.tonightLow} phrase={coldRangePhrase} />
       </div>
 
-      {/* NET-NEW no-wrap derived headline. The visible line is ellipsis-truncated, so it is NOT a
-          faithful alternative — the full sentence ships as visually-hidden TEXT and the truncated
-          copy is aria-hidden, so it never double-announces.
-          Was `<div aria-label={headline}>` wrapping an aria-hidden child, whose comment claimed the
-          sentence was "in the a11y tree (aria-label)". It was not: aria-label on a role-less div is
-          ignored (role=generic can't be named), so this headline had been SILENT since V200 Slice 6.
-          Pre-existing, not from V4-WATERWHY-002 — but that cut removed the Why panel that used to
-          carry the guidance, making this the load-bearing restatement surface (WCAG 1.4.10). It has
-          to actually work now. Real text in the DOM beats ARIA naming for a sentence. */}
+      {/* No-wrap derived headline. The visible line is ellipsis-truncated, so it is NOT a faithful
+          alternative: the full sentence ships as visually-hidden TEXT and the truncated copy is
+          aria-hidden, so it never double-announces. aria-label on a role-less div is ignored
+          (role=generic can't be named), so real text in the DOM is what makes this headline reach
+          the a11y tree; it is the load-bearing restatement surface (WCAG 1.4.10). */}
       <div style={{ marginTop: tokens.space.sm }}>
         <span style={{
           position: 'absolute', width: 1, height: 1, padding: 0, margin: -1,
@@ -460,13 +417,13 @@ export default function WeatherWidget({
           {/* care.rainPct is drawn for this exact line: its registry note calls it "the FORECAST twin
               of event.rain … one drop under a raised cloud reads as 'some chance', three streaks read
               as 'it is raining'", and every sentence this glyph sits beside is a forecast. Single-hue
-              blue before and after — the hand-roll's cloud was the same dropBody at 0.55 opacity. */}
+              blue. */}
           <Icon name="care.rainPct" size={13} decorative style={{ color: ICON_COLORS.dropBody }} />
           {rainNote}
         </div>
       )}
-      {/* BUG-RAINFCSTONEMODEL-001 (b) — its own gate: the following day's rain can matter on a card whose
-          own day is dry and quiet, which is exactly when the line above stays shut. */}
+      {/* Its own gate: the following day's rain can matter on a card whose own day is dry and quiet,
+          which is exactly when the line above stays shut. */}
       {nextNote && (
         <div data-testid="weather-next-rain" style={{ marginTop: tokens.space.xs, textAlign: 'center', fontSize: tokens.type.xs, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, color: PAL.micro }}>
           <Icon name="care.rainPct" size={13} decorative style={{ color: ICON_COLORS.dropBody }} />
@@ -476,13 +433,12 @@ export default function WeatherWidget({
 
       {live ? (
         <div style={{ marginTop: tokens.space.sm, textAlign: 'center', fontSize: tokens.type.xs, color: PAL.micro }}>
-          {/* DRG-WXSTATION-002 — with a gauge on site the live overlay is forecast-ONLY (client Open-Meteo),
-              so a bare "live" would let a predicted figure read as a measured one directly under a stamp
-              that says "rain gauge" the rest of the day. That masquerade is the BUG-RAINACTUAL-001 defect
-              class. Qualified only when a gauge exists to be confused with; no station -> copy unchanged.
-              BUG-WXLIVESTAMPSTALE-001 adds `gaugeMeasured`: a card showing a measured "fallen" figure has
-              something to be confused with whether or not the provenance bag came through, and that is the
-              exact card this stamp was misread on. */}
+          {/* With a gauge on site the live overlay is forecast-ONLY (client Open-Meteo), so a bare
+              "live" would let a predicted figure read as a measured one directly under a stamp that
+              says "rain gauge" the rest of the day. Qualified only when a gauge exists to be confused
+              with (`stationProv`) or when the card shows a measured "fallen" figure
+              (`gaugeMeasured`), whether or not the provenance bag came through; no station -> copy
+              unchanged. */}
           Updated {liveAt} &middot; {stationProv || gaugeMeasured ? 'live forecast' : 'live'}
         </div>
       ) : asOf ? (
@@ -496,12 +452,10 @@ export default function WeatherWidget({
           color: PAL.warnInk, background: PAL.warnBg, border: `1px solid ${PAL.warnBorder}`,
           borderRadius: 9, padding: '5px 8px',
         }}>
-          {/* BUG-WXLIVESTAMPSTALE-001 — was "today's forecast hasn't refreshed yet", which is a FALSE
-              statement on the branch this banner now also reaches: with the live overlay on, a fresh
-              forecast is exactly what HAS arrived. What has not refreshed is the PLAN, and naming it
-              says what is actually affected — the lanes and the fallen/expected totals, all still read
-              off a previous day's generation. True on both branches, so the banner no longer needs to
-              hide from one of them. */}
+          {/* What has not refreshed is the PLAN, so the banner names it: the lanes and the
+              fallen/expected totals are read off a previous day's generation. It does not claim the
+              forecast is stale, which is false when the live overlay is on, so it is true on both
+              branches. */}
           &#9888; This is an older snapshot &mdash; today&rsquo;s plan hasn&rsquo;t refreshed yet, so the watering call and rain totals may be out of date.
         </div>
       )}
@@ -511,9 +465,8 @@ export default function WeatherWidget({
           color: PAL.warnInk, background: PAL.warnBg, border: `1px solid ${PAL.warnBorder}`,
           borderRadius: 9, padding: '5px 8px',
         }}>
-          {/* OPS-PLANHOURLY-001 — was "these amounts are a pre-dawn snapshot", true of the 02:00/05:30
-              generation and false under the hourly schedule. The caveat survives because the showery
-              uncertainty is real regardless of when the plan ran; only the provenance claim is gone. */}
+          {/* The caveat survives because the showery uncertainty is real regardless of when the plan
+              ran; it makes no claim about when the plan was generated. */}
           &#9888; Showery pattern &mdash; these amounts can still change through the day. The watering call above already plays it safe.
         </div>
       )}
@@ -523,8 +476,8 @@ export default function WeatherWidget({
           color: PAL.warnInk, background: PAL.warnBg, border: `1px solid ${PAL.warnBorder}`,
           borderRadius: 9, padding: '5px 8px',
         }}>
-          {/* BUG-WXBANNERSHOWERYCOPY-001 — same slot and precedence as the showery caveat (stale still
-              outranks it), different claim: see incompleteForecastCopy. */}
+          {/* Same slot and precedence as the showery caveat (stale still outranks it), different
+              claim: see incompleteForecastCopy. */}
           &#9888; {incompleteForecastCopy(hydrology)}
         </div>
       )}
