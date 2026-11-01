@@ -931,9 +931,9 @@ function InventoryDetailPage() {
                   // Succession disambiguation: three plantings of one cultivar are indistinguishable by
                   // name, and this is the case the multi-planting minority is made of.
                   labelFormat="wave"
-                  // "Not recorded", not "you must choose" — the honest empty state for a bought packet
                   // "Not recorded", not "you must choose": the honest empty state for a bought packet and for a
                   // saved one whose parent the user no longer remembers.
+                  emptyMeaning="none"
                   // An already-set parent stays listed and selected even if it later falls out of scope.
                   retainOutOfScopeValue
                   required={false}
