@@ -325,10 +325,170 @@ describe('BUG-EVENTAUDITACTOR-001 — actor GUC shares a transaction with every 
     expect(WITH_ACTOR.filter((g) => !isSetConfig(g.element0)).map((g) => `${g.file}:${g.line}`)).toEqual([])
   })
 
+  // Where each withActor actor comes from. The identifier is resolved through the scopes around the call; a parameter
+  // is followed to every call of its function in lambda/ (by position, or by key for a `{ userId }` param or an
+  // `opts?.userId` read) until it reaches the kit: the `userId` of `await requestContext(…)` imported from
+  // ./request-context.js. Anything else (a body or query read, a literal, a reassignment, a function passed as a
+  // value or never called) comes back UNRESOLVED, so a new shape fails closed until this resolver learns it.
+  const KIT = 'requestContext().userId'
+  const SRC = new Map()
+  const srcOf = (rel) => {
+    if (!SRC.has(rel)) SRC.set(rel, { code: readFileSync(join(ROOT, rel), 'utf8'), ast: parseFile(rel) })
+    return SRC.get(rel)
+  }
+  const isFn = (n) => ['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'].includes(n?.type)
+  // visit(node, scopes, parent): scopes is the Program plus every function around node, outermost first.
+  function walkScoped(node, scopes, parent, visit) {
+    if (!node || typeof node !== 'object') return
+    if (Array.isArray(node)) { for (const n of node) walkScoped(n, scopes, parent, visit); return }
+    if (typeof node.type !== 'string') return
+    visit(node, scopes, parent)
+    const inner = isFn(node) ? [...scopes, node] : scopes
+    for (const key of Object.keys(node)) if (key !== 'loc') walkScoped(node[key], inner, node, visit)
+  }
+  function walkLocal(node, visit) {
+    if (!node || typeof node !== 'object') return
+    if (Array.isArray(node)) { for (const n of node) walkLocal(n, visit); return }
+    if (typeof node.type !== 'string') return
+    visit(node)
+    if (isFn(node)) return
+    for (const key of Object.keys(node)) if (key !== 'loc') walkLocal(node[key], visit)
+  }
+  const nameOf = (p) => p?.type === 'Identifier' ? p.name : p?.type === 'AssignmentPattern' ? nameOf(p.left) : null
+  const keyOf = (pattern, name) => pattern?.type === 'ObjectPattern' &&
+    pattern.properties.find((q) => q.type === 'Property' && !q.computed && nameOf(q.value) === name)?.key.name
+  // name's binding in one scope: a parameter (index, and key when destructured) or a local declarator.
+  function bindingIn(scope, name) {
+    let found = null
+    for (const [param, p] of (scope.params ?? []).entries()) {
+      if (nameOf(p) === name) found = { param, key: null }
+      else if (keyOf(p, name)) found = { param, key: keyOf(p, name) }
+    }
+    if (!found) {
+      walkLocal(scope.body, (n) => {
+        if (n.type !== 'VariableDeclarator') return
+        if (nameOf(n.id) === name) found = { init: n.init, key: null, at: n }
+        else if (keyOf(n.id, name)) found = { init: n.init, key: keyOf(n.id, name), at: n }
+      })
+    }
+    if (!found) return null
+    walkAst(scope.body, (n) => {
+      if ((n.type === 'AssignmentExpression' && n.left.type === 'Identifier' && n.left.name === name) ||
+          (n.type === 'UpdateExpression' && n.argument.type === 'Identifier' && n.argument.name === name)) found.reassigned = n
+    })
+    return found
+  }
+  const unresolved = (rel, node, why) => ['UNRESOLVED ' + rel + ':' + node.loc.start.line + ' ' + why]
+  const sourceText = (rel, node) => srcOf(rel).code.slice(node.start, node.end).replace(/\s+/g, ' ')
+  // Every path by which `name` (or `name.key`) gets its value at node, each ending in KIT or UNRESOLVED.
+  function resolveRef(rel, scopes, node, name, key, seen) {
+    for (let i = scopes.length - 1; i >= 0; i--) {
+      const b = bindingIn(scopes[i], name)
+      if (!b) continue
+      if (b.reassigned) return unresolved(rel, b.reassigned, name + ' is reassigned')
+      if (b.key && key) return unresolved(rel, node, name + '.' + key + ' of a destructured ' + b.key)
+      if (b.param !== undefined) return viaCallers(rel, scopes[i], b.param, b.key ?? key, seen)
+      if (!b.init) return unresolved(rel, b.at, name + ' has no initializer')
+      return fromValue(rel, scopes.slice(0, i + 1), b.init, b.key ?? key, seen)
+    }
+    return unresolved(rel, node, name + ' has no binding in scope')
+  }
+  function fromValue(rel, scopes, expr, key, seen) {
+    const e = expr.type === 'ChainExpression' ? expr.expression : expr
+    if (key === 'userId' && e.type === 'AwaitExpression' && e.argument.type === 'CallExpression' &&
+        e.argument.callee.type === 'Identifier' && importedFrom(srcOf(rel).ast, e.argument.callee.name, './request-context.js', 'requestContext')) return [KIT]
+    if (e.type === 'Identifier') return resolveRef(rel, scopes, e, e.name, key, seen)
+    if (!key && e.type === 'MemberExpression' && !e.computed && e.object.type === 'Identifier') {
+      return resolveRef(rel, scopes, e, e.object.name, e.property.name, seen)
+    }
+    if (key && e.type === 'ObjectExpression') {
+      const prop = e.properties.find((p) => p.type === 'Property' && !p.computed && p.key.name === key)
+      return prop ? fromValue(rel, scopes, prop.value, null, seen) : unresolved(rel, e, 'no ' + key + ' in ' + sourceText(rel, e))
+    }
+    return unresolved(rel, e, sourceText(rel, e) + (key ? ' .' + key : ''))
+  }
+  const importedFrom = (ast, local, source, imported) => ast.body.some((s) => s.type === 'ImportDeclaration' &&
+    s.source.value === source && s.specifiers.some((sp) => sp.type === 'ImportSpecifier' && sp.imported.name === imported && sp.local.name === local))
+  function fnName(rel, fn) {
+    if (fn.id) return fn.id.name
+    let name = null
+    walkAst(srcOf(rel).ast, (n) => { if (n.type === 'VariableDeclarator' && n.init === fn && n.id.type === 'Identifier') name = n.id.name })
+    return name
+  }
+  // Parameter `index` (field `key` when set) of fn, resolved at every call of fn in lambda/: the defining file by its
+  // own name, any other file by the name it imports fn under.
+  function viaCallers(rel, fn, index, key, seen) {
+    const name = fnName(rel, fn)
+    const hop = rel + '#' + name + '(arg ' + index + (key ? '.' + key : '') + ')'
+    if (!name) return unresolved(rel, fn, 'anonymous function, arg ' + index)
+    if (seen.has(hop)) return unresolved(rel, fn, 'recursive ' + hop)
+    const out = []
+    let calls = 0
+    for (const file of FILES) {
+      const { ast } = srcOf(file)
+      let local = file === rel ? name : null
+      if (!local) {
+        for (const s of ast.body) {
+          if (s.type !== 'ImportDeclaration' || join(dirname(file), s.source.value) !== rel) continue
+          const sp = s.specifiers.find((x) => x.type === 'ImportSpecifier' && x.imported.name === name)
+          if (sp) local = sp.local.name
+        }
+      }
+      if (!local) continue
+      walkScoped(ast.body, [ast], ast, (n, scopes, parent) => {
+        if (n.type !== 'Identifier' || n.name !== local) return
+        if (parent.type === 'CallExpression' && parent.callee === n) {
+          calls++
+          const arg = parent.arguments[index]
+          if (!arg || arg.type === 'SpreadElement') { out.push(...unresolved(file, parent, name + ' called without arg ' + index)); return }
+          out.push(...fromValue(file, scopes, arg, key, new Set([...seen, hop])).map((p) => hop + ' <- ' + file + ':' + parent.loc.start.line + ' <- ' + p))
+          return
+        }
+        const declared = (isFn(parent) && parent.id === n) || (parent.type === 'VariableDeclarator' && parent.id === n) ||
+          ['ImportSpecifier', 'ExportSpecifier'].includes(parent.type) ||
+          (parent.type === 'MemberExpression' && parent.property === n && !parent.computed) ||
+          (parent.type === 'Property' && parent.key === n && !parent.shorthand && !parent.computed)
+        if (!declared) out.push(...unresolved(file, n, name + ' used as a value, not called'))
+      })
+    }
+    return calls ? out : [...out, ...unresolved(rel, fn, name + ' is never called in lambda/')]
+  }
+  function actorTrails() {
+    const trails = new Map()
+    for (const rel of [...new Set(WITH_ACTOR.map((g) => g.file))]) {
+      const { ast } = srcOf(rel)
+      walkScoped(ast.body, [ast], ast, (n, scopes) => {
+        if (!isWithActorCall(n)) return
+        const a = n.arguments[1]
+        const paths = a?.type === 'Identifier' || a?.type === 'MemberExpression' ? fromValue(rel, scopes, a, null, new Set())
+          : unresolved(rel, n, 'actor is ' + (a ? sourceText(rel, a) : 'absent'))
+        trails.set(rel + ':' + n.loc.start.line, paths)
+      })
+    }
+    return trails
+  }
+
   it('withActor\'s actor argument is the caller (userId / ctx.userId), never a literal', () => {
     const caller = (a) => (a?.type === 'Identifier' && a.name === 'userId') ||
       (a?.type === 'MemberExpression' && a.object.type === 'Identifier' && a.object.name === 'ctx' && a.property.name === 'userId')
     expect(WITH_ACTOR.filter((g) => !caller(g.actor)).map((g) => `${g.file}:${g.line}`)).toEqual([])
+
+    // ...and that name is bound to the authenticated requester at every site, through every hop, never to a value
+    // the request carries.
+    const trails = actorTrails()
+    expect([...trails.keys()].sort()).toEqual(WITH_ACTOR.map((g) => g.file + ':' + g.line).sort())
+    const bad = [...trails].flatMap(([site, paths]) => paths.filter((p) => !p.endsWith(KIT)).map((p) => site + ' <- ' + p))
+    expect(bad).toEqual([])
+    // The two hops the photos sites ride, so a resolver that stopped following them could not pass vacuously.
+    const promote = trails.get([...trails.keys()].find((k) => k.startsWith('lambda/photos/index.js:') &&
+      trails.get(k).every((p) => p.startsWith('lambda/photos/index.js#autoPromoteFeatured(arg 3.userId)'))))
+    expect(promote).toHaveLength(2)
+    const replay = [...trails].filter(([site]) => site.startsWith('lambda/photos/photoDelete.js:')).map(([, paths]) => paths)
+    expect(replay).toHaveLength(2)
+    for (const paths of replay) {
+      expect(paths).toHaveLength(1)
+      expect(paths[0]).toMatch(/^lambda\/photos\/photoDelete\.js#restoreHeroPointers\(arg 3\) <- .*lambda\/photos\/photoDelete\.js#restorePhoto\(arg 1\.userId\) <- lambda\/photos\/index\.js:\d+ <- requestContext\(\)\.userId$/)
+    }
   })
 
   it('the helper checks the actor, leads its batch with the transaction-local GUC, then runs the builder', () => {

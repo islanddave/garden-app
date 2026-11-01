@@ -126,7 +126,9 @@ describe('V4-SPACEPHOTO-001 — flag-OFF inertness (AC-5)', () => {
   it('the spaces auto-promote arm emits NOTHING when the flag is off', async () => {
     const autoPromoteFeatured = instantiate(promoteSrc);
     const sql = makeSql();
-    await autoPromoteFeatured(sql, { id: 'photo-1', space_id: 'space-1' }, ['user_dave'], { spaceEnabled: false });
+    // A real actor, so a broken flag check reaches the template instead of dying in withActor's refusal inside the
+    // non-fatal catch (which would leave sql.calls empty and this case green).
+    await autoPromoteFeatured(sql, { id: 'photo-1', space_id: 'space-1' }, ['user_dave'], { spaceEnabled: false, userId: 'user_dave' });
     expect(sql.calls).toHaveLength(0);
   });
 
