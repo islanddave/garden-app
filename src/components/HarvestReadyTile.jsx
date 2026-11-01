@@ -1,8 +1,6 @@
-// W2 dashboard tile — "Harvest ready" surface (V1.2a-2 Session 3).
-// Lists projects with status 'harvesting' as tappable rows that deep-link to
-// the harvest log form. Includes an ambient time-blindness severity dot on the
-// "observed N days ago" line — an ADHD-friendly cue that a harvesting project
-// hasn't been looked at recently.
+// Dashboard tile — "Harvest ready" surface. Lists projects with status 'harvesting' as tappable rows
+// that deep-link to the harvest log form. Includes an ambient time-blindness severity dot on the
+// "observed N days ago" line: a cue that a harvesting project hasn't been looked at recently.
 
 import React from 'react'
 import { useOverlayNavigate } from '../context/OverlayContext.jsx'
@@ -70,8 +68,8 @@ const TILE_LABEL_STYLE = {
 
 export default function HarvestReadyTile({ harvestReady, onDataRefresh }) {
   const navigate = useOverlayNavigate()
-  // onDataRefresh is accepted for forward-compat (inline log/refresh in a later
-  // wave). Intentionally unused here — reference it so linters don't flag it.
+  // onDataRefresh is accepted for forward-compat and intentionally unused; referenced so linters
+  // don't flag it.
   void onDataRefresh
 
   // Branch 1: undefined => still loading. Subtle italic placeholder, matching

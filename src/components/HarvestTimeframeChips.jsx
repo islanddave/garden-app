@@ -1,23 +1,22 @@
-// HarvestTimeframeChips — V4-HARVESTVIEW-001 S4 + V4-HARVDEFAULT-001. THE shared harvest timeframe
-// control (design §2b: ONE control, never a second Totals-only selector). Extracted from
-// Harvests.jsx's local TimeframeChips so the export sheet (V4-HARVEXPORT-001 §2c: "date range = the
-// existing timeframe vocabulary") reuses the SAME row instead of minting a sibling. Deliberately NOT
-// migrated onto FilterChipRow this release (design §1b: consolidation is a ledger follow-up).
+// HarvestTimeframeChips — THE shared harvest timeframe control (V4-HARVESTVIEW-001, V4-HARVDEFAULT-001):
+// ONE control, never a second Totals-only selector. The Harvests page and the export sheet
+// (V4-HARVEXPORT-001: "date range = the existing timeframe vocabulary") reuse the SAME row instead
+// of minting a sibling. Deliberately NOT built on FilterChipRow.
 //
 // The 4th chip is the SEASON chip: it ALWAYS opens a small grow-year sheet (a tap on the
-// already-active chip reopens it — no deselect ambiguity) and RELABELS itself with the chosen season.
-// Canon label convention (harvest-view §4): "2026 season" = the season ENDING Oct 2026; selecting the
-// current season restores "This season". Sheet rows carry the Nov–Oct span; current season first,
-// prior seasons below (universe from the caller — the UNFILTERED first_pick range, design §2b, so it
-// never self-collapses under a season selection). Writes the same `season:<year>` / '' vocabulary the
-// server already parses — zero server change for the selector itself.
+// already-active chip reopens it, so there is no deselect ambiguity) and RELABELS itself with the
+// chosen season. Label convention: "2026 season" = the season ENDING Oct 2026; selecting the current
+// season restores "This season". Sheet rows carry the Nov–Oct span; current season first, prior
+// seasons below (universe from the caller: the UNFILTERED first_pick range, so it never
+// self-collapses under a season selection). Writes the same `season:<year>` / '' vocabulary the
+// server already parses.
 import React, { useState } from 'react'
 import { P } from '../lib/constants.js'
 import Sheet from './forms/Sheet.jsx'
 import { currentGrowYear } from '../lib/growYear.js'
 
-// ≥48px touch targets per the build-spec addendum (design §5.8) — the whole row moves together so
-// the new season chip doesn't sit taller than its siblings.
+// >=48px touch targets; the whole row moves together so the season chip doesn't sit taller than its
+// siblings.
 const chipStyle = (active) => ({
   padding: '6px 14px', minHeight: 48, borderRadius: 20, fontSize: '0.82rem', fontWeight: 600,
   cursor: 'pointer', border: `1px solid ${active ? P.green : P.border}`,
@@ -41,12 +40,10 @@ export default function HarvestTimeframeChips({ value, onChange, seasonYears, ar
   const current = currentGrowYear(new Date())
   const years = Array.isArray(seasonYears) && seasonYears.length > 0 ? seasonYears : [current]
   const seasonActive = /^season:\d{4}$/.test(String(value ?? ''))
-  // V4-HARVEXPORTDAYS-001 (BD-018): Today/Yesterday lead the row — day-grain is the commonest
-  // export scope (log tonight's picking, or last night's after the fact) and reading order should
-  // match how often a chip is reached for. Both resolve SERVER-SIDE in HARVEST_TZ, so a tap near
-  // midnight or from a device on another clock still means the garden's day, not the browser's.
-  // These land on the shared row by design (§2b: ONE control) and so appear on the Harvests page
-  // too — a second export-only selector is exactly what this component exists to prevent.
+  // V4-HARVEXPORTDAYS-001 (BD-018): Today/Yesterday lead the row, since day-grain is the commonest
+  // export scope. Both resolve SERVER-SIDE in HARVEST_TZ, so a tap near midnight or from a device on
+  // another clock still means the garden's day, not the browser's. They appear on the Harvests page
+  // too, by design: a second export-only selector is what this component exists to prevent.
   const fixed = [
     { value: 'today', label: 'Today' },
     { value: 'yesterday', label: 'Yesterday' },

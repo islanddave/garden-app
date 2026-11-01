@@ -1,24 +1,19 @@
 // src/components/SpaceAttachPicker.jsx — V4-SPACECLIENTGAP-001 Stage 2.
 //
 // Batch-attach existing photos to the Space. This is the ONLY client caller of
-// PUT /api/photos/:id/space (the attach sub-resource shipped dark in v3.83.0); until now the
-// route was live in prod with nothing able to invoke it, and the only way a photo could acquire a
-// space_id at all was to be uploaded directly on /space.
+// PUT /api/photos/:id/space.
 //
-// WHY IT LIVES ON /space AND NOT IN THE PHOTO LIBRARY TAG MODAL (crucible boss, carried into the
-// Stage-2 brief). A sixth <select> in that modal was the obvious-looking home and is the wrong one
-// on three independent counts: (1) the modal body has no `overflowY`, so a sixth field pushes the
-// submit button off-screen on a phone; (2) that form ALREADY has a control labelled "Space" which
-// means LOCATION — two different tiers, same word, one form (now renamed "Zone", but the collision
-// is what made the modal the wrong surface in the first place); (3) attaching is a BATCH act —
-// "these twelve wide shots are the property" — and a per-photo dropdown makes it a twelve-visit
-// chore. The general re-tag PUT also cannot carry space_id at all; see the route's own comment.
+// WHY IT LIVES ON /space AND NOT IN THE PHOTO LIBRARY TAG MODAL: (1) that modal body has no
+// `overflowY`, so another field pushes the submit button off-screen on a phone; (2) that form
+// already has a "Zone" control whose old label "Space" meant LOCATION, so two different tiers shared
+// one word in one form; (3) attaching is a BATCH act ("these twelve wide shots are the property") and
+// a per-photo dropdown makes it a twelve-visit chore. The general re-tag PUT also cannot carry
+// space_id at all; see the route's own comment.
 //
-// SEMANTICS. Attach only. Detach is deliberately absent from this surface: the route rejects
-// detaching a photo's only parent with a 400, and the honest UI for "this photo belongs nowhere
-// now" is the tag modal, not a bulk picker. Nothing here designates a hero either — attach and
-// designate are separate acts (that is why there are two routes), so a batch attach never silently
-// changes the feature photo.
+// SEMANTICS. Attach only. Detach is deliberately absent: the route rejects detaching a photo's only
+// parent with a 400, and the honest UI for "this photo belongs nowhere now" is the tag modal. Nothing
+// here designates a hero either; attach and designate are separate acts (two routes), so a batch
+// attach never silently changes the feature photo.
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useApiFetch } from '../lib/api.js'
 import { P, T } from '../lib/tokens.js'
@@ -28,17 +23,15 @@ import { useDismissable } from '../context/DismissRegistry.jsx'
 import { LAYER } from '../lib/dismissLayers.js'
 
 // Bounded concurrency. Each attach is its own PUT (the route is single-photo by design), so a
-// 40-photo selection is 40 requests. Unbounded Promise.all would open 40 sockets at once and, on a
-// cold Lambda, hand several of them a 503 that reads to the user as "the app dropped my photos".
-// Four keeps the wall-clock reasonable while staying inside a warm container's comfort.
+// 40-photo selection is 40 requests; unbounded Promise.all would open 40 sockets at once and, on a
+// cold Lambda, hand several a 503 that reads as "the app dropped my photos".
 const ATTACH_CONCURRENCY = 4
 
-// GET /api/photos caps at 200 and has NO offset/cursor — there is no pagination to page through.
-// Prod carries ~981 photos, so this picker can only ever offer the most recent PAGE_LIMIT of them.
-// That is a real limit, not a rounding error, so the sheet SAYS SO when the list comes back full
-// (see the truncation notice) rather than quietly presenting a partial library as the whole thing.
-// Paginating the endpoint properly means touching all four list SELECTs, each of which is
-// flag-off byte-identity-sensitive — deliberately out of scope for the flip commit.
+// GET /api/photos caps at 200 and has NO offset/cursor, so this picker can only ever offer the most
+// recent PAGE_LIMIT photos. That is a real limit, so the sheet SAYS SO when the list comes back full
+// (see the truncation notice) rather than presenting a partial library as the whole thing.
+// Paginating the endpoint means touching all four list SELECTs, each flag-off byte-identity-
+// sensitive, so it is out of scope here.
 const PAGE_LIMIT = 200
 
 // Run `worker` over `items` with at most `limit` in flight. Resolves to a result array in INPUT
@@ -67,13 +60,8 @@ export default function SpaceAttachPicker({ spaceId, spaceName, onClose, onAttac
   const dialogRef = useRef(null)
   const closeRef = useRef(null)
 
-  // Garden-wide read, then filter client-side to what is ATTACHABLE. There is no server-side
-  // "?space_id=null" filter and this deliberately does not add one: the candidate set is "every
-  // photo not already on this space", which is a negation the list endpoint has no vocabulary for,
-  // and the wall is already capped at the endpoint's row limit (see PAGE_LIMIT above).
-  // V4-BACKNAV-001 Slice 2 — mounted-means-open. `busy: saving` preserves this surface's existing
-  // guard: it already refused Escape mid-save by hand, and the registry's blockOnBusy is what lets
-  // it join without regressing that.
+  // Mounted-means-open. `busy: saving` keeps this surface's guard against Escape mid-save: the
+  // registry's blockOnBusy is what lets it join without regressing that.
   const { registered, isTopmost } = useDismissable({ open: true, onDismiss: onClose, busy: saving, layer: LAYER.SHEET })
 
   useEffect(() => {
@@ -92,11 +80,13 @@ export default function SpaceAttachPicker({ spaceId, spaceName, onClose, onAttac
     return () => ac.abort()
   }, [fetch, loadTick])
 
+  // Garden-wide read, then filter client-side to what is ATTACHABLE. There is no server-side
+  // "?space_id=null" filter and none is added: the candidate set is "every photo not already on this
+  // space", a negation the list endpoint has no vocabulary for, and the wall is already capped at
+  // the endpoint's row limit (see PAGE_LIMIT above).
   // Already-attached rows are EXCLUDED, not shown-and-disabled: they are visible one scroll down in
-  // the gallery this picker sits above, so listing them again would be the same photo twice on one
-  // screen with different affordances. Depends on the list carrying space_id — it does, on every
-  // branch, since the 2026-08-02 server fix (before that it was selected on the ?space_id branch
-  // only, and every row here would have read as unattached).
+  // the gallery this picker sits above, so listing them again would show the same photo twice with
+  // different affordances. Depends on the list carrying space_id on every branch.
   const candidates = useMemo(
     () => (photos ?? []).filter((p) => p.space_id !== spaceId),
     [photos, spaceId],
@@ -112,10 +102,9 @@ export default function SpaceAttachPicker({ spaceId, spaceName, onClose, onAttac
     setFailed(null)
   }, [])
 
-  // Escape closes, and focus lands on the close control so a keyboard user is not dropped at the
-  // top of the document behind the sheet. Mirrors Lightbox's grammar rather than inventing a
-  // second modal idiom. Not a full focus trap — Lightbox owns that pattern and copying half of it
-  // would be worse than matching the simpler one.
+  // Escape closes, and focus lands on the close control so a keyboard user is not dropped at the top
+  // of the document behind the sheet. Mirrors Lightbox's grammar. Not a full focus trap: Lightbox
+  // owns that pattern and copying half of it would be worse than matching the simpler one.
   useEffect(() => {
     closeRef.current?.focus()
     function onKey(e) {
@@ -147,9 +136,9 @@ export default function SpaceAttachPicker({ spaceId, spaceName, onClose, onAttac
     setSaving(false)
 
     // PARTIAL FAILURE IS A FIRST-CLASS OUTCOME, not an error toast over a closed sheet. N requests
-    // can fail independently, so "some worked" is the common failure, and closing here would hide
-    // which ones. The sheet stays open with ONLY the failures still selected, so the retry is the
-    // same button again and cannot double-attach the ones that already landed (a re-attach is
+    // can fail independently, so closing here would hide which ones. The sheet stays open with ONLY
+    // the failures still selected, so the retry is the same button again and cannot double-attach the
+    // ones that already landed (a re-attach is
     // idempotent server-side anyway, but the user should not have to trust that).
     if (bad.length) {
       setSelected(new Set(bad))
@@ -213,8 +202,7 @@ export default function SpaceAttachPicker({ spaceId, spaceName, onClose, onAttac
         ) : (
           <>
           {/* Honest about the cap. A full page back means there are almost certainly older photos
-              this sheet cannot reach, and silently showing 200 of 981 as if it were the library is
-              the kind of quiet truncation that reads as "my photo is gone". */}
+              this sheet cannot reach, and a quiet truncation reads as "my photo is gone". */}
           {(photos ?? []).length >= PAGE_LIMIT && (
             <p data-testid="space-attach-truncated" style={{ margin: '0 0 10px', fontSize: '0.76rem', color: P.mid }}>
               Showing your {PAGE_LIMIT} most recent photos. Older ones aren’t listed here yet — you
@@ -229,14 +217,12 @@ export default function SpaceAttachPicker({ spaceId, spaceName, onClose, onAttac
               // Tile style note: `padding: 0` must come BEFORE paddingBottom — a trailing shorthand
               // would reset the aspect-ratio padding to 0 and collapse every tile to a 1px line.
               return (
-                // V4-A11YGATE-001: role="listitem" used to sit ON the button. That overrode the
-                // button role outright (so 6 toggles announced as static list items) AND made
-                // aria-pressed invalid — listitem does not support it — so the selected state was
-                // dropped too. axe: 236 aria-allowed-attr violations, the repo's largest. The list
-                // structure is real and worth keeping, so listitem moves to a wrapper, matching
-                // forms/TileGrid.jsx. The wrapper is now the grid item, so the button needs an
-                // explicit width:100% to keep filling its cell (global box-sizing is border-box,
-                // main.jsx, so the 1–2px border stays inside the column).
+                // V4-A11YGATE-001: the listitem role sits on a wrapper, not on the button. On the
+                // button it overrode the button role (toggles announced as static list items) and
+                // made aria-pressed invalid, so the selected state was dropped too. Matches
+                // forms/TileGrid.jsx. The wrapper is the grid item, so the button needs an explicit
+                // width:100% to keep filling its cell (global box-sizing is border-box, main.jsx, so
+                // the 1–2px border stays inside the column).
                 <div role="listitem" key={photo.id} style={{ minWidth: 0 }}>
                 <button
                   type="button"

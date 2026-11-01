@@ -1,11 +1,10 @@
-// LoveMehPopover — D-INV-1 Option A in-context species prefs.
-// Canonical spec: revision §3.29 (long-press → ❤️ Love / ☓ Meh / Cancel → PATCH species-prefs).
-// V100 binding: §5 Stage 2 ambient; this is an in-context popover, NOT a modal.
+// LoveMehPopover — in-context species prefs: long-press → Love / Meh / Cancel → PATCH species-prefs.
+// Ambient: an in-context popover, NOT a modal.
 //
 // HARD RULES:
 //   - NOT a modal / NOT a coachmark / NOT a toast / NOT a tap-to-claim
-//   - Discoverability INTENTIONALLY undiscovered for week 1 (no onboarding hint)
-//   - 300ms heart/dot pulse confirmation per §3.29, NO toast
+//   - Intentionally undiscovered at first (no onboarding hint)
+//   - 300ms heart/dot pulse confirmation, NO toast
 //   - Click outside / Escape / pick = dismiss
 //
 // Props:
@@ -27,7 +26,7 @@ export default function LoveMehPopover({ open, anchorRef = null, species = null,
   const ref = useRef(null)
   const [pulse, setPulse] = useState(null) // 'love' | 'meh' | null
 
-  // V4-BACKNAV-001 Slice 2 — shared registry owns Escape when present.
+  // The shared registry owns Escape when present.
   const { registered, isTopmost } = useDismissable({ open, onDismiss: onClose, layer: LAYER.SHEET })
 
   // Escape key dismiss.

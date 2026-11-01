@@ -1,26 +1,22 @@
-// V4-APPBAR-003 — ONE peach search-first header on every content surface (unifies the old
-// root/detail/unauth split; retires TopBar). Variant is a function of route class
-// (lib/routeClass.js):
+// V4-APPBAR-003 — ONE peach search-first header on every content surface. Variant is a function of
+// route class (lib/routeClass.js):
 //   root    -> 52px: brand wordmark + the three action circles (Snap, Harvest, Search), NO Back.
-//   detail  -> the SAME row with a Back (history) button ahead of the brand. root and detail now
-//              differ by that ONE button and nothing else — both render from a single JSX block
-//              below, so a header action can never land on one variant and miss the other.
-//              52px == the retired TopBar height, so every `100dvh - 52px` shell +
-//              PlantingDetail's sticky `top:52` still hold.
+//   detail  -> the SAME row with a Back (history) button ahead of the brand. root and detail differ
+//              by that ONE button and nothing else; both render from a single JSX block below, so a
+//              header action can never land on one variant and miss the other. 52px keeps every
+//              `100dvh - 52px` shell and PlantingDetail's sticky `top:52` valid.
 //   unauth  -> 52px brand moment: brand wordmark + Sign in, banner behind, NO search (targets are
 //              Protected pre-auth).
 //   capture -> slim immersive CaptureBar (Back + optional title) for /capture, /field.
 // Unknown routes default to 'detail', so a new route can never silently lose its header.
-// V4-HEADERPARITY-001 (Dave, 2026-08-18): root gave up the 88px full-width "Search your garden"
-// launcher for the same magnifier circle every other screen has — search parity WITHOUT a Back
+//
+// Root uses the same magnifier circle every other screen has, giving search parity WITHOUT a Back
 // arrow (reclassifying the five tabs to 'detail' would have bought the icon and shipped the arrow;
-// routeClass.js records that exact regression). Dropping root to 52px also retired the breathing
-// SCRIM: measured with scripts/banner_contrast.py, that gradient's 0.42-alpha stop lands right
-// behind the wordmark in a 52px box (2.03:1 worst case against a 4.5:1 floor), which is precisely
-// why the 52px detail header always used the near-solid DIM_SCRIM. One scrim now.
-// Rehomed OFF the header (Dave, V4-APPBAR-003): Favorites heart -> Garden tab; Field/Desk chip ->
-// BottomNav More (already mirrored there, now the primary home); What's-New dot -> BottomNav More
-// "Release Notes" (already present). Header is brand + the three actions.
+// routeClass.js records that regression). The 52px box also needs the near-solid DIM_SCRIM: a
+// gradient with a 0.42-alpha stop lands right behind the wordmark at 2.03:1 contrast against a 4.5:1
+// floor (measured with scripts/banner_contrast.py). One scrim.
+// Header is brand + the three actions; Favorites, the Field/Desk chip and the What's-New dot live
+// elsewhere (Garden tab, BottomNav More).
 // DIM_SCRIM stops mirror scripts/banner_contrast.py STOPS — change BOTH together.
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
@@ -50,14 +46,13 @@ function Magnifier({ size = 17 }) {
 
 // V4-TOPCHROMEACTIONS-001 (BD-027) — Snap + Harvest as header actions.
 //
-// INLINE SVG, NOT THE ICON REGISTRY, deliberately. This file already draws its own glyphs
-// (Magnifier above, the mic in the root pill) and pulls in no icon module; the header is chrome
-// and stays self-contained. More decisively: the registry has NO harvest anchor — `event.harvest`
-// resolves to STATUS_GLYPHS.harvesting, which is the EMOJI 🧺 (iconRegistry.js:21), and minting a
-// real `action.harvest` anchor is a governed act (24px + 18px masters on the Pass B keyline
-// grammar, plus an approved entry in scripts/icon-ci/icon-golden-baseline.json). That belongs to
-// V4-ICON-001, not to this lane. Both glyphs below are drawn on Magnifier's exact grammar —
-// 24 viewBox, stroke-2, round caps — so the eventual registry sweep is mechanical.
+// INLINE SVG, NOT THE ICON REGISTRY, deliberately: the header is chrome and stays self-contained
+// (Magnifier above and the mic draw their own glyphs). The registry has NO harvest anchor
+// (`event.harvest` resolves to the emoji STATUS_GLYPHS.harvesting), and minting a real
+// `action.harvest` anchor is a governed act (24px + 18px masters on the Pass B keyline grammar, plus
+// an approved entry in scripts/icon-ci/icon-golden-baseline.json) that belongs to V4-ICON-001. Both
+// glyphs are drawn on Magnifier's exact grammar (24 viewBox, stroke-2, round caps) so the eventual
+// registry sweep is mechanical.
 function Camera({ size = 18 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={P.greenDeep} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -78,65 +73,45 @@ function Basket({ size = 18 }) {
   )
 }
 
-// One shared shape for every circular header action (search, snap, harvest) — the search circle's
-// style was already a literal in the detail header; a second and third copy is where the three
-// silently drift apart, which is the exact divergence BD-027 exists to kill.
-// 44x44, raised from 36 on 2026-08-17. These two circles carry the app's #1 and #2 HUMAN ACTIONS —
-// harvest 664 and photo 601 over 90 days, 1,265 combined — measured as actions, not as event rows.
-// That distinction is the whole reason this changed: denominated in event_log rows, harvest looks
-// like 4.9% of activity and this header looks over-provisioned; denominated in taps (watering
-// arrives ~18 events per batch, harvest is 1:1) harvest is ~32% of everything Dave does. So the two
-// highest-frequency actions in the product were sitting on the two smallest, least-reachable
-// targets in the product, at the top edge of a 390px one-handed screen. 44 is the platform floor.
+// One shared shape for every circular header action (search, snap, harvest): separate copies are
+// where the three silently drift apart (BD-027).
+// 44x44, the platform touch floor. Harvest and photo are the app's #1 and #2 HUMAN ACTIONS measured
+// as taps, not as event rows (a watering batch writes ~18 rows, a harvest 1:1), so they must not sit
+// on the smallest targets in the product.
 //
-// NOT fixed here, and the bigger half of the problem: they are still in the TOP corner, which is
-// the worst thumb-reach zone one-handed. Moving harvest capture into the thumb zone is the real
-// Fitts's-law fix and is a layout decision, not a constant.
+// NOT fixed here: they are still in the TOP corner, the worst thumb-reach zone one-handed. Moving
+// harvest capture into the thumb zone is the real fix and is a layout decision, not a constant.
 const ACTION_CIRCLE = {
   position: 'relative', zIndex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
   width: 44, height: 44, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.75)',
   textDecoration: 'none', flexShrink: 0, ...FROST,
 }
 
-// Snap is a PAGE (route class 'capture' swaps the whole header for CaptureBar). It was a plain Link
-// until BD-032; it is now a button that opens the picker in-tap and then navigates — see SnapAction
-// below for why the navigation alone could not do it.
+// Snap is a PAGE (route class 'capture' swaps the whole header for CaptureBar); the Snap circle is a
+// button that opens the OS picker IN THIS TAP, then parks the file and navigates (BD-032).
 //
-// V4-WEIGHINCTA-001 (CHECKIN PLAN B5, Dave GO 2026-08-18) — Harvest now opens the WEIGH-IN SESSION
-// full-page (/log?session=harvest), not the single-event overlay it carried from the retired FAB row.
-// Both halves of that change are load-bearing and neither works alone:
-//   - the TARGET, because B5's done-criterion is "session <=1 tap"; this circle is on every content
-//     surface, so it is the only doorway that buys one tap from anywhere.
-//   - the POSTURE, because session mode is full-page ONLY — EventNew gates every session behavior on
-//     `harvestSessionParam && !inOverlay`, so an OverlayLink here would degrade to the plain
-//     ?event_type=harvest form and the session would silently never engage. A Link, deliberately.
-// What this gives up: the overlay used to preserve your place on the page behind it. That loss is
-// bounded to the GLOBAL action, which never carried ?plant= or ?project= and so was always "start a
-// harvest from scratch" — the case the session's ready-planting tray is built for. Every CONTEXTUAL
-// harvest entry (HarvestWatchBand, HarvestReadyTile, HarvestReadyBand) still deep-links
-// ?plant=&event_type=harvest through an overlay and is untouched here.
-// V4-HEADERPARITY-001: Search moved IN here rather than being copied into the root variant. The
-// three circles are now one definition with one call site per header, which is the only structure
-// in which root and detail cannot drift apart on what actions they carry. Search stays LAST — it is
-// the affordance every screen already trained on the right edge. Not rendered by 'unauth' or
-// 'pending' (all three targets are Protected / identity-bearing), which is why this stays a
-// component the signed-in row opts into rather than something baked into the bar itself.
-// BD-032 — the Snap circle opens the OS picker IN THIS TAP, then parks the file and navigates.
+// A plain Link to /capture would land on a step whose only control is "Choose photo", a dead tap. It
+// cannot be fixed from inside CaptureFlow: a file input needs transient activation, the navigation
+// gesture is already spent, and Android Chrome blocks auto-opening on mount (CaptureFlow documents
+// this). Opening it here works because THIS tap is the trusted gesture. Same pattern as
+// planting/QuickActions.jsx; this reuses `pendingCapture` rather than a second hand-off.
 //
-// It used to be a plain <Link to="/capture">, which landed on a step whose only control was a
-// "Choose photo" button: a screen with one option is a dead tap, and Dave hit it on arrival and
-// again after every save. It could not be fixed from inside CaptureFlow — a file input needs
-// transient activation, and the navigation gesture that got you there is already spent, so
-// auto-opening on mount is blocked by Android Chrome (CaptureFlow documents this).
+// It still navigates when the user CANCELS the picker: <input type=file> fires no cancel event, so
+// "navigate only on pick" would strand the tap silently. Landing on the photo step with a working
+// Choose button is the correct fallback.
 //
-// Opening it here works because THIS tap is the trusted gesture. Same pattern already shipped in
-// planting/QuickActions.jsx:149 for the same reason; this reuses `pendingCapture` rather than
-// inventing a second hand-off.
-//
-// Deliberately still navigates when the user CANCELS the picker: <input type=file> fires no cancel
-// event, so "navigate only on pick" would strand the tap silently for anyone who backs out. Landing
-// on the photo step with a working Choose button is the correct fallback, and is what the old
-// behaviour was for everyone.
+// Harvest opens the harvest page full-page, not the single-event overlay (V4-WEIGHINCTA-001). Both
+// halves are load-bearing: the TARGET, because this circle is on every content surface and is the only
+// one-tap doorway from anywhere; and the POSTURE, because session mode is full-page ONLY (EventNew
+// gates every session behavior on `harvestSessionParam && !inOverlay`), so an OverlayLink here would
+// degrade to the plain ?event_type=harvest form and the session would silently never engage. A Link,
+// deliberately. Every CONTEXTUAL harvest entry (HarvestWatchBand, HarvestReadyTile, HarvestReadyBand)
+// still deep-links ?plant=&event_type=harvest through an overlay.
+// Search lives in HeaderActions rather than being copied into the root variant, so the three circles
+// are one definition with one call site per header and root and detail cannot drift apart on what
+// actions they carry. Search stays LAST (the right-edge affordance every screen trained on). Not
+// rendered by 'unauth' or 'pending' (all three targets are Protected / identity-bearing), which is why
+// this stays a component the signed-in row opts into.
 function SnapAction() {
   const navigate = useNavigate()
   const inputRef = useRef(null)
@@ -168,11 +143,10 @@ function HeaderActions() {
   return (
     <>
       <SnapAction />
-      {/* V5-HARVESTONEDOOR-001: retargeted from `/log?session=harvest` to the combined harvest page.
-          Still a plain Link and still full-page, for the same reason V4-WEIGHINCTA-001 gave — the
-          Manual half IS the weigh-in session and it engages only outside an overlay. What changes
-          is that this circle now lands on voice by default, with the session one tap away, rather
-          than on the session with no route to voice at all. */}
+      {/* V5-HARVESTONEDOOR-001: opens the combined harvest page. Still a plain Link and still
+          full-page for the V4-WEIGHINCTA-001 reason above: the Manual half IS the weigh-in session
+          and it engages only outside an overlay. It lands on voice by default, with the session one
+          tap away. */}
       <Link to="/log/harvest" aria-label="Log a harvest" data-testid="topchrome-harvest" style={ACTION_CIRCLE}>
         <Basket />
       </Link>
@@ -197,9 +171,9 @@ export default function TopChrome() {
   }, [])
   const banner = useMemo(() => pickBanner(new Date(dayKey), BANNERS), [dayKey])
 
-  // V5-NAVANYSLOT-001 (Dave, 2026-10-01: "follow my bar") — `bar` is the SAME value BottomNav maps
-  // over, from the same context read, so a More page loses its Back arrow in the very commit its tab
-  // is drawn and never otherwise. Do not derive it here by another road (routeClass.js).
+  // V5-NAVANYSLOT-001 — `bar` is the SAME value BottomNav maps over, from the same context read, so a
+  // More page loses its Back arrow in the very commit its tab is drawn and never otherwise. Do not
+  // derive it here by another road (routeClass.js).
   const cls = getRouteClass(pathname, { user, loading, bar })
   if (cls === 'capture') return <CaptureBar title={CAPTURE_TITLES[pathname] ?? null} />
 
@@ -227,9 +201,8 @@ export default function TopChrome() {
     </>
   ) : null
 
-  // One box for every non-capture variant now, so 'pending' reserves the resolved geometry on EVERY
-  // route rather than only on the root tabs — the handover cannot reflow whichever way auth
-  // resolves. (Root was 88px before V4-HEADERPARITY-001, so 'pending' had to guess the route class.)
+  // One box for every non-capture variant, so 'pending' reserves the resolved geometry on EVERY route
+  // and the handover cannot reflow whichever way auth resolves.
   const base = {
     height: `calc(${BAR_H}px + env(safe-area-inset-top))`,
     paddingTop: 'env(safe-area-inset-top)',
@@ -242,10 +215,9 @@ export default function TopChrome() {
 
   // V4-PERFCLERK-001 C — identity UNRESOLVED. Brand + banner only: no Sign in (a signed-out
   // affordance), no search/Snap/Harvest (signed-in affordances whose targets are Protected), and no
-  // <Link> at all, so there is no navigation target to mis-fire during the window. The wordmark is a
-  // <span>, not a Link to /dashboard, for exactly that reason. It reserves the resolved row exactly
-  // — same 52px box, same brand slot — so only the trailing controls fade in. The launcher-shaped
-  // bone that used to hold the 88px root layout went with the launcher (V4-HEADERPARITY-001).
+  // Link at all, so there is no navigation target to mis-fire during the window. The wordmark is a
+  // span, not a Link to /dashboard, for that reason. It reserves the resolved row exactly (same 52px
+  // box, same brand slot), so only the trailing controls fade in.
   if (cls === 'pending') {
     return (
       <header data-app-chrome="top" data-chrome-state="pending" aria-busy="true"
@@ -266,10 +238,9 @@ export default function TopChrome() {
     )
   }
 
-  // root AND detail, from ONE block (V4-HEADERPARITY-001). The Back button is the entire difference:
-  // a root tab is where a journey starts, so there is no history behind it to go back to, while
-  // every pushed route gets the arrow. Anything added below now lands on both variants by
-  // construction — which is exactly how the search icon failed to reach root before this.
+  // root AND detail, from ONE block. The Back button is the entire difference: a root tab is where a
+  // journey starts, so there is no history behind it, while every pushed route gets the arrow.
+  // Anything added below lands on both variants by construction.
   return (
     <header data-app-chrome="top" style={{ ...base, display: 'flex', alignItems: 'center', gap: 6 }}>
       {bannerLayers}
@@ -281,9 +252,8 @@ export default function TopChrome() {
       )}
       {/* 390px viewport budget, detail being the tighter of the two: 14+14 padding, 40 back, 3x44
           circles, 4x6 gaps => ~166px left for the brand, which ellipsizes rather than pushing an
-          action off; root gets the button's 46px back. textAlign:center is dropped — with three
-          trailing actions the optical centre is no longer the box centre, and a centered label
-          inside a squeezed flex box reads as mis-aligned rather than centered. */}
+          action off; root gets the button's 46px back. textAlign:center is dropped: with three
+          trailing actions the optical centre is no longer the box centre. */}
       <Link to="/dashboard" style={{ ...BRAND, position: 'relative', zIndex: 1, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{APP_NAME}</Link>
       <HeaderActions />
     </header>

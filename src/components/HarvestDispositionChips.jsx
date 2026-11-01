@@ -1,30 +1,25 @@
 // src/components/HarvestDispositionChips.jsx
-// V4-HARVDISPOSITION-001 (capture half) — the optional "what went wrong with this pick" chip row.
+// V4-HARVDISPOSITION-001 — the optional "what went wrong with this pick" chip row.
 //
 // Composed from the FROZEN SelectChip primitive (components/forms/FROZEN.md: extend, don't mint a
-// second chip), and deliberately NOT added to the forms barrel — the freeze test pins that export
-// set exactly, and this is a domain widget (a harvest vocabulary), not a shared primitive. Imported
-// directly, the same way WaterDepthChips imports SelectChip.
+// second chip), and deliberately NOT added to the forms barrel: the freeze test pins that export set
+// exactly, and this is a domain widget (a harvest vocabulary), not a shared primitive.
 //
-// WHERE THIS DIVERGES FROM WaterDepthChips, and why: that row is REQUIRED with a preselected
-// default, because every watering has an amount. This one is OPTIONAL and starts unselected,
-// because 703 of 707 live harvests are ordinary picks and NULL is their meaning (lib/harvestDisposition.js).
-// That difference drives three things here:
+// Unlike WaterDepthChips (REQUIRED with a preselected default), this row is OPTIONAL and starts
+// unselected, because nearly every harvest is an ordinary pick and NULL is its meaning
+// (lib/harvestDisposition.js). That drives three things here:
 //   * COLLAPSED behind a disclosure by default, so the fast path costs zero taps and zero height.
 //   * FORCED OPEN whenever a value is set, so an existing disposition can never hide behind a
-//     collapsed summary on the edit form — the state the user most needs to see is the one a
-//     default-collapsed panel would conceal.
-//   * TAPPING THE ACTIVE CHIP CLEARS IT (onChange(null)), plus an explicit "Clear" text button in
-//     the quality-row idiom. Both, because toggle-off is fast but undiscoverable, and a value that
-//     cannot be un-set is a value the user will avoid setting.
+//     collapsed summary on the edit form.
+//   * TAPPING THE ACTIVE CHIP CLEARS IT (onChange(null)), plus an explicit "Clear" text button.
+//     Both, because toggle-off is fast but undiscoverable, and a value that cannot be un-set is a
+//     value the user will avoid setting.
 //
-// Layout: a 2-column grid, not 4. At 390px (Dave's Chrome/Android width) four `touch` chips demand
-// 4*44 + 3*8 = 200px of min-content and would technically fit on one line, but "Damaged" plus its
-// anchor does not — the chips would render at ~85px and truncate the anchor that makes the word
-// unambiguous. Two columns give ~170px per chip and a 48px height floor, which is what a chip tapped
-// one-handed while holding produce needs.
+// Layout: a 2-column grid, not 4. At 390px four `touch` chips would render at ~85px and truncate the
+// anchor that makes the word unambiguous ("Damaged" plus its anchor); two columns give ~170px per
+// chip and a 48px height floor for one-handed taps.
 //
-// Sits OUTSIDE <Field> deliberately: Field's frozen contract takes exactly one focusable control and
+// Sits OUTSIDE Field deliberately: Field's frozen contract takes exactly one focusable control and
 // clones ARIA onto it, so a chip group inside it would trip contractWarn.
 import React, { useState } from 'react'
 import { P } from '../lib/constants.js'

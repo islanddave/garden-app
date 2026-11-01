@@ -1,43 +1,37 @@
-// src/components/PhotoImg.jsx — image-reliability primitive (garden-perf-image-plan V102 §A1, +A2b).
+// src/components/PhotoImg.jsx — image-reliability primitive.
 //
 // Owns the photo SRC LIFECYCLE only, NEVER layout: all sizing / objectFit / borderRadius / aspect
 // come from the consumer via ...rest onto the inner <img> (and onto the placeholder box too, so a
 // terminal/empty/pending state reserves the SAME box and never shifts layout).
 //
-// Self-heals an expired S3 presigned URL (900s TTL, rendered by a bare <img> today with no onError →
-// permanent blank). On <img> error it re-mints a fresh URL from the household-scoped
-// GET /api/photos/view-url/:id (V-B1: server-side created_by-scoped, NOT an IDOR). On foreground/resume
-// it proactively re-mints an IN-VIEWPORT photo (esp. a hero) before the stale URL renders — viewport-
-// gated (A2b P5) so a full grid of mounted thumbs does not fire N mints on one foreground. Given a
-// photoId but NO initialUrl (an id-only thumb, e.g. PutUpPhotoThumb), it mints once ON MOUNT so the
-// photo appears without waiting for an interaction (A2b P1). A module-level per-photoId map dedups
-// co-visible instances (hero + thumb = one call), tracks lastMintedAt for the proactive elapsed gate,
-// caps global concurrency, and survives an off-screen unmount so windowing re-mount doesn't re-mint.
+// Self-heals an expired S3 presigned URL (900s TTL). On <img> error it re-mints a fresh URL from the
+// household-scoped GET /api/photos/view-url/:id (server-side created_by-scoped, not an IDOR). On
+// foreground/resume it re-mints an IN-VIEWPORT photo before the stale URL renders; the viewport gate
+// keeps a full grid of mounted thumbs from firing N mints on one foreground. A photoId with NO
+// initialUrl (an id-only thumb) mints once ON MOUNT. A module-level per-photoId map dedups co-visible
+// instances (hero + thumb = one call), tracks lastMintedAt for the proactive elapsed gate, caps
+// global concurrency, and survives an off-screen unmount so windowing re-mount doesn't re-mint.
 //
-// FROZEN CONTRACT — C's tier-agnostic PhotoHero and the A2b img sites compose this; PhotoImg gains
-// NO hero/variant/tier prop (composition, not configuration). Freeze deltas folded in: (1) placeholder
-// inherits the consumer's box styling; (2) `fallback` governs the empty, pending, AND error render;
+// FROZEN CONTRACT — PhotoHero and the img sites compose this; PhotoImg gains NO hero/variant/tier
+// prop (composition, not configuration):
+// (1) the placeholder inherits the consumer's box styling;
+// (2) `fallback` governs the empty, pending, AND error render;
 // (3) `hasFallback` says whether the CONSUMER can take over on error — a fact about the caller's own
-// state, not about which derivative this is, so the tier stays entirely on PhotoView's side.
-// (4) V4-TIERBLINDMINT-001 NARROWS the no-tier-prop clause and machine-enforces what it was for.
-// The clause bans a VARIANT MODE — a prop the component branches on to render differently. It was
-// also, unintentionally, stopping the component from telling the mint layer WHICH SOURCE to renew,
-// so every heal re-selected the original: PhotoImg was performing the tier SELECTION this contract
-// assigns to PhotoView, silently, because until the Lambda accepted ?tier there was no other answer
-// to give. `mintTier` is that missing identity, not a mode — it reaches the mint URL and the cache
-// key and nothing else, the component body below names no tier vocabulary at all, and
-// PhotoImg.tier.test.jsx reds if either stops being true. Render, layout and degrade stay tier-blind.
-// (5) V5-SEEDSPOLISH-001 (Dave-approved 2026-09-21) adds ONE outbound event, `onTerminal`. A consumer
-// that draws its OWN empty state once a photo is truly gone (My seeds' sprout box) could not learn
-// that from this component: with alt="" the TERMINAL box is byte-identical to the PENDING one, and
-// onError/onRemint/onLoad log the same stream for a terminal heal as for a live one, so the only other
-// route was copying this file's retry budget into the consumer. `onTerminal(photoId)` fires once at
-// each entry into TERMINAL — heal exhausted, a re-mint 404/403, a mount-mint 404/403 — and never for
-// pending, a transient (429/5xx/network) failure or a heal that lands. It is an event, not a mode: it
-// is called beside each setTerminal(true), and nothing in render, layout or degrade reads it. It is
-// deliberately NOT a flavour of onError: PhotoView steps its degrade chain on every onError, so a
-// terminal onError would walk a thumb tile to the original. PhotoImg.terminal.test.jsx pins each
-// entry, the negatives, and that no setTerminal(true) exists without the event beside it.
+//     state, not about which derivative this is, so the tier stays entirely on PhotoView's side;
+// (4) `mintTier` is an identity, not a mode. The no-tier-prop clause bans a VARIANT MODE (a prop the
+//     component branches on to render differently); it must not stop the component telling the mint
+//     layer WHICH SOURCE to renew. `mintTier` reaches the mint URL and the cache key and nothing
+//     else, and the component body names no tier vocabulary. PhotoImg.tier.test.jsx reds if either
+//     stops being true. Render, layout and degrade stay tier-blind;
+// (5) `onTerminal(photoId)` is ONE outbound event, fired once at each entry into TERMINAL (heal
+//     exhausted, a re-mint 404/403, a mount-mint 404/403) and never for pending, a transient
+//     (429/5xx/network) failure or a heal that lands. It exists because with alt="" the TERMINAL box
+//     is byte-identical to the PENDING one, so a consumer drawing its own empty state could not tell
+//     them apart. It is an event, not a mode: it is called beside each setTerminal(true) and nothing
+//     in render, layout or degrade reads it. It is deliberately NOT a flavour of onError: PhotoView
+//     steps its degrade chain on every onError, so a terminal onError would walk a thumb tile to the
+//     original. PhotoImg.terminal.test.jsx pins each entry, the negatives, and that no
+//     setTerminal(true) exists without the event beside it.
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
@@ -46,46 +40,37 @@ import { TIER } from '../lib/photoModel.js'
 export const PRESIGN_TTL_MS = 900 * 1000            // == server view-url expiresIn:900
 const MAX_CONCURRENT_MINTS = 6
 
-// Module-level storm control. _key(photoId, tier) -> { url, at, inFlight }. Shared across every
+// Module-level storm control. _key(photoId, tier) -> { url, at, inFlight }, shared across every
 // mounted instance. Keyed on the TIER as well as the id because a hero and a tile of the SAME photo
-// are two different objects in the bucket: a single-key cache lets a thumb mint answer a full one
-// and paint 163 KB at 94vw (the hazard _seed's publishUrl below was invented to dodge one path of).
+// are two different objects in the bucket: a single-key cache would let a thumb mint answer a full
+// one and paint a thumb at full width.
 const _cache = new Map()
 let _active = 0
 const _queue = []
 
 const _TIERS = Object.freeze(Object.values(TIER))
-// Unknown/absent tier => the original. The SERVER deliberately 400s an unknown tier rather than
-// coercing (it is the authority; hiding a caller's typo behind a 200 IS the tier-blindness). The
-// client is not the authority and sits in a render path, where a 400 would be classified as a
-// transient failure and retried forever — so a bad tier degrades to the pre-existing full-tier
-// behaviour instead. PhotoImg.tier.test.jsx pins _TIERS against the Lambda's own enum so the two
-// vocabularies cannot drift apart.
+// Unknown/absent tier => the original. The SERVER deliberately 400s an unknown tier (it is the
+// authority). The client sits in a render path, where a 400 would be classified as a transient
+// failure and retried forever, so a bad tier degrades to the full-tier behaviour instead.
+// PhotoImg.tier.test.jsx pins _TIERS against the Lambda's own enum so the two cannot drift apart.
 const _tier = (t) => (_TIERS.includes(t) ? t : TIER.FULL)
-// The tier is always the suffix after the LAST `|`, and no member of the closed enum contains one,
-// so the split point is unambiguous and no (id, tier) pair can spell another's key — a photo id is
-// a UUID, which cannot contain `|` either. A NUL separator proves the same thing and makes this
-// whole file BINARY to git: no diff, no blame, no review on a core component. Any printable byte
-// outside the enum buys the identical guarantee for free.
+// The tier is the suffix after the LAST `|`; no member of the closed enum contains one and a photo id
+// is a UUID, so no (id, tier) pair can spell another's key. Do not use a NUL separator: it would make
+// this file BINARY to git (no diff, no blame).
 const _key = (photoId, tier) => `${photoId}|${_tier(tier)}`
 
 // The server reads `?tier=`; ABSENT means 'full' (viewTier.js normalizeViewTier), so the default
-// tier is sent as no parameter at all. The full-tier request is then byte-identical to the one every
-// deployed client already makes — nothing to re-verify on that path — and a full-tier heal cannot
-// 400 against a Lambda that predates the enum. Only a non-default tier has to say so.
+// tier is sent as no parameter at all. That keeps the full-tier request identical to every deployed
+// client's and lets a full-tier heal work against a Lambda that predates the enum.
 const _viewUrl = (photoId, tier) => `/api/photos/view-url/${photoId}${tier === TIER.FULL ? '' : `?tier=${tier}`}`
 
-// V4-PHOTOCORS-001 — the CORS-broken latch. A CORS request that the origin refuses does NOT fall
-// back to a no-cors fetch: the image simply does not load. Each instance handles that itself (one
-// plain retry of the same url, below), but a whole grid paying an extra failed request per photo,
-// forever, would be a worse regression than the caching is a win. So the FIRST time a plain retry
-// SUCCEEDS where the CORS attempt FAILED, crossOrigin is latched off process-wide.
-//
-// That success-after-failure pair is the precise signal, and choosing it over "any error" matters:
-// an expired presign 403s in BOTH modes, so a naive latch would disable the feature app-wide on the
-// first stale URL — safe, but silently permanent. Only a same-url difference attributable to the
-// CORS mode alone trips this. It is deliberately one-way and per page load: a latched session never
-// re-probes (nothing changes mid-session that would fix CORS), and a reload re-probes for free.
+// V4-PHOTOCORS-001 — the CORS-broken latch. A CORS request the origin refuses does NOT fall back to a
+// no-cors fetch: the image simply does not load. Each instance retries once plain (below), but a
+// whole grid paying an extra failed request per photo would be worse than the caching is a win. So
+// the FIRST time a plain retry SUCCEEDS where the CORS attempt FAILED, crossOrigin is latched off
+// process-wide. That success-after-failure pair is the precise signal: an expired presign 403s in
+// BOTH modes, so latching on "any error" would disable the feature app-wide on the first stale URL.
+// One-way and per page load: a latched session never re-probes, and a reload re-probes for free.
 let _corsBroken = false
 export function __photoCorsBroken() { return _corsBroken }
 
@@ -98,10 +83,8 @@ function _isCrossOrigin(src) {
 }
 
 // Test seams — reset / seed module state between cases. `tier` is trailing+defaulted so the
-// pre-tier 3-arg call sites keep seeding the full-tier slot they always meant.
-// The CORS latch is cleared here too (not only by its own seam) because every existing suite already
-// calls this in beforeEach — leaving a latch that one case sets to leak into the next is a landmine
-// no author of a future test would think to look for.
+// pre-tier 3-arg call sites keep seeding the full-tier slot. The CORS latch is cleared here too, so
+// a case that trips it cannot leak into the next.
 export function __resetPhotoImgCache() { _cache.clear(); _active = 0; _queue.length = 0; _corsBroken = false }
 export function __seedPhotoImgUrl(photoId, url, at, tier) { _cache.set(_key(photoId, tier), { url, at: at == null ? Date.now() : at, inFlight: null }) }
 
@@ -112,12 +95,11 @@ function _drain() { _active--; const next = _queue.shift(); if (next) next() }
 // the bucket, so they correctly cost two requests; same-tier still collapses to one.
 // NOTE: `cache:'no-store'` governs the BROWSER HTTP cache only — it does NOT bypass the service worker
 // (the SW fetch handler still intercepts /api/photos/view-url via networkFirst). Online this always
-// serves a fresh mint; only true-offline can serve a cached — possibly expired — view-url, which then
+// serves a fresh mint; only true-offline can serve a cached, possibly expired, view-url, which then
 // self-heals on the next online/foreground. authedFetch = useApiFetch().fetch (returns parsed JSON,
 // throws Error{status} on non-2xx). Resolves to a fresh url string; rejects (with .status) on failure.
 // 404/absent-url is normalized to status 404. The 200 body also NAMES the tier it minted; that name
-// is deliberately not gated on — an older Lambda omits it, and rejecting its response would trade a
-// wrong-tier image for no image at all.
+// is deliberately not gated on, because an older Lambda omits it.
 export function mintUrl(photoId, authedFetch, tier) {
   const t = _tier(tier)
   const k = _key(photoId, t)
@@ -147,15 +129,13 @@ export function mintUrl(photoId, authedFetch, tier) {
 }
 
 // Seed lastMintedAt from the initialUrl provided at mount (it came from a recent list fetch), so the
-// proactive elapsed gate doesn't re-mint a just-mounted fresh hero on the first foreground (NEW-4).
+// proactive elapsed gate doesn't re-mint a just-mounted fresh hero on the first foreground.
 //
 // `publishUrl` is false when the consumer holds a fallback BELOW this source (PhotoView mid-degrade).
-// The TIMESTAMP is still true of the photo id either way — every URL for that id came down in the
-// same list response, so they age together — but the URL is a derivative that this id's OTHER
-// consumers must not inherit. `.url` is read by exactly one path (the mount-fetch below), and its
-// callers include the full-screen Lightbox, which would otherwise paint a 163 KB thumb at 94vw.
-// Keeping `publishUrl` now that the slot is tier-keyed is deliberate belt-and-braces: the key stops
-// a thumb answering a FULL reader, and this stops a mid-chain source answering at all.
+// The TIMESTAMP is still true of the photo id either way (every URL for that id came down in the same
+// list response), but the URL is a derivative that this id's OTHER consumers must not inherit: `.url`
+// is read by the mount-fetch below, and its callers include the full-screen Lightbox, which would
+// otherwise paint a thumb at 94vw.
 function _seed(photoId, initialUrl, publishUrl = true, tier) {
   if (!photoId || !initialUrl) return
   const k = _key(photoId, tier)
@@ -164,26 +144,22 @@ function _seed(photoId, initialUrl, publishUrl = true, tier) {
 }
 
 // `hasFallback` — the consumer has a cheaper source in hand for this same photo and will swap it in
-// on error (PhotoView's degrade chain). NOT a tier prop: PhotoImg still knows nothing about thumbs or
-// derivatives, only that it is not the last resort. It suppresses the REACTIVE heal and the shared-
-// cache URL publish; the PROACTIVE heal is deliberately untouched, because keeping a rendered source's
-// presign alive across a resume is exactly as necessary mid-chain as it is at the end of one.
+// on error (PhotoView's degrade chain). NOT a tier prop. It suppresses the REACTIVE heal and the
+// shared-cache URL publish; the PROACTIVE heal is deliberately untouched, because keeping a rendered
+// source's presign alive across a resume is as necessary mid-chain as at the end of one.
 //
 // `mintTier` — WHICH source of this photo the consumer handed down, so a heal renews THAT one instead
 // of always re-selecting the original. Destructured (never left in ...rest) so it cannot reach the
-// <img> as an unknown DOM attribute. It is not a mode: nothing below branches on it, no render,
-// layout, degrade or a11y path reads it, and it changes in lockstep with `initialUrl` (each step of
-// PhotoView's chain carries its own URL), so the existing initialUrl-change reset already covers a
-// tier switch and no separate mintTier-change branch is needed.
+// <img> as an unknown DOM attribute. Nothing below branches on it, and it changes in lockstep with
+// `initialUrl`, so the initialUrl-change reset already covers a tier switch.
 //
-// `onTerminal` — freeze delta (5). Called with the photoId beside every setTerminal(true), so it fires
-// exactly when this instance enters TERMINAL; the fallback="none" exhausted heal never enters it (it
-// keeps its broken <img>) and so never fires. Destructured, like mintTier, so it cannot reach the DOM
-// as an unknown event-handler attribute. On PhotoView's id-only arm a mount-mint 404 on the thumb rung
-// fires it too, and that is still true of the photo: view-url 404s only a missing, foreign or deleted
-// photo ROW, never a missing derivative, so every rung of that photo would 404 alike. The callback
-// MUST NOT THROW: on the two 404 arms it runs before onError({type:'deleted'}), so a throw would
-// swallow the signal PhotoView degrades on.
+// `onTerminal` — freeze delta (5). Called with the photoId beside every setTerminal(true); the
+// fallback="none" exhausted heal never enters TERMINAL (it keeps its broken <img>) and never fires.
+// Destructured, like mintTier, so it cannot reach the DOM as an unknown handler attribute. On
+// PhotoView's id-only arm a mount-mint 404 on the thumb rung fires it too, and that is still true of
+// the photo: view-url 404s only a missing, foreign or deleted photo ROW, never a missing derivative.
+// The callback MUST NOT THROW: on the two 404 arms it runs before onError({type:'deleted'}), so a
+// throw would swallow the signal PhotoView degrades on.
 export default function PhotoImg({
   photoId, initialUrl, alt = '', fallback = 'placeholder', loading, hasFallback = false, mintTier,
   onOpen, onRemint, onError, onTerminal, onLoad, style, className, ...rest
@@ -198,9 +174,8 @@ export default function PhotoImg({
   const photoIdRef = useRef(photoId)                // P4/D1: latest identity for the stale-heal guard
   const mountFetchedForRef = useRef(null)           // P1: at most one mount-fetch per photoId
   // V4-PHOTOCORS-001: the ONE src whose CORS attempt already failed here. Holding the URL rather
-  // than a boolean is what makes this self-resetting — a heal or a tier step changes `src`, so the
-  // comparison below goes true again and the new URL gets its own single CORS attempt, with no
-  // reset branch to keep in sync with the two places that already assign src.
+  // than a boolean makes this self-resetting: a heal or tier step changes `src`, so the new URL gets
+  // its own single CORS attempt with no reset branch to keep in sync.
   const [corsFailedSrc, setCorsFailedSrc] = useState(null)
 
   // Render-time prop-change adoption (NEW-1; no src-watching effect → no render-loop / StrictMode
@@ -216,11 +191,11 @@ export default function PhotoImg({
     abortRef.current?.abort()                        // stop a pending reactive heal bound to the old id
   }
 
-  // V4-PHOTOCORS-001 half (1). Ask for the photo in CORS mode so the response is not opaque and
-  // sw.js's isImageResponse() can cache it on its real content-type. sw.js cannot import anything, so
-  // its half (presign-param stripping) gates on `request.mode === 'cors'`, which is true exactly when
-  // this attribute is set: the two halves cannot drift apart. Derived, never stored: latch tripped,
-  // same-origin src, or a src that already failed CORS here => render with no crossOrigin.
+  // V4-PHOTOCORS-001. Ask for the photo in CORS mode so the response is not opaque and sw.js's
+  // isImageResponse() can cache it on its real content-type. sw.js's half (presign-param stripping)
+  // gates on `request.mode === 'cors'`, which is true exactly when this attribute is set, so the two
+  // halves cannot drift apart. Derived, never stored: latch tripped, same-origin src, or a src that
+  // already failed CORS here => render with no crossOrigin.
   const useCors = !_corsBroken && corsFailedSrc !== src && _isCrossOrigin(src)
 
   useEffect(() => { _seed(photoId, initialUrl, !hasFallback, mintTier) }, [photoId, initialUrl, hasFallback, mintTier])
@@ -251,19 +226,16 @@ export default function PhotoImg({
 
   // Reactive heal: the <img> errored. Treat as expiry → one re-mint. Classify the MINT failure.
   const handleError = useCallback(async (ev) => {
-    // V4-PHOTOCORS-001 — the CORS retry, and it MUST come before everything else in this handler.
-    // A refused CORS request is not evidence that the photo is gone, so nothing downstream may act
-    // as if it were: `onError` would advance PhotoView's tier cursor and send a THUMB tile to the
-    // ~2.97 MB original (the exact saving tier=THUMB exists for), the hasFallback branch below would
-    // stand down, and the non-fallback branch would spend the one-shot mint budget on a URL that is
-    // fine. Re-render the SAME url with the attribute removed instead; if THAT fails too, this
-    // handler runs again with `useCors` false and takes the ordinary path unchanged.
+    // V4-PHOTOCORS-001 — the CORS retry MUST come before everything else in this handler. A refused
+    // CORS request is not evidence that the photo is gone: `onError` would advance PhotoView's tier
+    // cursor and send a THUMB tile to the original, the hasFallback branch would stand down, and the
+    // non-fallback branch would spend the one-shot mint budget on a URL that is fine. Re-render the
+    // SAME url without the attribute; if THAT fails too, this runs again with `useCors` false.
     if (useCors) { setCorsFailedSrc(src); return }
     onError?.(ev)
-    // The consumer swaps in its own next source on this same event, so minting here would spend a
-    // round-trip on a URL about to be replaced — and going terminal would blank the box for the frame
-    // before the swap lands. Return BEFORE the retry budget is touched: the budget belongs to the
-    // source that actually gets to heal.
+    // The consumer swaps in its own next source on this same event, so minting here would waste a
+    // round-trip, and going terminal would blank the box for the frame before the swap lands. Return
+    // BEFORE the retry budget is touched: it belongs to the source that actually gets to heal.
     if (hasFallback) return
     if (!photoId || retriedRef.current) { if (fallback !== 'none') { setTerminal(true); onTerminal?.(photoId) } return }
     retriedRef.current = true
@@ -277,11 +249,10 @@ export default function PhotoImg({
     } catch (err) {
       // BUG-PHOTOIMGSTALECATCH-001: bail on an aborted heal exactly as the success branch above does.
       // A consumer that pages this instance to another photo (the Lightbox) aborts the heal, and a late
-      // 404 for the photo it left says nothing about the one on screen now — without this line it put
-      // the NEW photo into TERMINAL and sent the consumer a 'deleted' while the new photo was showing.
-      // Every render-time reset aborts the heal, so the SAME photo getting a new URL mid-heal drops its
-      // 404 too: that failure is re-derived if the new URL fails (one more mint, then TERMINAL) and moot
-      // if it loads. PhotoImg.staleCatch.test.jsx pins both shapes.
+      // 404 for the photo it left says nothing about the one on screen now. Every render-time reset
+      // aborts the heal, so the SAME photo getting a new URL mid-heal drops its 404 too: that failure
+      // is re-derived if the new URL fails (one more mint, then TERMINAL). PhotoImg.staleCatch.test.jsx
+      // pins both shapes.
       if (!mountedRef.current || ac.signal.aborted) return
       const st = err?.status
       if (st === 404) { setTerminal(true); onTerminal?.(photoId); onError?.({ type: 'deleted', photoId }) }   // signal cache invalidate
@@ -290,16 +261,15 @@ export default function PhotoImg({
     }
   }, [photoId, apiFetch, fallback, hasFallback, mintTier, onRemint, onError, onTerminal, adopt, useCors, src])
 
-  // V4-PHOTOCORS-001 — latch detection. This fires only on the plain RETRY of a url whose CORS
-  // attempt failed, which is the one observation that isolates the CORS mode as the cause: same url,
-  // same network, same presign — only the attribute differs. Wrapping onLoad rather than replacing
-  // it; consumers that count loads still see every one.
+  // V4-PHOTOCORS-001 — latch detection. This fires only on the plain RETRY of a url whose CORS attempt
+  // failed: same url, same network, same presign, only the attribute differs, which isolates the CORS
+  // mode as the cause. Wraps onLoad rather than replacing it, so consumers that count loads see every one.
   const handleLoad = useCallback((ev) => {
     if (corsFailedSrc && corsFailedSrc === src) _corsBroken = true
     onLoad?.(ev)
   }, [corsFailedSrc, src, onLoad])
 
-  // P1 — Fetch-on-mount: a photoId with NO consumer-provided url (an id-only thumb) resolves once on
+  // Fetch-on-mount: a photoId with NO consumer-provided url (an id-only thumb) resolves once on
   // mount so it renders without an interaction. Guarded so the initialUrl-present path (every shipped
   // consumer, incl. HeroPhoto) is byte-unchanged. Warm cache within TTL → adopt with ZERO network.
   useEffect(() => {
@@ -317,8 +287,7 @@ export default function PhotoImg({
       adopt(fresh, photoId)
     }).catch((err) => {
       // BUG-PHOTOIMGSTALECATCH-001: the same identity guard adopt() applies to a resolve. A mount-mint
-      // that fails after the consumer re-pointed this instance belongs to the photo it left; without
-      // this line a late 404 for that photo blanked the new one even after it had loaded.
+      // that fails after the consumer re-pointed this instance belongs to the photo it left.
       if (!mountedRef.current || photoIdRef.current !== photoId) return
       const st = err?.status
       if (st === 404) { setTerminal(true); onTerminal?.(photoId); onError?.({ type: 'deleted', photoId }) }
@@ -385,11 +354,10 @@ export default function PhotoImg({
     )
   }
 
-  // `key` on the element, not just the attribute: dropping crossOrigin in place relies on the
-  // browser treating it as a relevant mutation that re-runs "update the image data", and the whole
-  // point of the retry is that the second request definitely happens. Remounting says so outright.
-  // No flash — the CORS attempt painted nothing to lose. Inert for a same-origin src: `useCors` is
-  // then constant false, the key never changes, and crossOrigin is undefined (React omits it).
+  // `key` on the element, not just the attribute: dropping crossOrigin in place relies on the browser
+  // treating it as a mutation that re-runs "update the image data", and the retry must definitely
+  // issue a second request. Remounting guarantees it, with no flash (the CORS attempt painted
+  // nothing). Inert for a same-origin src: `useCors` is constant false, so the key never changes.
   const img = (
     <img
       key={useCors ? 'cors' : 'plain'}

@@ -1,14 +1,12 @@
-// Phase B coachmark — MVP-Critter.
-// Canonical spec: revision §3.7 (anchor to garden-view-enter, 1500ms min-visible-time),
-//                 §3.9 step 3 (renders on SECOND garden-view visit after first earned critter,
-//                 NOT first — first visit is reserved for unmediated Stage 2 delight),
-//                 V101 2026-06-01: baseline residents RETIRED — all species count toward "first earned".
-// V100 binding: §5 Stage 3 — explains the dot, NEVER a modal, NEVER interrupt.
+// Coachmark — MVP-Critter. Explains the dot, NEVER a modal, NEVER an interrupt. Anchored to
+// garden-view-enter with a 1500ms min-visible-time; renders on the SECOND garden-view visit after the
+// first earned critter, NOT the first (the first visit is reserved for unmediated Stage 2 delight).
+// All species count toward "first earned" (no baseline residents).
 //
 // Render gating (parent computes + passes `eligible` prop):
 //   eligible = (
 //     coachmark_seen_at IS NULL         // server-side single source of truth
-//     AND an earned critter exists   // V101: any species 1-8 (no baselines)
+//     AND an earned critter exists   // any species (no baselines)
 //     AND prevGardenViewAt > earnedAt   // SECOND visit (user has been here once since earning)
 //   )
 //
@@ -17,7 +15,7 @@
 //   • Visible-time timer starts on mount.
 //   • On unmount (route change out of Garden): if visible ≥ 1500ms, fire onDismiss() →
 //     parent posts Route 9 /api/notifications/coachmark-dismissed.
-//   • If user leaves <1500ms (ADHD accidental route-change), do NOT write → re-renders next visit.
+//   • If user leaves <1500ms (accidental route-change), do NOT write → re-renders next visit.
 //
 // Props:
 //   eligible       — boolean; parent computes per spec

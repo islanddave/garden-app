@@ -1,25 +1,22 @@
 // V4-BATCHUNDO-001 — the confirm that gates the durable batch undo.
 //
-// WHAT IS AT STAKE HERE, in numbers measured on prod: Dave fires ~3.3 bulk logs a day averaging 30
-// plantings, and the largest in the last 60 days wrote 157 rows. So this surface exists to fix an
-// unrecoverable-mistake problem WITHOUT introducing a second one — a mis-tap that silently removes
-// 157 entries would be a strictly worse defect than the one the feature closes. Hence: the count is
-// in the body sentence AND on the button face, and the button that fires it is not the one the thumb
-// lands on by default.
+// It must fix an unrecoverable-mistake problem WITHOUT introducing a second one: a mis-tap that
+// silently removes a batch of 150+ entries is worse than the defect the feature closes. Hence the
+// count is in the body sentence AND on the button face, and the button that fires it is not the one
+// the thumb lands on by default.
 //
-// THIS UNDO IS NOT RECOVERABLE FROM THE APP, and the copy says so plainly. That is not pessimism —
-// it is checked: the events Lambda has no restore route, and src/lib/deletedEntities.js (which
-// drives the Recently deleted page) covers projects, plantings, locations, varieties and photos and
-// NOT events. PhotoDeleteConfirm can promise "restore it any time" because a restore genuinely
-// exists; borrowing that reassurance here would be a false one, and a confirm that under-states its
-// own consequence is the failure this component is built against.
+// THIS UNDO IS NOT RECOVERABLE FROM THE APP, and the copy says so plainly: the events Lambda has no
+// restore route, and src/lib/deletedEntities.js (which drives the Recently deleted page) covers
+// projects, plantings, locations, varieties and photos and NOT events. PhotoDeleteConfirm can promise
+// "restore it any time" because a restore genuinely exists; borrowing that reassurance here would be
+// false, and a confirm that under-states its own consequence is the failure this component is built
+// against.
 //
-// DISMISSAL GOES THROUGH <Sheet>, WHICH GOES THROUGH DismissRegistry — not a hand-rolled
-// outside-click handler. The registry (context/DismissRegistry.jsx) is the app's single arbiter of
-// Escape, Android Back, layer ordering and busy/dirty coordination across its consumers, and Dave is
-// on Chrome/Android where Back is the primary dismissal gesture, not a nicety. `armsBack` is TRUE
-// deliberately: this surface closes in place (it does not navigate), which is exactly the membership
-// test in Sheet's header, and Back must dismiss it WITHOUT undoing anything.
+// DISMISSAL GOES THROUGH <Sheet>, WHICH GOES THROUGH DismissRegistry, not a hand-rolled outside-click
+// handler: the registry (context/DismissRegistry.jsx) is the single arbiter of Escape, Android Back,
+// layer ordering and busy/dirty coordination, and on Chrome/Android Back is the primary dismissal
+// gesture. `armsBack` is TRUE deliberately: this surface closes in place (it does not navigate),
+// which is the membership test in Sheet's header, and Back must dismiss it WITHOUT undoing anything.
 //
 // PRESENTATIONAL ONLY, like PhotoDeleteConfirm: no fetch, no cache invalidation, no toast. `busy`
 // holds the sheet up with its controls disabled while the caller's DELETE is in flight rather than
@@ -34,8 +31,7 @@ import { formatDate } from '../lib/format.js'
 import { prettyEventType } from '../lib/feed.js'
 
 // "30 entries" / "1 entry". A count of exactly one is reachable (a batch can be logged against a
-// single planting), and "1 entries" on a destructive button reads like a bug in the thing you are
-// about to trust with 157 rows.
+// single planting), and "1 entries" on a destructive button reads like a bug.
 export function entriesPhrase(count) {
   return count === 1 ? '1 entry' : `${count} entries`
 }
@@ -71,12 +67,10 @@ export default function BatchUndoConfirm({ open, batch = null, count = null, bus
           )}
         </div>
 
-        {/* THE COUNT SENTENCE. The number is stated in prose as well as on the button because the
-            button face is what the thumb reads and the sentence is what the eye reads, and 157 is
-            exactly the case where those must not disagree. The non-numeric arm is a genuine
-            fallback, not decoration: every batch the list endpoint returns carries an exact
-            item_count, so if that number is ever missing this must decline to invent one rather
-            than render "removes 0 entries" over a real batch. */}
+        {/* THE COUNT SENTENCE. The number is stated in prose as well as on the button face, and the
+            two must not disagree. The non-numeric arm is a genuine fallback: every batch the list
+            endpoint returns carries an exact item_count, so if it is ever missing this must decline
+            to invent one rather than render "removes 0 entries" over a real batch. */}
         <p style={{ margin: 0, color: P.mid, fontSize: '0.95rem', lineHeight: 1.45 }}>
           {known ? (
             <>This removes <strong data-testid="batch-undo-count" style={{ fontWeight: 700, color: P.dark }}>all {entriesPhrase(count)}</strong> logged in this batch.</>
@@ -90,11 +84,10 @@ export default function BatchUndoConfirm({ open, batch = null, count = null, bus
           There is no way to put them back from the app — you would have to log them again.
         </p>
 
-        {/* BUTTON ORDER IS A SAFETY DECISION, copied from PhotoDeleteConfirm / EventDeleteConfirm
-            rather than re-argued: in a bottom sheet on a 390px Android screen the BOTTOM-most
-            control is where the thumb rests, so the destructive action must not sit there. Stacked
-            full-width with a real gap — never side by side, where one thumb-width separates a
-            destructive target from a safe one. */}
+        {/* BUTTON ORDER IS A SAFETY DECISION, as in PhotoDeleteConfirm / EventDeleteConfirm: in a
+            bottom sheet on a 390px Android screen the BOTTOM-most control is where the thumb rests,
+            so the destructive action must not sit there. Stacked full-width with a real gap, never
+            side by side, where one thumb-width separates a destructive target from a safe one. */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {/* testids, not names: Sheet's own mandatory close control is ALSO labelled "Cancel"
               (closeLabel), so a by-name query resolves to two buttons and a test written against it

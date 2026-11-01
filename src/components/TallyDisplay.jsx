@@ -3,13 +3,13 @@ import { useAuth } from '@clerk/react'
 import { P } from '../lib/constants.js'
 import { getTally, TALLY_SIGHTINGS } from '../lib/sharedStateClient.js'
 
-// V3-DELIGHT-001 D2 — ambient shared "sighting tally" on the Collection header.
-// Reward-UX (V102, BINDING): ambient presence ONLY — no interrupt/modal/toast/badge/sound/
-// haptic/tap-to-claim, and NO animated count-up overlay (a plain rendered number only).
-// de-FOMO: a quiet household stat, never a goal/deficit/"waiting" frame. Household-coherent:
-// one shared counter (TALLY_SIGHTINGS), incremented server-side exactly once per genuine
-// critter award (lambda/events/critterAward.js → awardCritterServer). Degrades to null on any
-// no-op / error / malformed payload; never blocks the Collection page.
+// Ambient shared "sighting tally" on the Collection header.
+// Reward-UX (BINDING): ambient presence ONLY — no interrupt/modal/toast/badge/sound/haptic/
+// tap-to-claim, and NO animated count-up overlay (a plain rendered number only).
+// de-FOMO: a quiet household stat, never a goal/deficit/"waiting" frame. Household-coherent: one
+// shared counter (TALLY_SIGHTINGS), incremented server-side exactly once per genuine critter award
+// (lambda/events/critterAward.js → awardCritterServer). Degrades to null on any no-op / error /
+// malformed payload; never blocks the Collection page.
 
 export default function TallyDisplay() {
   const { getToken } = useAuth()

@@ -1,17 +1,18 @@
-// src/components/PhotoHero.jsx — TIER-AGNOSTIC photo-hero shell (front-of-roadmap Wave 2C /
-// V4-SPACEPHOTO-001). Owns the hero BOX and nothing else: the 4:3 container (maxHeight 420,
-// radius 12), the two scrims, the floating Back / Share controls, and the centered no-photo CTA
-// slot. Composes PhotoImg for the image layer (PhotoImg's contract is frozen — it gains NO
-// hero/variant/tier prop; this is composition, not configuration).
+// src/components/PhotoHero.jsx — TIER-AGNOSTIC photo-hero shell (V4-SPACEPHOTO-001). Owns the hero BOX
+// and nothing else: the 4:3 container (maxHeight 420, radius 12), the two scrims, the floating Back /
+// Share controls, and the centered no-photo CTA slot. Composes PhotoImg for the image layer
+// (PhotoImg's contract is frozen — it gains NO hero/variant/tier prop; composition, not
+// configuration).
 //
 // It knows nothing about plantings, plants, spaces or locations. Every tier-specific affordance
 // arrives as a SLOT: `actions` (extra floating controls, right of Share), `overlay` (the bottom
 // chrome band), `emptyState` (the no-photo CTA body). HeroPhoto specializes it for a planting; the
-// space hero will specialize it too. There is exactly ONE hero shell — do not fork a second.
+// space hero specializes it too. There is exactly ONE hero shell — do not fork a second. The static
+// guard in PhotoHero.test.jsx pins its imports and bars domain nouns from its code.
 //
 // Lives OUTSIDE src/components/forms/, so it is not in the no-hex ESLint scope; the rgba-black scrim
-// gradients / control backgrounds are intentional literals (mirrors Lightbox), lifted verbatim from
-// HeroPhoto. Palette colors come from P; glyphs come from Icon.
+// gradients / control backgrounds are intentional literals (mirrors Lightbox). Palette colors come
+// from P; glyphs come from Icon.
 import React from 'react'
 import { useNavigate } from 'react-router-dom'
 import { P } from '../lib/constants.js'
@@ -37,8 +38,8 @@ const topScrimStyle = {
   background: 'linear-gradient(rgba(0,0,0,0.45), transparent)',
 }
 const bottomScrimStyle = {
-  // V4-A11Y-001 (SC 1.4.3): deepened + taller so the white <h1> name band sits over >=0.70 alpha,
-  // clearing 3:1 large-text over a worst-case bright photo (was h=120 / 0.55 -> 1.8-3.3:1).
+  // V4-A11Y-001 (SC 1.4.3): deep and tall enough that the white <h1> name band sits over >=0.70
+  // alpha, clearing 3:1 large-text over a worst-case bright photo.
   position: 'absolute', bottom: 0, left: 0, right: 0, height: 180, zIndex: 2, pointerEvents: 'none',
   background: 'linear-gradient(transparent, rgba(0,0,0,0.30) 32%, rgba(0,0,0,0.72) 74%, rgba(0,0,0,0.82))',
 }
@@ -88,8 +89,7 @@ export default function PhotoHero({
 }) {
   const url = shareUrl ?? (typeof window !== 'undefined' ? window.location.href : '')
   // Presence of a rendered URL — NOT of a photoId — selects the image layer. An id-only hero would
-  // need PhotoImg's mount-mint path (A2b P1) and a pending box; no tier needs that today, and
-  // keying off `src` keeps the planting hero's branch byte-identical to its pre-extraction form.
+  // need PhotoImg's mount-mint path and a pending box, and no tier needs that today.
   const image = src
     ? <PhotoImg photoId={photoId} initialUrl={src} alt={alt} style={onOpenImage ? imgStyle : staticImgStyle} />
     : null

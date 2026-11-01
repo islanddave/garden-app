@@ -1,21 +1,17 @@
 // NotifyButton — dashboard tile that records a push-notification consent preference.
 //
 // ─── KILL SWITCH ──────────────────────────────────────────────────────────────
-// Ships behind a feature flag, default OFF (plan boss-decision B6). Push DELIVERY
-// is not built yet — this component only records a permission/consent preference.
-// To ENABLE: flip NOTIFY_ENABLED to true below, then redeploy the SPA.
-// When disabled, the component renders null (render-level short-circuit, plan B4).
+// Ships behind a feature flag, default OFF. Push DELIVERY is not built yet — this component only
+// records a permission/consent preference. To ENABLE: flip NOTIFY_ENABLED to true below, then
+// redeploy the SPA. When disabled, the component renders null (render-level short-circuit).
 // ──────────────────────────────────────────────────────────────────────────────
 //
-// Testability: accepts an optional `enabled` prop defaulting to NOTIFY_ENABLED.
-// Production callers (Dashboard.jsx) do NOT pass it → resolves to false → renders
-// null. Tests pass enabled={true} to exercise the full component.
+// Testability: accepts an optional `enabled` prop defaulting to NOTIFY_ENABLED. Production callers
+// (Dashboard.jsx) do NOT pass it → resolves to false → renders null. Tests pass enabled={true}.
 //
-// V4-ICON-001 (done). The four bells are MEANINGFUL — bell vs bell-slash is the on/blocked state
-// mark — and both were DRAWN for this: the registry had no bell of any kind. Shape carries the
-// state; the green/terra tint beside it is reinforcement, never the sole channel. The `▸`/`▾`
-// disclosure carets are NOT emoji (U+25B8/U+25BE, Geometric Shapes) and are out of this pass's
-// scope, the same call slice 3 made for the `•••` overflow affordance on Locations.
+// Bell vs bell-slash is the on/blocked state mark. Shape carries the state; the green/terra tint
+// beside it is reinforcement, never the sole channel. The `▸`/`▾` disclosure carets are NOT emoji
+// (U+25B8/U+25BE, Geometric Shapes).
 
 import React, { useState, useEffect, useRef } from 'react'
 import { P } from '../lib/constants.js'
@@ -24,8 +20,8 @@ import { useApiFetch } from '../lib/api.js'
 
 const NOTIFY_ENABLED = false
 
-// Engagement gate (plan Q4): hide the button until the user has logged enough
-// activity to make a permissions decision meaningful.
+// Engagement gate: hide the button until the user has logged enough activity to make a permissions
+// decision meaningful.
 const MIN_EVENTS = 3
 const MIN_HARVESTS = 1
 
@@ -97,10 +93,9 @@ export default function NotifyButton({ eventCount = 0, harvestCount = 0, enabled
   if (eventCount < MIN_EVENTS && harvestCount < MIN_HARVESTS) return null
 
   // ─── iOS Safari non-PWA guidance (MUST precede the capability gate) ─────────
-  // iOS Safari outside an installed PWA has no window.Notification at all, so a
-  // capability check placed first made this branch unreachable on the exact
-  // device it targets (push-P0 gate-order fix, 2026-07-22). Guidance tile with a
-  // user-initiated expandable A2HS how-to — same primitive as the denied how-to.
+  // iOS Safari outside an installed PWA has no window.Notification at all, so a capability check
+  // placed first would make this branch unreachable on the exact device it targets. Guidance tile
+  // with a user-initiated expandable A2HS how-to — same primitive as the denied how-to.
   if (isIOS() && !isStandalonePWA()) {
     return (
       <div

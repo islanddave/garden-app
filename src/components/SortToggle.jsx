@@ -1,12 +1,8 @@
-// V3-ORDER-001 (Lane C / PR1): shared sort-order toggle used identically on every planting/
-// project list surface (Garden, ProjectDetail plantings, legacy /plants) so ordering parity is
-// guaranteed by one component, not three copies. Two states: A–Z (alpha, DEFAULT) and Recent.
-//
-// A–Z (alphabetical) is the default everywhere per the owner override (Dave, 2026-06-04),
-// overriding the Crucible's recency-default. Recency remains one tap away and persists.
-// Persistence is handled by the caller via loadSortOrder/
-// saveSortOrder (localStorage, tracked V4 follow-up for cross-device); this component is a
-// controlled segmented control: it renders `order` and calls onChange(next).
+// Shared sort-order toggle used identically on every planting/project list surface (Garden,
+// ProjectDetail plantings, legacy /plants), so ordering parity is guaranteed by one component, not
+// three copies. Two states: A–Z (alpha, DEFAULT everywhere) and Recent. Recency stays one tap away
+// and persists. Persistence is handled by the caller via loadSortOrder/saveSortOrder (localStorage);
+// this component is a controlled segmented control: it renders `order` and calls onChange(next).
 //
 // Accessibility: role=group with two role=radio buttons; each ≥ 44px tall (48 effective with
 // padding) and pressed state announced via aria-checked. Tap targets are siblings with gap.

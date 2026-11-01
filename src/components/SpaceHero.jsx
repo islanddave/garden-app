@@ -1,5 +1,5 @@
-// src/components/SpaceHero.jsx — V4-SPACEPHOTO-001 Lane C. The SPACE specialization of the
-// tier-agnostic PhotoHero shell. Sibling to planting/HeroPhoto.jsx: same shell, different slots.
+// src/components/SpaceHero.jsx — V4-SPACEPHOTO-001. The SPACE specialization of the tier-agnostic
+// PhotoHero shell. Sibling to planting/HeroPhoto.jsx: same shell, different slots.
 //
 // The shell owns the box, both scrims, the floating Back/Share and the no-photo CTA position;
 // this file owns only the space chrome that fills those slots — the property NAME rendered as the

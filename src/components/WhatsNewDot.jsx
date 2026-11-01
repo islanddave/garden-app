@@ -1,8 +1,8 @@
 // src/components/WhatsNewDot.jsx — V4-WHATSNEW-001 ambient unread indicator.
 // Renders a small pulsing dot ONLY when a newer release is unseen; otherwise null.
-// Reward-UX V101 compliant: ambient PRESENCE (single dot, no number/count, no toast/modal/sound/
-// haptic, never auto-opens). variant="satellite" is a Link (standalone, e.g. beside the Favorites
-// heart); variant="inline" is a bare span (the host row is already a Link to /releases — no nested a).
+// Reward-UX compliant: ambient PRESENCE (single dot, no number/count, no toast/modal/sound/haptic,
+// never auto-opens). variant="satellite" is a Link (standalone, e.g. beside the Favorites heart);
+// variant="inline" is a bare span (the host row is already a Link to /releases — no nested a).
 import React from 'react'
 import { Link } from 'react-router-dom'
 import { useWhatsNew } from '../hooks/useWhatsNew.js'
