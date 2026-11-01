@@ -1,57 +1,50 @@
-// haptics.js — V4-HAPTICVOCAB-001. The operational feedback vocabulary for the one-handed
-// weigh-in surface (EventNew's `?session=harvest` panel + its NumberPad).
+// The operational feedback vocabulary for the one-handed weigh-in surface (EventNew's
+// `?session=harvest` panel + its NumberPad).
 //
-// WHY THIS EXISTS. Dave logs harvests at a bench with his eyes ON THE SCALE and his right hand
-// committed to the fruit. Measured on this build: the app has ZERO `navigator.vibrate`, ZERO audio,
-// and `document.querySelectorAll('[aria-live],[role="status"],[role="alert"]')` is EMPTY on that
-// surface until something errors — so nothing confirms anything through a channel he is actually
-// attending to. The highest-value case is a REJECTED keypress: `numberPad.js` refuses a second '.'
-// and any digit at `maxLen`, and the only signal is the key DIMMING. Eyes-on-scale, a refused tap
-// feels exactly like an accepted one, so his mental model of the field diverges from its value and
-// a wrong weight gets saved while he believes it is right. That is a data-integrity defect with a
-// UI cause, and it is what this module exists to close.
+// WHY THIS EXISTS. Harvests are logged at a bench with the eyes ON THE SCALE and the right hand
+// committed to the fruit, and nothing on that surface confirms anything through a channel the user is
+// attending to (no vibration, no audio, no live region until something errors). The highest-value case
+// is a REJECTED keypress: `numberPad.js` refuses a second '.' and any digit at `maxLen`, and the only
+// signal is the key DIMMING. Eyes-on-scale, a refused tap feels exactly like an accepted one, so the
+// mental model of the field diverges from its value and a wrong weight gets saved while it is believed
+// right. That is a data-integrity defect with a UI cause, and it is what this module closes.
 //
 // ── PRIOR RULING THIS RE-OPENS (read before deleting or extending) ────────────────────────────
-// A log-save haptic ALREADY SHIPPED here and was deliberately REMOVED — see EventNew.jsx:1454-1455
-// and `reward-ux-conformance-audit-V001-20260522.2150.md` §V-4, ratified by Dave 2026-05-22. Its
-// own words: "Borderline (a save-confirmation could be task-feedback) but the channel is banned and
-// the save completes without it → treat as a reward-signal-via-banned-channel." The banned-channel
-// list it enforces (gardening.md §Reward UX) scopes to REWARD surfaces — XP, levels, critters — and
-// the audit's disposition points forward to "the already-planned T-1 'haptic opt-in/default-OFF'
-// Increment-0 direction". This module is that T-1 line, not a revival of §V-4: every pattern here is
-// OPERATIONAL (did the input land / did the row save / did the undo apply), none is a reward signal,
-// nothing fires on XP, level-up or critter award, and the whole vocabulary is behind a preference.
-// Anyone adding a reward-path caller is re-committing the exact violation the audit closed.
+// A log-save haptic once shipped and was deliberately REMOVED as a reward-signal-via-banned-channel
+// (reward-ux-conformance-audit-V001-20260522.2150.md §V-4). The banned-channel list it enforces
+// (gardening.md §Reward UX) scopes to REWARD surfaces — XP, levels, critters — and the audit points
+// forward to a "haptic opt-in/default-OFF" direction for those. This module is that line, not a revival
+// of §V-4: every pattern here is OPERATIONAL (did the input land / did the row save / did the undo
+// apply), none is a reward signal, nothing fires on XP, level-up or critter award, and the whole
+// vocabulary is behind a preference. Anyone adding a reward-path caller is re-committing the exact
+// violation the audit closed.
 //
 // ── RULINGS ENCODED HERE (these are decisions, not defaults; changing one is a decision too) ───
 // 1. GATED ON PREFERENCE **AND** CAPABILITY, both independently. Two separate suppressors, so any
 //    test of one must neutralise the other or the mutation is masked.
 // 2. **NOT gated on `prefers-reduced-motion`.** Haptics are not motion. That query is about visual
 //    vestibular load — parallax, zoom, autoplay — and a phone in a pocket set to "reduce motion"
-//    still buzzes for every message. Conflating the two is a category error whose cost lands
-//    entirely on this user: it would silently disable the ONE channel that reaches him, on a
-//    surface where the alternative is a mis-recorded weight. If a "reduce haptics" preference is
-//    ever wanted it is its own switch (below), not a rider on a visual-motion query.
+//    still buzzes for every message. Conflating the two would silently disable the ONE channel that
+//    reaches the user, on a surface where the alternative is a mis-recorded weight. If a "reduce
+//    haptics" preference is ever wanted it is its own switch (below), not a rider on a motion query.
 // 3. **No audio, ever.** A kitchen bench with running water is a poor audio environment and the
 //    phone may be silenced; a cue that is inaudible half the time trains the user to ignore it.
-//    `reward-ux-conformance-audit` §Out-of-scope also bans sound outright on this app.
+//    The reward-ux audit also bans sound outright on this app.
 // 4. **No haptic on field advance** (quantity → weight). It is user-initiated and visible, and a
 //    vocabulary that fires on navigation as well as on outcomes teaches the hand to ignore it.
 //    Encoded as the ABSENCE of a PATTERNS key, and pinned by a test, so it reads as a ruling rather
 //    than an omission somebody helpfully "fixes".
 
-// '1'/'0' with a null-means-default read, mirroring the house convention for a device-local
-// preference (ScopeChecklist.jsx:57 `quicklog.defaultAllSelected`).
+// '1'/'0' with a null-means-default read, the house convention for a device-local preference.
 export const HAPTIC_PREF_KEY = 'haptics.enabled.v1'
 
-// ON by default: Dave chose the full vocabulary for this surface, and there is no settings UI in
-// this slice — shipping default-OFF would ship a feature nothing can turn on. The audit's T-1 line
-// says "opt-in/default-OFF" about REWARD haptics; this is the operational set. Flipping this single
-// constant is the entire cost of reversing that call.
+// ON by default: the full vocabulary is wanted on this surface, and there is no settings UI, so
+// default-OFF would ship a feature nothing can turn on. The audit's "opt-in/default-OFF" line is about
+// REWARD haptics; this is the operational set. Flipping this single constant reverses that call.
 export const HAPTIC_DEFAULT_ENABLED = true
 
 // ── THE VOCABULARY ────────────────────────────────────────────────────────────────────────────
-// Seven events, six patterns (field advance is silent by ruling 4). The set is designed to be
+// Six events, each with a pattern (field advance is silent by ruling 4). The set is designed to be
 // discriminable BY FEEL ALONE, eyes elsewhere, on three orthogonal axes:
 //   • PULSE COUNT      — 1, 2 or 3. The most robust discriminator for cues this brief.
 //   • PULSE WEIGHT     — tick (≤20ms) / mid (21-45ms) / heavy (≥46ms).
@@ -77,17 +70,15 @@ export const PATTERNS = {
   // 40ms gap, but rejected is [tick,tick] and this is [tick,mid]: the second pulse growing rather
   // than matching is what the hand reads, and the two never fire from the same control anyway.
   undoApplied: [15, 40, 30],
-  // BUG-VOICEFAILSILENT-001 — "I picked something, but I GUESSED." The voice flow auto-selects on a
-  // single hit whether the strict matcher answered or voiceFuzzyMatch scored its way there; the
-  // banner says which and the hand could not tell, so a wrong-plant guess felt exactly like a correct
-  // match. That is the false-success class, on the one channel that reaches him while he is holding a
-  // cucumber and looking at the bed.
+  // "I picked something, but I GUESSED." The voice flow auto-selects on a single hit whether the strict
+  // matcher answered or voiceFuzzyMatch scored its way there; the banner says which and the hand could
+  // not tell, so a wrong-plant guess felt exactly like a correct match (the false-success class).
   //
   // THREE ticks: unique on pulse count (nothing else in the set has three) and deliberately built
   // from the REJECTED tick rather than a new weight class — an uncertain match is nearer a refusal
   // than a success, and that family resemblance is the message. Rare by construction: it can only
   // fire on a rescue, never on the strict path that answers most utterances, so it adds nothing to
-  // the frequent classes the 175-buzz weigh-in has to tolerate.
+  // the frequent classes a long weigh-in has to tolerate.
   matchUncertain: [8, 40, 8, 40, 8],
 }
 
@@ -101,9 +92,8 @@ export function hapticsEnabled() {
     const v = localStorage.getItem(HAPTIC_PREF_KEY)
     return v === null ? HAPTIC_DEFAULT_ENABLED : v === '1'
   } catch {
-    // try/catch per the house convention (cropLogLedger.readStore, clientPrefs.clearClientPrefs):
-    // an unavailable or throwing localStorage degrades to the default, never to an error on a
-    // keypress path.
+    // try/catch per the house convention: an unavailable or throwing localStorage degrades to the
+    // default, never to an error on a keypress path.
     return HAPTIC_DEFAULT_ENABLED
   }
 }
@@ -119,8 +109,7 @@ export function setHapticsEnabled(on) {
 //
 // The return value is not decoration: Chrome returns false when it refuses a vibration (no user
 // activation on the frame, or a hidden document), which is the only in-app signal that the
-// ACTIVATION RISK below actually bit. Callers may ignore it; the on-device check in the lane report
-// reads it.
+// ACTIVATION RISK below actually bit. Callers may ignore it.
 //
 // ACTIVATION RISK — stated, not papered over. Chrome gates `vibrate` on user activation. The pad,
 // reject and undo patterns are all gesture-descended (they run inside the click handler that caused
@@ -134,13 +123,12 @@ export function haptic(name) {
   if (pattern === undefined) return false      // unknown name, and field advance by ruling 4
   if (!hapticsEnabled()) return false
   // REDUNDANT-SUPPRESSION NOTE. This guard and the catch below suppress the SAME observable for the
-  // same input — with vibrate absent, deleting this line still returns false, because calling a
-  // non-function throws a TypeError the catch swallows. A mutation run confirmed it: removing this
-  // line left every return-value assertion green (the mutant SURVIVED). So the check is pinned on
-  // the one axis the catch cannot fake — that the capability is CONSULTED before it is used, not
-  // discovered by throwing on every keypress on a platform that has no motor. haptics.test.js
-  // counts reads of `navigator.vibrate` for exactly that reason; a refactor that caches the
-  // function in a local must update that test rather than delete it.
+  // same input: with vibrate absent, deleting this line still returns false, because calling a
+  // non-function throws a TypeError the catch swallows. So the check is pinned on the one axis the
+  // catch cannot fake — that the capability is CONSULTED before it is used, not discovered by throwing
+  // on every keypress on a platform that has no motor. haptics.test.js counts reads of
+  // `navigator.vibrate` for exactly that reason; a refactor that caches the function in a local must
+  // update that test rather than delete it.
   if (!hapticsSupported()) return false
   try {
     return navigator.vibrate(pattern) !== false
