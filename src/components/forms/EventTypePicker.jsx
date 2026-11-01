@@ -1,31 +1,22 @@
-// src/components/forms/EventTypePicker.jsx
-// Lane D / Phase D — single-select event-type picker, extracted verbatim from
-// EventNew.jsx (no behavior change). A button-grid quick-picker: primary types in
-// a 3-col + 2-col grid, the rest in a collapsible "More" panel grouped by
-// EVENT_TYPE_META category. Owns the primary list (EVENT_TYPES_UI) and derives the
-// secondary groups from the canonical eventTypes.js — re-exported so the prior
-// importers (EventNew re-export → EventTypesPhase1.test) keep working unchanged.
+// Single-select event-type picker: primary types in a 3-col + 2-col grid, the rest in a collapsible
+// "More" panel grouped by EVENT_TYPE_META category. Owns the primary list (EVENT_TYPES_UI) and
+// derives the secondary groups from the canonical eventTypes.js. Re-exported through EventNew for
+// its prior importers (EventTypesPhase1.test).
 //
-// Composition note (plan §5 Phase D): this is the QUICK-PICKER half. The LogMany
-// scope/exclusion checklist is a SEPARATE component (ScopeChecklist) — different
-// render tree + state model; they share primitives, not a `mode=` switch.
+// This is the QUICK-PICKER half. The LogMany scope/exclusion checklist is a SEPARATE component
+// (ScopeChecklist) with a different render tree and state model; they share primitives, not a
+// `mode=` switch.
 import React, { useState, useMemo } from 'react'
-// V4-LOSSEVENT-001: SELECTABLE_EVENT_TYPES, not EVENT_TYPES — the CREATION list, which drops the
-// two plant-reduction types while their capture panel is unbuilt. See constants.js for the why.
+// SELECTABLE_EVENT_TYPES, not EVENT_TYPES: the CREATION list, which drops the two plant-reduction
+// types while their capture panel is unbuilt. See constants.js.
 import { P, SELECTABLE_EVENT_TYPES } from '../../lib/constants.js'
 import { buildSecondaryGroups } from '../../lib/eventTypes.js'
 import { T } from './formStyles.js'
 import Icon from '../Icon.jsx'
 
-// Primary quick-picks (V4-EVENTSEL-002, Dave 2026-07-07: first-class set reordered to
-// Watered / Transplanted / Fertilized / Flowering / Fruit Set / Harvested / Photo — and
-// unified with the Log Many selector. Supersedes the V3-EVENTZONE-001 braindump set:
-// mulched + suckered drop to "More"; flowering + photo promoted). slice(0,3) → 3-col grid;
-// slice(3) → 2-col grid.
-//
-// V4-ICON-001: `emoji` removed. TypeBtn has rendered <Icon name={`event.${value}`} /> since the
-// registry landed, so these were inert strings; `value` is now the ONLY glyph key. Shape is
-// { value, label } — the same shape buildSecondaryGroups emits, which is why TypeBtn takes both.
+// Primary quick-picks, shared with the Log Many selector. slice(0,3) → 3-col grid; slice(3) → 2-col
+// grid. `value` is the ONLY glyph key (TypeBtn renders <Icon name={`event.${value}`} />). Shape is
+// { value, label }, the same shape buildSecondaryGroups emits, which is why TypeBtn takes both.
 export const EVENT_TYPES_UI = [
   { value: 'watering',    label: 'Watered' },
   { value: 'transplant',  label: 'Transplanted\n/ Planted' },
@@ -77,9 +68,8 @@ function TypeBtn({ type, selected, onSelect }) {
 export default function EventTypePicker({ value, onChange, primaries = EVENT_TYPES_UI, available = SELECTABLE_EVENT_TYPES }) {
   const [showMore, setShowMore] = useState(false)
   // Secondary "More" groups: everything in `available` not shown as a primary tile, grouped by
-  // EVENT_TYPE_META category. Defaults (primaries=EVENT_TYPES_UI, available=EVENT_TYPES) reproduce
-  // the module-const SECONDARY_GROUPS exactly, so EventNew (passes no props) is byte-identical.
-  // Log Many passes primaries=first-class-minus-photo + available=BATCH_EVENT_TYPES → one shared grid.
+  // EVENT_TYPE_META category. The defaults reproduce the module-const SECONDARY_GROUPS exactly, so
+  // EventNew (passes no props) is unaffected.
   const secondaryGroups = useMemo(
     () => buildSecondaryGroups(new Set(primaries.map(t => t.value)), available),
     [primaries, available],
@@ -104,11 +94,8 @@ export default function EventTypePicker({ value, onChange, primaries = EVENT_TYP
           marginTop: 12, background: 'none', border: 'none',
           cursor: 'pointer', color: P.green, fontSize: '0.82rem',
           fontWeight: 600, padding: '4px 0',
-          // BUG-DISCLOSURETAPSIZE-001: 24px measured at 390x844 (4px padding + a 0.82rem line box).
-          // Found by the tap-target CENSUS in scripts/layout-gate/log-chooser-clearance.mjs, not by
-          // the manual audit that filed the bug — that audit named this control but attributed it
-          // to EventNew's harvest disclosure, so a fix list built from the ticket alone would have
-          // left it short. The census is the reason the miss surfaced.
+          // 24px at 390x844 was under the tap floor (4px padding + a 0.82rem line box); the
+          // log-chooser-clearance layout gate's tap-target census covers this control.
           minHeight: T.tapMinHeight,
           display: 'flex', alignItems: 'center', gap: 5,
         }}

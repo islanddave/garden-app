@@ -1,8 +1,8 @@
 import React from 'react'
 import { T, P } from '../../lib/tokens.js'
 
-// GroupByControl — single active group-by selector for the Garden render. Segmented chip row;
-// exactly one active at a time. value==='none' = the legacy by-project tree (golden path).
+// Single active group-by selector for the Garden render: segmented chip row, exactly one active.
+// value==='none' = the legacy by-project tree.
 export default function GroupByControl({ options = [], value = 'none', onChange, style }) {
   return (
     <div role="group" aria-label="Group by" style={{ display: 'inline-flex', flexWrap: 'wrap', gap: T.space.xs, ...style }}>

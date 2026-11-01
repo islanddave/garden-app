@@ -1,10 +1,7 @@
-// src/components/forms/Select.jsx
-// Lane D / Phase A — canonical native <select> primitive with palette chevron.
-//
-// Options come from EITHER an `options` prop ([{value,label}] or string[]) OR
-// children <option>s. A placeholder is rendered when `placeholder` is set and the
-// value is empty. Same error/aria conventions as Input. Chevron chrome is composed
-// from P.light in formStyles (no hardcoded stroke).
+// Canonical native <select> primitive with palette chevron. Options come from EITHER an `options`
+// prop ([{value,label}] or string[]) OR children <option>s. A placeholder is rendered when
+// `placeholder` is set and the value is empty. Same error/aria conventions as Input. Chevron chrome
+// is composed from P.light in formStyles (no hardcoded stroke).
 import React from 'react'
 import { selectChrome } from './formStyles.js'
 
@@ -16,20 +13,15 @@ function normalizeOptions(options) {
   )
 }
 
-// A stored value that is not in `options` used to render as the PLACEHOLDER — the select showed
-// "— optional —" for a field that was in fact set, so the real value was invisible and could not be
-// preserved by anyone editing the form. Worse than invisible: the obvious user response is to pick
-// a value to fill the apparently-empty box, which silently REPLACES the stored one.
-//
-// Hit live on locations.type_label 2026-08-08: 'area' was the most common value in the data (9 of
-// 21 locations, 200 live plantings) and had never been added to LOCATION_TYPE_LABELS. Because
-// type_label feeds the care engine's covered/outdoor branch, "filling in" one of those boxes with
-// shelf/rack/tray would have flipped a whole yard to covered — no rain credit, no frost alerts.
-//
-// Surfacing the value is strictly more honest than hiding it, so this is fixed in the PRIMITIVE
-// rather than in one caller's option list: the same drift can happen to any select whose vocabulary
-// is a hardcoded list and whose data is not. Appended, not prepended, so it never displaces a real
-// option, and only when the value is non-empty — an empty value must still show the placeholder.
+// A stored value that is not in `options` must not render as the PLACEHOLDER: the box would look
+// empty for a field that is set, the value could not be preserved by anyone editing, and the
+// obvious response (pick a value to fill the box) silently REPLACES the stored one. The case that
+// mattered: locations.type_label values missing from LOCATION_TYPE_LABELS, where type_label feeds
+// the care engine's covered/outdoor branch, so "filling in" the box could flip a whole yard to
+// covered (no rain credit, no frost alerts).
+// Fixed in the PRIMITIVE, since any select with a hardcoded vocabulary over unconstrained data can
+// drift the same way. Appended, not prepended, so it never displaces a real option, and only when
+// the value is non-empty (an empty value must still show the placeholder).
 function withStoredValue(opts, value) {
   if (!opts || value == null || value === '') return opts
   return opts.some(o => String(o.value) === String(value))

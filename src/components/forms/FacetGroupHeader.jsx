@@ -5,16 +5,14 @@ import { P, T } from '../../lib/tokens.js'
 // The chevron's two glyphs, shared by both modes (the designsys emoji ceiling counts literals, not uses).
 const CHEVRON = { closed: '▸', open: '▾' }
 
-// FacetGroupHeader — section header for one group in the faceted Garden render. Shows label +
-// count; optional collapse chevron when onToggle is provided. Unsorted renders neutral + italic.
+// Section header for one group in the faceted Garden render. Shows label + count; optional collapse
+// chevron when onToggle is provided. Unsorted renders neutral + italic.
 //
-// V5-TODAYREDESIGN-001 S2 — an OPT-IN native mode, engaged by `headingLevel` (plan-v2 §4 "Section band",
-// §5.2 disclosure contract). Absent, every caller (Garden, My seeds) renders the div[role=button] below
-// byte-for-byte (FacetGroupHeader.native.test.jsx pins it). Present:
+// OPT-IN native mode, engaged by `headingLevel`. Absent, every caller (Garden, My seeds) renders the
+// div[role=button] below unchanged (FacetGroupHeader.native.test.jsx pins it). Present:
 //   <hN><button aria-expanded aria-controls> chevron · label · count / summary </button></hN> + trailing
-// with the panel (children) mounted as the band's next sibling ONLY while open, under an id from useId —
-// so aria-controls names a node that exists, and two instances never share an id (V1's CareNeeded
-// hand-built its ids and duplicated them across the household lists).
+// with the panel (children) mounted as the band's next sibling ONLY while open, under an id from
+// useId, so aria-controls names a node that exists and two instances never share an id.
 export default function FacetGroupHeader({ label, count, facet, value, collapsed = false, onToggle, isUnsorted = false, style, headingLevel, ...native }) {
   if (headingLevel != null) {
     return <NativeFacetGroupHeader label={label} count={count} facet={facet} value={value} collapsed={collapsed}
@@ -40,17 +38,17 @@ export default function FacetGroupHeader({ label, count, facet, value, collapsed
     >
       {interactive && <span aria-hidden="true" style={{ fontSize: T.type.xs }}>{collapsed ? CHEVRON.closed : CHEVRON.open}</span>}
       <span style={{ fontStyle: isUnsorted ? 'italic' : 'normal' }}>{label}</span>
-      {/* Full opacity (V5-SEEDCARDS-001): at .7 the count read 3.74:1 on its fill, under 4.5 — and on a
-          collapsed My seeds group it is the header's only content. */}
+      {/* Full opacity: at .7 the count read 3.74:1 on its fill, under 4.5, and on a collapsed My
+          seeds group it is the header's only content. */}
       {typeof count === 'number' && <span style={{ marginLeft: 'auto', fontWeight: 600 }}>{count}</span>}
     </div>
   )
 }
 
-// size 'section' — the flat band (plan §4): facet fill, 3px left rule, title T.type.sm 700, count right,
-// summary line 2 in P.mid (P.light is 4.24:1 on fTypeBg, §5.9). size 'row' — a spot row's disclosure
-// (S4): no chrome of its own (the row card is the caller's), name T.type.md 600 P.dark, count, chevron
-// last. Both: a native button, minHeight 48, chevron glyph swapped — never rotated, never animated.
+// size 'section': the flat band: facet fill, 3px left rule, title T.type.sm 700, count right, summary
+// line 2 in P.mid (P.light is 4.24:1 on fTypeBg). size 'row': a spot row's disclosure: no chrome of
+// its own (the row card is the caller's), name T.type.md 600 P.dark, count, chevron last. Both: a
+// native button, minHeight 48, chevron glyph swapped, never rotated or animated.
 // `trailing` is the band's sibling control zone (Not today / Water all): never inside the button.
 // No onToggle = the non-collapsible form: a static heading, the panel always mounted.
 function NativeFacetGroupHeader({ label, count, facet, value, collapsed, onToggle, isUnsorted, style, headingLevel, summary, trailing, size = 'section', children, panelStyle, testId = 'facet-group-header' }) {

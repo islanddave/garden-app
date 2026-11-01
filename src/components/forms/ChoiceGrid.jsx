@@ -1,18 +1,12 @@
-// src/components/forms/ChoiceGrid.jsx
-// V4-FORMSYS-CHOICEGRID-001 — canonical single-select card/list picker. Replaces the bespoke
-// TypeCard (InventoryAdd) + ZoneCard (ZonePicker, since deleted) selectors with ONE grammar:
-// selected = greenPale fill + green 2px border + check; error = terra border. Two layouts preserve
-// current looks: 'grid' (icon over label, N columns — InventoryAdd) | 'list' (icon left,
-// label+description, check right, full-width — originally ZonePicker, now OverwinterPrompt/AddSeeds;
-// the layout outlived the page). Real radio semantics: role=radiogroup/radio + aria-checked
-// + roving tabindex + arrow-key nav (the bespoke originals were plain buttons with no a11y).
+// Canonical single-select card/list picker. selected = greenPale fill + green 2px border + check;
+// error = terra border. Two layouts: 'grid' (icon over label, N columns) | 'list' (icon left,
+// label+description, check right, full-width). Real radio semantics: role=radiogroup/radio +
+// aria-checked + roving tabindex + arrow-key nav.
 //
-// V4-ICON-001. An option carries its mark as `iconName` — a REGISTRY KEY this component resolves —
-// rather than as a glyph the caller interpolates. Two data modules (overwinterRegimes, inventoryEnums)
-// held emoji purely because their only render site was this one line, and a key that arrives as a
-// string can be checked by a static test; an emoji baked into a data module cannot. The legacy
-// `icon` field still works and still takes a node: AddSeeds passes ready-made <Icon> elements, and
-// ChoiceGrid.test.jsx passes plain strings. Both paths are live, so neither is a migration remnant.
+// An option carries its mark as `iconName`, a REGISTRY KEY this component resolves, rather than a
+// glyph the caller interpolates: a key arriving as a string can be checked by a static test; an
+// emoji baked into a data module cannot. The `icon` field still takes a node (AddSeeds passes
+// ready-made <Icon> elements, ChoiceGrid.test.jsx passes plain strings); both paths are live.
 import React, { useRef } from 'react'
 import { P } from '../../lib/constants.js'
 import Icon from '../Icon.jsx'
@@ -64,10 +58,9 @@ export default function ChoiceGrid({ value, onChange, options = [], columns = 2,
             disabled={o.disabled} tabIndex={o.disabled ? -1 : tabIndex}
             ref={el => { refs.current[i] = el }} onClick={() => onChange?.(o.value)}
             style={cardStyle({ selected, hasError, layout })}>
-            {/* Sizes match what the emoji occupied (2rem / 1.8rem), so the card geometry is
-                unchanged. Both land above the 21px master crossover, i.e. the 24 master. The tint
-                tracks the label rather than carrying the selection on its own — border, fill and
-                the check mark already state it three other ways. */}
+            {/* Icon sizes match what the emoji occupied (2rem / 1.8rem), so card geometry is
+                unchanged. The tint tracks the label; border, fill and the check mark already
+                state the selection three other ways. */}
             {o.iconName
               ? <Icon name={o.iconName} size={layout === 'list' ? 30 : 28} decorative
                   style={{ flexShrink: 0, color: selected ? P.green : P.dark }} />

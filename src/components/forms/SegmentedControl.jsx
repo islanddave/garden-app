@@ -1,16 +1,12 @@
-// src/components/forms/SegmentedControl.jsx
-// V4-THEME-001 (V200 Pass B) — canonical 2+-way view toggle. ONE segmented grammar for
-// the Plants⇄Photos sub-tab toggle and the plant-detail Basics·Care·More tabs.
-// NOT GroupByControl (that is a single-axis facet GROUP selector that can also be "none");
-// this is a mutually-exclusive VIEW switch where exactly one option is always active.
-// a11y: WAI-ARIA radiogroup pattern — role=radiogroup wrapper, role=radio options,
-// roving tabindex + Left/Right(Up/Down) arrow selection, aria-checked on the active option.
-// Ships DARK (no runtime importer until the adopting slice).
+// Canonical 2+-way view toggle: a mutually-exclusive VIEW switch where exactly one option is always
+// active. NOT GroupByControl (a single-axis facet GROUP selector that can also be "none").
+// a11y: WAI-ARIA radiogroup pattern: role=radiogroup wrapper, role=radio options, roving tabindex +
+// Left/Right(Up/Down) arrow selection, aria-checked on the active option.
 //
-// `touch` (V5-PUTUPLOGRETIRE-001): opt-in option height of 48 px, the tap target, for a surface whose floor is
-// 48 (Put-Up). Absent, every caller renders byte-identically. The height comes from the token and is never
-// spelled as a second number here: two layout gates read this file's one numeric height as the primitive's
-// floor (scripts/layout-gate/segmented-control-exemption.mjs) and refuse to run if they find two.
+// `touch` opts into the 48 px option height (the tap target) for a surface whose floor is 48
+// (Put-Up). The height comes from the token and is never spelled as a second number here: two
+// layout gates read this file's one numeric height as the primitive's floor
+// (scripts/layout-gate/segmented-control-exemption.mjs) and refuse to run if they find two.
 import React, { useRef } from 'react'
 import { P } from '../../lib/constants.js'
 import { T } from './formStyles.js'
