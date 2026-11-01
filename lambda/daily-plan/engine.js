@@ -949,13 +949,12 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
       // not due -> no row: day-credits/snoozes/amounts already spoke through D
     }
     else if(dW!=null && dW>=wi && _satApplies){
-      // DRG-WXSATCAP-001: heavy-soak saturation cap OUTRANKS the tier decay + fast-dry discount + heat-gate.
+      // The heavy-soak saturation cap OUTRANKS the tier decay + fast-dry discount + heat-gate.
       rainSkipped.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,in_ground:inGround,
         days_since:dW,interval:wi,saturated:true,
-        // BUG-TODAYWATER-001: structured decision inputs alongside the prose. Without these, "did we skip on
-        // a forecast that busted?" is unanswerable after the fact — and that is the failure this change can
-        // cause. Additive only; PLAN_SCHEMA_VERSION deliberately NOT bumped (the three readers pin the
-        // literal and deploy in one unordered matrix wave, so a bump opens a mismatch window).
+        // Structured decision inputs alongside the prose: without them "did we skip on a forecast that busted?" is unanswerable after the fact.
+        // Additive only; PLAN_SCHEMA_VERSION deliberately NOT bumped (the three readers pin the literal and deploy in one unordered matrix wave, so
+        // a bump opens a mismatch window).
         sat_kind:_sat.kind, sat_wp:_sat.wp,
         today_in:(hydrology&&hydrology.today_precip_in)??null, today_pop:(hydrology&&hydrology.today_pop)??null,
         reason: satReason(_sat)});
@@ -966,22 +965,16 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
           ? `Skip — ${rc.wp}" rain counts as watering (fabric bag dries fast at ${high}°F: ${rc.credit_days}d credit${bagHeatCut?`, cut from ${rc.bag_heat_from}d`:''})`
           : `Skip — ${rc.wp}" rain over the last few days counts as watering`});
     } else if(dW!=null && dW>=wi){
-      // BUG-RAINFORECASTCREDIT-001 residual: the DECISION that landed us in this branch is
-      // `rc == null`, and rc comes from creditPrecip(hydrology, measuredCreditEnabled). Quoting
-      // windowPrecip here instead made the sentence and the verdict cite different numbers the
-      // moment the measured flag went live — a literally false `Water — 0.38" rain under the 0.20"
-      // soak-in threshold`, where 0.38 was the mixed sum and the 0.20 bar was applied to the
-      // measured one. Same call, same args as the credit itself. measuredCreditEnabled=false ->
-      // creditPrecip IS windowPrecip, so the flag-OFF note is byte-identical.
+      // The DECISION that landed us in this branch is `rc == null`, and rc comes from creditPrecip(hydrology, measuredCreditEnabled). Quoting
+      // windowPrecip here instead made the sentence and the verdict cite different numbers once the measured flag went live (a false `Water — 0.38"
+      // rain under the 0.20" soak-in threshold`, where 0.38 was the mixed sum and the bar applied to the measured one). Same call, same args as the
+      // credit itself; with measuredCreditEnabled=false creditPrecip IS windowPrecip, so the flag-OFF note is byte-identical.
       const wp=creditPrecip(hydrology, measuredCreditEnabled);
       // flag-OFF: _iaShown===RAIN_IA.outdoor and _creditClass===(rcls==='outdoor') -> note is byte-identical.
       const _iaShown = rainCreditEnabled ? (RAIN_TIER_IA[_rainTier] ?? RAIN_TIER_IA.unknown) : RAIN_IA.outdoor;
-      // BUG-HEATDEMOTETOTAL-001: the bag branch now reports the credit that SURVIVED the gate, and only
-      // fires when there was a credit at all. `bagHeatGate && rc==null` means the rain never cleared the
-      // soak-in threshold in the first place — the old note called that "rain credit withheld on hot
-      // days", naming a cause that did not apply; it now falls through to the threshold note, which does.
-      // The `cut from` clause is conditional because the 2-class flag-OFF path has no room to demote: its
-      // base credit already IS bagHeatMinCreditDays, so the gate fires and the number does not move.
+      // The bag branch reports the credit that SURVIVED the gate, and only fires when there was a credit at all: `bagHeatGate && rc==null` means the
+      // rain never cleared the soak-in threshold, so it falls through to the threshold note, which names the real cause. The `cut from` clause is
+      // conditional because the 2-class flag-OFF path has no room to demote: its base credit already IS bagHeatMinCreditDays.
       const rain_note=freshTransplant
         ? 'Water — fresh transplant (no rain credit; small root ball dries fast)'
         : (bagHeatGate && rc)
@@ -992,32 +985,26 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
       water.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,in_ground:inGround,days_since:dW,interval:wi,overdue_by:dW-wi,method:c.water_method,moisture:c.soil_moisture_target,never:false,rain_note});
     }
     else if(dW==null) water.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,in_ground:inGround,days_since:null,interval:wi,overdue_by:null,method:c.water_method,moisture:c.soil_moisture_target,never:true});
-    } // end DRG-NOCALWATER-001 watering guard (fert/pest/cold below run for suppressed plantings too)
-    // V4-OVERWINTER-001 EXIT NOTICE. Bounded to EXIT_NOTICE_DAYS after the window closes and emitted
-    // only for the two regimes where Dave physically moves the plant. Normal care has ALREADY resumed
-    // by the time this fires (the window closing IS the exit), so this is a reminder to move the pot,
-    // not a hold — and it goes quiet by itself, because an unbounded reminder is the one-way trap in
-    // different clothing.
+    } // end watering guard (fert/pest/cold below run for suppressed plantings too)
+    // OVERWINTER EXIT NOTICE. Bounded to EXIT_NOTICE_DAYS after the window closes and emitted only for the two regimes where Dave physically moves the
+    // plant. Normal care has ALREADY resumed by then (the window closing IS the exit), so this is a reminder to move the pot, not a hold — and it goes
+    // quiet by itself, because an unbounded reminder is the one-way trap in different clothing.
     if(_ow && _ow.exitDue){
       overwintering.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,
         regime:_ow.regime,interval:null,days_since:null,overdue_by:null,never:false,exit_due:true,
         harvestable:_ow.harvestable,window_until:_ow.until,moisture:null,note:_ow.guidance,
         reason:'Overwintering window has ended — move it back out and resume normal care, or extend the window'});
     }
-    // V4-OVERWINTER-001: feeding is OFF for every overwintering regime. A quiescent root system cannot
-    // take up what is applied, so it stays in the medium as salt; and a tunnel crop coasting at 9 hours
-    // of daylight has no growth to feed. Uniform across the four regimes on purpose — one boolean, not
-    // a fifth per-regime knob to get wrong. Pest and cold still run below: scale and spider mites are
-    // the classic indoor-overwintering losses, and a protected plant still needs its cold card.
-    // BUG-CAREFEEDINHERIT-001: suppression is LOUD, never silent — a plant nobody ever feeds should be
-    // distinguishable from a plant everybody forgot. REPORTING ONLY: the suppression itself happens once,
-    // inside fertilizeRec, and this line does NOT also skip the call. That is deliberate anti-redundancy —
-    // two guards on one decision means mutating either leaves the other holding, and the test can never
-    // watch a guard fail. Here, breaking feedSuppression breaks the bucket AND releases the card; breaking
-    // the guard inside fertilizeRec puts the planting in BOTH lists, which is visibly wrong.
-    // Reported regardless of overwintering (which stops feeding for its own, temporary reason) because
-    // this is a POPULATION, like dormancy_suppressed: every planting whose profile refuses calendar
-    // feeding, not just the ones that would have been carded today.
+    // Feeding is OFF for every overwintering regime. A quiescent root system cannot take up what is applied, so it stays in the medium as salt; a tunnel
+    // crop coasting at 9 hours of daylight has no growth to feed. Uniform across the four regimes on purpose — one boolean, not a fifth per-regime knob
+    // to get wrong. Pest and cold still run below: scale and spider mites are the classic indoor-overwintering losses, and a protected plant still needs
+    // its cold card.
+    // Feed suppression is LOUD, never silent: a plant nobody ever feeds should be distinguishable from one everybody forgot. REPORTING ONLY: the
+    // suppression itself happens once, inside fertilizeRec, and this line does NOT also skip the call. That is deliberate anti-redundancy — two guards on
+    // one decision means mutating either leaves the other holding and no test watches a guard fail. Here, breaking feedSuppression breaks the bucket AND
+    // releases the card; breaking the guard inside fertilizeRec puts the planting in BOTH lists, which is visibly wrong.
+    // Reported regardless of overwintering (which stops feeding for its own, temporary reason) because this is a POPULATION, like dormancy_suppressed:
+    // every planting whose profile refuses calendar feeding, not just the ones that would have been carded today.
     const _fsup=feedSuppression(p,c);
     if(_fsup) feedSuppressed.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,rule:_fsup,
       reason:'Feeding suppressed — profile: NO calendar feeding; feed only on plant signals, never by interval'});
@@ -1030,7 +1017,6 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
   const ovk=a=>a.never?-1:(a.overdue_by??-1);
   const due=water.filter(w=>!w.never).sort((a,b)=>ovk(b)-ovk(a));
   const noHistory=water.filter(w=>w.never);
-  // substrate feeding summary
   const feeding = (phaseCounts['establishment_0_2wk']||0)+(phaseCounts['mg_active_3_12wk']||0);
   const substrate={phase_counts:phaseCounts, feeding_now:feeding, fertilize_recs:fertilize.length,
     on_hold: fertilize.length===0,
@@ -1038,33 +1024,18 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
       ? `Feeding on HOLD — fresh MG slow-release mix is feeding all ${feeding} plantings (potted recently; mix feeds 3-6 months). Optional: kelp via sprayer for transplant establishment. Watch for Mg (Epsom) / blossom-end-rot (gypsum) symptoms.`
       : `${fertilize.length} planting(s) past the MG feed window — feed per recommendation.`,
     water_note: fm.water_quality && fm.water_quality.implications[0]};
-  // DRG-NOCALWATER-001: dormancy_suppressed is ADDITIVE (new counts key + new tasks array); existing task
-  // arrays keep their shape, so PLAN_SCHEMA_VERSION is deliberately NOT bumped (readers select named keys;
-  // same precedent as BUG-TODAYWATER-001's additive keys). A zero count is itself information: it says the
-  // suppression gate RAN and found nothing, distinguishing "no suppressed plantings" from "gate missing".
-  // V4-OVERWINTER-001: `overwintering` (actionable rows: due soil checks + bounded exit notices) and
-  // `overwinter_held` (the POPULATION inside an open window) are additive — named-key readers, so
-  // PLAN_SCHEMA_VERSION is deliberately NOT bumped. Two numbers rather than one because they answer
-  // different questions: a zero `overwintering` alongside a non-zero `overwinter_held` means "held out of
-  // summer cadence, nothing due today", which is the normal winter state.
+  // dormancy_suppressed is ADDITIVE (new counts key + new tasks array); existing task arrays keep their shape, so PLAN_SCHEMA_VERSION is deliberately NOT
+  // bumped (readers select named keys). A zero count is itself information: the suppression gate RAN and found nothing, distinguishing "no suppressed
+  // plantings" from "gate missing".
+  // `overwintering` (actionable rows: due soil checks + bounded exit notices) and `overwinter_held` (the POPULATION inside an open window) are additive
+  // too. Two numbers because they answer different questions: a zero `overwintering` alongside a non-zero `overwinter_held` means "held out of summer
+  // cadence, nothing due today", the normal winter state.
   //
-  // SPREAD CONDITIONALLY, unlike dormancy_suppressed's unconditional zero. The keys are absent — not
-  // present-and-zero — when nothing in the run overwinters, so the plan payload for today's garden is
-  // BYTE-IDENTICAL to the pre-change engine and tests/parity stays green with no regenerated goldens.
-  // That matters more here than the "a zero proves the gate ran" argument: a regenerated golden can hide
-  // a silent revert of the very feature it is supposed to lock, and inertness-until-used is a stronger,
-  // directly-testable property (overwinter-engine.test.js "is completely inert"). The same conditional
-  // shape is already used for hydrology.today_observed_in a few lines below, for the same reason.
-  // BUG-CAREFEEDINHERIT-001: `feed_suppressed` follows V4-OVERWINTER-001's CONDITIONAL spread, not
-  // dormancy_suppressed's unconditional zero — the two shapes are both in this return and the file has
-  // already argued the question once, in favour of conditional. Absent (not present-and-zero) when
-  // nothing in the run is suppressed, so today's plan payload is BYTE-IDENTICAL to the pre-change engine
-  // and all 25 parity goldens stay green with no regeneration. That is worth more here than "a zero
-  // proves the gate ran": no prod row carries the key yet, so an unconditional zero would have forced a
-  // mass golden regeneration to record a feature that changes nothing — and a regenerated golden can
-  // hide a silent revert of the very thing it locks. Inertness-until-used is the stronger property and
-  // is directly tested (neverfeed.test.js "the key set is inert"). Additive either way, so
-  // PLAN_SCHEMA_VERSION is deliberately NOT bumped (readers select named keys).
+  // overwintering and feed_suppressed SPREAD CONDITIONALLY, unlike dormancy_suppressed's unconditional zero: the keys are absent, not present-and-zero,
+  // when nothing in the run overwinters or is suppressed, so today's plan payload is BYTE-IDENTICAL to the pre-change engine and tests/parity stays green
+  // with no regenerated goldens. That matters more than "a zero proves the gate ran": a regenerated golden can hide a silent revert of the very feature it
+  // locks, and inertness-until-used is a stronger, directly-testable property (overwinter-engine.test.js "is completely inert"; neverfeed.test.js "the
+  // key set is inert"). The same conditional shape is used for hydrology.today_observed_in below.
   const _owOn = overwinterHeld>0 || overwintering.length>0;
   const _fsOn = feedSuppressed.length>0;
   return {counts:{plantings:plantings.length,water_due:due.length,no_history:noHistory.length,fertilize:fertilize.length,pest:pest.length,cold:cold.length,dormant:dormant.length,rain_skipped:rainSkipped.length,dormancy_suppressed:waterSuppressed.length,
@@ -1075,13 +1046,10 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
       ...(_fsOn?{feed_suppressed:feedSuppressed}:{})}};
 }
 
-// BUG-RAINBEDWAITCONFLICT-001 — the rain callout's own gate. It tells Dave "let in-ground beds wait", so it
-// must fire exactly when the engine lets DRY beds wait: the 'incoming_dry' bars (0.50"/60%, a null PoP
-// fails closed, and no deferral at all when windowPrecip is unknown — saturationSuppressed bails there).
-// The pre-2026-09-28 bar was a private 0.30"/50% (null PoP allowed) dated 2026-06-30, before the gauge,
-// with no derivation; it produced the season's only forecast-driven false hold (09-17: 1.12" @ 53% -> 0.17"
-// fell) and told Dave to let beds wait while the list below it watered them. `bedsWait` false keeps the old
-// gate byte-for-byte, so every caller that has not armed a dry deferral (and every parity golden) is unchanged.
+// The rain callout's own gate. It tells Dave "let in-ground beds wait", so it must fire exactly when the engine lets DRY beds wait: the 'incoming_dry'
+// bars (0.50"/60%, a null PoP fails closed, and no deferral at all when windowPrecip is unknown — saturationSuppressed bails there). The old gate was a
+// private 0.30"/50% (null PoP allowed) with no derivation; it produced a forecast-driven false hold and told Dave to let beds wait while the list below it
+// watered them. `bedsWait` false keeps the old gate byte-for-byte, so every caller that has not armed a dry deferral (and every parity golden) is unchanged.
 function rainCalloutFires(hy, bedsWait){
   if(!hy) return false;
   if(!bedsWait) return hy.tomorrow_precip_in>=0.3 && (hy.tomorrow_pop==null || hy.tomorrow_pop>=50);
@@ -1090,12 +1058,10 @@ function rainCalloutFires(hy, bedsWait){
     && hy.tomorrow_pop!=null && hy.tomorrow_pop>=SOAK_FCST_POP_PCT;
 }
 
-// V5-CHILLBAND-001 — which words a cold-side callout takes, from the PLAN DATE's month and day ('YYYY-MM-DD',
-// the garden's local date the plan is for; read as text, so no clock or time zone enters). The same 47°F
-// means opposite things in May (young transplants are out) and September (the season is ending): 'spring' is
-// May 1..Aug 14, 'fall' is Aug 15..Oct 31, and null is Nov 1..Apr 30 or no usable date. Dave's windows,
-// 2026-10-13. COPIED in src/lib/tonightLow.js cueSeason (the bundle cannot import this module); its PARITY
-// sweep in src/__tests__/tonightLow.test.js holds the two together on every boundary day.
+// Which words a cold-side callout takes, from the PLAN DATE's month and day ('YYYY-MM-DD', the garden's local date the plan is for; read as text, so no
+// clock or time zone enters). The same 47°F means opposite things in May (young transplants are out) and September (the season is ending): 'spring' is
+// May 1..Aug 14, 'fall' is Aug 15..Oct 31, and null is Nov 1..Apr 30 or no usable date. COPIED in src/lib/tonightLow.js cueSeason (the bundle cannot
+// import this module); its PARITY sweep in src/__tests__/tonightLow.test.js holds the two together on every boundary day.
 function calloutSeason(planDate){
   const m = typeof planDate==='string' ? /^\d{4}-(\d{2})-(\d{2})/.exec(planDate) : null;
   if(!m) return null;
@@ -1108,10 +1074,9 @@ function calloutSeason(planDate){
 }
 
 // Compute the single weather callout (action only) from temp + hydrology. Priority order; null = no callout (no filler).
-// V5-CHILLBAND-001: planDate picks the season words (calloutSeason). Without one the cold line keeps its
-// all-year words and the 45-50°F `cool` line stays silent, so a caller that passes no date falls through to
-// heat/rain/wet exactly as before. `cool` is a sixth icon: src/lib/weatherCue.js CUE_FORM and
-// lambda/daily-plan-read/cue-impression.js CUES must name it, or Today renders nothing on such a night.
+// planDate picks the season words (calloutSeason). Without one the cold line keeps its all-year words and the 45-50°F `cool` line stays silent.
+// `cool` is a sixth icon: src/lib/weatherCue.js CUE_FORM and lambda/daily-plan-read/cue-impression.js CUES must name it, or Today renders nothing on such
+// a night.
 function computeCallout(weather, hy, bedsWait=false, planDate=null){
   const low=weather&&weather.tonightLow, high=weather&&weather.highToday;
   const season=calloutSeason(planDate);
@@ -1124,11 +1089,9 @@ function computeCallout(weather, hy, bedsWait=false, planDate=null){
     : `Cool night (${low}°F) — cover young peppers, basil & cukes`};
   if(high!=null && high>=88) return {icon:'heat', text:`Hot day (${high}°F) — deep-water thirsty crops, shade if wilting`};
   if(rainCalloutFires(hy, bedsWait)){
-    // BUG-RAINFCSTONEMODEL-001 (b) — mirror the Today widget, which since 2026-09-25 prints the amount and the
-    // chance side by side instead of their product (DRG-WXPROB-001 printed amount × PoP / 100 here too). The
-    // GATE is unchanged — whether this fires is a watering decision. A null PoP prints the amount alone, as
-    // before. The text before ' — ' is what weatherCue.buildCueLine keeps, so the chance travels with it.
-    // Two decimals, as the card prints it, so the two lines stacked on Today show the same figure.
+    // Mirrors the Today widget, which prints the amount and the chance side by side instead of their product. The GATE is unchanged — whether this fires
+    // is a watering decision. A null PoP prints the amount alone. The text before ' — ' is what weatherCue.buildCueLine keeps, so the chance travels with
+    // it. Two decimals, as the card prints it, so the two lines stacked on Today show the same figure.
     const _pop = hy.tomorrow_pop!=null ? ` (${hy.tomorrow_pop}% chance)` : '';
     return {icon:'rain', text:`${hy.tomorrow_precip_in.toFixed(2)}" rain tomorrow${_pop} — water containers today, let in-ground beds wait`};
   }
@@ -1136,35 +1099,23 @@ function computeCallout(weather, hy, bedsWait=false, planDate=null){
     return {icon:'wet', text:`${hy.recent_precip_in}" fell recently — soil is wet, skip outdoor watering`};
   return null;
 }
-// Full-picture gate + uncertainty. In showery/convective regimes the amount can move several-fold within
-// hours, so the OLD 40-60%-PoP-only band missed the common high-PoP cases (e.g. 88% PoP with a trace or
-// modest amount — DRG-WXROLL/bell). Flag the figures as volatile whenever rain is reasonably likely today
-// or tomorrow, or when data is missing.
-//
-// OPS-PLANHOURLY-001 — these strings used to say "pre-dawn snapshot", which was accurate when the plan
-// was generated at 02:00/05:30/15:30 ET and became a FALSE STATEMENT under the hourly schedule: the
-// figures are now at most ~an hour old. The uncertainty itself is unchanged and still real — a showery
-// regime shifts whatever time you read it — so only the provenance half of the copy moved. Naming the
-// generation time was doing real work in the old copy (it explained WHY the number might be wrong), so
-// it is replaced rather than dropped: "latest" still tells Dave this is a forecast that can move, without
-// asserting a generation time that is no longer true.
-// METADATA ONLY — no watering recommendation reads this flag (presentation honesty for the Today widget;
-// the conservative watering model is unchanged). DRG-WX Phase 2.
+// Full-picture gate + uncertainty. In showery/convective regimes the amount can move several-fold within hours, so a PoP-only band missed the common
+// high-PoP cases (e.g. 88% PoP with a trace or modest amount). Flag the figures as volatile whenever rain is reasonably likely today or tomorrow, or
+// when data is missing. The copy says "latest" rather than naming a generation time: the plan regenerates hourly, so the figures are at most ~an hour
+// old, yet a showery regime shifts whatever time you read it.
+// METADATA ONLY — no watering recommendation reads this flag (presentation honesty for the Today widget).
 const SHOWERY_POP = 50;
-// BUG-WXBANNERSHOWERYCOPY-001 — "assumes no rain credit" is true only while recent_precip_in is null
-// (windowPrecip/creditPrecip return null, so nothing is credited). With a bound gauge and no forecast
-// (the 2026-09-02 shape) recent is the gauge's and still credits, so that case says so instead.
+// "assumes no rain credit" is true only while recent_precip_in is null (windowPrecip/creditPrecip return null, so nothing is credited). With a bound gauge
+// and no forecast, recent is the gauge's and still credits, so that case says so instead.
 function hydrologyStatus(hy){
   if(!hy || hy.recent_precip_in==null || hy.upcoming_precip_in==null)
     return {ok:false, uncertainty:{flag:true, reason: (hy && hy.recent_precip_in!=null)
       ? 'precip data incomplete — watering advice still credits recent rain'
       : 'precip data incomplete — watering advice assumes no rain credit'}};
-  // BUG-RAINFCSTONEMODEL-001 — the tomorrow half reads the DISPLACED best_match pair when the five-model
-  // forecast replaced it (rainForecast.applyRainForecast keeps it as bm_tomorrow_*). SHOWERY_POP 50 was set
-  // against best_match's max-hourly PoP; the five-model share clears 50 on ~45% of summer days (37 of 82,
-  // 2026-07-05..09-24) against ~11% (9 of 82), which would put the gold banner on Today every other day — the
-  // "wallpaper" failure WeatherCueLine.jsx names. The banner is metadata that no watering decision reads, so
-  // it keeps its calibrated trigger until someone re-derives one for the new quantity.
+  // The tomorrow half reads the DISPLACED best_match pair when the five-model forecast replaced it (rainForecast.applyRainForecast keeps it as
+  // bm_tomorrow_*). SHOWERY_POP 50 was set against best_match's max-hourly PoP; the five-model share clears 50 on ~45% of summer days against ~11%, which
+  // would put the gold banner on Today every other day — the "wallpaper" failure WeatherCueLine.jsx names. The banner is metadata that no watering
+  // decision reads, so it keeps its calibrated trigger until someone re-derives one for the new quantity.
   const tPop=hy.today_pop, mPop=('bm_tomorrow_pop' in hy) ? hy.bm_tomorrow_pop : hy.tomorrow_pop;
   const tIn=hy.today_precip_in??0, mIn=(('bm_tomorrow_precip_in' in hy) ? hy.bm_tomorrow_precip_in : hy.tomorrow_precip_in)??0;
   let reason=null;
@@ -1181,13 +1132,10 @@ function hydrologyStatus(hy){
   return {ok:true, uncertainty: reason ? {flag:true, reason} : {flag:false}};
 }
 
-// V4-WATERMATH-001 F2: waterLedgerEnabled/weatherDaily/eventsByPlant/nowMs are the fold inputs the
-// handler threads through (weatherDaily was already passed as the F1 seam; it is consumed now).
-// All default to inert — an un-updated caller is byte-identical, and enabled-without-events stays
-// legacy (the handler passes enabled=false when the event-window read fails).
-// BUG-INGROUND39FSLIVER-001: frostCoverage is frostEval.frostCoverage over the handler's frost decision for
-// this Space (a Map keyed by planting id, shared by every user in the Space); see coldFor. Default null keeps
-// every in-ground card, so a caller that supplies the flag but no coverage gets cards, not silence.
+// waterLedgerEnabled/weatherDaily/eventsByPlant/nowMs are the fold inputs the handler threads through. All default to inert — an un-updated caller is
+// byte-identical, and enabled-without-events stays legacy (the handler passes enabled=false when the event-window read fails).
+// frostCoverage is frostEval.frostCoverage over the handler's frost decision for this Space (a Map keyed by planting id, shared by every user in the
+// Space); see coldFor. Default null keeps every in-ground card, so a caller that supplies the flag but no coverage gets cards, not silence.
 function generatePlan({plantings, cadence, fertModel, today, weather, hydrology, ownerFallback, rainCreditEnabled=false, rainMaxDaysEnabled=false, todayAwareEnabled=false, waterLedgerEnabled=false, weatherDaily=null, eventsByPlant=null, nowMs=null, measuredCreditEnabled=false, droughtState=null, deferDryEnabled=false, soonAwareEnabled=false, frostAlertEnabled=false, frostCoverage=null, deferDryBedsEnabled=false}){
   const ledgerOpts = (waterLedgerEnabled && eventsByPlant)
     ? ledger.buildLedgerOpts({ weatherDaily, eventsByPlant, today, nowMs })
@@ -1195,12 +1143,9 @@ function generatePlan({plantings, cadence, fertModel, today, weather, hydrology,
   const byUser=new Map();
   for(const p of plantings){ const c=resolveCadence(p,cadence); const u=ownerFor(p,c,ownerFallback)||'__UNASSIGNED__'; if(!byUser.has(u))byUser.set(u,[]); byUser.get(u).push(p); }
   const hy=hydrology||null; const callout=computeCallout(weather,hy,deferDryEnabled||deferDryBedsEnabled,today); const hs=hydrologyStatus(hy);
-  // BUG-TODAYWATER-001: `rain_coming` could not see rain arriving TODAY -- it read tomorrow only, so on
-  // 2026-08-03 it reported false while 3.8" fell. Note this flag reaches NO engine gate (it is emitted at
-  // the bottom of this function and consumed client-side), so this is an honesty fix, not the fix that
-  // moves water_due -- that is the 'today' branch in saturationSuppressed. `rain_horizon` is additive and
-  // exists because the two horizons imply OPPOSITE advice: rain tomorrow means water containers today and
-  // let beds wait; rain today means beds can wait and containers may catch little or none.
+  // `rain_coming` must see rain arriving TODAY, not tomorrow only. This flag reaches NO engine gate (it is consumed client-side), so it is an honesty fix;
+  // the fix that moves water_due is the 'today' branch in saturationSuppressed. `rain_horizon` is additive because the two horizons imply OPPOSITE advice:
+  // rain tomorrow means water containers today and let beds wait; rain today means beds can wait and containers may catch little or none.
   const _tomorrowComing = !!(hy && hy.tomorrow_precip_in>=0.3 && (hy.tomorrow_pop==null||hy.tomorrow_pop>=50));
   const _todayComing = todayQualifies(hy);
   const rainComing = _todayComing || _tomorrowComing;
@@ -1211,38 +1156,27 @@ function generatePlan({plantings, cadence, fertModel, today, weather, hydrology,
   const lwOut=(hy && Array.isArray(hy.wetness_window)) ? lw.assessLeafWetness(hy.wetness_window, today) : null;
   return {date:today,
     weather: weather? {tonightLow:weather.tonightLow, highToday:weather.highToday, code:weather.code, short:weather.short, unit:weather.unit||'F', callout} : null,
-    // BUG-RAINACTUAL-001 §3-1: today_observed_in / today_remaining_in ride along for observability — they are
-    // what makes "was that 1.4" measured or predicted?" answerable from a stored row. Spread CONDITIONALLY so
-    // a run with no bound station emits a byte-identical payload (the keys are absent, not null).
+    // today_observed_in / today_remaining_in ride along for observability: they make "was that 1.4" measured or predicted?" answerable from a stored row.
+    // Spread CONDITIONALLY so a run with no bound station emits a byte-identical payload (the keys are absent, not null).
     hydrology: hy ? {recent_precip_in:hy.recent_precip_in, today_precip_in:hy.today_precip_in, today_pop:hy.today_pop, upcoming_precip_in:hy.upcoming_precip_in, tomorrow_precip_in:hy.tomorrow_precip_in, tomorrow_pop:hy.tomorrow_pop,
       ...(hy.today_observed_in!=null?{today_observed_in:hy.today_observed_in}:{}), ...(hy.today_remaining_in!=null?{today_remaining_in:hy.today_remaining_in}:{}),
-      // BUG-RAINFCSTONEMODEL-001 (b) — D2 for Today's following-day line, the fallback when the card's live
-      // overlay is absent. Display only. Spread on the key's PRESENCE (as the two above are on non-null), so a
-      // hydrology without it — every parity fixture — emits a byte-identical payload.
+      // D2 for Today's following-day line, the fallback when the card's live overlay is absent. Display only. Spread on the key's PRESENCE, so a hydrology
+      // without it — every parity fixture — emits a byte-identical payload.
       ...('day2_precip_in' in hy ? {day2_precip_in:hy.day2_precip_in, day2_pop:hy.day2_pop??null, day2_date:hy.day2_date??null} : {}),
-      // BUG-RAINFCSTONEMODEL-001 — which method made the day-ahead figures, and the best_match pair it displaced
-      // (the shadow series for re-scoring after a full year). Present only when the five-model forecast ran.
+      // Which method made the day-ahead figures, and the best_match pair it displaced (the shadow series for re-scoring). Present only when the five-model
+      // forecast ran.
       ...(hy.forecast_source!=null ? {forecast_source:hy.forecast_source, bm_tomorrow_precip_in:hy.bm_tomorrow_precip_in??null, bm_tomorrow_pop:hy.bm_tomorrow_pop??null} : {}),
-      // V5-TODAYFROSTWARMEDADVISORY-001 — the second model's (Open-Meteo best_match) D1..D3 lows and their ET dates,
-      // verbatim as fetchPrecip fetched them THIS run and the advisory tier read them (handler.frostForSpace). An
-      // advisory entry in alerts_sent is a send-time snapshot that no later run refreshes, so without this Today cannot
-      // tell "the second model still says 38" from "it now says 45" (src/lib/frostAlertLine.js retires the stale one).
-      // Only while the frost alert is on, since alerts_sent (the only consumer) exists only then, and only when the
-      // fetch supplied them: a flag-off row and every parity fixture stay byte-identical.
+      // The second model's (Open-Meteo best_match) D1..D3 lows and their ET dates, verbatim as fetchPrecip fetched them THIS run and the advisory tier read
+      // them (handler.frostForSpace). An advisory entry in alerts_sent is a send-time snapshot that no later run refreshes, so without this Today cannot tell
+      // "the second model still says 38" from "it now says 45" (src/lib/frostAlertLine.js retires the stale one). Only while the frost alert is on
+      // (alerts_sent, the only consumer, exists only then) and only when the fetch supplied them: a flag-off row and every parity fixture stay byte-identical.
       ...(frostAlertEnabled && Array.isArray(hy.forecast_lows) ? {forecast_lows:hy.forecast_lows, forecast_dates:Array.isArray(hy.forecast_dates)?hy.forecast_dates:null} : {}),
       rain_coming:rainComing, rain_horizon:rainHorizon, status:hs} : {status:hs},
-    // V5-LEAFWETNESS-001 — SPREAD CONDITIONALLY, not emitted as an always-present null. The first cut
-    // wrote `leaf_wetness: <result-or-null>` unconditionally and the G-PARITY gate caught it: a new
-    // always-present key changes EVERY stored payload, so all 26 committed goldens went red at once.
-    // That gate is correct and the fix is the house pattern three lines above — `today_observed_in`
-    // spreads conditionally for exactly this reason ("a run with no bound station emits a
-    // byte-identical payload; the keys are absent, not null").
-    //
-    // The cost is real and worth stating: an ABSENT key cannot distinguish "no wet days" from "the
-    // cue was deleted". That detectability is bought back in the test suite instead — the Today mount
-    // case reddens if the element goes, and the engine case reddens if the key stops appearing when a
-    // qualifying window IS supplied. PLAN_SCHEMA_VERSION stays unbumped: readers select named keys,
-    // and a bump nulls the plan in three reader Lambdas with no regeneration path.
+    // SPREAD CONDITIONALLY, not an always-present null: a new always-present key changes EVERY stored payload and reddens every committed parity golden
+    // (the G-PARITY gate caught the first cut). Same house pattern as `today_observed_in` above. The cost: an ABSENT key cannot distinguish "no wet days"
+    // from "the cue was deleted"; that detectability is bought back in the suite (the Today mount case reddens if the element goes, and the engine case
+    // reddens if the key stops appearing when a qualifying window IS supplied). PLAN_SCHEMA_VERSION stays unbumped: readers select named keys, and a bump
+    // nulls the plan in three reader Lambdas with no regeneration path.
     ...(lwOut ? { leaf_wetness: lwOut } : {}),
     hot:(weather&&weather.highToday>=HOT_F)||false, water_source:(fertModel.water_quality||{}).source||null, users};
 }
