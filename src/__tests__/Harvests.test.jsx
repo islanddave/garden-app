@@ -1,5 +1,5 @@
 import React from 'react'
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, onTestFinished } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 
 const { fetchSpy, searchParamsRef } = vi.hoisted(() => ({ fetchSpy: vi.fn(), searchParamsRef: { current: new URLSearchParams() } }))
@@ -218,10 +218,15 @@ describe('Harvests page', () => {
       ],
     }]
     // V4-HARVCROPTABLE-001: the block is a Planting | Count | Total weight | First pick table now.
-    // Date built off the clock — the component year-qualifies anything that is not the current year,
-    // so a hardcoded '2026-06-14' would silently start rendering "Jun 14, 2026" next January.
+    // Clock pinned mid-season. A bare arrival fetches the current grow-year (Nov 1 - Oct 31) and the
+    // mock scopes first_pick to it, so a June date built off a Nov/Dec clock falls outside the season
+    // and the table never renders. The pin also keeps "Jun 14" meaning a current-year first pick,
+    // which the component prints without a year.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-07-01T12:00:00'))
+    onTestFinished(() => vi.useRealTimers())
     const firstPick = [{
-      plant_id: 'p1', planting_name: 'Bed A tomato', crop_type_slug: 'tomato', first_pick_date: `${new Date().getFullYear()}-06-14`,
+      plant_id: 'p1', planting_name: 'Bed A tomato', crop_type_slug: 'tomato', first_pick_date: '2026-06-14',
       units: [{ unit: 'count', unit_key: 'count', total: 6, count: 2 }],
       unquantified: 0,
       weight: { grams: 1400, measured_grams: 1400, estimated_grams: 0, measured: 2, estimated: 0, unweighed: 0 },
