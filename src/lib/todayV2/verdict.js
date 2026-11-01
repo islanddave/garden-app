@@ -1,25 +1,24 @@
-// src/lib/todayV2/verdict.js — the redesigned Today's GLANCE CARD, as data (V5-TODAYREDESIGN-001 S3; plan-v2 §4
-// "Glance card", §8 S3, §13 SF9 update). PURE: a plan in, sentences out — no React state, no clock, no network.
+// The redesigned Today's GLANCE CARD, as data. PURE: a plan in, sentences out — no React state, no clock,
+// no network.
 //
 // THE HEADLINE is WeatherWidget's headlineFor over the same two lane verdicts the card computes
-// (computeWateringScale → pillState) and the page's active water_due count, with ONE display-only guard in front
-// (§13 SF9 update): a KNOWN empty water list never gets a watering imperative. That guard is the one parked on
-// lane-waterautumn-20260928 (BUG-WATERAUTUMNDEMAND-001), on the same condition; it lives here because that lane
-// has not shipped. Once it ships, headlineFor returns its own empty-list sentence and the guard's line of
-// glanceHeadline is a no-op — drop it then. The open card does not recompute it: GlanceCard hands this sentence to
-// WeatherWidget's `headline` prop (finish plan D-2), so the closed and open card say one thing.
+// (computeWateringScale → pillState) and the page's active water_due count, with ONE display-only guard
+// in front: a KNOWN empty water list never gets a watering imperative. The guard lives here, not in
+// headlineFor; if headlineFor ever handles an empty list itself, the guard's line in glanceHeadline
+// becomes a no-op and can go. The open card does not recompute it: GlanceCard hands this sentence to
+// WeatherWidget's `headline` prop, so the closed and open card say one thing.
 //
-// SHORT FORM (finish plan §3.2 row C, 2026-10-14): two of headlineFor's five sentences are shortened for the card,
-// the other three print verbatim. Both lanes "do" reads "Water containers & beds today."; and the two sentences
-// that mean the list is empty — the guard's and headlineFor's both-hold "All set — no watering needed today." —
-// read "Nothing to water today." (still only on a list known to be empty: BUG-TODAYWATER-001's rule holds).
-// verdictLead drops the closing " today." / "." when an urgent phrase follows: "Water containers & beds · frost
-// watch tonight".
+// SHORT FORM: two of headlineFor's five sentences are shortened for the card, the other three print
+// verbatim. Both lanes "do" reads "Water containers & beds today."; and the two sentences that mean the
+// list is empty — the guard's and headlineFor's both-hold "All set — no watering needed today." — read
+// "Nothing to water today." (still only on a list known to be empty, so the "All set" rule holds).
+// verdictLead drops the closing " today." / "." when an urgent phrase follows: "Water containers & beds ·
+// frost watch tonight".
 //
 // THE URGENT PHRASE, one at most, by precedence freeze > frost > hot:
 //   freeze  tonight's low under FREEZE_BELOW_F (40°F), the engine cue's own "Freeze tonight" bar, read off the one
 //           low the card, the cue and the frost line all print (agreedTonightLow when a frost line names
-//           tonight, else the plan's) — the §3 `lowRaw`;
+//           tonight, else the plan's) — `lowRaw`;
 //   frost   a frost line names tonight (pickFrostLines with the plan's current lows, so a warmed, retired
 //           advisory stays quiet), in the line's own words: "frost watch" for a radiative trip, "frost possible"
 //           otherwise;
@@ -43,9 +42,9 @@ function num(v) {
 }
 
 // -> the verdict sentence. `plan` is the stored daily plan (plan.weather, plan.hydrology, plan.water_due).
-// `waterDue` (finish plan D-9): the page's ACTIVE water_due count (logged and skipped rows out), so "N still due"
+// `waterDue`: the page's ACTIVE water_due count (logged and skipped rows out), so "N still due"
 // and the empty-list guard follow what is left on the list; absent, the plan's raw water_due length.
-// The open card prints this same sentence (WeatherWidget `headline`, D-2), so the two states cannot disagree.
+// The open card prints this same sentence (WeatherWidget `headline`), so the two states cannot disagree.
 export function glanceHeadline(plan, waterDue) {
   const scale = computeWateringScale(plan?.hydrology || {}, plan?.weather || {})
   const containersDo = pillState(scale.containers) === 'do'
@@ -86,8 +85,8 @@ export function glanceRain({ hydrology, liveHydrology = null, generatedAt = null
   return rainSentences({ hydrology: h, liveHydrology, live, uncertain, showery, noForecast, generatedAt })
 }
 
-// The closed card's stale marker (plan-v2 §4, §6.6): a plan served from the service worker's cache, or dated
-// before today on this device, opens nothing (§3) and says how old it is. null when the plan is today's.
+// The closed card's stale marker: a plan served from the service worker's cache, or dated
+// before today on this device, opens nothing and says how old it is. null when the plan is today's.
 // `today` is the device's YYYY-MM-DD (todayLocalISO).
 export function staleMarker({ planDate, generatedAt, fromCache = false, today }) {
   const at = asOfLabel(generatedAt)

@@ -1,6 +1,5 @@
-// protect.js — Protect tonight, as data (V5-TODAYREDESIGN-001 S5; plan-v2 §1.1 / §1.2, §2.4, §4, §13 SF1; the
-// orchestrator's household rule, 2026-09-29). PURE: plans in, rows / order / summary out. What opens the section
-// is triggers.js's; the page state is useProtect's; the body is ProtectTonight.jsx.
+// Protect tonight, as data. PURE: plans in, rows / order / summary out. What opens the section is
+// triggers.js's; the page state is useProtect's; the body is ProtectTonight.jsx.
 //
 // ROWS. The engine's cold cards (engine.js coldFor, the plan's `cold` bucket) as careNeeded.js builds them —
 // key `<planting id>:cold`, the one-tap event `brought_inside`, the reason with the "(low …)" clause dropped on
@@ -8,11 +7,11 @@
 // text names (triggers.js protectThreshold). Cold rows have ONE owner, this section: Needs care never lists them
 // (useNeedsCare keeps only water / feed / check needs), and neither does a household section.
 //
-// HOUSEHOLD. When this person has the household view on (lib/householdView.js, SF6), every other member's cold
+// HOUSEHOLD. When this person has the household view on (lib/householdView.js), every other member's cold
 // rows join Protect tonight, each carrying that member's first name — frost hits the whole garden, and a
-// household section never opens by itself (plan-v2 §10 item 6, adopted by default in design-todayux-V100).
+// household section never opens by itself.
 //
-// TWO ROW KINDS (§4). A `protect` card is a tender planting at or under its own threshold: its own row, with
+// TWO ROW KINDS. A `protect` card is a tender planting at or under its own threshold: its own row, with
 // Covered and Brought in. `bring_in` / `optional` cards are the nightshade mass of a cold night: grouped by spot
 // into a cover row ("Bag Area · 68", "Cover all 68") that opens to its plants.
 import { buildCareNeeded } from '../careNeeded.js'
@@ -31,9 +30,9 @@ export function coldRows(plan, owner = null) {
   })
 }
 
-// The visit's held order of Protect's rows (plan-v2 §2.2): spots in the PAGE's spot order — takeOrder (spots.js)
+// The visit's held order of Protect's rows: spots in the PAGE's spot order — takeOrder (spots.js)
 // over the care rows and the cold rows together, so Protect lists spots as Needs care does wherever they share
-// one (Bag Area, Trough, Deck, then Stable on the 09-24 plan, §1.1) — then the engine's order within a spot.
+// one — then the engine's order within a spot.
 // `rows` and `careRows` are enriched (spotKey, group). -> [row key].
 export function protectOrder(rows, careRows = [], groupOrder = [OUTSIDE]) {
   const order = takeOrder([...(careRows || []), ...rows], groupOrder)
@@ -44,12 +43,12 @@ export function protectOrder(rows, careRows = [], groupOrder = [OUTSIDE]) {
   return rows.map((r, idx) => ({ r, idx })).sort((a, b) => (at(a.r) - at(b.r)) || (a.idx - b.idx)).map(({ r }) => r.key)
 }
 
-// The band's one-line summary (§1.1 / §1.2): when to act, then — open — why, or — closed — the first two names.
+// The band's one-line summary: when to act, then — open — why, or — closed — the first two names.
 // "Before dark" on a frost or hard-freeze night (the pick link and the cover work need daylight), "Tonight"
-// otherwise. Finish plan §3.3 / §3.6 (D15, 2026-10-14): tonight's low is stated once on the page (the glance
-// card), so the summary carries the REASON instead — "tender below 50°", the threshold the rows' cards name, once
-// (a range when they differ) — and an open section drops the names its body lists right under it (§2 of the
-// ADHD review: "an open section's summary drops its name list and keeps reason + timing").
+// otherwise. Tonight's low is stated once on the page (the glance card), so the summary carries the
+// REASON instead — "tender below 50°", the threshold the rows' cards name, once (a range when they
+// differ) — and an open section drops the names its body lists right under it: an open section's
+// summary drops its name list and keeps reason + timing.
 // The thresholds the rows still to do name, low to high, once each — what the open summary says, and what the body
 // reads to leave the one shared threshold off its rows (ProtectTonight), so the two can never count different rows.
 export const tenderThresholds = (rows) => [...new Set((rows || []).map((r) => r.threshold).filter((n) => Number.isFinite(n)))].sort((a, b) => a - b)
@@ -67,7 +66,7 @@ export function protectSummary({ tier, rows, open = false }) {
   return bits.join(' · ')
 }
 
-// A frost or hard-freeze night: the nights the pick link is shown on (§1.1; §1.2 has none).
+// A frost or hard-freeze night: the nights the pick link is shown on.
 export const pickNight = (tier) => tier === 'frost' || tier === 'hardfreeze'
 
 // What this visit did, for an emptied section's summary: "All handled · 2 covered · 3 brought in".

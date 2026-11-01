@@ -1,5 +1,4 @@
-// src/lib/todayV2/alerts.js — where the redesigned Today says tonight's weather alerts (V5-TODAYREDESIGN-001,
-// finish plan §3.3; Dave's D15 2026-10-14 "Fold into Protect"). PURE: lines and a callout in, placements out.
+// Where the redesigned Today says tonight's weather alerts. PURE: lines and a callout in, placements out.
 //
 // THE RULE: each thing is said once, where it is acted on.
 //   · A Protect tonight section on the page takes the frost / cold words. The verdict already carries the urgent
@@ -10,7 +9,7 @@
 //   · No Protect section: the first frost line stays under the glance card, tonight's in its short form ("Frost
 //     watch tonight — clear and calm.": the card's row A states the low), and the rest wait behind Details.
 //   · A cue that is not cold-side (heat, rain, wet) never folds: Protect has nothing to say about it.
-// Operational alerts, never a reward surface: no banner, toast or fill anywhere here (§3.9).
+// Operational alerts, never a reward surface: no banner, toast or fill anywhere here.
 import { buildCueLine, CUE_SEPARATOR } from '../weatherCue.js'
 
 // engine.js computeCallout's cold-side cues: they key on tonight's low, as Protect does.

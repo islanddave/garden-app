@@ -1,17 +1,14 @@
-// spots.js — the redesigned Today's Needs care, as data (V5-TODAYREDESIGN-001 S4; plan-v2 §2.4, §2.6, §4,
-// §11.0 E8, §13 MF3/SF2/SF5/SF7/SF8, Dave's D3/D7/D9/D11/D12). PURE: rows, /api/plants and /api/locations in,
-// the page's groups / spots / exceptions / cohort / product groups / counts out. No fetch, no React.
+// The redesigned Today's Needs care, as data. PURE: rows, /api/plants and /api/locations in, the page's
+// groups / spots / exceptions / cohort / product groups / counts out. No fetch, no React.
 //
 // Which plantings need what stays careNeeded.js's (buildCareNeeded). This file only arranges them:
-//   GROUP (D7, SF5)  Outside, or a covered TOP-LEVEL location named by itself (Stable; House). A planting's
-//                    group is decided by its top-level ancestor: covered → that location, else Outside. So a
-//                    covered shelf under Stable is Stable, and "Yard > Yard - Stable" (Yard is uncovered) is
-//                    Outside. On Dave's locations (S0's read-only dump) this yields exactly Outside / Stable /
-//                    House.
-//   SPOT (D3)        the planting's own location. Unplaced plantings share one "Unplaced" spot in Outside
-//                    (the gate's own reading, v2groups.mjs, puts them there too).
-//   TASKS            water (water_due + no_history), feed (fertilize), check (pest + overwintering). Cold rows
-//                    are Protect tonight's alone (§2.4) and never reach this file.
+//   GROUP   Outside, or a covered TOP-LEVEL location named by itself (Stable; House). A planting's
+//           group is decided by its top-level ancestor: covered → that location, else Outside. So a
+//           covered shelf under Stable is Stable, and "Yard > Yard - Stable" (Yard is uncovered) is
+//           Outside.
+//   SPOT    the planting's own location. Unplaced plantings share one "Unplaced" spot in Outside.
+//   TASKS   water (water_due + no_history), feed (fertilize), check (pest + overwintering). Cold rows
+//           are Protect tonight's alone and never reach this file.
 export const OUTSIDE = 'Outside'
 export const UNPLACED = '_unplaced'
 export const TASKS = ['water', 'feed', 'check']
@@ -22,10 +19,10 @@ export const TASK_OF_NEED = { water_due: 'water', no_history: 'water', fertilize
 export const SMALL_VESSEL_TYPES = new Set(['tray_cell', 'soil_block', 'solo_cup'])
 const VESSEL_LABEL = { tray_cell: 'Tray cell', soil_block: 'Soil block', solo_cup: 'Solo cup' }
 const VESSEL_PLURAL = { tray_cell: 'tray cells', soil_block: 'soil blocks', solo_cup: 'solo cups' }
-// §11.0 E8: a spot with this many water rows or fewer shows every row; a cohort under COHORT_MIN is not one.
+// A spot with this many water rows or fewer shows every row; a cohort under COHORT_MIN is not one.
 export const SMALL_SPOT_MAX = 5
 export const COHORT_MIN = 3
-// §4 "Cohort line": a disclosed cohort renders this many rows until "Show N more".
+// A disclosed cohort renders this many rows until "Show N more".
 export const COHORT_CAP = 20
 
 const isWater = (r) => r && (r.need === 'water_due' || r.need === 'no_history')
@@ -57,12 +54,11 @@ export function locationIndex(payload) {
 }
 
 // The care rows, joined to what the page needs to arrange them: spot + group from /api/plants location_id,
-// container type, the planting's thumbnail (V1's photo shape, BUG-TIERLESSPHOTOS-001), and the plan item's
+// container type, the planting's thumbnail (V1's photo shape), and the plan item's
 // days_since / rain_note (buildCareNeeded does not carry them). `rows` = buildCareNeeded rows.
 // Location spots need BOTH reads: the locations tree AND /api/plants, whose location_id places each row. Without
 // the plant list (a failed /api/plants — its caller passes null) every row would land in one "Unplaced" spot whose
-// Water all covers the whole garden (review 4160.2 IMPORTANT-3), so it falls back to project spots exactly as a
-// failed /api/locations does.
+// Water all covers the whole garden, so it falls back to project spots exactly as a failed /api/locations does.
 export function enrichRows(rows, { plan, plants, locations }) {
   const idx = locationIndex(locations)
   const placed = idx.ok && Array.isArray(plants)
@@ -103,9 +99,9 @@ function severity(rows) {
   return s
 }
 
-// The visit's held order (§2.2), taken at the ready point over "rows minus skipped, logged kept" (BD-036's
-// orderingRows): groups in their fixed order, spots within a group heaviest first (V1's group severity),
-// ties by name. Returns { groups:[key], spots:{group:[spotKey]} }.
+// The visit's held order, taken at the ready point over "rows minus skipped, logged kept": groups in
+// their fixed order, spots within a group heaviest first (V1's group severity), ties by name. Returns
+// { groups:[key], spots:{group:[spotKey]} }.
 export function takeOrder(rows, groupOrder = [OUTSIDE]) {
   const bySpot = new Map()
   for (const r of rows) {
@@ -131,12 +127,12 @@ function modeOf(values) {
 
 export const cadenceWords = (interval) => (interval === 1 ? 'daily' : (typeof interval === 'number' && interval > 1 ? `every ${interval} days` : null))
 
-// §11.0 E8 + D11: a spot's water rows split into the few that differ (shown first, never capped) and the
-// cohort that is "like the rest" (one line, "Show them"). A cohort exists only where most of the spot shares
-// one watering record — the batch-watered case the split is for (Bag Area: 97 rows, all 4 d). A row differs
-// when it is a small, fast-drying vessel, has never been watered, carries a rain note, or its record sits
-// its own interval or more from the spot's (R11's rule, kept). Size rules: ≤ 5 water rows → every row, no
-// split; a cohort under 3 → every row, the differing ones first. Returns exception KEYS (held for the visit).
+// A spot's water rows split into the few that differ (shown first, never capped) and the cohort that
+// is "like the rest" (one line, "Show them"). A cohort exists only where most of the spot shares one
+// watering record — the batch-watered case the split is for. A row differs when it is a small,
+// fast-drying vessel, has never been watered, carries a rain note, or its record sits its own
+// interval or more from the spot's. Size rules: ≤ 5 water rows → every row, no split; a cohort under
+// 3 → every row, the differing ones first. Returns exception KEYS (held for the visit).
 export function exceptionKeys(waterRows) {
   const rows = waterRows.filter(isWater)
   if (rows.length <= SMALL_SPOT_MAX) return null
@@ -151,7 +147,7 @@ export function exceptionKeys(waterRows) {
 }
 
 // Why a differing row differs, then its cadence and record: "Tray cell — dries fastest · every 2 days ·
-// last watered 4 d ago" (§4 Exception row).
+// last watered 4 d ago".
 export function exceptionReason(r) {
   const why = r.need === 'no_history' ? 'Never watered'
     : SMALL_VESSEL_TYPES.has(r.containerType) ? `${VESSEL_LABEL[r.containerType]} — dries fastest`
@@ -160,20 +156,21 @@ export function exceptionReason(r) {
   return parts.filter(Boolean).join(' · ') || r.reason || ''
 }
 
-// Finish plan §3.6 (L5, Dave's D18): urgency is a warning mark plus words in the row's meta, never a fill. The rows
-// that carry it are the ones needTier puts on its overdue tiers (terra / terra-bold: a non-daily water row a day or
-// more past its cadence); the words are the engine's own count, "2d overdue".
+// Urgency is a warning mark plus words in the row's meta, never a fill. The rows that carry it are the
+// ones needTier puts on its overdue tiers (terra / terra-bold: a non-daily water row a day or more
+// past its cadence); the words are the engine's own count, "2d overdue".
 export const isOverdue = (r) => !!r && (r.tier === 'terra' || r.tier === 'terra-bold') && typeof r.overdueBy === 'number' && r.overdueBy > 0
 export const overdueWords = (r) => (isOverdue(r) ? `${r.overdueBy}d overdue` : null)
 
-// §3.6 "meta that every row of a group shares moves into the group line, printed once": the differing rows of a
-// spot (exceptionKeys) as ONE group line and rows that say only what is their own. A row's meta is exceptionReason's
-// three parts — why it differs, its cadence, its record — and its overdue words; what all of them share is printed
-// in the line, the rest stays on the row. When they all differ for one reason, that reason names the group: "Tray
-// cells · 8" over "dry fastest · every 2 days · last watered 4 d ago" (Bag Area, Dave's 09-24 plan: every row is
-// then its name alone). Returns { label, line, urgent, own } — `urgent` when the overdue words are the group's, and
-// `own` maps each row key to { meta, urgent } (meta null = the name alone). `count` is the label's number — the rows
-// still due, when handled ones are passed for a steady line (SpotBody).
+// Meta that every row of a group shares moves into the group line, printed once: the differing rows of
+// a spot (exceptionKeys) as ONE group line and rows that say only what is their own. A row's meta is
+// exceptionReason's three parts — why it differs, its cadence, its record — and its overdue words; what
+// all of them share is printed in the line, the rest stays on the row. When they all differ for one
+// reason, that reason names the group: "Tray cells · 8" over "dry fastest · every 2 days · last watered
+// 4 d ago" (every row is then its name alone). Returns { label, line, urgent, own } — `urgent` when
+// the overdue words are the group's, and `own` maps each row key to { meta, urgent } (meta null = the
+// name alone). `count` is the label's number — the rows still due, when handled ones are passed for a
+// steady line (SpotBody).
 export function exceptionGroup(rows, count = rows.length) {
   const n = rows.length
   const vessel = (r) => (SMALL_VESSEL_TYPES.has(r.containerType) && r.need !== 'no_history' ? r.containerType : null)
@@ -198,7 +195,7 @@ export function exceptionGroup(rows, count = rows.length) {
   return { label, line, urgent, own }
 }
 
-// SF2: the disclosed cohort, longest-waiting first, then crop, then name — so on a batch-watered spot (every
+// The disclosed cohort, longest-waiting first, then crop, then name — so on a batch-watered spot (every
 // age tied) it reads by crop, and the cap note drops "longest-waiting" (cohortCapNote).
 export function sortCohort(rows) {
   return [...rows].sort((a, b) => ((b.daysSince ?? -1) - (a.daysSince ?? -1))
@@ -220,18 +217,17 @@ export function cohortCapNote(cohort, shown) {
   return ages.size > 1 ? `Showing the longest-waiting ${shown}.` : `Showing ${shown} of ${cohort.length}.`
 }
 
-// Counts for a set of rows, per task. Zero counts are dropped from any line built from these (SF7).
+// Counts for a set of rows, per task. Zero counts are dropped from any line built from these.
 export function taskCounts(rows) {
   const c = { water: 0, feed: 0, check: 0 }
   for (const r of rows) if (c[r.task] != null) c[r.task]++
   return c
 }
 
-// Bulk candidates for one spot's rows (§2.4 candidateKeys, careNeeded.js's predicate): its watering rows —
-// in-ground beds included. The engine owns the rain hold (BUG-DEFERNOSTRESSOVERRIDE-001): the beds that wait
-// are in rain_skipped, never on this list, so an in-ground row here is one the engine kept because it must
-// not wait. (Until then a client bed-wait rule, D7, dropped them from Water all and labeled them "wait for rain".)
-// `exclude` (S4g, MF3): keys a bulk never takes — rows whose write failed this visit, which only their Retry
+// Bulk candidates for one spot's rows (careNeeded.js's candidateKeys predicate): its watering rows —
+// in-ground beds included. The engine owns the rain hold: the beds that wait are in rain_skipped, never
+// on this list, so an in-ground row here is one the engine kept because it must not wait.
+// `exclude`: keys a bulk never takes — rows whose write failed this visit, which only their Retry
 // re-posts (so a fresh Water all cannot split one run's failures into a second batch). Absent = none.
 export function waterCandidates(rows, exclude) {
   const keys = new Set()
@@ -245,7 +241,7 @@ export function waterCandidates(rows, exclude) {
 
 // The page's model for one render. `rows` = the enriched rows ON THE LIST (logged and skipped removed);
 // `held` = the visit's order ({groups, spots}); `tasks` / `spots` = the filter selections (empty = all);
-// `exclude` = keys no bulk takes (waterCandidates). Filters hide, never re-sort (§2.6). New spots (a refetch)
+// `exclude` = keys no bulk takes (waterCandidates). Filters hide, never re-sort. New spots (a refetch)
 // are appended to their group in held order's tail.
 export function buildModel(rows, { held, tasks = [], spots = [], exclude } = {}) {
   const taskSet = new Set(tasks), spotSet = new Set(spots)
@@ -282,7 +278,7 @@ export function buildModel(rows, { held, tasks = [], spots = [], exclude } = {})
   return { groups, spotCount: bySpot.size }
 }
 
-// D12 / SF3: under the Feed filter, one row per product + method across the garden.
+// Under the Feed filter, one row per product + method across the garden.
 export function productGroups(rows) {
   const map = new Map()
   for (const r of rows) {
@@ -294,10 +290,10 @@ export function productGroups(rows) {
   return [...map.values()].sort((a, b) => (b.rows.length - a.rows.length) || a.product.localeCompare(b.product))
 }
 
-// §2.6 / §5.6 (S4g): what a filter selection leaves in view — by NeedsCare's own rules: a task with no rows drops
-// out, a spot with no rows of the chosen tasks drops out, and the Feed filter alone shows products (D12), not
-// spots — and the one sentence the status region says about it: "Needs care: Water, 168 in 8 spots." (`title`: the
-// list it is said of — a household section's is "Jen’s care").
+// What a filter selection leaves in view — by NeedsCare's own rules: a task with no rows drops
+// out, a spot with no rows of the chosen tasks drops out, and the Feed filter alone shows products, not
+// spots — and the one sentence the status region says about it: "Needs care: Water, 168 in 8 spots."
+// (`title`: the list it is said of — a household section's is "Jen’s care").
 export function filterResult(rows, { tasks = [], spots = [] } = {}) {
   const present = TASKS.filter((t) => rows.some((r) => r.task === t))
   const ts = tasks.filter((t) => present.includes(t))
@@ -319,12 +315,13 @@ export function filterAnnouncement({ tasks, spots, n, spotCount, products }, tit
   return `${title}: ${label}, ${n} in ${where}.`
 }
 
-// §2.5 (S4g): an emptied Needs care keeps its header, which reads "Needs care · all caught up" over "95 logged
-// today, 3 waiting for rain, 70 watered by rain". LOGGED = the plan's care items the read path marks `done`
-// today (logged anywhere: another device, V1, a rain event on a listed item — lambda/daily-plan-read/
-// doneEvents.js) ∪ this tab's today-logged store (logged here, not yet in a plan read), by key, care needs only
-// (a Protect key is not Needs care's). WAITING / RAIN = the plan's rain_skipped, split by lib/rainHold.js: held
-// on a forecast is never "watered by rain". None → no summary (the title already says it).
+// An emptied Needs care keeps its header, which reads "Needs care · all caught up" over "95 logged
+// today, 3 waiting for rain, 70 watered by rain". LOGGED = the plan's care items the read path marks
+// `done` today (logged anywhere: another device, V1, a rain event on a listed item —
+// lambda/daily-plan-read/doneEvents.js) ∪ this tab's today-logged store (logged here, not yet in a plan
+// read), by key, care needs only (a Protect key is not Needs care's). WAITING / RAIN = the plan's
+// rain_skipped, split by lib/rainHold.js: held on a forecast is never "watered by rain". None → no
+// summary (the title already says it).
 export const CAUGHT_UP_TITLE = 'Needs care · all caught up'
 export function loggedTodayCount(plan, storeKeys = []) {
   const keys = new Set()
@@ -336,7 +333,7 @@ export function caughtUpSummary({ logged, waiting, rain }) {
   return [logged ? `${logged} logged today` : null, waiting ? `${waiting} waiting for rain` : null, rain ? `${rain} watered by rain` : null].filter(Boolean).join(', ') || null
 }
 
-// SF8: the Needs care summary carries REASONS and spots, never counts (the counts live on the chips and the
+// The Needs care summary carries REASONS and spots, never counts (the counts live on the chips and the
 // header). "8 tray cells due · 9 spots". `reasons` = triggers.js careReasons().
 export function careSummary({ reasons, rows, spotCount }) {
   const bits = []
