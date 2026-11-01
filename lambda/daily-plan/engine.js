@@ -695,34 +695,25 @@ function waterSuppression(p, c){
   return null;
 }
 
-// ── BUG-CAREFEEDINHERIT-001 — profile-declared feeding suppression ──
-// The feed-arm twin of waterSuppression, and deliberately its exact shape. `no_calendar_feed:true` in a
-// care_profile means "this plant is never fed on a calendar" — the only way to say so, because the merge
-// that builds the profile cannot express a refusal as a number (see the header on fertilizeRec).
-// care_profile.profile is unconstrained jsonb, so the key needed no migration; it is inert until rows
-// carry it. There is no growth_gated twin: that rule is about when water is USABLE, and the feed arm has
-// no equivalent second mode to name. One rule, one label -> 'no_calendar_feed' | null.
+// ── Profile-declared feeding suppression ──
+// The feed-arm twin of waterSuppression, deliberately its exact shape. `no_calendar_feed:true` in a care_profile means "this plant is never
+// fed on a calendar" — the only way to say so, because the merge that builds the profile cannot express a refusal as a number (see
+// fertilizeRec). care_profile.profile is unconstrained jsonb, so the key needs no migration. One rule, one label -> 'no_calendar_feed' | null.
 //
-// THE TWO-SOURCE READ IS LOAD-BEARING, NOT BELT-AND-BRACES — same exposure as the water arm, verbatim.
-// resolveCadence adopts db_cadence only when a scope contributed a WATER cadence key (cadence_scopes;
-// `_seeded` on the flag-OFF path). A profile can declare no_calendar_feed while carrying no watering
-// interval at all -> cadence_scopes = [] -> the bundled JSON wins -> `c` is the fallback object and never
-// contains the key. Checking `c` alone would drop the signal through exactly the path that killed the
-// Lithops on the water side. Read `c` first so a leaf-scope override still wins where one exists.
-// `===true` (not truthiness) for the same reason the water arm uses it: the string "yes" is a typo, not
-// a refusal, and silently never-feeding a plant on a typo is the dangerous direction.
+// THE TWO-SOURCE READ IS LOAD-BEARING, same exposure as the water arm: resolveCadence adopts db_cadence only when a scope contributed a WATER
+// cadence key, so a profile that declares no_calendar_feed with no watering interval falls to the bundled JSON, and checking `c` alone would
+// drop the signal. Read `c` first so a leaf-scope override still wins where one exists.
+// `===true` (not truthiness): the string "yes" is a typo, not a refusal, and silently never-feeding a plant on a typo is the dangerous direction.
 function feedSuppression(p, c){
   const srcs=[c, p&&p.db_cadence];
   for(const s of srcs){ if(s && s.no_calendar_feed===true) return 'no_calendar_feed'; }
   return null;
 }
 
-// ── V4-WATERMATH-001 F2 — per-planting ledger verdict (only reached when the flag is ON) ──────────
-// Computes wi_eff (RETIRES the >=88F heat gate and the maxdays ceiling in-flag — canon legacy-term
-// table: keeping them next to ET scaling double-counts heat; tray class hard-caps at 1 day), the
-// drought-tolerant late-bias threshold, the fold, and server-side confidence. Returns the additive
-// `ledger` payload key plus the INTEGER calendar-day fields the three verified readers depend on
-// ((e->>'overdue_by')::int at dashboard handlers.js:433 throws 22P02 on any fraction — proven live).
+// ── Per-planting ledger verdict (only reached when the flag is ON) ──
+// Computes wi_eff (RETIRES the >=88F heat gate and the maxdays ceiling in-flag: keeping them next to ET scaling double-counts heat; tray class
+// hard-caps at 1 day), the drought-tolerant late-bias threshold, the fold, and server-side confidence. Returns the additive `ledger` payload key
+// plus the INTEGER calendar-day fields the three readers depend on ((e->>'overdue_by')::int at dashboard handlers.js throws 22P02 on any fraction).
 function ledgerVerdictFor(p, c, wiBase, today, hydrology, lo){
   const vp = ledger.vesselProfile(p.container_type, p.container_size);
   const wiEff = vp.tray ? Math.min(wiBase, LP.TRAY_WI_CAP_DAYS) : wiBase;
@@ -734,10 +725,9 @@ function ledgerVerdictFor(p, c, wiBase, today, hydrology, lo){
     todayStr: today, effNowMs: lo.effNowMs,
     todayEt0: hydrology ? (hydrology.today_et0_in ?? null) : null,
     todayTmax: hydrology ? (hydrology.today_tmax_f ?? null) : null,
-    // BUG-F2RAINBASIS-001: today's rain for the fold's D0 day-credit. today_observed_in ONLY —
-    // the identical term creditPrecip spends at the measured-basis line above, so the ledger and
-    // the legacy chain now credit the same inches on the same day. Absent (no bound station) or
-    // absent hydrology -> null -> no D0 credit, matching legacy's degrade-to-`recent`.
+    // Today's rain for the fold's D0 day-credit: today_observed_in ONLY, the identical term creditPrecip spends at the measured-basis line, so the
+    // ledger and the legacy chain credit the same inches on the same day. Absent (no bound station or hydrology) -> null -> no D0 credit, matching
+    // legacy's degrade-to-`recent`.
     todayPrecip: hydrology ? (hydrology.today_observed_in ?? null) : null,
     // RAIN_DEPTH key, not the IA/hold one. sizeGal gates the bed-equivalent fabric_ground row.
     exposure, vessel: vp, rainTier: rainDepthTierFor(p.container_type, vp.sizeGal),
@@ -756,60 +746,48 @@ function ledgerVerdictFor(p, c, wiBase, today, hydrology, lo){
   };
 }
 
-// DRG-WXFLAGSPLIT-001 F1: rainMaxDaysEnabled gates the max-days CEILING independently of rainCreditEnabled
-// (which gates the tiered credit). Trailing param, default false -> every existing caller keeps flag-OFF
-// behaviour and the plan stays byte-identical until an env flip.
-// V4-WATERMATH-001 F2: `ledgerOpts` (10th param, default null) carries the Water Ledger inputs from
-// generatePlan — {enabled, eventsByPlant, weatherByDate, weatherRowCount, effNowMs}. Null/absent ->
-// byte-identical legacy path; the fold requires BOTH the flag and a real event window (a failed
-// event-window read degrades the whole run to flag-OFF, per the canon fail-to-today's-model rule).
-// `satOpts` is an OBJECT, not two more positionals: this list is already twelve deep and every caller
-// passes them by position, so a thirteenth and fourteenth boolean would be one transposition away from
-// silently arming a suppression branch. Defaults to {} so every existing caller is byte-identical.
+// rainMaxDaysEnabled gates the max-days CEILING independently of rainCreditEnabled (which gates the tiered credit). Trailing param, default false
+// -> every existing caller keeps flag-OFF behaviour and the plan stays byte-identical until an env flip.
+// `ledgerOpts` (10th param, default null) carries the Water Ledger inputs from generatePlan — {enabled, eventsByPlant, weatherByDate, weatherRowCount,
+// effNowMs}. Null/absent -> byte-identical legacy path; the fold requires BOTH the flag and a real event window (a failed event-window read degrades
+// the whole run to flag-OFF, per the canon fail-to-today's-model rule).
+// `satOpts` is an OBJECT, not two more positionals: this list is already twelve deep and every caller passes them by position, so more booleans
+// would be one transposition away from silently arming a suppression branch. Defaults to {} so every existing caller is byte-identical.
 function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rainCreditEnabled=false, rainMaxDaysEnabled=false, todayAwareEnabled=false, ledgerOpts=null, measuredCreditEnabled=false, droughtState=null, satOpts={}, frostAlertEnabled=false, frostCoverage=null){
   const _ledgerOn = !!(ledgerOpts && ledgerOpts.enabled && ledgerOpts.eventsByPlant);
   const water=[], fertilize=[], pest=[], cold=[], dormant=[], rainSkipped=[], waterSuppressed=[], overwintering=[], feedSuppressed=[];
   let overwinterHeld=0, overwinterDeferred=0;
   const phaseCounts={};
   const low=weather?weather.tonightLow:null, high=weather?weather.highToday:null, hot=high!=null&&high>=HOT_F;
-  const hotForBag=high!=null&&high>=BAG_HEAT_GATE_F;   // DRG-WATERCREDIT-004 fabric-bag heat-gate signal
+  const hotForBag=high!=null&&high>=BAG_HEAT_GATE_F;   // fabric-bag heat-gate signal
   for(const p of plantings){
-    // DRG-WATERSTAGE-001: skip plantings whose parent PROJECT is still in 'planning' — not yet physically
-    // planted, so they must not generate watering (or any other) care tasks. Plantings carry no 'planning'
-    // status of their own; the planning state lives on the parent project (passed through as p.project_status).
+    // Skip plantings whose parent PROJECT is still in 'planning': not yet physically planted, so they must not generate care tasks. The planning
+    // state lives on the parent project (p.project_status), not on the planting.
     if(p.project_status==='planning') continue;
     const c=resolveCadence(p, cad);
     if(c.exclude) continue;
     const ph=feedPhase(weeksSince(today,p.substrate_start)); phaseCounts[ph]=(phaseCounts[ph]||0)+1;
-    // V4-DORMANTRESUME-001: `reason` discriminates the two unrelated causes this bucket merges.
-    // 'status' = the planting carries status='dormant', which a human set and only a human clears —
-    // resumable. 'profile' = the cadence flag (dormant_skip, Lithops only), which is care DATA, not
-    // status: clearing a status it never had is meaningless and the flag exists because watering it
-    // now rots it. Consumers previously had to compare the `note` string to tell them apart. Same
-    // dormant_skip-wins precedence as `note`, so the two fields cannot disagree. Additive key;
-    // PLAN_SCHEMA_VERSION deliberately NOT bumped (readers select named keys).
+    // `reason` discriminates the two unrelated causes this bucket merges: 'status' = status='dormant', which a human set and only a human clears
+    // (resumable); 'profile' = the cadence flag (dormant_skip, Lithops only), which is care DATA, not status: clearing a status it never had is
+    // meaningless, and watering it now rots it. Same dormant_skip-wins precedence as `note`. Additive key; PLAN_SCHEMA_VERSION deliberately NOT
+    // bumped (readers select named keys).
     if(p.status==='dormant' || c.dormant_skip){ dormant.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,reason:c.dormant_skip?'profile':'status',note:c.dormant_skip?c.notes:'Dormant — skip routine care'}); continue; }
-    // DRG-NOCALWATER-001: profile-declared calendar-watering suppression. Evaluated BEFORE any watering
-    // computation and BEFORE any flag fork, so it binds identically with todayAware/rainCredit/rainMaxDays
-    // on or off. Suppressed plantings get NO water_due/no_history/rain_skipped item — they land LOUDLY on
-    // tasks.dormancy_suppressed (+ counts.dormancy_suppressed) with the rule + guidance, and still flow
-    // through fert/pest/cold below (the signal governs watering only).
+    // Profile-declared calendar-watering suppression. Evaluated BEFORE any watering computation and BEFORE any flag fork, so it binds identically
+    // under every flag combination. Suppressed plantings get NO water_due/no_history/rain_skipped item — they land LOUDLY on
+    // tasks.dormancy_suppressed (+ counts.dormancy_suppressed) with the rule + guidance, and still flow through fert/pest/cold below.
     const _wsup=waterSuppression(p,c);
-    // V4-OVERWINTER-001. Evaluated here, in the same shared pre-branch path as the suppression gate and
-    // for the same reason: a guard written inside one flag fork is silently deleted when the flag flips.
+    // Overwinter state, in the same shared pre-branch path as the suppression gate and for the same reason: a guard written inside one flag fork is
+    // silently deleted when the flag flips.
     //
-    // PRECEDENCE IS ENFORCED BY THE BRANCH ORDER BELOW, not by this line — waterSuppression WINS. A
-    // no_calendar_water profile is the Lithops class, where an interval-driven prompt is what killed the
-    // plant; overwintering's reduced check would re-introduce exactly that prompt at a longer period.
-    // The `if(!_wsup)` here is a short-circuit only (skip the date maths we would discard anyway); deleting
-    // it changes no behaviour, which is why the precedence guard in overwinter-engine.test.js mutates
-    // the BRANCH ORDER rather than this expression.
+    // PRECEDENCE IS ENFORCED BY THE BRANCH ORDER BELOW, not by this line — waterSuppression WINS. A no_calendar_water profile is the Lithops class,
+    // where an interval-driven prompt is what killed the plant; overwintering's reduced check would re-introduce exactly that prompt at a longer
+    // period. The `if(!_wsup)` is a short-circuit only (skip date maths we would discard); deleting it changes no behaviour, which is why the
+    // precedence guard in overwinter-engine.test.js mutates the BRANCH ORDER rather than this expression.
     //
-    // BUG-LAMBDAERRPATHS-001 (I4): a throw here used to end the run for every Space. It now degrades
-    // this planting only, to the DEFAULT window (stored from/until ignored). _ow is never nulled on a
-    // throw: null means "not overwintering", which would hand a dormant plant fertilize and water rows.
-    // If even the default window throws, the planting is skipped for tonight rather than mis-carded,
-    // and that skip logs at ERROR so the Lambda error-log alarm path still sees a run that dropped cards.
+    // A throw here must not end the run for every Space: it degrades this planting only, to the DEFAULT window (stored from/until ignored). _ow is
+    // never nulled on a throw: null means "not overwintering", which would hand a dormant plant fertilize and water rows. If even the default window
+    // throws, the planting is skipped for tonight rather than mis-carded, and that skip logs at ERROR so the Lambda error-log alarm path still sees a
+    // run that dropped cards.
     let _ow = null;
     if(!_wsup){
       try { _ow = ow.overwinterState(p, c, today); }
@@ -824,14 +802,11 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
       if(_ow && _ow.bad_dates) console.warn(JSON.stringify({ msg: 'overwinter-bad-date', planting: p.id, fields: _ow.bad_dates }));
     }
     if(_wsup){
-      // V5-LEGACYEXCEPTIONCARE-001 — the drought signal rides HERE, appended to the reason and mirrored
-      // as a structured key. It does NOT amend the suppression rule: the shipped policy stays "water only
-      // on plant signals, never by interval", and a 20-day absence of any root-zone-wetting rain IS a
-      // plant signal, which is the one thing this profile class had no way to receive. No branch above or
-      // below reads it, so a suppressed planting is still never routed to water_due by weather alone.
-      // Both keys are ADDITIVE on an existing row -> PLAN_SCHEMA_VERSION deliberately NOT bumped (every
-      // reader selects named keys; a bump nulls the plan in three reader Lambdas with no regeneration
-      // path — crucible Verdict 4).
+      // The drought signal rides HERE, appended to the reason and mirrored as a structured key. It does NOT amend the suppression rule (water only on
+      // plant signals, never by interval): a long absence of any root-zone-wetting rain IS a plant signal, which this profile class had no way to
+      // receive. No branch reads it, so a suppressed planting is never routed to water_due by weather alone.
+      // Both keys are ADDITIVE on an existing row -> PLAN_SCHEMA_VERSION deliberately NOT bumped (every reader selects named keys; a bump nulls the
+      // plan in three reader Lambdas with no regeneration path).
       const _dnote = dr.droughtNote(droughtState);
       waterSuppressed.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,rule:_wsup,
         moisture:(p.db_cadence&&p.db_cadence.soil_moisture_target)||c.soil_moisture_target||null,
@@ -842,34 +817,27 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
         ...(_dnote ? {drought:{dry_days:droughtState.dryDays, deep_soak_in:droughtState.deepSoakIn,
           last_deep_soak:droughtState.lastDeepSoakDate, truncated:droughtState.truncated}} : {})});
     } else if(_ow && _ow.active){
-      // HELD OUT of water_due / no_history / rain_skipped, and given a reduced-cadence MOISTURE CHECK —
-      // NOT a skip. A cover sheds the rain that would have reached the bed and indoor heat dries a pot
-      // faster than July does, so inheriting dormant's "skip routine care" is how an overwintered crop
-      // dies of a dry freeze. The item asks Dave to feel the soil, never to water unconditionally.
+      // HELD OUT of water_due / no_history / rain_skipped, and given a reduced-cadence MOISTURE CHECK — NOT a skip. A cover sheds the rain that would
+      // have reached the bed and indoor heat dries a pot faster than July does, so inheriting dormant's "skip routine care" is how an overwintered
+      // crop dies of a dry freeze. The item asks Dave to feel the soil, never to water unconditionally.
       overwinterHeld++;
       const _wiOw = ow.checkIntervalFor(_ow, baseWaterInterval(p, c, cad));
-      // V4-OVERWINTERCARDNOISE-001 (1): _ow carries rain_counts, so a covered/indoor regime reads
-      // last_hand_water and a logged rain no longer clears its check. Passing _ow is load-bearing —
-      // dropping the second argument silently restores the rain credit for all three protected regimes.
+      // _ow carries rain_counts, so a covered/indoor regime reads last_hand_water and a logged rain no longer clears its check. Passing _ow is
+      // load-bearing — dropping the second argument silently restores the rain credit for all three protected regimes.
       const _touch = ow.lastTouch(p,_ow);
       const _dOw = daysBetween(today,_touch);
       // dW==null (never watered, never checked) is DUE: an untouched pot through a winter is the case
       // most worth surfacing, and "no history" is not evidence of a damp medium.
       const _dueOw = _dOw==null || _dOw>=_wiOw;
-      // V4-OVERWINTERCARDNOISE-001 (3): due is not the same as WORTH FIRING. field_hardy alone is
-      // weather-gated (it is the only regime the weather can reach); the card SLIPS to the next
+      // Due is not the same as WORTH FIRING: field_hardy alone is weather-gated (the only regime the weather can reach); the card SLIPS to the next
       // workable day rather than being cancelled, because nothing here writes to lastTouch.
       const _actOw = _dueOw && _ow.regime==='field_hardy' ? ow.fieldHardyActionable(weather,hydrology) : null;
       if(_dueOw && _actOw && !_actOw.actionable){ overwinterDeferred++; }
       else if(_dueOw){
-        // V4-DRYDOWNCHANNELLING-001. The moisture TEST is regime-specific and `reason` is the ONLY place
-        // the user reads one: `note` carries the full per-regime guidance but no surface renders it —
-        // buildCareNeeded does not copy it onto the row — so a test stated only there is a test nobody
-        // sees. protected_quiescent reads the pot's WEIGHT at both ends, not the top inch. The top inch
-        // on a leafless pot is dry long before the core is (overwinter.js regime table), and on a peat
-        // mix that has dried past its wetting agent a re-water runs down the shrinkage gap at the wall
-        // and out the hole in seconds — it drains fast, reads as watered, and leaves the core dry.
-        // "only until it feels heavier" is the stop condition a channelled watering cannot satisfy.
+        // The moisture TEST is regime-specific and `reason` is the ONLY place the user reads one (`note` carries the full guidance but no surface renders
+        // it). protected_quiescent reads the pot's WEIGHT at both ends, not the top inch: the top inch on a leafless pot is dry long before the core is
+        // (overwinter.js regime table), and on a peat mix dried past its wetting agent a re-water runs down the shrinkage gap and out the hole, reads as
+        // watered, and leaves the core dry. "only until it feels heavier" is the stop condition a channelled watering cannot satisfy.
         const _testOw = _ow.regime==='protected_quiescent'
           ? 'lift the pot: water only if it feels light, and only until it feels heavier' : null;
         overwintering.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,
@@ -882,71 +850,49 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
             : `Overwintering — soil check due (${_dOw}d since last water/check); ${_testOw||'water only if dry below the top inch'}`});
       }
     } else {
-    // CARE-PROFILES-001: select inground or container cadence based on container_type.
     const inGround=likelyInGround(p,c);
-    // BUG-INDOORCADENCE-001: water_interval_days_indoor replaces it while the planting is indoors.
     let wi=baseWaterInterval(p, c, cad);
-    // V4-WATERMATH-001 F2: the ledger fold consumes the PRE-heat-gate interval — the >=88F wi-=1
-    // gate is RETIRED in-flag (continuous ET0 demand subsumes it; retaining it double-counts heat).
+    // The ledger fold consumes the PRE-heat-gate interval: the >=88F wi-=1 gate is RETIRED in-flag (continuous ET0 demand subsumes it).
     const _wiBase = wi;
-    // BUG-CADENCESIZE-001 vessel floor. Placed HERE, between _wiBase and the heat gate, for two reasons:
-    //   * AFTER _wiBase, so the F2 ledger fold never sees it. The ledger already models vessel size
-    //     continuously (vesselProfile sizeFactor + the fabric heat ramp); layering this coarse floor on
-    //     top would double-count the same signal, and F2 must stay unaffected by this change.
-    //   * BEFORE the heat gate, so a >=88F day still walks a low-drought-tolerance planting back down to
-    //     1. Heat is exactly when a trough pepper does want daily water, and it means this change is a
-    //     no-op on hot days and +1 day only on ordinary ones — the most conservative placement available.
+    // Vessel floor. Placed HERE, between _wiBase and the heat gate: AFTER _wiBase so the ledger fold never sees it (the ledger already models vessel
+    // size continuously; layering this coarse floor on top would double-count), and BEFORE the heat gate so a >=88F day still walks a
+    // low-drought-tolerance planting back down to 1 (heat is when a trough pepper wants daily water). That makes it a no-op on hot days and +1 day
+    // only on ordinary ones, the most conservative placement available.
     const _floor = dailyFloorFor(p);
     if(_floor!=null && wi<_floor) wi=_floor;
     if(hot && c.drought_tolerance==='low' && wi>1) wi=wi-1;
-    // DRG-WXWATER-001 coarse-v1 (flag-ON only): clamp the interval to the substrate x stage ceiling so a
-    // rain-credited planting still re-surfaces for a moisture check. Flag-OFF leaves wi exactly as computed above.
-    // DRG-WXFLAGSPLIT-001 F1: the tier is needed by EITHER flag (credit uses it for IA/hold, the ceiling for the
-    // clamp), so derive it when either is on; the clamp itself is now gated on rainMaxDaysEnabled ALONE. With both
-    // OFF the tier stays null and wi is untouched -> byte-identical to pre-split.
-    // BUG-RAINCREDITLIVEPATH-001: pass the parsed size so a >=3 gal fabric_bag resolves to 'fabric_ground'.
-    // vesselProfile is a pure parse (ledger.js:109) already require'd at the top of this file, so no new import.
+    // Flag-ON only: clamp the interval to the substrate x stage ceiling so a rain-credited planting still re-surfaces for a moisture check. Flag-OFF
+    // leaves wi as computed above. The tier is needed by EITHER flag (credit uses it for IA/hold, the ceiling for the clamp), so derive it when either
+    // is on; the clamp itself is gated on rainMaxDaysEnabled ALONE. With both OFF the tier stays null and wi is untouched.
+    // Pass the parsed size so a >=3 gal fabric_bag resolves to 'fabric_ground' (vesselProfile is a pure parse, already required above).
     const _rainTier = (rainCreditEnabled || rainMaxDaysEnabled)
       ? rainTierFor(p.container_type, ledger.vesselProfile(p.container_type, p.container_size).sizeGal) : null;
     if(rainMaxDaysEnabled){ const _cap=rainMaxDays(_rainTier, p.status, c.crop, p); if(_cap!=null && wi>_cap) wi=_cap; }
     const dW=daysBetween(today,p.last_water);
-    // DRG-WATERCREDIT-001 Path B-plus: credit qualifying window rain against the cadence (per class), with a
-    // fresh-transplant carve-out. A credited planting drops OUT of water_due (so counts.water_due is correct —
-    // fixes the legacy defer-count bug) and lands on rain_skipped with a one-line reason string.
+    // Path B-plus: credit qualifying window rain against the cadence (per class), with a fresh-transplant carve-out. A credited planting drops OUT of
+    // water_due (so counts.water_due is correct) and lands on rain_skipped with a one-line reason string.
     const rcls=rainClass(p);
-    // DRG-WXSATCAP-001: flag-independent heavy-soak cap (outer gate).
-    // BUG-TODAYWATER-001: pass the vessel size so the TODAY branch can hold small vessels to a higher bar.
-    // BUG-RAINBEDWAITCONFLICT-001 (Dave, 2026-09-28: "let beds wait") — satOpts.deferDryBeds arms the
-    // 'incoming_dry' branch for IN-GROUND plantings only. A bed presents its whole area to the sky, so a
-    // forecast half-inch reaches it; a bag's top catches too little of it (the widget's container
-    // exemption), so containers keep watering. A YOUNG bed keeps its water too, but that is not said
-    // here any more: it is youngBed in _satApplies below, where it covers every forecast kind and where
-    // no arming flag (this one, or satOpts.deferDry) can switch it off.
+    // Flag-independent heavy-soak cap (outer gate). The vessel size lets the TODAY branch hold small vessels to a higher bar.
+    // satOpts.deferDryBeds arms the 'incoming_dry' branch for IN-GROUND plantings only: a bed presents its whole area to the sky, so a forecast
+    // half-inch reaches it, while a bag's top catches too little of it (the widget's container exemption), so containers keep watering. A YOUNG bed
+    // keeps its water too, via youngBed in _satApplies below, which covers every forecast kind and which no arming flag can switch off.
     const _bedDefer = !!satOpts.deferDryBeds && inGround;
     const _sat=saturationSuppressed(rcls, hydrology, { todayAware: todayAwareEnabled, smallVessel: isSmallVessel(p), deferDry: !!satOpts.deferDry || _bedDefer, soonAware: !!satOpts.soonAware });
-    // DRG-WXWATER-001 coarse-v1 (flag-ON only): exposure eligibility. Flag-OFF uses the location-derived class
-    // (rcls==='outdoor'); flag-ON derives exposure from the location, honoring a stored rain_exposed
-    // boolean as an explicit override. _creditClass/_iaShown collapse to the flag-OFF values when OFF.
+    // Flag-ON only: exposure eligibility. Flag-OFF uses the location-derived class (rcls==='outdoor'); flag-ON derives exposure from the location,
+    // honoring a stored rain_exposed boolean as an explicit override. _creditClass collapses to the flag-OFF value when OFF.
     // NOTE: CARE_RAIN_CREDIT_ENABLED is "true" in live prod config — this branch is LIVE, not dormant.
     //
-    // BUG-NOLOCOUTDOOR-001: was `!p.covered`, which made an un-located planting exposed=true and
-    // rain-credited. Now reads the handler's resolved flag, so unknown => not exposed => keeps its
-    // water. The rain_exposed override still wins and is now the CORRECT escape hatch for exactly
-    // this case: "no location, but I know it is outdoors" is rain_exposed=true. (0/270 rows set it
-    // today, so it is an escape hatch, not the fix.)
+    // Reads the handler's resolved flag, not `!p.covered` (which made an un-located planting exposed and rain-credited): unknown => not exposed => keeps
+    // its water. The rain_exposed override still wins and is the escape hatch for "no location, but I know it is outdoors".
     const _exposed = rainCreditEnabled ? (p.rain_exposed==null ? !!p.rain_exposed_resolved : !!p.rain_exposed) : null;
     const _creditClass = rainCreditEnabled ? _exposed : (rcls==='outdoor');
-    // DRG-WATERCREDIT-002 fix: key the fresh-transplant carve-out on a REAL transplant/potting event
-    // (p.transplant_at), NOT substrate_start. substrate_start falls back to created_at (DB row-creation
-    // date), so plantings entered into the app recently but established in the ground/pots long ago were
-    // wrongly flagged "fresh" and denied rain credit (98/167 on 2026-06-23). transplant_at is NULL when no
-    // potting_up/transplant/plant-out event exists -> treated as established -> rain credit applies.
+    // Key the fresh-transplant carve-out on a REAL transplant/potting event (p.transplant_at), NOT substrate_start: substrate_start falls back to
+    // created_at (DB row-creation date), so plantings entered into the app recently but established long ago were wrongly flagged "fresh" and denied
+    // rain credit. transplant_at is NULL when no potting_up/transplant/plant-out event exists -> treated as established.
     const freshTransplant=((daysBetween(today,p.transplant_at)??999)<=TRANSPLANT_CARVEOUT_DAYS) && isSmallVessel(p);
-    // DRG-WATERCREDIT-004: outdoor fabric bags dry fast in heat -> cut rain credit on hot days so they
-    // still surface for watering sooner. Outdoor-scoped (covered bags are never credited anyway, so no
-    // misleading note). BUG-HEATDEMOTETOTAL-001: this used to zero the credit outright — it now scales
-    // it through bagHeatDemoteCredit. The fresh-transplant carve-out is still a full denial, and stays
-    // one: a small root ball is the case where "some credit" is exactly the wrong answer.
+    // Outdoor fabric bags dry fast in heat -> scale rain credit down on hot days (bagHeatDemoteCredit) so they still surface for watering sooner.
+    // Outdoor-scoped (covered bags are never credited anyway, so no misleading note). The fresh-transplant carve-out is still a full denial: a small
+    // root ball is the case where "some credit" is exactly the wrong answer.
     const bagHeatGate=hotForBag && rcls==='outdoor' && ((p.container_type||'').toLowerCase()==='fabric_bag');
     const _rcEarned=freshTransplant ? null
       : (rainCreditEnabled
@@ -955,54 +901,35 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
     const rc=bagHeatGate ? bagHeatDemoteCredit(_rcEarned) : _rcEarned;
     const bagHeatCut=!!(rc && rc.bag_heat_from > rc.credit_days);
     const effDays=(dW!=null&&rc)?dW-rc.credit_days:dW;
-    // BUG-TODAYWATER-001 — the TODAY branch is SUBORDINATE to the fast-dry carve-outs; 'soak' and 'incoming'
-    // keep outranking them. The distinction is what the gate is acting on: 'soak' means water is measurably
-    // already IN the media, so overriding a heat gate is defensible. 'today' means water is merely PREDICTED,
-    // and a forecast busts. Letting a prediction outrank bagHeatGate would skip a 5-gal fabric bag at 92F,
-    // and outrank freshTransplant would skip a small root ball — both cost plants when the rain no-shows,
-    // and both are exactly the cases those carve-outs were written to protect.
-    // A forecast busts; measured water in the media does not. Every FORECAST-based suppression therefore
-    // yields to the fast-dry carve-outs, while 'soak' and 'incoming' — both of which require water already
-    // measured in the media — outrank them, exactly as before.
+    // The forecast-based suppressions are SUBORDINATE to the fast-dry carve-outs; 'soak' and 'incoming' keep outranking them. A forecast busts;
+    // measured water in the media does not. 'soak' and 'incoming' both require water already measured in the media, so overriding a heat gate is
+    // defensible; letting a prediction outrank bagHeatGate would skip a 5-gal fabric bag at 92F, and outrank freshTransplant would skip a small root
+    // ball, both costing plants when the rain no-shows.
     //
-    // 'incoming_dry' and 'soon' join 'today' here rather than joining 'incoming', even though 'incoming_dry'
-    // is a relaxation of 'incoming': what made 'incoming' safe to leave unsubordinated was its already-wet
-    // prerequisite, and that is precisely the clause 'incoming_dry' drops. Inheriting its exemption along
-    // with its bars would have carried over a guarantee that no longer holds.
+    // 'incoming_dry' and 'soon' join 'today' here rather than 'incoming', though 'incoming_dry' relaxes 'incoming': what made 'incoming' safe to leave
+    // unsubordinated was its already-wet prerequisite, which is precisely the clause 'incoming_dry' drops.
     //
-    // BUG-DEFERNOSTRESSOVERRIDE-001 (Dave, 2026-10-09: "never wait") — two more plantings a busted
-    // forecast costs, exempt from every FORECAST kind and from nothing else:
-    //  * youngBed — an in-ground planting within TRANSPLANT_CARVEOUT_DAYS of going into the bed. A
-    //    transplant's root ball is still the size of the pot it came from; a seedbed's top half inch
-    //    dries inside one summer day, and a dry day during germination is stand loss, not reduced yield.
-    //    Aged from the transplant date when there is one, else from the sow date (p.sow_at): a planting
-    //    started indoors and set out later is as old as its transplant, never as its indoor sowing.
-    //    freshTransplant is small-vessel only, so it never covered a bed.
-    //    An UNDECLARED vessel (container_type NULL) counts as sown in place too: with no type recorded,
-    //    likelyInGround guesses from the crop and calls only cucurbits and leeks beds, so a carrot or
-    //    lettuce row sown four days ago was held. Unknown fails toward watering. A DECLARED vessel that
-    //    is not a bed is unchanged: a seed sown in a declared pot is freshTransplant's or nobody's.
-    //  * newTransplant — a planting within TRANSPLANT_CARVEOUT_DAYS of its transplant or potting-up, in
-    //    ANY vessel (Dave, same day: "new transplants … keep their watering card whatever the forecast",
-    //    said of no vessel). The root ball is the size of the pot it left however big the one it went
-    //    into. Transplant date only: a seed sown in place in a vessel is freshTransplant's or nobody's.
-    //    Unlike freshTransplant it denies no MEASURED rain credit — a large vessel keeps what fell.
-    //  * vesselHeatGate — at BAG_HEAT_GATE_F and above, every vessel that is not in the ground: rigid
-    //    pot, basket, trough and barrel as well as fabric bag. None of them has soil below to draw on.
-    //    It contains bagHeatGate, which stays fabric-only above because it also demotes MEASURED rain
-    //    credit, and that is not this rule's to widen. No rcls test: _sat is null unless outdoor.
+    // Three more plantings a busted forecast costs, exempt from every FORECAST kind and from nothing else:
+    //  * youngBed — an in-ground planting within TRANSPLANT_CARVEOUT_DAYS of going into the bed (a transplant's root ball is still the size of its
+    //    pot; a seedbed's top half inch dries inside one summer day, and a dry day during germination is stand loss). Aged from the transplant date,
+    //    else from the sow date (p.sow_at): a planting started indoors and set out later is as old as its transplant. freshTransplant is small-vessel
+    //    only, so it never covered a bed. An UNDECLARED vessel (container_type NULL) counts as sown in place too: likelyInGround guesses from the
+    //    crop, so a carrot or lettuce row sown four days ago would otherwise be held. Unknown fails toward watering. A DECLARED vessel that is not a
+    //    bed is unchanged.
+    //  * newTransplant — a planting within TRANSPLANT_CARVEOUT_DAYS of its transplant or potting-up, in ANY vessel: the root ball is the size of the
+    //    pot it left however big the one it went into. Transplant date only. Unlike freshTransplant it denies no MEASURED rain credit.
+    //  * vesselHeatGate — at BAG_HEAT_GATE_F and above, every vessel that is not in the ground (rigid pot, basket, trough, barrel as well as fabric
+    //    bag): none has soil below to draw on. It contains bagHeatGate, which stays fabric-only above because it also demotes MEASURED rain credit.
+    //    No rcls test: _sat is null unless outdoor.
     const youngBed = (inGround || !p.container_type) && ((daysBetween(today, p.transplant_at ?? p.sow_at) ?? 999) <= TRANSPLANT_CARVEOUT_DAYS);
     const newTransplant = (daysBetween(today, p.transplant_at) ?? 999) <= TRANSPLANT_CARVEOUT_DAYS;
     const vesselHeatGate = hotForBag && !inGround;
     const _satApplies = _sat && (!FORECAST_SAT_KINDS.has(_sat.kind) || !(freshTransplant || youngBed || newTransplant || vesselHeatGate));
-    // ── V4-WATERMATH-001 F2 fork ──────────────────────────────────────────────────────────────────
-    // Flag ON + watering history exists -> the continuous ledger replaces the dW>=wi chain below.
-    // dW==null deliberately FALLS THROUGH to the legacy never:true push (canon: never-watered path
-    // byte-identical). Rain day-credits, amount classes, snoozes and fractional time are all folded
-    // into D, so the legacy 72h-credit rain_skipped branch has no in-flag analog: a rain-covered
-    // planting simply is not due. The saturation cap is RETAINED and still SUPREME — unchanged
-    // _satApplies (incl. the 'today'-subordinate-to-carve-outs rule), with its eligibility gate now
-    // D >= dueThreshold instead of dW>=wi (canon legacy-term table, engine.js:455 note).
+    // ── Water Ledger fork ──
+    // Flag ON + watering history exists -> the continuous ledger replaces the dW>=wi chain below. dW==null deliberately FALLS THROUGH to the legacy
+    // never:true push (never-watered path byte-identical). Rain day-credits, amount classes, snoozes and fractional time are all folded into D, so the
+    // legacy 72h-credit rain_skipped branch has no in-flag analog: a rain-covered planting simply is not due. The saturation cap is RETAINED and still
+    // SUPREME — unchanged _satApplies (incl. the 'today'-subordinate-to-carve-outs rule), with its eligibility gate now D >= dueThreshold instead of dW>=wi.
     const _lg = (_ledgerOn && dW!=null) ? ledgerVerdictFor(p, c, _wiBase, today, hydrology, ledgerOpts) : null;
     if(_lg){
       if(_lg.due && _satApplies){
@@ -1013,8 +940,8 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
           reason: satReason(_sat),
           ledger:_lg.pub});
       } else if(_lg.due){
-        // PAYLOAD CONTRACT (canon Decision 10): days_since/overdue_by/interval stay INTEGER CALENDAR
-        // values — the ledger's fractional precision rides ONLY in the additive `ledger` key.
+        // PAYLOAD CONTRACT: days_since/overdue_by/interval stay INTEGER CALENDAR values — the ledger's fractional precision rides ONLY in the additive
+        // `ledger` key.
         water.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,in_ground:inGround,
           days_since:dW,interval:_lg.wiEff,overdue_by:_lg.overdueBy,method:c.water_method,moisture:c.soil_moisture_target,
           never:false,rain_note:null,ledger:_lg.pub});
