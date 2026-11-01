@@ -1,4 +1,4 @@
-// V4-COLDSTART-001 — the retry affordance for the `unknown` identity state.
+// The retry affordance for the `unknown` identity state.
 //
 // A FULL DOCUMENT RELOAD IS THE ONLY RETRY THAT EXISTS. IsomorphicClerk hot-loads clerk-js exactly
 // once (loadClerkJS is called from its constructor path and there is no public re-load/retry API),

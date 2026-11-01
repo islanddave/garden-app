@@ -1,4 +1,4 @@
-// V4-OVERLAY-001 Slice 2 — draft stash for the capture forms (§4 / §5.2 dirty-guard pairing).
+// Draft stash for the capture forms (pairs with the dirty-guard).
 // When a DIRTY /log or /log/many form is dismissed as an overlay, its in-progress state must survive
 // so re-opening resumes it (the dirty-backdrop guard stops the accidental discard; this keeps the
 // bytes). Smallest correct mechanism: a single versioned sessionStorage record per route key,

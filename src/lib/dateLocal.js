@@ -1,8 +1,7 @@
-// Local-calendar date helpers (WS-A4). The app's "today" must be the user's LOCAL
+// Local-calendar date helpers. The app's "today" must be the user's LOCAL
 // calendar day, not UTC — `new Date().toISOString().slice(0,10)` rolls the date forward
 // after ~8pm ET, filing events/projects on tomorrow. These use the local Date getters so
-// the result is the viewer's wall-clock day. Consolidates the ad-hoc copies that were
-// scattered per-component (CareNeeded, ProjectDetail, etc.).
+// the result is the viewer's wall-clock day.
 
 // A DATE column arrives bare ("2026-04-10") or as the Lambda serialises the driver's Date
 // ("2026-04-10T00:00:00.000Z"). Both are a calendar day with no instant behind them, and

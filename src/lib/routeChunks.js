@@ -3,7 +3,7 @@
 //
 // Same shape as ./collectionChunk.js, and for the same reason: a plain import() whose failure is a
 // VALUE (null), never React.lazy. React.lazy caches a rejected payload permanently, so one dead spot
-// mid-tap would make the page unreachable for the session (V4-LAZYRETRY-001; the full citation into
+// mid-tap would make the page unreachable for the session (the full citation into
 // the installed React source is in collectionChunk.js). Here a failed load leaves `cached` null and
 // `inflight` cleared, so the next load() is a genuinely new import().
 //

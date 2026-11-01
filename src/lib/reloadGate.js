@@ -1,18 +1,18 @@
 // src/lib/reloadGate.js
-// OPS-SWRELOADGUARD-001 — a deferral channel between in-progress capture forms and registerSW's
+// A deferral channel between in-progress capture forms and registerSW's
 // controllerchange→reload().
 //
 // Why it exists: public/sw.js skipWaiting()s at install and clients.claim()s, and registerSW
 // reload()s the page the instant a new worker takes control — including off the
 // visibilitychange→visible update re-check, i.e. exactly when the phone comes out of a pocket at a
-// plant. public/releases.json holds 105 releases across 24 active days (~4.4/active day), so a
-// deploy landing mid-form is routine, not hypothetical. It destroys a typed harvest weight ON FULL
-// SIGNAL: DRAFT_FORM_FIELDS does not cover harvest quantity/weight, so nothing restores it.
+// plant. Deploys are frequent, so one landing mid-form is routine, not hypothetical. It destroys a
+// typed harvest weight ON FULL SIGNAL: DRAFT_FORM_FIELDS does not cover harvest quantity/weight, so
+// nothing restores it.
 //
-// DEFER, DO NOT DISARM. BUG-STALECLIENT-001 exists because updates parked in `waiting` forever and
-// clients silently ran a stale bundle indefinitely; blocking the swap outright would rebuild that
-// bug. A hold only postpones the reload to the next safe moment — the instant the last hold clears,
-// or the next resume with nothing held.
+// DEFER, DO NOT DISARM. Updates once parked in `waiting` forever and clients silently ran a stale
+// bundle indefinitely; blocking the swap outright would rebuild that bug. A hold only postpones the
+// reload to the next safe moment — the instant the last hold clears, or the next resume with
+// nothing held.
 //
 // KEYED SET, NOT A BOOLEAN. Several surfaces can be dirty at once (a capture form under an open
 // overlay, PutUp, LogMany). With a shared boolean the second surface reporting clean would release
@@ -21,9 +21,9 @@
 // Framework-free on purpose: registerSW runs before React mounts and consults this from module
 // scope, so it must not pull in React or a context.
 //
-// FIRST INTENDED CONSUMER: src/pages/EventNew.jsx — call setReloadBlocked('event-new', isDirty)
-// from an effect whose cleanup releases the key (same shape as useReportOverlayDirty), so a
-// dismissed or unmounted form can never strand a hold and wedge updates forever.
+// Consumers (e.g. src/pages/EventNew.jsx) call setReloadBlocked('event-new', isDirty) from an
+// effect whose cleanup releases the key (same shape as useReportOverlayDirty), so a dismissed or
+// unmounted form can never strand a hold and wedge updates forever.
 
 const holds = new Set()
 const listeners = new Set()

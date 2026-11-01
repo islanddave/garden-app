@@ -1,4 +1,4 @@
-// Pure cache-key helpers for public/sw.js — Slice 1 of the SW API-cache remediation (design V100).
+// Pure cache-key helpers for public/sw.js.
 //
 // THE SEAM: public/sw.js is served raw and unbundled, so it cannot import from src/lib/. The block
 // between the SW-MIRROR sentinels below is byte-mirrored into public/sw.js, and

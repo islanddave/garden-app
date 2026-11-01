@@ -1,15 +1,15 @@
 // src/lib/scrollRestore.js
-// V4-NAVSTATE-002 — the scroll-restore RETRY decision, kept pure.
+// The scroll-restore RETRY decision, kept pure.
 //
 // Same discipline as backNav.js: no DOM, no React, no history. src/lib/** is in vitest
 // coverage.include; src/pages/Garden.jsx is NOT, so the decision lives here where it can be
 // exhaustively table-tested and only the driving loop stays in the page.
 //
-// WHY A RETRY EXISTS AT ALL. V4-NAVSTATE-001 restored Garden's scroll with a single
-// requestAnimationFrame(() => window.scrollTo(0, y)) and latched a one-shot ref BEFORE the attempt.
-// Both halves were wrong on the same navigation:
+// WHY A RETRY EXISTS AT ALL. Restoring Garden's scroll with a single
+// requestAnimationFrame(() => window.scrollTo(0, y)) and a one-shot ref latched BEFORE the attempt
+// is wrong on both halves:
 //
-//   1. Every planting grid is windowed at 24 tiles (BUG-PHOTOTHUMB-001, useImageWindow.js). On
+//   1. Every planting grid is windowed at 24 tiles (useImageWindow.js). On
 //      remount the window collapses back to one page, so a group that was showing 56 tiles comes
 //      back showing 24 and the document is a fraction of its former height. Chrome CLAMPS
 //      window.scrollTo to the current max scroll and reports no error, so the restore silently
@@ -25,9 +25,9 @@
 // IT IS SELF-LIMITING, which is why no window cap is needed here. The target offset can never
 // exceed the document height that existed when the user left the page, and that height was reached
 // by real scrolling. So the restore can only re-grow the window back to roughly where the user
-// already had it — it cannot run away toward the ~120 live <img> that froze the renderer in
-// BUG-PHOTOTHUMB-001. A blind index SEED has no such ceiling and must be capped separately; that
-// belongs with anchor restoration, not here.
+// already had it — it cannot run away toward the ~120 live <img> that once froze the renderer. A
+// blind index SEED has no such ceiling and must be capped separately; that belongs with anchor
+// restoration, not here.
 
 // Chrome reports fractional scroll offsets on a zoomed/DPR-scaled viewport, and the last growth
 // step can leave the document a hair short. 4px is below one line of text — a miss this small is
@@ -66,10 +66,9 @@ export function restoreStep({ currentY, targetY, frames }) {
 /**
  * Is there anything to restore at all?
  *
- * Kept separate from restoreStep so the "inert" case cannot consume the one-shot latch. The
- * original code set the latch and THEN checked the offset, so on any mount where the offset was 0
- * the restore was permanently disarmed before it had done anything — meaning an offset that
- * arrived even slightly late could never be applied for that mount.
+ * Kept separate from restoreStep so the "inert" case cannot consume the one-shot latch. Setting the
+ * latch and THEN checking the offset would permanently disarm the restore on any mount where the
+ * offset was 0, so an offset that arrived even slightly late could never be applied for that mount.
  *
  * @param {number} targetY
  * @returns {boolean}

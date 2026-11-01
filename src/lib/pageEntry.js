@@ -1,5 +1,5 @@
 // src/lib/pageEntry.js
-// BUG-OVERLAYRELOADKEY-001 — WHICH history entry the page tree is showing, read straight off
+// WHICH history entry the page tree is showing, read straight off
 // window.history.state for code that cannot go through the router (useScrollRestore, whose suites stub
 // react-router-dom wholesale).
 //

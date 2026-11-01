@@ -1,10 +1,10 @@
-// V4-BACKNAV-001 Slice 1 — the pure half of the dismiss registry (decision V200 §3).
+// The pure half of the dismiss registry.
 //
-// WHY THIS EXISTS. Before this, "which modal is on top?" had THREE disagreeing answers:
+// WHY THIS EXISTS. Without it, "which modal is on top?" has THREE disagreeing answers:
 //   1. Sheet.jsx's module-level openStack — insertion order, and it sees only Sheets.
-//   2. Paint order — hardcoded zIndex literals scattered across ~69 sites.
-//   3. Nothing at all — 8 of the app's 9 role="dialog" surfaces bind their own ungated document
-//      keydown, so Escape over a Sheet+Lightbox stack fires BOTH onCloses today.
+//   2. Paint order — hardcoded zIndex literals scattered across the app.
+//   3. Nothing at all — most of the app's role="dialog" surfaces bind their own ungated document
+//      keydown, so Escape over a Sheet+Lightbox stack would fire BOTH onCloses.
 // An arbiter whose stack order disagrees with paint order dismisses a surface the user cannot see
 // is on top. So layer is derived from the SAME scale that paints, and topmost = highest layer with
 // insertion order as the tiebreak.
@@ -38,12 +38,10 @@ export const LAYER = {
 // header): an arbiter whose stack order disagrees with paint order dismisses a surface the user
 // cannot see is on top.
 //
-// Four surfaces shipped in v3.103.0 violating it — they registered DIALOG (1000) while painting
-// 200–300: PhotoLibrary's PhotoModal, SpaceAttachPicker, LoveMehPopover (all 200) and
-// FacebookShareSheet (300). With any Sheet open beneath, the registry ranked them above a surface
-// that paints level with or above them, so ESCAPE COULD ALREADY RESOLVE TO THE WRONG SURFACE in
-// prod — independent of Back. Corrected at those four call sites; `layerMatchesPaint.test.js` pins
-// the pairs so the two scales cannot drift apart again.
+// A surface that registers DIALOG (1000) while painting 200–300 (PhotoLibrary's PhotoModal,
+// SpaceAttachPicker, LoveMehPopover at 200; FacebookShareSheet at 300) is ranked above a surface that
+// paints level with or above it, so ESCAPE CAN RESOLVE TO THE WRONG SURFACE, independent of Back.
+// `layerMatchesPaint.test.js` pins the pairs so the two scales cannot drift apart.
 
 // Highest layer wins; equal layers break by insertion order (later = on top). Returns null for an
 // empty stack — callers use that to mean "nothing registered, let the event through".
@@ -60,8 +58,8 @@ export function resolveTopmost(entries) {
 }
 
 // The dismissal decision for ONE dismissal gesture (Escape, Back, or a labelled Close routed here).
-// Exactly one outcome per input — never zero, never two. That closed-enum shape is what makes B1
-// falsifiable rather than aspirational ("handled wherever possible" cannot fail a test).
+// Exactly one outcome per input — never zero, never two. That closed-enum shape is what makes the
+// claim falsifiable rather than aspirational ("handled wherever possible" cannot fail a test).
 //
 //   NONE    — nothing registered; the caller must NOT swallow the event (Back should navigate).
 //   BLOCKED — topmost has a write in flight; swallow the gesture, show the surface's reason.
@@ -71,7 +69,7 @@ export function resolveTopmost(entries) {
 // `confirmOnDirty` and `blockOnBusy` are the CALLER's opt-ins. `blockOnBusy` still defaults false
 // here (the provider passes true); `confirmOnDirty` defaults false as the global kill-switch.
 //
-// BUG-DIRTYDISMISSGAP-001 — CONFIRM now needs BOTH the caller's switch AND the entry's own
+// CONFIRM needs BOTH the caller's switch AND the entry's own
 // `confirmOnDirty`. The per-entry term is not belt-and-braces, it is what makes the switch safe to
 // turn on at all: `dirty` means four different things at the four sites that pass it (a route
 // overlay's aggregate, PlantingEditor's deliberately over-reporting latch ×3), and the three overlay

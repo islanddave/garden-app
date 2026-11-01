@@ -1,7 +1,7 @@
 // Quantity rendering helpers.
 // numeric(N,3) columns serialize through the pg driver as strings like "3.000".
-// Dave directive 2026-06-15: show INTEGERS everywhere for now (he'll re-add decimal precision
-// per-surface where he wants it). formatQty rounds to nearest integer: "3.000"→"3", "3.500"→"4",
+// Display shows INTEGERS everywhere for now (decimal precision gets re-added per-surface where wanted).
+// formatQty rounds to nearest integer: "3.000"→"3", "3.500"→"4",
 // "3.125"→"3". Returns '' for null/undefined/empty. Returns String(n) when not finite (defensive).
 // The DB column stays numeric(N,3); this is display-only rounding, no data is altered — TRUE only
 // while every caller is a render. An EDIT input seeds from formatQtyExact below; see its note.
@@ -12,16 +12,14 @@ export function formatQty(n) {
   return String(Math.round(num))
 }
 
-// BUG-INVQTYROUNDTRIP-001 — the EDIT-form twin of formatQty, and the split is the whole point.
+// The EDIT-form twin of formatQty, and the split is the whole point.
 // formatQty's rounding is display-only and stays that way, but an EDITABLE box seeded from it is not
 // a render: the value is read back with parseFloat and PUT, so merely opening an item and saving any
-// OTHER field rewrote the quantity to its rounded self — HTTP 200, no warning. Prod carried five such
-// rows when this landed (3 in quantity_on_hand incl. the 0.500-packet okra, 2 in quantity_purchased).
-//
+// OTHER field rewrote the quantity to its rounded self — HTTP 200, no warning.
 // The contract is REVERSIBILITY, not prettiness: parseFloat(formatQtyExact(v)) === Number(v) for
 // every finite v, which is what makes the round trip provable rather than merely plausible. Number()
 // then String() is all it takes — "0.500"→"0.5", "3.000"→"3", "4.400"→"4.4" — trailing zeros gone
-// (the readable-input half V3-QTYINT-001 actually wanted) with the value itself untouched. toFixed(3)
+// (readable input) with the value itself untouched. toFixed(3)
 // would read as more careful and be less: it re-rounds anything finer than the column's resolution,
 // which is the same class of silent write this function exists to stop.
 // Same contract as its siblings for the edges: '' for null/undefined/empty, String(n) when not finite.
@@ -32,7 +30,7 @@ export function formatQtyExact(n) {
   return String(num)
 }
 
-// V5-SEEDQTY-001 — seed WEIGHT, and the one thing it must never be is formatQty. That function is
+// Seed WEIGHT, and the one thing it must never be is formatQty. That function is
 // String(Math.round(n)) with no unit, so a 0.5 g pinch of lettuce seed renders as a bare "1": a
 // number that is both wrong and unlabelled. inventory_items.seed_weight_g is numeric(10,3) and the
 // column is GRAMS, always — mg is a display unit here and never a stored one.
@@ -56,7 +54,7 @@ export function formatSeedWeight(g) {
   return `${Math.round(num * 1000)} mg`
 }
 
-// Money rendering. Always 2 decimals. Dave directive 2026-06-15: money stays decimal
+// Money rendering. Always 2 decimals: money stays decimal
 // at exactly 2 places (numeric columns serialize as "12.990"; this trims to "$12.99").
 // Display-only; DB column unchanged. Returns '' for null/empty, String(n) when not finite.
 export function formatMoney(n) {
@@ -69,7 +67,7 @@ export function formatMoney(n) {
 // Date rendering. numeric/timestamp date columns can serialize as a full ISO
 // string ("2026-06-01T00:00:00.000Z") OR a date-only "2026-06-01". Render a clean
 // friendly date from the leading YYYY-MM-DD WITHOUT a Date object (avoids the
-// midnight-UTC off-by-one TZ bug, L-107). Returns '' for null/empty, and the input
+// midnight-UTC off-by-one TZ bug). Returns '' for null/empty, and the input
 // untouched if it doesn't start with an ISO date (defensive — free-text passes through).
 const _MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 export function formatDate(s) {

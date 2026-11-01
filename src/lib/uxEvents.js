@@ -1,5 +1,5 @@
 // Fire-and-forget M1 success-metric telemetry (Post-V2 UX Overhaul — Increment 0).
-// Spec: success-metric-instrumentation-spec-V001-20260522.1620.md §2 (M1 tap-count).
+// Metric: M1 tap-count.
 //
 // HARD RULE: telemetry must NEVER block, delay, or throw into a user flow. Every send is
 // best-effort and swallows all errors. If VITE_API_UX_EVENTS is unset (not yet provisioned)
@@ -9,20 +9,12 @@
 import { useCallback, useRef } from 'react'
 import { useApiFetch } from './api.js'
 
-// The M1 flows (must match the Lambda's server-side ALLOWED_FLOWS allowlist).
-// V3-NAV-001 (Lane C / PR2): OPEN_PLANTING is a NEW step fired when the dedicated
-// PlantingDetail page mounts ("opened a planting detail"). It does NOT replace
-// REACH_PLANTING, which still fires on project load ("viewed a project containing
-// plantings") for one release so the funnel keeps a continuous signal during cutover.
-// Temporary double-signal is intentional — reconcile after both are visible in the funnel.
-// If the Lambda allowlist hasn't added 'open_planting' yet, sendUxEvent is a silent no-op
-// (server drops unknown flows), so this is safe to ship ahead of the server allowlist.
-// V4-PHOTOUPLOADINSTR-001: the comment above was right and its consequence was worse than "safe to
-// ship ahead of the server allowlist". `open_planting` shipped here 2026-06-03 and was NEVER added
-// to the Lambda, so it recorded ZERO rows in 2.5 months while PlantingDetail replaced ProjectDetail
-// as the way in — the funnel did not double-signal, it handed over to a flow that was being dropped.
-// Both are in ALLOWED_FLOWS now, and ux-events.flowLockstep.test.js fails if this object ever again
-// carries a value the server does not accept. Add flows in PAIRS, or the guard will tell you.
+// The M1 flows (must match the Lambda's server-side ALLOWED_FLOWS allowlist). The server drops
+// unknown flows silently, so a flow added here ahead of the allowlist records ZERO rows;
+// lambda/ux-events/flowLockstep.test.js fails if this object ever carries a value the server does not
+// accept. Add flows in PAIRS, or the guard will tell you.
+// OPEN_PLANTING fires when the dedicated PlantingDetail page mounts ("opened a planting detail");
+// REACH_PLANTING still fires on project load ("viewed a project containing plantings").
 export const FLOWS = {
   LOG_WATERING: 'log_watering',
   REACH_PLANTING: 'reach_planting',

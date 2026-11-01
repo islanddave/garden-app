@@ -1,14 +1,14 @@
 // src/lib/useAmbientBandFetch.js
-// BUG-READYBANDFETCH-001 — the three ambient Today bands (harvest-ready, harvest-watch, put-up
-// use-soon) each carried a byte-identical load block whose .catch() swallowed the error and left
-// state at null. Every one of them renders nothing when state is null, so a FAILED fetch rendered
-// IDENTICALLY to an EMPTY queue: the band whose whole job is to say "there is nothing to pick" said
-// exactly the same thing when it had never managed to ask.
+// Shared load for the three ambient Today bands (harvest-ready, harvest-watch, put-up use-soon).
+//
+// A band renders nothing when its state is null, so a swallowed fetch error would make a FAILED fetch
+// render IDENTICALLY to an EMPTY queue: the band whose whole job is to say "there is nothing to pick"
+// would say the same thing when it had never managed to ask. `failed` makes failure DISTINGUISHABLE
+// from emptiness, so a caller can render an ambient muted line instead of silently rendering nothing.
 //
 // The swallow itself is correct and STAYS. Reward-UX V102 forbids a toast/modal/sheet/banner on these
-// surfaces and a supplementary glance must never throw onto Today. What changes is that failure is
-// now DISTINGUISHABLE from emptiness, so a caller can render an ambient muted line instead of
-// silently rendering nothing. Nothing here surfaces an error object, a status code, or a stack.
+// surfaces and a supplementary glance must never throw onto Today. Nothing here surfaces an error
+// object, a status code, or a stack.
 //
 // ONE transient retry before failure is declared. A single dropped request on a phone waking from
 // sleep is the common case and must not put a "couldn't check" line on Today; only a second
@@ -16,8 +16,8 @@
 // focus/visibilitychange event mid-retry does not start a competing chain.
 //
 // A refresh that fails while data is ALREADY held keeps the stale data — setData is never called on
-// the error path. That was already correct before this fix and is preserved on purpose: stale rows
-// beat blank rows for a glance surface, and `failed` alone tells the caller which it is holding.
+// the error path: stale rows beat blank rows for a glance surface, and `failed` alone tells the
+// caller which it is holding.
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useOverlayLocation } from '../context/OverlayContext.jsx'
 import { useApiFetch } from './api.js'

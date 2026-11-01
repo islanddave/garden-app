@@ -1,14 +1,13 @@
-// src/lib/spaceId.js — V4-SPACEPHOTO-001 Lane C. The SINGLE seam that answers "which space?".
+// src/lib/spaceId.js — the SINGLE seam that answers "which space?".
 //
 // Discovery is SERVER-side. `GET /api/photos/space-hero` with NO id resolves the caller's own
 // household space (spaces.created_by = ANY(household), deterministic oldest when there is more
 // than one) and returns its id as `space_id`. That one round trip bootstraps every other space
 // surface: `?space_id=` for the gallery, `/space-featured/:id` for the PUT.
 //
-// It replaced a VITE_SPACE_ID build variable, now deleted. That variable was unset in every
-// environment, so with it the feature was unreachable even with SPACE_PHOTOS_ENABLED on; there
-// was no shipped surface a client could obtain a space id from (no /api/spaces, the plants list
-// SELECT omits workspace_id, the daily-plan read model drops it).
+// There is deliberately no VITE_SPACE_ID build variable: no other surface can supply a space id (no
+// /api/spaces, the plants list SELECT omits workspace_id, the daily-plan read model drops it), so
+// discovery is the only way in.
 //
 // A route param still WINS over discovery: /space/:spaceId is a real route and the by-id hero form
 // still 404s an unknown or foreign space server-side, so a second space needs a link, not a code
