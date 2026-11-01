@@ -1,10 +1,10 @@
-// src/lib/iconEvents.js — V4-ICON-001 (Pass B V101) event-type glyph forms.
-// 42 newly-drawn mono line forms (24+18 masters) + 9 event types that REUSE an existing
-// foundation form (sowing->seed, transplant->seedling, rooting->rooting, flowering->flowering, fruit_set->fruiting,
-// harvest->harvesting basket, watering->care.drop, potting_up->nav.garden, fertilizing->care.feed)
-// by reference (no redraw, no drift). EVENT_GLYPHS covers EVERY EVENT_TYPES value as event.<type>; consumers
-// route the event-type emoji render through <Icon name={`event.${type}`}>. Mono: stroke
-// inherits currentColor so a surface can tint per context. Drawn glyphs self-verified via resvg.
+// src/lib/iconEvents.js: V4-ICON-001 (Pass B V101) event-type glyph forms.
+// Newly-drawn mono line forms (24+18 masters) in NEW, plus event types that REUSE an existing foundation
+// form by reference (no redraw, no drift): sowing->seed, transplant->seedling, rooting, flowering,
+// fruit_set->fruiting, harvest->harvesting basket, watering->care.drop, potting_up->nav.garden,
+// fertilizing->care.feed. EVENT_GLYPHS covers EVERY EVENT_TYPES value as event.<type>; consumers render
+// the event-type icon through <Icon name={`event.${type}`}>. Mono: stroke inherits currentColor so a
+// surface can tint per context.
 // Two drawn forms (brought_inside, observation) also carry an opt-in `filled` colour variant
 // (V5-TODAYREDESIGN-001); their bases stay mono, so only a consumer that asks for colour gets it.
 import { EVENT_TYPES, EVENT_TYPE_META, LEGACY_EVENT_TYPE_ALIASES } from './eventTypes.js'
@@ -12,31 +12,23 @@ import ANCHORS from './iconAnchors.js'
 import { STATUS_GLYPHS } from './iconStatus.js'
 
 const NEW = {
-  // V4-GERMVSTRANSPLANT-001 (Dave 2026-08-28) — REDRAWN. The previous germination glyph and
-  // event.transplant (= STATUS_GLYPHS.seedling) were the SAME DRAWING AT TWO SCALES: byte-identical
-  // ground lines, stems of 5.5 vs 8.2 units and leaves of 4 vs 5. At the 22px they ship at, a
-  // 2.7-unit stem delta is ~2.5 device px, so both reduced to "a sprout on a ground line" — and they
-  // sit as ADJACENT ROWS on a plant's life story, which is the one place the difference is read.
-  // The emoji this pair replaced were more distinct, so the migration was a small regression.
+  // V4-GERMVSTRANSPLANT-001: germination is drawn to be told apart from event.transplant (=
+  // STATUS_GLYPHS.seedling). The old pair were the same drawing at two scales (a 2.7-unit stem delta is
+  // ~2.5 device px at the 22px they ship at), and they sit as ADJACENT ROWS on a plant's life story, the one
+  // place the difference is read.
   //
-  // THE FIX IS SILHOUETTE, NOT SCALE, on the axis care.plantedOut already proved survives reduction:
-  // the glyph's RELATIONSHIP TO THE SOIL LINE. germination now carries mass BELOW the line (the seed
-  // it came out of), transplant sits ON it, care.plantedOut sits IN a hollow in it. Three different
-  // baseline reads, none of which depends on relative size. The single cotyledon is a second,
-  // independent discriminator against transplant's two.
+  // THE FIX IS SILHOUETTE, NOT SCALE, on the axis care.plantedOut proved survives reduction: the glyph's
+  // RELATIONSHIP TO THE SOIL LINE. germination carries mass BELOW the line (the seed it came out of),
+  // transplant sits ON it, care.plantedOut sits IN a hollow in it. The single cotyledon is a second
+  // discriminator against transplant's two.
   //
-  // ONLY germination is redrawn. transplant aliases STATUS_GLYPHS.seedling, which also backs the
-  // seedling/sprouting/seeding STATUS badges — redrawing it would silently repaint those three.
-  // Semantics improve too: germination is the seed opening, so a seed belongs in the picture, and it
-  // reads as a progression from sowing's bare bean rather than a smaller copy of the seedling.
-  // 18 keeps ALL FOUR elements (the usual complexity-floor cut would be the seed, which is the whole
-  // discriminator) and keeps the ground line that transplant's own 18 master drops — so the two
-  // masters diverge further at 18, not less, which is where they were closest before.
-  // The seed is a TILTED BEAN, not a circle, and the shoot CURVES. A symmetric ring plus a straight
-  // vertical stem read as hardware — a bolt or a key — at 56px, which is not a thing to ship on a
-  // plant's life story however well it separated from transplant. Tilt and curve cost nothing at
-  // 22px and are what make it read as growth. The bean also echoes sowing's bare tilted seed, so the
-  // two sit as a progression rather than as unrelated drawings.
+  // ONLY germination is redrawn: transplant aliases STATUS_GLYPHS.seedling, which also backs the
+  // seedling/sprouting/seeding STATUS badges, so redrawing it would silently repaint those three.
+  // 18 keeps ALL FOUR elements (the usual cut would be the seed, the whole discriminator) and keeps the
+  // ground line that transplant's 18 master drops, so the masters diverge further at 18.
+  // The seed is a TILTED BEAN, not a circle, and the shoot CURVES: a symmetric ring plus a straight vertical
+  // stem read as hardware (a bolt or a key) at 56px. Tilt and curve cost nothing at 22px, and the bean
+  // echoes sowing's bare tilted seed so the two read as a progression.
   germination: { svg24: '<path d="M3.6 15.4h16.8"/><path d="M8.92 20.04a3.4 2.2 -25 1 0 6.16 -2.88a3.4 2.2 -25 1 0 -6.16 2.88z"/><path d="M12.6 16.6C13 13.6 12.5 11.2 12 9.6"/><path d="M12 11.6c0-2.2 1.8-4 4-4 0 2.2-1.8 4-4 4z"/>', svg18: '<path d="M3.6 14.8h16.8"/><path d="M9.16 19.66a3.2 2.1 -25 1 0 5.8 -2.7a3.2 2.1 -25 1 0 -5.8 2.7z"/><path d="M12.5 16.1C12.9 13.4 12.5 11.2 12 9.6"/><path d="M12 11.4c0-2 1.7-3.7 3.7-3.7 0 2-1.7 3.7-3.7 3.7z"/>' },
   seed_soak: { svg24: '<path d="M3.5 14.5h17"/><path d="M12 8c2.5 0 4.2 1.8 4.2 4S14.5 16 12 16 7.8 14.2 7.8 12 9.5 8 12 8z" fill="currentColor" stroke="none"/><path d="M6 17.8c0 1.1.9 2 2 2"/><path d="M16.5 17.8c0 1.1.9 2 2 2"/>', svg18: '<path d="M3 13h18"/><path d="M12 7c2.8 0 4.6 2 4.6 4.6S14.8 16.2 12 16.2 7.4 14.2 7.4 11.6 9.2 7 12 7z" fill="currentColor" stroke="none"/><path d="M16 17.5c0 1.2 1 2.2 2.2 2.2"/>' },
   thinning: { svg24: '<path d="M4 20.5h16"/><path d="M8 20.5v-5"/><path d="M8 15.5C6.3 15.5 5 14.2 5 12.5c1.7 0 3 1.3 3 3z"/><path d="M8 14.2c0-1.7 1.3-3 3-3 0 1.7-1.3 3-3 3z"/><path d="M16.5 20.5v-8"/><path d="M16.5 12.5C14.8 12.5 13.5 11.2 13.5 9.5c1.7 0 3 1.3 3 3z"/><path d="M19.5 6l-3-3-3 3"/>', svg18: '<path d="M8 20.5v-5"/><path d="M8 15.5C6.3 15.5 5 14.2 5 12.5c1.7 0 3 1.3 3 3z"/><path d="M8 14.2c0-1.7 1.3-3 3-3 0 1.7-1.3 3-3 3z"/><path d="M16.5 20.5v-9"/><path d="M19 7l-2.5-2.5L14 7"/>' },
@@ -53,11 +45,11 @@ const NEW = {
   hardening_off: { svg24: '<circle cx="8.5" cy="8" r="3.6"/><path d="M8.5 2.5v1.5"/><path d="M3 8h1.5"/><path d="M4.6 4.1l1.1 1.1"/><path d="M12.4 4.1l-1.1 1.1"/><path d="M4.6 11.9l1.1-1.1"/><path d="M10.5 15.5a3.7 3.7 0 0 1 .2-7.3 4.7 4.7 0 0 1 9 1.2 3.4 3.4 0 0 1-.6 6.1z"/>', svg18: '<circle cx="8" cy="7.5" r="3.4"/><path d="M8 2.3v1.6"/><path d="M2.6 7.5h1.6"/><path d="M4.1 3.6l1.2 1.2"/><path d="M10.5 15.5a3.6 3.6 0 0 1 .2-7 4.6 4.6 0 0 1 8.8 1.2 3.3 3.3 0 0 1-.6 5.8z"/>' },
   cover: { svg24: '<path d="M4.5 14.5a7.5 7.5 0 0 1 15 0"/><path d="M3.5 14.5h17"/><path d="M12 20v-3.5"/><path d="M12 17.5c-1.6 0-2.8-1.2-2.8-2.8 1.6 0 2.8 1.2 2.8 2.8z"/>', svg18: '<path d="M4 14a8 8 0 0 1 16 0"/><path d="M3 14h18"/><path d="M12 20v-4"/>' },
   uncover: { svg24: '<path d="M4.5 9.5a7.5 7.5 0 0 1 15 0"/><path d="M3.5 9.5h17"/><path d="M12 21v-7.5"/><path d="M12 15.5c-1.7 0-3-1.3-3-3 1.7 0 3 1.3 3 3z"/><path d="M12 13.5c0-1.5 1.2-2.7 2.7-2.7 0 1.5-1.2 2.7-2.7 2.7z"/>', svg18: '<path d="M4 9a8 8 0 0 1 16 0"/><path d="M3 9h18"/><path d="M12 21v-7.5"/><path d="M12 16c-1.7 0-3-1.3-3-3 1.7 0 3 1.3 3 3z"/>' },
-  // V5-TODAYREDESIGN-001 — the Today jump bar's Protect chip draws this in colour. Base stays mono;
-  // colour rides `filled` (see EVENT_GLYPHS below). The doorway is a NOTCH open at the bottom edge,
-  // not a coloured panel: a pale door fails 3:1, and an outlined house with an empty interior is an
-  // enclosed hole that region-seam.mjs rejects. The notch also reads better at 18 than the mono's
-  // stroked door, whose opening narrows to ~1.3 units at that master's 2.67-unit stroke.
+  // V5-TODAYREDESIGN-001: the Today jump bar's Protect chip draws this in colour. Base stays mono; colour
+  // rides `filled` (see EVENT_GLYPHS below). The doorway is a NOTCH open at the bottom edge, not a coloured
+  // panel: a pale door fails 3:1, and an outlined house with an empty interior is an enclosed hole that
+  // region-seam.mjs rejects. The notch also reads better at 18 than the mono's stroked door, whose opening
+  // narrows to ~1.3 units.
   brought_inside: {
     svg24: '<path d="M4.5 11.5l7.5-6.5 7.5 6.5"/><path d="M6.2 10.5v8.5a1 1 0 0 0 1 1h9.6a1 1 0 0 0 1-1v-8.5"/><path d="M10 20v-4.5h4v4.5"/>', svg18: '<path d="M4 11l8-7 8 7"/><path d="M6 9.5v10h12v-10"/><path d="M10 19.5v-5h4v5"/>',
     regionIntent: { wall: 'house body with the doorway cut as a notch — terracotta brick', roof: 'roof chevron — deep green, drawn over the gable' },
@@ -86,11 +78,10 @@ const NEW = {
   seed_saved: { svg24: '<path d="M4.8 7.6h14.4a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H4.8a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1z"/><path d="M4.8 8 12 12.6 19.2 8"/><path d="M11 15.6c-1.2 0-2-0.7-2-1.7s0.8-1.7 2-1.7c0 1 0 2.4 0 3.4z" fill="currentColor" stroke="none"/>', svg18: '<path d="M4.8 7.8h14.4a1 1 0 0 1 1 1v7.6a1 1 0 0 1-1 1H4.8a1 1 0 0 1-1-1V8.8a1 1 0 0 1 1-1z"/><path d="M5 8.2 12 12.4 19 8.2"/><path d="M11.4 15.6c-1.2 0-2-0.7-2-1.7s0.8-1.7 2-1.7c0 1 0 2.4 0 3.4z" fill="currentColor" stroke="none"/>' },
   cloves_saved: { svg24: '<path d="M12 6.4c3.2 0 5.6 3 5.6 6.6 0 4-2.6 7-5.6 7s-5.6-3-5.6-7c0-3.6 2.4-6.6 5.6-6.6z"/><path d="M12 6.4V4"/><path d="M10.6 4.6c0.4-0.8 1.8-0.8 2.8 0"/><path d="M9.4 8.4c-0.8 2.6-0.8 6.4 0 9.6"/><path d="M14.6 8.4c0.8 2.6 0.8 6.4 0 9.6"/>', svg18: '<path d="M12 6.6c3.1 0 5.4 2.9 5.4 6.4 0 3.9-2.5 6.8-5.4 6.8s-5.4-2.9-5.4-6.8c0-3.5 2.3-6.4 5.4-6.4z"/><path d="M12 6.6V4.2"/><path d="M9.6 8.8c-0.7 2.6-0.7 6.2 0 9.2"/><path d="M14.4 8.8c0.7 2.6 0.7 6.2 0 9.2"/>' },
   overwinter_survived: { svg24: '<path d="M12 21v-4.6"/><path d="M12 16.8C10.1 16.8 8.6 15.3 8.6 13.4c1.9 0 3.4 1.5 3.4 3.4z"/><path d="M12 16c0-1.7 1.4-3 3-3 0 1.7-1.4 3-3 3z"/><path d="M12 3v8"/><path d="M8.5 5 15.5 9M15.5 5 8.5 9"/>', svg18: '<path d="M12 21v-4.2"/><path d="M12 17C10.2 17 8.8 15.6 8.8 13.8c1.8 0 3.2 1.4 3.2 3.2z"/><path d="M12 16.2c0-1.6 1.3-2.9 2.9-2.9 0 1.6-1.3 2.9-2.9 2.9z"/><path d="M12 3.2v7.6"/><path d="M8.8 5 15.2 8.6M15.2 5 8.8 8.6"/>' },
-  // V5-TODAYREDESIGN-001 — the Today jump bar's Check chip draws this in colour. The eye is SOLID
-  // (lids, iris, pupil stacked), because the obvious reading — a white of the eye inside an outline —
-  // is both a sub-3:1 region and an enclosed hole for region-seam.mjs. Brown lids rather than a blue
-  // lens: the Check chip sits beside Water's blue drop, and a mostly-blue eye put two blue marks side
-  // by side in that bar.
+  // V5-TODAYREDESIGN-001: the Today jump bar's Check chip draws this in colour. The eye is SOLID (lids,
+  // iris, pupil stacked): a white of the eye inside an outline is both a sub-3:1 region and an enclosed hole
+  // for region-seam.mjs. Brown lids rather than a blue lens, so the chip does not put two blue marks beside
+  // Water's blue drop.
   observation: {
     svg24: '<path d="M3.6 12C5.6 8.4 8.6 6.6 12 6.6s6.4 1.8 8.4 5.4c-2 3.6-5 5.4-8.4 5.4S5.6 15.6 3.6 12z"/><circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none"/>', svg18: '<path d="M3.6 12C5.6 8.4 8.6 6.6 12 6.6s6.4 1.8 8.4 5.4c-2 3.6-5 5.4-8.4 5.4S5.6 15.6 3.6 12z"/><circle cx="12" cy="12" r="2.6" fill="currentColor" stroke="none"/>',
     regionIntent: { lid: 'the eye shape (lids) — warm brown', iris: 'iris — blue', pupil: 'pupil — deep brown' },
@@ -106,29 +97,24 @@ const NEW = {
   other: { svg24: '<path d="M15.6 4.8 19.2 8.4 9 18.6 4.6 19.8 5.8 15.4z"/><path d="M14 6.4 17.6 10"/><path d="M5.8 15.4 8.6 18.2"/>', svg18: '<path d="M15.4 5 19 8.6 8.8 18.8 4.4 20 5.6 15.6z"/><path d="M13.8 6.6 17.4 10.2"/>' },
   photo: { svg24: '<path d="M4 8.6h3.1l1.3-2.1a1 1 0 0 1 .85-.5h5.5a1 1 0 0 1 .85.5l1.3 2.1H21a1 1 0 0 1 1 1v8.4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9.6a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.6" r="3.4"/>', svg18: '<path d="M3.5 8.6h3.6l1.2-2h7.4l1.2 2h3.6a1 1 0 0 1 1 1v8.4a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V9.6a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.6" r="3.2"/>' },
   rain: { svg24: '<path d="M7.6 13.2a3.5 3.5 0 0 1 .3-7 4.5 4.5 0 0 1 8.6 1.2 3.2 3.2 0 0 1-.5 5.8z"/><path d="M8.4 16l-1 2.6"/><path d="M11.7 16l-1 2.6"/><path d="M15 16l-1 2.6"/>', svg18: '<path d="M7.4 13a3.6 3.6 0 0 1 .3-7 4.6 4.6 0 0 1 8.8 1.2 3.3 3.3 0 0 1-.5 5.8z"/><path d="M9 15.6l-1 2.8"/><path d="M14 15.6l-1 2.8"/>' },
-  // V4-WATERMATH-001 F0. EVENT_GLYPHS below maps EVERY EVENT_TYPES value and dereferences
-  // FORM(t).svg24 unguarded, so a type with no form here is a MODULE-LOAD TypeError — it takes
-  // the icon registry down, and with it every surface that imports it. Adding an event type
-  // therefore REQUIRES an entry here; this is not optional decoration.
-  // Form: a soil probe sunk into a mound, with a drop beside it — "I went and felt the soil".
-  // Deliberately NOT a reuse of care.drop (watering's glyph): moisture_check is the assertion
-  // that watering was NOT needed, and a user who cannot tell the two rows apart in their history
-  // cannot audit their own watering record.
+  // V4-WATERMATH-001 F0. EVENT_GLYPHS below maps EVERY EVENT_TYPES value and dereferences FORM(t).svg24
+  // unguarded, so a type with no form here is a MODULE-LOAD TypeError that takes down the icon registry and
+  // every surface importing it. Adding an event type therefore REQUIRES an entry here.
+  // Form: a soil probe sunk into a mound, with a drop beside it. Deliberately NOT a reuse of care.drop
+  // (watering's glyph): moisture_check asserts that watering was NOT needed, and rows that cannot be told
+  // apart in history cannot be audited.
   moisture_check: { svg24: '<path d="M3.5 19h17"/><path d="M5 19a7 7 0 0 1 14 0"/><path d="M9.5 16.5V5.5"/><path d="M7.8 5.5h3.4"/><path d="M16 13.6c-1.1 0-2-.9-2-2 0-1.2 2-3.4 2-3.4s2 2.2 2 3.4c0 1.1-.9 2-2 2z"/>', svg18: '<path d="M3.5 19h17"/><path d="M5 19a7 7 0 0 1 14 0"/><path d="M9.5 16.5V5.5"/><path d="M7.8 5.5h3.4"/><path d="M16 13.6c-1.1 0-2-.9-2-2 0-1.2 2-3.4 2-3.4s2 2.2 2 3.4c0 1.1-.9 2-2 2z"/>' },
-  // V4-LOSSEVENT-001, corrected. Was a REUSE of ANCHORS['action.share'] until 2026-08-21; see the
-  // REUSE-block note below for why that was wrong. Gift box = lid band + body + seam + two bow
-  // loops, restoring the 🎁 the pre-icon emoji vocabulary already used (eventTypes.js:147).
-  // 18 drops nothing — the bow IS the read (without it this collapses toward `doctored`/`ended`),
-  // so instead the lid band and both loops are widened to hold their aperture at the small optical
-  // size, where the 24 master's lid blurs into the bow.
+  // V4-LOSSEVENT-001. Gift box = lid band + body + seam + two bow loops. Was a REUSE of
+  // ANCHORS['action.share']; see the REUSE-block note below for why that was wrong.
+  // 18 drops nothing: the bow IS the read (without it this collapses toward `doctored`/`ended`), so the lid
+  // band and both loops are widened to hold their aperture where the 24 master's lid blurs into the bow.
   reduction_given_away: { svg24: '<rect x="3.6" y="8.4" width="16.8" height="3.6" rx="1"/><path d="M5.2 12v7a1.2 1.2 0 0 0 1.2 1.2h11.2a1.2 1.2 0 0 0 1.2-1.2v-7"/><path d="M12 8.4v11.8"/><path d="M12 8.4S10.7 4.8 8.9 4.8a1.8 1.8 0 0 0 0 3.6H12"/><path d="M12 8.4s1.3-3.6 3.1-3.6a1.8 1.8 0 0 1 0 3.6H12"/>', svg18: '<rect x="4" y="8.6" width="16" height="4" rx="1"/><path d="M5.6 12.6v6.6a1.2 1.2 0 0 0 1.2 1.2h10.4a1.2 1.2 0 0 0 1.2-1.2v-6.6"/><path d="M12 8.6v11.8"/><path d="M12 8.6S10.6 4.6 8.6 4.6a2 2 0 0 0 0 4H12"/><path d="M12 8.6s1.4-4 3.4-4a2 2 0 0 1 0 4H12"/>' },
-  // BUG-LOSSEVENTLABEL-001 (Dave 2026-09-29). Was a REUSE of STATUS_GLYPHS.failed — the ✕ that IS the
-  // planting's "Failed" badge — so a row saying "2 of 8 Mini Roses lost" wore the same mark as a
-  // planting that failed outright. Dave: failed is a status, don't mix the two up. Redrawn as a
-  // wilted plant: the stem bows over, its tip leaf hangs, a side leaf droops. Calm, and read by
-  // SILHOUETTE against the upright transplant sprout (0.607 on the distinctness metric, floor 0.40).
-  // A leaf-minus mirroring fertilizing's leaf-plus was tried first and scored 0.352 against it —
-  // below the floor, one stroke apart on adjacent log rows. 18 drops the ground line, as seedling's does.
+  // BUG-LOSSEVENTLABEL-001. Redrawn as a wilted plant (stem bows over, tip leaf hangs, a side leaf droops),
+  // read by SILHOUETTE against the upright transplant sprout (0.607 on the distinctness metric, floor 0.40).
+  // It was a REUSE of STATUS_GLYPHS.failed (the X that IS a planting's "Failed" badge), so "2 of 8 Mini Roses
+  // lost" wore the mark of a planting that failed outright; failed is a status, do not mix the two. A
+  // leaf-minus mirroring fertilizing's leaf-plus scored 0.352 against transplant, under the floor. 18 drops
+  // the ground line, as seedling's does.
   reduction_lost: { svg24: '<path d="M4.5 20.5h15"/><path d="M10.8 20.5c0-4.6.6-8.4 3.4-10.3 1.6-1.1 3.4-.8 4.4.5"/><path d="M18.6 10.7c1.2 1.6.9 3.8-.8 5-1.2-1.6-.9-3.8.8-5z"/><path d="M11.2 15.2c-.7 2-2.6 3.1-4.6 2.7.7-2 2.6-3.1 4.6-2.7z"/>', svg18: '<path d="M10.8 20c0-4.4.6-8 3.4-9.9 1.6-1.1 3.4-.8 4.4.5"/><path d="M18.6 10.6c1.2 1.6.9 3.8-.8 5-1.2-1.6-.9-3.8.8-5z"/><path d="M11.2 15c-.7 2-2.6 3.1-4.6 2.7.7-2 2.6-3.1 4.6-2.7z"/>' },
 }
 
@@ -141,37 +127,28 @@ const REUSE = {
   harvest:    STATUS_GLYPHS.harvesting,
   watering:   ANCHORS['care.drop'],
   potting_up: ANCHORS['nav.garden'],
-  // V4-ICON-001: the leaf+plus form MOVED to ANCHORS['care.feed'] and this event now borrows it
-  // by reference. §9's care/weather family needs a feed glyph and this event already WAS one —
-  // drawing a second would have put two marks on one meaning, the mirror of the given_away
-  // defect below. Reference, not a copy, so the two can never drift.
+  // The leaf+plus form lives in ANCHORS['care.feed'] and this event borrows it by reference: §9's
+  // care/weather family needs a feed glyph and this event already WAS one, and a second drawing would put
+  // two marks on one meaning. Reference, not a copy, so the two can never drift.
   fertilizing: ANCHORS['care.feed'],
-  // `failed` REUSEd status.failed here until 2026-09-29, on the reading that the X meant "these plants
-  // are gone" in both places. It did not: a loss event is usually PARTIAL (2 of 8), while the status
-  // says the whole planting failed. Same mark, two claims — the defect class described next. Redrawn
-  // in NEW above (BUG-LOSSEVENTLABEL-001).
+  // `failed` and `given_away` are NOT reused; both are drawn in NEW above. Reusing a glyph with a different
+  // claim ships ONE glyph on TWO meanings, which a reader cannot recover from:
+  //   - `failed` borrowed status.failed's X, but a loss event is usually PARTIAL (2 of 8) while the status
+  //     says the whole planting failed (BUG-LOSSEVENTLABEL-001).
+  //   - `given_away` borrowed ANCHORS['action.share'], the live Share button (ComposeHarvestBand.jsx,
+  //     PhotoHero.jsx), so one mark meant both "publish this publicly" and "I handed plants to a neighbour",
+  //     and PlantingDetail renders both on one screen (V4-LOSSEVENT-001).
   //
-  // `given_away` used to REUSE ANCHORS['action.share'] on the same reasoning and it was WRONG.
-  // This block guards against two glyphs on one meaning; what that reuse shipped was the inverse —
-  // ONE glyph on TWO meanings, which a reader cannot recover from. action.share is not an abstract
-  // "went to someone else" mark in this app: it is the live Share button (ComposeHarvestBand.jsx,
-  // PhotoHero.jsx, accessibleName 'Share'), so the identical mark meant both "publish this
-  // publicly" and "I handed plants to a neighbour" — and PlantingDetail renders BOTH on one screen
-  // (HeroPhoto's share button, and the event-history rows). Redrawn as a gift box in NEW above.
-  // The a11y name was always correct (EVENT_TYPE_META -> "Plants given away"); this was visual only.
-  //
-  // Before adding a REUSE here, check that the borrowed anchor is not itself an interactive
-  // affordance somewhere. iconUniqueness.test.js now enforces this: every collision needs an
-  // explicit allowlist entry, so the next one cannot ship silently.
+  // Before adding a REUSE here, check that the borrowed anchor is not itself an interactive affordance
+  // somewhere. iconUniqueness.test.js enforces it: every collision needs an explicit allowlist entry.
 }
 
 const FORM = (t) => NEW[t] || REUSE[t]
 
-// V5-TODAYREDESIGN-001 — a form drawn HERE that declares a colour variant carries it onto its event.*
-// key; before this, every entry was built from the two masters alone, so no event key could reach a
-// `filled` variant at all. Scoped to NEW on purpose: a REUSE form's variants stay on the key that owns
-// them (care.drop, nav.garden, care.feed), and the event keys that borrow those forms keep their
-// current shape until a consumer asks for them in colour. Entries without a variant are unchanged.
+// A form drawn HERE that declares a colour variant carries it onto its event.* key
+// (V5-TODAYREDESIGN-001). Scoped to NEW on purpose: a REUSE form's variants stay on the key that owns them
+// (care.drop, nav.garden, care.feed), and the event keys that borrow those forms keep their current shape
+// until a consumer asks for colour.
 const colourOf = (t) => (NEW[t]?.variants
   ? { variants: NEW[t].variants, regionIntent: NEW[t].regionIntent ?? null, colorFills: NEW[t].colorFills ?? null }
   : {})

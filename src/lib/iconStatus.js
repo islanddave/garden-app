@@ -1,11 +1,10 @@
-// src/lib/iconStatus.js — V4-ICON-001 (Pass B V101) plant-status glyph forms.
-// 16 mono line forms (kit-matched to the anchor set), 24 + 18 masters. The 21 status
-// keys map onto these 16 forms (e.g. sprouting/seeding reuse the seedling sprout).
-// 12 forms / 17 keys are the plant lifecycle; V4-ICON-001 added 4 ATTENTION-state forms
-// (unseen + the healthy/due/overdue care trio) in the same namespace — see their block.
-// Status glyphs are MONO (stroke="currentColor") so PlantStatusBadge's getStatusColors
-// ink (sc.text) flows in via currentColor — preserving the Pass A "hue never baked"
-// 3-channel contract. (Lifecycle-facet color-candidate stages are a separate concern.)
+// src/lib/iconStatus.js: V4-ICON-001 (Pass B V101) plant-status glyph forms.
+// Mono line forms (kit-matched to the anchor set), 24 + 18 masters; the status keys map onto these forms
+// (e.g. sprouting/seeding reuse the seedling sprout). Most are the plant lifecycle; the attention-state
+// forms (unseen + the healthy/due/overdue care trio) share the namespace (see their block).
+// Status glyphs are MONO (stroke="currentColor") so PlantStatusBadge's getStatusColors ink (sc.text) flows
+// in via currentColor, preserving the Pass A "hue never baked" 3-channel contract. (Lifecycle-facet
+// color-candidate stages are a separate concern.)
 const FORMS = {
   seed:       { svg24: '<path d="M15.8 4.6c3.6 2.1 5.2 7 3.4 11.4-1.8 4.4-6.5 6.6-10.6 5.2-3.6-1.2-5.4-5.4-3.9-9.6C6.2 7.2 11 2.3 15.8 4.6z"/><path d="M13.4 8.4c-1.7 1.1-2.6 3-2.4 5"/>', svg18: '<path d="M15.8 4.6c3.6 2.1 5.2 7 3.4 11.4-1.8 4.4-6.5 6.6-10.6 5.2-3.6-1.2-5.4-5.4-3.9-9.6C6.2 7.2 11 2.3 15.8 4.6z"/>' },
   rooting:    { svg24: '<path d="M12 6.2c2.7 0 4.7 2 4.7 4.6 0 2.3-1.5 4-3.4 4.5l-.1 .1h-2.4l-.1-.1C8.8 14.8 7.3 13.1 7.3 10.8 7.3 8.2 9.3 6.2 12 6.2z"/><path d="M12 6.2c0-1.4 1-2.5 2.4-2.8-.1 1.4-1 2.5-2.4 2.8z"/><path d="M10.2 15.3c-.5 1.7-.6 3.6-.3 5.4"/><path d="M12 15.4c.1 1.8-.1 3.7-.6 5.4"/><path d="M13.8 15.3c.5 1.7.7 3.6.5 5.4"/>', svg18: '<path d="M12 6.6c2.5 0 4.4 1.9 4.4 4.3 0 2.1-1.4 3.7-3.2 4.2l-.1 .1h-2.2l-.1-.1C9 14.6 7.6 13 7.6 10.9 7.6 8.5 9.5 6.6 12 6.6z"/><path d="M10.4 15.4c-.5 1.7-.6 3.5-.3 5.2"/><path d="M12.6 15.4c.4 1.7.6 3.5.4 5.2"/>' },
@@ -19,31 +18,26 @@ const FORMS = {
   planning:   { svg24: '<path d="M6.5 5.5h11a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-13a1 1 0 0 1 1-1z"/><path d="M9.5 5.5V4.6a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v0.9z"/><path d="M8.6 11h6.8"/><path d="M8.6 14.4h6.8"/><path d="M8.6 17.8h4.2"/>', svg18: '<path d="M6 5.5h12a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-13a1 1 0 0 1 1-1z"/><path d="M9.4 5.5V4.6a1 1 0 0 1 1-1h3.2a1 1 0 0 1 1 1v0.9z"/><path d="M8.4 11.5h7.2"/><path d="M8.4 15.5h7.2"/>' },
   ended:      { svg24: '<path d="M6.5 4.5h11a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-11a2 2 0 0 1-2-2v-11a2 2 0 0 1 2-2z"/>', svg18: '<path d="M6 4.5h12a1.8 1.8 0 0 1 1.8 1.8v11.4a1.8 1.8 0 0 1-1.8 1.8H6a1.8 1.8 0 0 1-1.8-1.8V6.3A1.8 1.8 0 0 1 6 4.5z"/>' },
   failed:     { svg24: '<path d="M6.2 6.2l11.6 11.6"/><path d="M17.8 6.2L6.2 17.8"/>', svg18: '<path d="M6.6 6.6l10.8 10.8"/><path d="M17.4 6.6L6.6 17.4"/>' },
-  // ── V4-ICON-001: attention states. These are NOT lifecycle stages — they are what the app says
-  // about a planting right now — but they live in status.* because that is the namespace every
-  // badge already reads (`status.${x}`), and inventing a second one would split the vocabulary.
+  // ── V4-ICON-001: attention states. NOT lifecycle stages (they are what the app says about a planting
+  // right now), but they live in status.* because that is the namespace every badge reads
+  // (`status.${x}`); a second one would split the vocabulary.
   //
-  // unseen = the eye-off. Kin to event.observation's lens by design — "you looked at this" and
-  // "you have not looked at this lately" are opposites and SHOULD share a root form. The pupil is
-  // load-bearing, not decoration: lens + slash alone renders as Ø, the empty-set/diameter sign
-  // (seen on the contact sheet), because a near-circular lens with a corner-to-corner slash IS
-  // that character. The pupil breaks the read, so the lens is also flattened (w/h 1.73 vs 1.56).
-  // The 18 master cannot keep the pupil — lens interior 8.1 device px, pupil-plus-stroke 6.7, a
-  // 0.5px counter-space that blobbed on the sheet (§4 aperture) — so it kills the Ø the other
-  // way, with a much flatter almond (w/h 2.3) that no longer resembles a circle at all.
+  // unseen = the eye-off. Kin to event.observation's lens by design: "you looked at this" and "you have
+  // not looked at this lately" are opposites and SHOULD share a root form. The pupil is load-bearing: lens
+  // + slash alone renders as Ø, the empty-set sign, because a near-circular lens with a corner-to-corner
+  // slash IS that character. The pupil breaks the read, so the lens is also flattened (w/h 1.73 vs 1.56).
+  // The 18 master cannot keep the pupil (0.5px counter-space blobs, §4 aperture), so it kills the Ø the
+  // other way, with a much flatter almond (w/h 2.3) that no longer resembles a circle.
   unseen:     { svg24: '<path d="M3.2 12C5.4 8.6 8.4 6.9 12 6.9s6.6 1.7 8.8 5.1c-2.2 3.4-5.2 5.1-8.8 5.1S5.4 15.4 3.2 12z"/><circle cx="12" cy="12" r="2.5"/><path d="M5.6 18.4 18.4 5.6"/>', svg18: '<path d="M3 12C5.4 9.4 8.4 8.1 12 8.1s6.6 1.3 9 3.9c-2.4 2.6-5.4 3.9-9 3.9S5.4 14.6 3 12z"/><path d="M5.2 18.8 18.8 5.2"/>' },
-  // ── Care state (healthy / due / overdue). These have no glyph today: CareStatus.jsx expresses
-  // care state by RECOLOURING care.drop, which is the §15 baked-colour-drift hazard — the meaning
-  // rides on hue alone, so it dies under forced-colors, greyscale, and colour-blind vision (SC
-  // 1.4.1). Shape carries the state now; the consumer's hue stays as reinforcement.
+  // ── Care state (healthy / due / overdue). Shape carries the state (a hue-only mark dies under
+  // forced-colors, greyscale and colour-blind vision, SC 1.4.1); the consumer's hue stays as reinforcement.
   //
-  // healthy is care.drop's own silhouette with a tick struck in the bulb — "the drop, satisfied" —
-  // so the resolved state is visibly the same object as the need it resolves. due and overdue are
-  // a matched pair on one enclosure (clock face vs bang), which is how the reader tells "act
-  // today" from "you missed it" with no colour at all. healthy's 18 master carries a BIGGER drop
-  // (r 6.4 vs 5) and a SMALLER tick than the 24: at care.drop's own 18 proportions the tick's left
-  // terminal fused into the bulb wall (clear radius 2.33 units against a 2.67-unit stroke) and the
-  // mark rendered as a solid blob — §4's aperture bound, invisible to the coverage band.
+  // healthy is care.drop's own silhouette with a tick struck in the bulb ("the drop, satisfied"), so the
+  // resolved state is visibly the same object as the need it resolves. due and overdue are a matched pair
+  // on one enclosure (clock face vs bang), telling "act today" from "you missed it" with no colour.
+  // healthy's 18 master carries a BIGGER drop (r 6.4 vs 5) and a SMALLER tick than the 24: at care.drop's
+  // own 18 proportions the tick's left terminal fused into the bulb wall (§4 aperture bound) and the mark
+  // rendered as a solid blob.
   healthy:    { svg24: '<path d="M12 3.4C12 3.4 6.5 9.6 6.5 13.5A5.5 5.5 0 0 0 17.5 13.5C17.5 9.6 12 3.4 12 3.4Z"/><path d="M9.2 13.6 11.2 15.6 15 11.6"/>', svg18: '<path d="M12 3.2C12 3.2 5.6 9.8 5.6 14A6.4 6.4 0 0 0 18.4 14C18.4 9.8 12 3.2 12 3.2Z"/><path d="M9.8 14.2 11.2 15.6 14.2 12.4"/>' },
   due:        { svg24: '<circle cx="12" cy="12" r="8.2"/><path d="M12 6.8V12l3.4 2.2"/>', svg18: '<circle cx="12" cy="12" r="8.4"/><path d="M12 7V12l3.2 2"/>' },
   // overdue is action.info inverted on purpose — dot-under-stem vs dot-over-stem is the "!" / "i"
@@ -53,7 +47,7 @@ const FORMS = {
   overdue:    { svg24: '<circle cx="12" cy="12" r="8.2"/><path d="M12 7.4v5.4"/><circle cx="12" cy="16.2" r="0.85" fill="currentColor" stroke="none"/>', svg18: '<circle cx="12" cy="12" r="8.4"/><path d="M12 7.4v5.2"/><circle cx="12" cy="16.2" r="0.95" fill="currentColor" stroke="none"/>' },
 }
 
-// 17 status keys -> 12 forms + a humanized name.
+// Status keys -> forms, plus a humanized name.
 const KEY_FORM = {
   seed: 'seed', rooting: 'rooting', seedling: 'seedling', sprouting: 'seedling', seeding: 'seedling',
   vegetative: 'vegetative', growing: 'vegetative', active: 'vegetative', flowering: 'flowering',

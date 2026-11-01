@@ -1,11 +1,9 @@
-// src/lib/iconRegistry.js — DESIGNSYS Pass A shared icon registry.
-// Lifts the status glyph map out of PlantStatusBadge into one place so future facet
-// surfaces (TAGSUB) reuse the same glyph vocabulary. Each entry carries an
-// accessibleName for AT (the rendered glyph itself stays aria-hidden; consumers own
-// the aria-label/title wiring). Facet glyphs are placeholders — unused until TAGSUB.
+// src/lib/iconRegistry.js: DESIGNSYS Pass A shared icon registry.
+// One place for the glyph vocabulary shared by status badges and facet surfaces. Each entry carries an
+// accessibleName for AT (the rendered glyph itself stays aria-hidden; consumers own the aria-label/title
+// wiring). Facet glyphs are placeholders, unused until TAGSUB.
 //
-// status glyphs are COPIED VERBATIM from the prior PlantStatusBadge STATUS_ICONS map
-// (parity-preserving — visual output unchanged).
+// status glyphs are COPIED VERBATIM from the original PlantStatusBadge STATUS_ICONS map (parity-preserving).
 export const ICONS = {
   status: {
     seed:       { glyph: '🌰', accessibleName: 'Seed' },
@@ -45,14 +43,13 @@ export function statusGlyph(status) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// V4-ICON-001 (DESIGNSYS Pass B V101) — additive go-forward registry.
-// The legacy ICONS/statusGlyph above are UNTOUCHED (PlantStatusBadge + contract
-// test still read them). GLYPHS is the V101-schema registry the custom-SVG era
-// migrates into; consumers are NOT yet routed here (inert until per-glyph swaps).
+// V4-ICON-001 (DESIGNSYS Pass B V101): the SVG registry.
+// The legacy ICONS/statusGlyph above are separate (PlantStatusBadge + the contract test still read them).
+// GLYPHS is the V101-schema registry; Icon.jsx reads it through getIcon.
 // Entry shape (§13 additive superset): { key, glyph (legacy/null), svg24, svg18,
 // class:'mono'|'color-candidate', register:'functional'|'illustrated', variant,
 // accessibleName (string | per-state map), schemaVersion, variants? }. isSvg is
-// DERIVED (Boolean(svg24 && svg18)) — never hand-stored (removes a drift vector).
+// DERIVED (Boolean(svg24 && svg18)), never hand-stored (removes a drift vector).
 import ANCHORS from './iconAnchors.js'
 import { STATUS_GLYPHS } from './iconStatus.js'
 import { EVENT_GLYPHS, LEGACY_EVENT_GLYPHS } from './iconEvents.js'
@@ -65,9 +62,9 @@ const ANCHOR_META = {
   'facet.location': { accessibleName: 'Location' },
   'severity.high':  { accessibleName: 'High severity' },
   'action.heart':   { accessibleName: { outline: 'Add to favorites', filled: 'Remove from favorites' } },
-  // V5-NAVCUSTOM-001 — two-state like the heart: outline = not pinned, filled = pinned. The More
-  // sheet's pin button names itself per row ("Pin Seeds to the top" / "Unpin Seeds") and draws this
-  // decoratively; these names are the registry's own, for any consumer that renders it as an image.
+  // V5-NAVCUSTOM-001: two-state like the heart: outline = not pinned, filled = pinned. The More sheet's
+  // pin button names itself per row ("Pin Seeds to the top" / "Unpin Seeds") and draws this decoratively;
+  // these names are the registry's own, for any consumer that renders it as an image.
   'action.pin':     { accessibleName: { outline: 'Pin to the top', filled: 'Unpin' } },
   'care.pause':     { accessibleName: 'Pause' },
   'care.sun':       { accessibleName: 'Sun' },
@@ -113,9 +110,9 @@ export const GLYPHS = Object.fromEntries(
     variants: a.variants ?? null,
     regionIntent: a.regionIntent ?? null,
     colorFills: a.colorFills ?? null,
-    // ANCHOR_META still wins (it is where the original 40 anchors declare their names); glyphs
-    // added from V4-ICON-001 onward carry accessibleName on the anchor entry itself, next to the
-    // masters, so a new family lands in ONE file. `key` stays the last-resort floor.
+    // ANCHOR_META still wins (it is where the original anchors declare their names); glyphs added later
+    // carry accessibleName on the anchor entry itself, next to the masters, so a new family lands in ONE
+    // file. `key` stays the last-resort floor.
     accessibleName: ANCHOR_META[key]?.accessibleName ?? a.accessibleName ?? key,
     schemaVersion: 101,
   }])
@@ -123,7 +120,7 @@ export const GLYPHS = Object.fromEntries(
 Object.assign(GLYPHS, Object.fromEntries(Object.entries(STATUS_GLYPHS).map(([k,e])=>[`status.${k}`, e])))
 Object.assign(GLYPHS, EVENT_GLYPHS, LEGACY_EVENT_GLYPHS)
 
-// Neutral fallback — V101 successor to the statusGlyph '•' dot. Never throws.
+// Neutral fallback, the V101 successor to the statusGlyph '•' dot. Never throws.
 export const NEUTRAL_ICON = {
   key: '__neutral__', glyph: '•', class: 'mono', register: 'functional', variant: 'line',
   svg24: '<circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none"/>',

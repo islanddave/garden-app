@@ -23,24 +23,18 @@
 // non-final result may still finalize, so consuming it would both duplicate (interim then final)
 // and commit text the recognizer had not settled on.
 
-// BUG-VOICEDUPE-005 — THE HIGH-WATER MARK DOES NOT COVER THE ENGINE ECHO, and this reader is the one
-// path in the app that had no guard for it at all.
+// BUG-VOICEDUPE-005: THE HIGH-WATER MARK DOES NOT COVER THE ENGINE ECHO.
 //
-// The mark makes it impossible to read the SAME index twice. The echo the 2026-08-27 device run timed
-// does not land on the same index — it lands on the NEXT one, 272 ms later, where a fresh slot is
-// above the mark and passes straight through. Three of this reader's four call sites APPEND what they
-// receive (`f.notes ? f.notes + ' ' + text : text`, EventNew.jsx), so the echo becomes a doubled word
-// in the field. `transcribe.js` grew a bounded cross-slot guard for exactly this in BUG-VOICEDUPE-004;
-// this reader never got one, because -004 was scoped to the surfaces that go through that wrapper and
-// this is the one that does not.
+// The mark makes it impossible to read the SAME index twice, but the engine echo does not land on the same
+// index: it lands on the NEXT one (measured ~272 ms later), where a fresh slot is above the mark and passes
+// straight through. Most of this reader's call sites APPEND what they receive (`f.notes ? f.notes + ' ' +
+// text : text`, EventNew.jsx), so the echo becomes a doubled word in the field. transcribe.js has the
+// bounded cross-slot guard (BUG-VOICEDUPE-004); this reader is the path that does not go through that
+// wrapper.
 //
-// Dave reports the doubling on the PICKER, which is a transcribe.js surface — so this is not the
-// defect he is looking at. It is the same defect on a path nobody has reported yet, found while
-// tracing his, and left in only if we decide a known duplicate is fine because no one has complained.
-//
-// SAME RULE, SAME BOUND, deliberately: identical comparison key and identical 600 ms window as
-// transcribe.js, imported rather than re-derived so the two cannot drift apart. Outside the window a
-// repeat is real speech and is kept.
+// SAME RULE, SAME BOUND, deliberately: identical comparison key and identical window as transcribe.js,
+// imported rather than re-derived so the two cannot drift apart. Outside the window a repeat is real
+// speech and is kept.
 import { DUPLICATE_ECHO_WINDOW_MS, echoKey } from './transcribe.js'
 
 export function createFinalResultReader({ now = () => Date.now() } = {}) {

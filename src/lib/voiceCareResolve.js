@@ -1,28 +1,26 @@
 // src/lib/voiceCareResolve.js
-// V5-VOICECARE-001 — turn a spoken bulk care command into an EXACT set of plantings, or refuse.
+// V5-VOICECARE-001: turn a spoken bulk care command into an EXACT set of plantings, or refuse.
 //
-// voiceCareGrammar.js answers "is this a care command and what are its parts"; this file answers
-// "which plantings does it mean". It implements rules R0–R7 of the Resolution contract in
-// Projects/Gardening/_roadmapexec_20260916/lane-G-voicecare-hostres.md, with Dave's three decisions
-// of 2026-09-16 applied:
-//   Q-A  the scope is EVERY live planting in the named area (Log Many's `space` meaning), not
-//        today's care list — so S is the batch dry-run for that location.
-//   Q-B  the go-ahead after the read-back is an explicit spoken "next", the harvest save word.
-//        Silence or anything else cancels. careConfirmDecision() below.
-//   Q-C  a fuzzy-matched skip name is SAID inside the read-back with what was heard, and still
-//        waits for "next". It is never applied silently and never refused just for being fuzzy.
+// voiceCareGrammar.js answers "is this a care command and what are its parts"; this file answers "which
+// plantings does it mean". It implements rules R0-R7 of the Resolution contract in
+// Projects/Gardening/_roadmapexec_20260916/lane-G-voicecare-hostres.md, with three decisions applied:
+//   Q-A  the scope is EVERY live planting in the named area (Log Many's `space` meaning), not today's
+//        care list, so S is the batch dry-run for that location.
+//   Q-B  the go-ahead after the read-back is an explicit spoken "next", the harvest save word. Silence or
+//        anything else cancels. careConfirmDecision() below.
+//   Q-C  a fuzzy-matched skip name is SAID inside the read-back with what was heard, and still waits for
+//        "next". It is never applied silently and never refused just for being fuzzy.
 //
-// PURE. No fetch, no clock, no randomness: the host (or voiceCareBatch.js) runs the dry run and hands
-// its result in as `scopeSet`. That is what lets every rule below be pinned by a unit test against
-// the real vocabulary shape.
+// PURE. No fetch, no clock, no randomness: the host (or voiceCareBatch.js) runs the dry run and hands its
+// result in as `scopeSet`, so every rule below can be pinned by a unit test against the real vocabulary shape.
 //
 // ── THE ASYMMETRY EVERY RULE SERVES ─────────────────────────────────────────────────────────────
-// A care batch writes MANY rows and a wrong or missing exclusion looks exactly like success — the
-// plant he meant to skip simply looks fed. Harvest voice can be permissive because a wrong harvest
-// row is one visible row. So here: the scope never goes through fuzzy matching (a wrong area is the
-// biggest possible blast radius), any doubt about any name refuses the WHOLE command, and the
-// read-back names every skipped plant by the name the app RESOLVED, because a count alone ("skipping
-// 3") hides a lost or swapped name unless he is counting (design §2h).
+// A care batch writes MANY rows and a wrong or missing exclusion looks exactly like success: the plant
+// that should have been skipped simply looks fed. Harvest voice can be permissive because a wrong harvest
+// row is one visible row. So here the scope never goes through fuzzy matching (a wrong area is the biggest
+// blast radius), any doubt about any name refuses the WHOLE command, and the read-back names every skipped
+// plant by the name the app RESOLVED, because a count alone ("skipping 3") hides a lost or swapped name
+// (design §2h).
 //
 // ── REUSED, NOT RE-DERIVED ──────────────────────────────────────────────────────────────────────
 //   looseKey            comboboxInput.js    — the shared voice-forgiving key; voiceKey wraps it
@@ -33,9 +31,8 @@
 //   foldNumberWords     voiceHarvestGrammar.js — the harvest order's number-word layer
 //   classify            voiceHarvestGrammar.js — "next" is whatever harvest saves on (Q-B)
 // careTerms() is the one local copy: it must equal VoiceHarvest.jsx's plantingAliases(), and
-// voiceCareResolve.test.js pins the two against each other. It is copied rather than imported because
-// nothing in src/lib imports from src/pages, and the likeliest host for this flow is that page — the
-// import would be a cycle.
+// voiceCareResolve.test.js pins the two against each other. It is copied, not imported, because nothing in
+// src/lib imports from src/pages and the likeliest host for this flow is that page (a cycle).
 
 import { looseKey } from './comboboxInput.js'
 import { resolveAlias } from './voiceAliases.js'
@@ -43,15 +40,14 @@ import { fuzzyMatch } from './voiceFuzzyMatch.js'
 import { classify, foldNumberWords, normalise } from './voiceHarvestGrammar.js'
 
 // ── KEY(x) — the comparison key for voice ───────────────────────────────────────────────────────
-// looseKey keeps characters speech never produces — parentheses, '&', commas, '/', '>' — so "Holy
-// Basil (Tulsi)" and "Hot & Spicy Oregano" could never be an exact match for anything said aloud, and
-// "Pasture > In-Ground" could never equal "pasture in ground" (design §2d: 13/106 Bag Area plantings
-// carry such a term, one carries nothing else). KEY strips every remaining non-alphanumeric.
+// looseKey keeps characters speech never produces (parentheses, '&', commas, '/', '>'), so "Holy Basil
+// (Tulsi)" could never be an exact match for anything said aloud, nor "Pasture > In-Ground" equal
+// "pasture in ground" (design §2d). KEY strips every remaining non-alphanumeric.
 //
-// THE SECOND looseKey IS LOAD-BEARING. looseKey collapses repeated letters, but only ones that are
-// adjacent when it runs: "Hot & Tangy" keys to "hot&tangy", while the spoken "hot tangy" keys to
-// "hotangy". Stripping the '&' afterwards leaves "hottangy" on the name side, and the two never meet.
-// Re-applying looseKey after the strip collapses both sides the same way.
+// THE SECOND looseKey IS LOAD-BEARING. looseKey collapses repeated letters, but only ones adjacent when it
+// runs: "Hot & Tangy" keys to "hot&tangy", while the spoken "hot tangy" keys to "hotangy". Stripping the '&'
+// afterwards leaves "hottangy" on the name side and the two never meet. Re-applying looseKey after the
+// strip collapses both sides the same way.
 //
 // Voice-only. looseKey itself is shared with three typed surfaces and is deliberately NOT changed.
 export function voiceKey(s) {
@@ -79,9 +75,8 @@ export const CARE_READBACK_VERBS = {
   weeded: 'Weed',
 }
 
-// Q-B. The go-ahead is the harvest save word. Read from the harvest grammar rather than listed here,
-// so "next" (and its exact paraphrases "next one" / "save and next") stay the same words on both
-// flows — Dave's decision was "the same trigger phrase we are using on harvest", not a new vocabulary.
+// Q-B. The go-ahead is the harvest save word, read from the harvest grammar rather than listed here, so
+// "next" (and its paraphrases "next one" / "save and next") stay the same words on both flows.
 export const CONFIRM_COMMAND = 'save_and_advance'
 export const CARE_CONFIRM_PROMPT = 'Say “next” to log it. Anything else cancels.'
 
@@ -92,9 +87,8 @@ export const SPLIT_STEP_BUDGET = 5000
 const CANDIDATE_NAMES = 3
 
 // ── refusals ────────────────────────────────────────────────────────────────────────────────────
-// Every refusal happens before anything is written, so every one can truthfully end "Nothing was
-// logged" — which is the sentence a hands-free user needs, since a refusal he half-hears must never
-// be mistaken for a success.
+// Every refusal happens before anything is written, so every one can truthfully end "Nothing was logged",
+// the sentence a hands-free user needs: a half-heard refusal must never be mistaken for a success.
 function refusal(rule, reason, text, extra = {}) {
   return { kind: 'care_refusal', rule, reason, spokenReason: `${text} Nothing was logged.`, ...extra }
 }
@@ -167,9 +161,9 @@ export function resolveCareScope(care, locations) {
   const locs = (locations ?? []).filter((l) => l && l.id != null)
 
   // EXACT KEY FIRST, over the name and the full path. "pasture in ground" is the full path of Pasture >
-  // In-Ground exactly — and a SUBSTRING of "Legacy Pasture In-Ground", the deliberately unmanaged
-  // legacy bed. "stable" is the zone Stable exactly — and a substring of "Yard - Stable". In both, only
-  // the exact reading is what he means (design §1b; the live tree 2026-09-23).
+  // In-Ground exactly, and a SUBSTRING of "Legacy Pasture In-Ground", the deliberately unmanaged legacy
+  // bed; "stable" is the zone Stable exactly, and a substring of "Yard - Stable". Only the exact reading
+  // is meant (design §1b).
   const exact = locs.filter((l) => voiceKey(l.name) === k || voiceKey(l.full_path) === k)
   if (exact.length === 1) return { kind: 'care_scope', location: exact[0], match: 'exact', heard }
   if (exact.length > 1) {
@@ -177,8 +171,8 @@ export function resolveCareScope(care, locations) {
       `“${heard}” could be ${nameCandidates(exact.map((l) => l.full_path))}.`)
   }
 
-  // Substring over the same, but NEVER a zone: a zone is reachable by its exact name only, because
-  // "pasture" is 127 plantings against the 24 of the area he usually means.
+  // Substring over the same, but NEVER a zone: a zone is reachable by its exact name only, because it
+  // spans far more plantings than the area usually meant.
   const sub = locs.filter((l) => !isZone(l)
     && (voiceKey(l.name).includes(k) || voiceKey(l.full_path).includes(k)))
   if (sub.length === 1) return { kind: 'care_scope', location: sub[0], match: 'substring', heard }
@@ -225,12 +219,12 @@ function exactRowsFor(text, idx) {
 }
 
 // ── R2: split an unpunctuated list ──────────────────────────────────────────────────────────────
-// Chrome rarely punctuates, so "zephyr crimson sweet king richard" arrives as one segment. Split
-// points are chosen by EXACT names only — substring, learned and fuzzy never decide where one name
-// ends, because substring splitting produced wrong-but-clean readings in the design's simulation
-// (§2h: 15 of 400, e.g. "bell pepper unknown" -> "bell pepper" + "unknown") and exact never did.
-// Every segment is tried, whatever the grammar's `ambiguousList` says: that flag is only set for a
-// single segment, and a partly punctuated list carries multi-name segments flagged as unambiguous.
+// Chrome rarely punctuates, so "zephyr crimson sweet king richard" arrives as one segment. Split points are
+// chosen by EXACT names only: substring, learned and fuzzy never decide where one name ends, because
+// substring splitting produced wrong-but-clean readings in simulation (design §2h; e.g. "bell pepper
+// unknown" -> "bell pepper" + "unknown") and exact never did. Every segment is tried, whatever the
+// grammar's `ambiguousList` says: that flag is only set for a single segment, and a partly punctuated list
+// carries multi-name segments flagged as unambiguous.
 function splitSegment(segment, idx) {
   const words = String(segment).split(/\s+/).filter(Boolean)
   if (words.length <= 1) return { parts: [words.join(' ')] }
@@ -311,12 +305,11 @@ function fromExact(rows, k, heard, exact, inS) {
   return ambiguous(heard, rows, inS)
 }
 
-// THE ORDER IS THE HARVEST ORDER (matchPlantingsWithRescue): strict (exact before substring) ->
-// learned -> folded -> fuzzy. Every layer runs against U, the whole household list — NEVER against S.
-// Narrowing to the area first is the trap the design measured on Dave's own taught phrases (§2g): in
-// In-Ground alone, "cucumber one" (taught for Suyo Long, which lives in the Bag Area) is auto-selected
-// by fuzzy as Cucamelon. Against U it resolves to Suyo Long, and R4 then refuses it as not in the area
-// — which is how a misheard name, or a misheard area, shows itself.
+// THE ORDER IS THE HARVEST ORDER (matchPlantingsWithRescue): strict (exact before substring) -> learned ->
+// folded -> fuzzy. Every layer runs against U, the whole household list, NEVER against S. Narrowing to the
+// area first is a trap (design §2g): within one area, "cucumber one" (taught for a variety that lives in
+// another area) is auto-selected by fuzzy as Cucamelon. Against U it resolves to the taught variety, and R4
+// then refuses it as not in the area, which is how a misheard name or area shows itself.
 function resolveName(heard, idx, aliasIndex, plantings, inS) {
   const k = voiceKey(heard)
   if (!k) return refusal('R3', 'name-empty', 'I didn’t catch one of the names to skip.')
@@ -360,10 +353,10 @@ function resolveName(heard, idx, aliasIndex, plantings, inS) {
 }
 
 // ── R4: membership ──────────────────────────────────────────────────────────────────────────────
-// A resolved name must be IN the dry-run set. A group excludes only its members that are, and says
-// how many. The refusal is worded "isn't one of the N plants in <area>" rather than "isn't in <area>"
-// because U carries no status: an ENDED planting standing in that very bed fails this check too, and
-// "Cantaloupe isn't in Pasture In-Ground" would be false to a man looking at it.
+// A resolved name must be IN the dry-run set. A group excludes only its members that are, and says how
+// many. The refusal is worded "isn't one of the N plants in <area>" rather than "isn't in <area>" because U
+// carries no status: an ENDED planting standing in that very bed fails this check too, and "X isn't in
+// <area>" would be false to someone looking at it.
 function membership(res, inS, area, sCount) {
   const inScope = res.rows.filter((r) => inS.has(r.id))
   if (!inScope.length) {
@@ -518,15 +511,14 @@ export function resolveCareCommand({
 /**
  * One utterance heard while a read-back is pending -> 'confirm' | 'cancel' | 'ignore'.
  *
- * 'confirm' only for the harvest save word (Q-B). EVERYTHING else that carries words cancels — a
- * continuation of the command ("except zephyr…" after a pause), a mishear of "next" ("text"), a
- * doubled "next next". A missed "next" fails safe: nothing is logged and he says it again.
- * 'ignore' is only for an empty final, which Chrome emits routinely at the head of a session (36 in
- * 54 s on the 2026-09-13 trace) and which is not an utterance at all.
+ * 'confirm' only for the harvest save word (Q-B). EVERYTHING else that carries words cancels: a
+ * continuation of the command ("except zephyr..." after a pause), a mishear of "next" ("text"), a doubled
+ * "next next". A missed "next" fails safe: nothing is logged and it is said again. 'ignore' is only for an
+ * empty final, which Chrome emits routinely at the head of a session and which is not an utterance at all.
  *
- * The HOST must consume the utterance whatever this returns. A cancelled continuation that fell
- * through to a harvest search branch on the same page is the failure the design names for this
- * window (§3, the split-utterance case).
+ * The HOST must consume the utterance whatever this returns: a cancelled continuation that fell through
+ * to a harvest search branch on the same page is the failure the design names for this window (§3, the
+ * split-utterance case).
  */
 export function careConfirmDecision(raw) {
   const r = classify(raw)

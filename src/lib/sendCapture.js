@@ -1,17 +1,11 @@
 /**
- * src/lib/sendCapture.js
+ * src/lib/sendCapture.js: shared "Send to Claude" delivery.
  *
- * Bite 7 of Post-V2 UX overhaul Increment 2: shared "Send to Claude" delivery.
+ * FieldCapture's tile-level button and TranscriptReview's in-review button share ONE copy of the
+ * navigator.share -> clipboard -> manual-copy fallback chain, with markHandedOff on success.
  *
- * Extracted from TranscriptReview.handleSendToClaude (Bite 6) so the new
- * tile-level Send-to-Claude button in FieldCapture and TranscriptReview's
- * in-review button share ONE copy of the navigator.share -> clipboard ->
- * manual-copy fallback chain. No behavior change vs Bite 6 — same chain,
- * same precedence, same markHandedOff-on-success contract.
- *
- * Pure client-side: navigator.share / navigator.clipboard + a single
- * captureQueue.markHandedOff write on success. No Lambda, no network IO
- * beyond the platform share sheet.
+ * Pure client-side: navigator.share / navigator.clipboard + a single captureQueue.markHandedOff write on
+ * success. No Lambda, no network IO beyond the platform share sheet.
  */
 
 import { assembleFromEntry } from './helperPrompt.js'
