@@ -1,10 +1,9 @@
-// src/pages/SavedSeeds.jsx — V4-SEEDSAVEFLOW-001 (BD-071) /seeds/saved surface.
+// SavedSeeds: the /seeds/saved surface, where seed-saving is tracked by stage.
 //
-// WHY THIS PAGE EXISTS. There was no seed-saving flow. `seed_saved` is a valid event type with a
-// label and an icon, but it is not in PRIMARY_EVENT_TYPES, so its only route was the collapsed
-// "More event types" disclosure filed under the category "Harvest". Dave went looking for it and
-// could not find it; prod has ZERO seed_saved events ever logged, for any crop. This page is the
-// door, and the stage list is what makes it worth walking through.
+// WHY THIS PAGE EXISTS. `seed_saved` is a valid event type with a label and an icon, but it is not in
+// PRIMARY_EVENT_TYPES, so its only other route is the collapsed "More event types" disclosure filed
+// under "Harvest", which nobody finds. This page is the door, and the stage list is what makes it
+// worth walking through.
 //
 // THE QUESTION IT ANSWERS is not "what seed do I have" — Inventory already answers that. It is
 // "what is in flight right now, and when did I last touch it": a jar fermenting on the counter and
@@ -12,10 +11,10 @@
 // the app. So the list is grouped BY STAGE in process order, and every card leads with elapsed time
 // rather than a date, because "4 days" is the number that decides whether to go and check it.
 //
-// BACKDATING IS FIRST-CLASS, NOT A CONVENIENCE. The founding case is retroactive: the 1884 tomato
-// lot fermented and went out to dry before any of this shipped. A stage history that could only be
-// written in the present tense could not record what actually happened, so the advance form carries
-// a date field seeded to today and the Lambda accepts entered_at.
+// BACKDATING IS FIRST-CLASS, NOT A CONVENIENCE. A lot may have fermented and gone out to dry before
+// it was ever tracked here. A stage history that could only be written in the present tense could
+// not record what actually happened, so the advance form carries a date field seeded to today and
+// the Lambda accepts entered_at.
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
@@ -35,21 +34,20 @@ import SheetRowLink from '../components/SheetRowLink.jsx'
 import { todayLocalISO } from '../lib/dateLocal.js'
 import { T } from '../components/forms/formStyles.js'
 import { SEED_STAGES } from '../components/seed/seedStages.js'
-// V5-SEEDSTAB-001 — the lot vocabulary moved to a leaf module this page shares with My seeds; see
-// seedLots.js for the vendor and calendar-day fixes that landed with the move.
+// The lot vocabulary lives in a leaf module this page shares with My seeds.
 import {
   prettySlug, candidateFacts, labelCandidates, lotMeasure, elapsedLabel, fermentUrgency, isNotStartedLot,
   F2_LABEL, kindAllowsParentPlant,
 } from '../components/seed/seedLots.js'
-// V5-SEEDMULTIPARENT-001 release 2b — the jar's chips come off its PARENT SET (lotNotice, the one
-// function the save sheet and the lot page read too). With the flag off it answers today's F2 rule.
+// The jar's chips come off its PARENT SET (lotNotice, the one
+// function the save sheet and the lot page read too). With the flag off it answers the plain F2 rule.
 import { lotNotice } from '../components/seed/seedParents.js'
 import { SEED_MULTI_PARENT } from '../lib/featureFlags.js'
 // Where a Not started lot came from, in My seeds' words for the same lot one tap away.
 import { originNote } from '../components/seed/mySeedsModel.js'
 import { seedsHref, addPacketHref, seedsReturnState, LOT_SECTION_KEY, LOT_SECTION_SOURCE_PLANT } from '../lib/seedsRoutes.js'
 import { useLotOutline, outlineStyle } from '../components/seed/useLotOutline.js'
-// SeedCountBasis alongside the sheet itself: V5-SEEDESTTOGGLE-001's control is shared by the two
+// SeedCountBasis alongside the sheet itself: the control is shared by the two
 // writers of the seed-measure columns, and this page already depended on that module, so the shared
 // control adds no edge to the import graph and cannot close a cycle.
 import SaveSeedSheet, { SeedCountBasis } from '../components/planting/SaveSeedSheet.jsx'
@@ -62,11 +60,9 @@ export { lotMeasure, labelCandidates }
 // terminal. Kept in one place so the section list, the next-stage arrow and the advance button copy
 // can never disagree about what follows what.
 //
-// IMPORTED, not redeclared, since V4-SEEDSTOREDQTY-001. This file used to spell the three values out
-// again, which made it the fourth declaration of one DB CHECK and left
-// src/__tests__/seedStageVocabulary.test.js scraping this page's source text to prove it still
-// agreed. seedStages.js is a leaf module with no imports of its own, so taking the array from there
-// costs nothing and removes the drift surface rather than guarding it.
+// IMPORTED, not redeclared: seedStages.js is a leaf module with no imports of its own, so taking the
+// array from there costs nothing and removes the drift surface (a fourth declaration of one DB CHECK)
+// rather than guarding it.
 const STAGES = SEED_STAGES
 const STAGE_META = {
   fermenting: { label: 'Fermenting', sub: 'Wet-process seed sitting in its own juice' },
@@ -74,7 +70,7 @@ const STAGE_META = {
   // dehydrator is the one drying surface here that can exceed it without looking like it is doing
   // anything wrong — see the note placeholder below.
   drying:     { label: 'Drying',     sub: 'Spread out to dry — screens, plates, a dehydrator; keep below 95°F' },
-  // V4-SEEDFRESHPROCESS-001 — Dave asked for this half explicitly: warn when the seed went in WET.
+  // Warn when the seed went in WET.
   // Two lots in `drying` are not in the same condition. Seed that arrived by the `fresh` route was
   // scraped out of a ripe fruit hours ago and is genuinely wet; seed that arrived by `dry` was
   // threshed from a pod that dried on the plant and is nearly there already. The wet one is the one
@@ -88,32 +84,19 @@ const nextStage = (s) => STAGES[STAGES.indexOf(s) + 1] ?? null
 // useCropFacetOptions requires a referentially stable accessor; module scope is the simplest one.
 const cropSlugOf = (i) => i.crop_slug
 
-// ── BUG-SEEDZEROSOWABLE-001 — the count, asked at EVERY stage ─────────────────────────────────────
-// Dave 2026-09-02, verbatim: "ensure I can enter/update the count along the entire process. I might
-// save 10 seeds and know it from the first moment, or I might have saved dozens/hundreds and not
-// know how many potentially viable ones I'll save in the end. Each step needs to be able to
-// set/update that count."
+// The count, asked at EVERY stage. A count is knowable whenever the gardener happens to know it
+// (10 seeds known from the first moment, or hundreds with the final yield unknown), which is a fact
+// about the gardener and not about the stage, so the field is offered at every step. Every field is
+// blank-by-default and nothing is ever fabricated, and the ANSWER stays optional — everywhere except
+// the one place its absence is load-bearing.
 //
-// SUPERSEDES V4-SEEDSTOREDQTY-001's stored-only placement, and it is NOT a revert of it. That change
-// removed a count field DEFAULTING TO 1 — a guess dressed as data — and concluded the only knowable
-// moment was `stored`. The first half stands: every field below is blank-by-default and nothing is
-// ever fabricated. The second half was too strong. A count is knowable whenever the gardener happens
-// to know it, which is a fact about the gardener and not about the stage, so the field is offered at
-// every step and the ANSWER stays optional — everywhere except the one place its absence is
-// load-bearing.
-//
-// REQUIRED AT `stored`, and that arm is the whole fix for the silent half of the defect. Reaching
-// `stored` with the count skipped left the lot at 0, which sowEngine.isDepleted() reads as "none
-// left" — so a lot that completed the entire ferment→dry→store process was filed under "Sowed
-// previously" on Sow Now. The seed was finished, packeted and on the shelf, and the app said there
-// was none. Nothing on the row distinguished never-counted-0 from counted-and-gone-0, and no column
-// could be added to tell them apart retroactively.
-//
-// Requiring the answer at the terminal stage resolves it at the SOURCE instead: from here on, a
+// REQUIRED AT `stored`. Reaching `stored` with the count skipped would leave the lot at 0, which
+// sowEngine.isDepleted() reads as "none left", so a lot that completed the entire ferment→dry→store
+// process would be filed under "Sowed previously" on Sow Now: the seed finished, packeted and on the
+// shelf, and the app saying there was none. Nothing on the row distinguishes never-counted-0 from
+// counted-and-gone-0, so requiring the answer at the terminal stage resolves it at the SOURCE: a
 // seeds lot at `stored` is one whose count was explicitly answered, so 0 there genuinely means zero
-// and depletion is the right reading. That invariant holds from day one rather than needing a
-// backfill — prod carries ZERO lots with any seed_stage today (the surface shipped this morning),
-// so there is no legacy population that reached `stored` unanswered.
+// and depletion is the right reading.
 //
 // Zero stays fully expressible: the input accepts 0 and the help text names it as a real answer.
 // "Required" here means an answer is required, never that the answer must be non-zero.
@@ -128,52 +111,44 @@ const COUNT_ASK = {
   },
   stored: {
     label: 'How much did you get?',
-    // The consequence of 0, said out loud at the one place it is now deliberately chosen rather
-    // than fallen into. Same sentence the sheet used to carry for a BLANK answer, moved onto the
-    // answer that now actually causes it.
+    // The consequence of 0, said out loud at the one place it is deliberately chosen rather
+    // than fallen into.
     help: 'Needed now that the seed is dry and countable. Enter 0 if none of it was viable — a lot on zero shows as empty on Sow now.',
   },
 }
 
-// BUG-SEEDPROCFORCED-001. The PROCESS decides where a lot enters the pipeline, so it is asked once,
+// The PROCESS decides where a lot enters the pipeline, so it is asked once,
 // at the only moment the answer is known, and the entry stage follows from it.
 //
-// Until now "Track a saved-seed lot" had exactly one action and it hard-coded `fermenting`, which
-// meant the surface FABRICATED a process record: the /seed-stage POST writes a permanent row into
-// seed_lot_stage_log, so a dry-cleaned lot could only be tracked by asserting a ferment that never
-// happened. Beans, peas, lettuce and every brassica are that case: seed threshed out of a pod that
-// dried on the plant, never wet, never fermented.
+// The /seed-stage POST writes a permanent row into seed_lot_stage_log, so the surface must not
+// FABRICATE a process record: a dry-cleaned lot (beans, peas, lettuce, every brassica: seed threshed
+// out of a pod that dried on the plant, never wet, never fermented) must not be trackable only by
+// asserting a ferment that never happened.
 //
-// MELON IS NOT ONE OF THEM, and this file said it was until 2026-09-02 (WAVE 2 S3c). Melon seed
-// comes out of a ripe wet fruit surrounded by pulp; it is a WET extraction and belongs on the wet
-// entry point. Calling it "cleaned dry" in the option copy taught the wrong process on the one
-// screen where the process is chosen, and the choice writes a permanent stage-log row. The same
-// error is in the migration comment that introduced seed_process — reported, not fixed here.
+// MELON IS NOT A DRY CASE. Melon seed comes out of a ripe wet fruit surrounded by pulp; it is a WET
+// extraction and belongs on the wet entry point. Calling it "cleaned dry" in the option copy would
+// teach the wrong process on the one screen where the process is chosen, and the choice writes a
+// permanent stage-log row.
 //
-// The two keys are the WHOLE live vocabulary of inventory_items_seed_process_check, read from prod
-// (`seed_process IS NULL OR seed_process = ANY (ARRAY['wet','dry'])`) — not a third value invented
+// The keys are the WHOLE live vocabulary of inventory_items_seed_process_check
+// (`seed_process IS NULL OR seed_process = ANY (ARRAY['wet','dry','fresh'])`), not values invented
 // to fit the UI. `drying` is a legal entry point with no special-casing anywhere: nextStage('drying')
 // is 'stored', so a dry lot advances through the same machinery one step shorter.
-// V4-SEEDFRESHPROCESS-001 — 'fresh' added, and BOTH existing labels were wrong at the edges.
-// Dave, 2026-09-03: "wet / dry don't give any option for peppers, which just goes from fresh plant
-// to drying for a few days then saved. None of these two options works here."
 //
-// He is right, and the copy failed him in both directions at once:
-//   * `wet` advertised "seed WASHED or fermented out of wet pulp" while routing to `fermenting`.
-//     A user who read "washed" and picked it would get peppers filed in the ferment queue AND a
-//     permanent seed_lot_stage_log row asserting a ferment that never happened. The word "washed"
-//     is removed from this option for that reason — it belongs to 'fresh' now.
-//   * `dry` said "threshed from a pod dried ON THE PLANT", which a fresh pepper also is not.
-// So peppers fell into the gap between two labels, on this garden's LARGEST seed crop (36 Capsicum
-// cultivars, ~175 plants).
+// 'fresh' is for seed scraped from a ripe fruit with no ferment (peppers: fresh plant to drying for a
+// few days, then saved), which neither other label describes:
+//   * `wet` is "fermented out of wet pulp" and routes to `fermenting`. A user who picked it for
+//     peppers would get them filed in the ferment queue AND a permanent seed_lot_stage_log row
+//     asserting a ferment that never happened, so the word "washed" belongs to 'fresh', not to `wet`.
+//   * `dry` is "threshed from a pod dried ON THE PLANT", which a fresh pepper is not.
 //
 // 'fresh' enters at the SAME `drying` stage 'dry' does — the distinction is PROVENANCE, not routing.
 // It is worth a vocabulary widening rather than a copy tweak precisely because seed_process is a
 // permanent record of how a lot was handled, and "threshed from a dried pod" would be false on every
-// pepper lot Dave saves.
+// pepper lot.
 //
-// The DB CHECK is the authority and it was widened FIRST (migrations/v4-seedfreshprocess-001), then
-// the two Lambda SEED_PROCESSES arrays, then this. Shipping this file ahead of either is a 400.
+// The DB CHECK is the authority; the two Lambda SEED_PROCESSES arrays must agree with it, and this
+// file must not ship ahead of either (a 400).
 const PROCESS_ENTRY = {
   wet: {
     stage: 'fermenting',
@@ -192,56 +167,48 @@ const PROCESS_ENTRY = {
   },
 }
 
-// ── V4-SEEDNOPLANTING-001 — the door for seed that came from no planting ──────────────────────────
-// Dave, 2026-09-02, hours after the create-a-lot flow shipped: "i don't see where to go right now to
-// add seeds into this flow when not from a planting - is that just adding a seed item to inventory?"
+// The door for seed that came from no planting. The path is: add a seeds item, then track it here,
+// then set "Or where did it come from?" on the lot for the non-garden origin. "Track a saved-seed
+// lot" only offers packets that already exist, and the empty state teaches provenance rather than
+// the first step, so this page points at the add form explicitly.
 //
-// It is. The path already worked end to end — add a seeds item, then track it here, then set "Or
-// where did it come from?" on the lot for the non-garden origin. Nothing was broken. But NOTHING
-// POINTED AT IT: "Track a saved-seed lot" only offers packets that already exist, and the empty
-// state taught provenance rather than the first step. A working path nobody can find is not a
-// working path, and he is the second person to walk into this after the session that built it.
-//
-// The params carry the two facts the general Add-item form would otherwise make him re-derive (a
-// seed packet is a `consumable` in category `seeds`) plus a return leg, so saving lands him back
-// HERE — where the tracking control is — instead of on the Inventory list.
-// V5-SEEDSTAB-001 — returns to Seeds › Saved seeds, the view this page is now. Built by the shared URL
-// module rather than spelled here: the add-a-packet URL had three spellings before.
+// The params carry the two facts the general Add-item form would otherwise make the user re-derive (a
+// seed packet is a `consumable` in category `seeds`) plus a return leg, so saving lands back
+// HERE — where the tracking control is — instead of on the Inventory list. Returns to Seeds › Saved
+// seeds, built by the shared URL module rather than spelled here.
 const SAVED_VIEW_HREF = seedsHref('saved')
 const ADD_PACKET_HREF = addPacketHref(SAVED_VIEW_HREF)
 // location.state for every page this view PUSHES (the add form, a lot's detail): its exits come back
 // here with one Back instead of pushing Seeds again.
 const SAVED_RETURN_STATE = seedsReturnState(SAVED_VIEW_HREF)
-// The stage sheet's two parent-write failures (V5-SEEDMULTIPARENT-001 release 2b, contract O-2).
+// The stage sheet's two parent-write failures (contract O-2).
 const STAGE_PARENT_FAILED = 'Stage saved, but the parent plant did not.'
 const STAGE_PARENT_MULTI = 'This lot already has more than one plant. Open the lot to change its plants.'
-// BUG-SEEDLOTOPENSATFORM-001 — "Set parent plant →" is an EDIT door: it opens the lot's page to set one
+// "Set parent plant →" is an EDIT door: it opens the lot's page to set one
 // field, so it names that part beside the return state and the page lands on its "Saved from" card.
 // The card titles open the same page to look at the lot, so they add nothing and it opens at its top.
 const SET_PARENT_STATE = { ...SAVED_RETURN_STATE, [LOT_SECTION_KEY]: LOT_SECTION_SOURCE_PLANT }
 
-// ── BUG-SEEDCANDIDATEAMBIG-001 — the untracked-packet picker ──────────────────────────────────────
-// Measured against prod: ~260 untracked seed rows, roughly 41 phone-screens of unbroken scroll, and
-// 51 of them across 24 groups rendering a BYTE-IDENTICAL label — because the row printed
-// `{i.variety_name || i.name}` and nothing else. Choosing the right packet was not hard, it was
-// UNDECIDABLE, and the choice writes a permanent seed_lot_stage_log row against whichever one the
-// thumb landed on.
+// The untracked-packet picker. With hundreds of untracked seed rows and many sharing a
+// BYTE-IDENTICAL label (the row printed `{i.variety_name || i.name}` and nothing else), choosing the
+// right packet was UNDECIDABLE, and the choice writes a permanent seed_lot_stage_log row against
+// whichever one the thumb landed on.
 //
 // Three parts, and the third is the one that closes the defect:
 //   1. a filter over name / variety / source, using the same looseIncludes both shipped pickers use
 //      (VarietyPicker, PlantingSelect) rather than a third matching dialect;
 //   2. a cap with VISIBLE truncation — the matched -> visible -> hiddenCount idiom those two share,
-//      never a silent slice (VarietyPicker.jsx:49-52 records what a silent one cost);
+//      never a silent slice;
 //   3. a second line of facts per row, with a last-resort ordinal when even those collide.
 //
-// 25 rather than those pickers' 200, deliberately. Their list is an anchored dropdown over a page
-// where 200 rows are a scrollport the user can abandon by looking away; this one IS the body of a
-// 340px sheet, and 200 rows here is 32 screens of the exact scroll this change exists to end. The
+// The cap is 25 rather than those pickers' 200, deliberately. Their list is an anchored dropdown over a
+// page where 200 rows are a scrollport the user can abandon by looking away; this one IS the body of
+// a 340px sheet, and 200 rows here is 32 screens of the exact scroll this exists to end. The
 // mechanism is identical, only the number is surface-specific.
 const MAX_CANDIDATES = 25
 
-// V5-SEEDSTAB-001 — prettySlug, candidateTitle, seedCountLabel, candidateFacts, lotMeasure,
-// labelCandidates, elapsedDays and fermentUrgency moved to src/components/seed/seedLots.js, shared
+// prettySlug, candidateTitle, seedCountLabel, candidateFacts, lotMeasure,
+// labelCandidates, elapsedDays and fermentUrgency live in src/components/seed/seedLots.js, shared
 // with My seeds. What stays here is presentation only: how an urgent ferment LOOKS on this card.
 // The thresholds (day 4 check it, day 5 overdue) live with fermentUrgency.
 const FERMENT_URGENCY = {
@@ -251,104 +218,85 @@ const FERMENT_URGENCY = {
   },
   alarm: {
     tone: 'danger', ink: P.severityUrgent, border: P.alertBorder,
-    // "By", not "Past": days are calendar days in Eastern now (BUG-SEEDSOWRELDAY-001), so day 5 can
-    // arrive ~96h in, and "past 5 days" overstated it.
+    // "By", not "Past": days are calendar days in Eastern, so day 5 can
+    // arrive ~96h in, and "past 5 days" would overstate it.
     badge: 'Overdue', note: 'By day 5 the seed can sprout.',
   },
 }
 
-// ── V4-SEEDSTOREDQTY-001 — the wide PUT this page still opens, and what is left in it ─────────────
-// THE COUNT NO LONGER TRAVELS THIS WAY (V5-SEEDQTY-001). It used to, because there was no narrow
-// quantity route, and the cost was the defect: `quantity_on_hand` is the CONTAINERS column, so a
-// saved lot came out of this page reading `185.000 packet`. `seed_count` / `seed_weight_g` /
-// `seed_count_estimated` now have PUT /api/inventory-items/:id/seed-measure, which is their only
-// writer anywhere in the app — see the strip list below for why nothing else may name them.
+// The wide PUT this page still opens, and what is left in it.
+// THE COUNT DOES NOT TRAVEL THIS WAY. `quantity_on_hand` is the CONTAINERS column, so a count written
+// there would make a saved lot read `185.000 packet`. `seed_count` / `seed_weight_g` /
+// `seed_count_estimated` have PUT /api/inventory-items/:id/seed-measure, which is their only writer
+// anywhere in the app — see the strip list below for why nothing else may name them.
 //
 // What still comes through here is `year_harvested`, which has no narrow route. The wide PUT assigns
 // every column in its SET list unconditionally (`= ${body.x ?? null}`), so a short body is not a
 // partial update, it is a wipe. The complete row is therefore round-tripped; the row available here
 // is the LIST row, which is `i.*` plus the list query's projections.
 //
-// THIS LIST HAS NO MIRROR ANY MORE. It used to mirror PUT_DERIVED_KEYS + PUT_PRESENCE_GUARDED_KEYS in
-// src/pages/InventoryDetail.jsx; those constants and putPayloadFrom() were deleted with that page's
-// stage control (V5-SEEDSTAGEONEPLACE-001). What holds it now is the handler itself:
-// src/__tests__/SavedSeeds.storedCount.test.jsx scrapes lambda/inventory-items/index.js for every
-// key read as `hasOwnProperty.call(body, 'x')` and requires each one in the array literal below,
-// found IN THIS FILE by regex, so it stays here and stays one literal.
+// What holds this list in step with the handler is src/__tests__/SavedSeeds.storedCount.test.jsx: it
+// scrapes lambda/inventory-items/index.js for every key read as `hasOwnProperty.call(body, 'x')` and
+// requires each one in the array literal below, found IN THIS FILE by regex, so it stays here and
+// stays one literal.
 // The lot page's wide PUT keeps a second, SHORTER list of its own (SEED_ROW_ECHO_KEYS and
 // SEED_MEASURE_KEYS in src/hooks/useInventory.js) and the two are two lists on purpose: that page's
 // form sets `source_id`, `acquired_from_source_id` and `year_harvested` deliberately, and this list
 // strips all three.
 //
 // `seed_stage` is the one that would BITE rather than merely leak. The list row carries the lot's
-// stage as it was BEFORE the advance, so echoing that key back used to revert the stage the POST just
-// wrote — a 200 that silently undid the action the sheet is titled for. Since
-// BUG-SEEDSTAGEHEADSHIP-001 the wide PUT does not read the key at all (POST /:id/seed-stage is the
-// stage's only writer), so the freshly-written value stands either way; the key stays stripped
-// because that is the half that holds against a Lambda older than that fix.
+// stage as it was BEFORE the advance, so echoing that key back could revert the stage the POST just
+// wrote — a 200 that silently undid the action the sheet is titled for. The wide PUT does not read
+// the key at all (POST /:id/seed-stage is the stage's only writer), so the freshly-written value
+// stands either way; the key stays stripped because that is the half that holds against an older
+// Lambda.
 //
-// Two keys here that InventoryDetail's lists do not carry: `variety_name` and `stage_entered_at` are
-// projections the LIST query adds (a cultivar join and a LATERAL), not columns. Inert in the SET
-// list either way; stripped so the body is only ever columns.
+// `variety_name`, `stage_entered_at` and `crop_slug` are projections the LIST query adds (a cultivar
+// join, a LATERAL, and a `pv.crop_type_slug` alias), not columns on inventory_items. Inert in the SET
+// list either way; stripped so the body is only ever columns, and so none of them can arm if the
+// handler's SET list ever mentions it. That is also why this list is a strip rather than a whitelist.
 //
-// `source_plant_id` / `source_kind` (pre-promote MINOR #1) are the delay-fuse pair. Neither is in
-// the handler's PUT SET list today,
-// so both ride through harmlessly; the day either is added, a stale round-trip from this page would
-// null the parent plant off the very lot the count belongs to. The subset test below is what
-// forced them in here rather than only there, which is the seam working as intended.
-// `crop_slug` joins `variety_name` and `stage_entered_at` as the THIRD list-only projection — added
-// with the crop facet (V5-SEEDSAVEDFILTER-001). It is a `pv.crop_type_slug` alias, not a column on
-// inventory_items, so echoing it back would put a key in the wide PUT body that names no column.
-// It rides harmlessly today only because the handler's SET list does not mention it — exactly the
-// delay fuse described above for source_plant_id/source_kind, and the reason this list is a strip
-// rather than a whitelist. Stripping it now costs nothing and removes the fuse.
-// V5-SOURCEPICKER-001 adds `source_id` and `acquired_from_source_id`, and unlike the delay fuses
-// above these are LIVE from the day they land: the handler's PUT SET list names both behind a
+// `source_plant_id` / `source_kind` are a delay-fuse pair. Neither is in the handler's PUT SET list
+// today, so both ride through harmlessly; the day either is added, a stale round-trip from this page
+// would null the parent plant off the very lot the count belongs to. The storedCount test named above
+// is what forces them in here.
+//
+// `source_id` and `acquired_from_source_id` are LIVE: the handler's PUT SET list names both behind a
 // hasOwnProperty sentinel, so mentioning either IS an assignment. This page round-trips a list row
-// into the wide PUT, and the V5-SOURCEBACKFILL-001 backfill put a non-null `source_id` on all 504
-// inventory rows — so without these two entries every count edit made here would re-assert whatever
-// source the list row was holding. Against a stale row that silently reverts a provenance change
-// made anywhere else in the app, and answers 200.
-// BUG-SEEDYEARNOOP-001 adds `year_harvested`, and it is LIVE in the same sense as the two above —
-// the SET list now names it behind a hasOwnProperty sentinel, so mentioning it IS an assignment
-// where until today it was discarded. But it carries a second reason the others do not, and that
-// one is the sharper of the two: yearHarvestedPatch() enforces NEVER OVERWRITE by returning an
-// EMPTY OBJECT for a lot that already has a year. That contract is expressed entirely as the
-// key's ABSENCE from the body. Spreading the list row puts the key back — so without this entry
-// the patch's guard would be silently defeated by the very payload it is spread into, and every
-// count edit would re-assert the row's own year over whatever the column actually holds. Against
-// a stale row that is how a hand-entered 1986 gets replaced, with a 200.
+// into the wide PUT, so without these two entries every count edit made here would re-assert
+// whatever source the list row was holding, silently reverting a provenance change made anywhere
+// else in the app, and answering 200.
 //
-// V5-SEEDQTY-001 adds the last three, and they are the reason the narrow route exists at all. They
-// are real columns on inventory_items, so the list query's `i.*` puts them on every row this page
-// holds — and this page round-trips that row into the wide PUT. The handler deliberately does NOT
-// name them in its SET list, so today they ride through inert; the day one is added, an unrelated
-// wide PUT from here would re-assert whatever the LIST ROW held AT MOUNT, silently reverting a count
-// written minutes earlier through /seed-measure and answering 200. That is BUG-INVLOSTUPDATE-001's
-// exact shape, and a presence guard on the handler would not save it — `{ ...current, ...payload }`
-// in useInventory.updateItem re-inserts the stale value, so hasOwnProperty is TRUE and the guard
+// `year_harvested` is LIVE in the same sense (the SET list names it behind a hasOwnProperty
+// sentinel), with a second reason: yearHarvestedPatch() enforces NEVER OVERWRITE by returning an
+// EMPTY OBJECT for a lot that already has a year. That contract is expressed entirely as the key's
+// ABSENCE from the body. Spreading the list row puts the key back, which would defeat the patch's
+// guard and re-assert the row's own year over whatever the column holds, so a hand-entered year
+// gets replaced, with a 200.
+//
+// The three measure keys (`seed_count`, `seed_weight_g`, `seed_count_estimated`) are real columns on
+// inventory_items, so the list query's `i.*` puts them on every row this page holds. The handler
+// deliberately does NOT name them in its SET list, so today they ride through inert; the day one is
+// added, an unrelated wide PUT from here would re-assert whatever the LIST ROW held AT MOUNT,
+// silently reverting a count written minutes earlier through /seed-measure and answering 200. A
+// presence guard on the handler would not save it — `{ ...current, ...payload }` in
+// useInventory.updateItem re-inserts the stale value, so hasOwnProperty is TRUE and the guard
 // assigns it. Stripped here, PUT /api/inventory-items/:id/seed-measure is the only writer.
-// (updateItem itself strips these three since 2026-09-25, when /inventory/:id began writing
-// /seed-measure too; this page's own wide PUT does not go through it, hence this list.)
+// (updateItem itself strips these three too, since /inventory/:id also writes /seed-measure; this
+// page's own wide PUT does not go through it, hence this list.)
 //
-// MERGE NOTE (2026-09-04): these two arrived from different sessions in the same hour and are a
-// UNION, not a choice. They are the same defect class reached from opposite directions — a stale
-// list row re-asserting a value nobody edited — and the year's case is the one with a live victim
-// (4 curated rows, one of them a hand-entered 1986). Dropping either side's entries restores that
-// side's bug silently, with a 200.
+// The seed card's projections are all LIST-ONLY like `crop_slug`: the packet photo's thumb URL and
+// `hero_photo_id` (the derived hero, which leaves the list under its own name precisely so it never
+// overrides `featured_photo_id`), and the cultivar's facts — scoville range and its provenance,
+// country and region of origin, species, breeding system, days to maturity and their basis, and the
+// cultivar's reference URL. That last one is `pv.source_url` ALIASED to `variety_source_url` because
+// `i.*` already carries the lot's own `source_url`, which the wide PUT assigns bare. None names a
+// column on inventory_items and the SET list mentions none, so each rides inert today — the delay
+// fuse above, stripped before anything can arm it.
 //
-// V5-SEEDCARDS-001 adds the seed card's projections, all LIST-ONLY like `crop_slug`: the packet
-// photo's thumb URL and `hero_photo_id` (the derived hero, which leaves the list under its own name
-// precisely so it never overrides `featured_photo_id`), and the cultivar's facts — scoville range and
-// its provenance, country and region of origin, species, breeding system, days to maturity and their
-// basis, and the cultivar's reference URL. That last one is `pv.source_url` ALIASED to
-// `variety_source_url` because `i.*` already carries the lot's own `source_url`, which the wide PUT
-// assigns bare. None names a column on inventory_items and the SET list mentions none, so each rides
-// inert today — the delay fuse above, stripped before anything can arm it.
-//
-// V5-SEEDMULTIPARENT-001 (R2a) adds `seed_parent_plant_count` and `variety_rank`. The first is a real
-// column whose only writer is PUT /:id/seed-measure, the same case as the three measure keys above;
-// the second is a projection of the filed variety, the same case as `variety_name`.
+// `seed_parent_plant_count` and `variety_rank` are the last two. The first is a real column whose
+// only writer is PUT /:id/seed-measure, the same case as the three measure keys above; the second is
+// a projection of the filed variety, the same case as `variety_name`.
 const LIST_ROW_PUT_STRIP = [
   'variety_name', 'stage_entered_at', 'crop_slug', 'featured_photo_view_url', 'featured_is_explicit',
   'germination', 'featured_photo_id', 'variety_id', 'seed_process', 'seed_stage', 'source_plant_id',
@@ -362,20 +310,20 @@ const LIST_ROW_PUT_STRIP = [
 ]
 
 /**
- * V5-SEEDYEARHARVESTED-001 — the harvest year a saved lot already knows and never records.
+ * The harvest year a saved lot already knows and never records.
  *
  * `year_harvested` is the right time axis for seed: germination decays with age, so how old a lot is
- * decides whether it is worth sowing. The column exists and carries FOUR rows out of 263 — 1.5% —
- * while every lot Dave saves knows its own year at the moment it is stored.
+ * decides whether it is worth sowing. The column is rarely filled, though every lot knows its own year
+ * at the moment it is stored.
  *
  * ONLY on the move to `stored`, and ONLY into a null. Two separate guards, both load-bearing:
  *  · `stored` is when the seed is finished and put away, so that is when the year is a fact rather
  *    than a forecast. A lot still fermenting may not finish this year.
- *  · NEVER OVERWRITE. Those four existing rows are curated and irreplaceable — one is Jen's 1986
- *    Edelweiss from Austria — and this write travels through the WIDE PUT, where every key in the
- *    body is assigned unconditionally. Sending `year_harvested` on a lot that already has one would
- *    replace a hand-entered 1986 with the current year, silently, in the same request that saves a
- *    count. Absent from the body is the only safe way to say "leave it alone".
+ *  · NEVER OVERWRITE. Existing years are curated and irreplaceable (a hand-entered 1986, say), and this
+ *    write travels through the WIDE PUT, where every key in the body is assigned unconditionally.
+ *    Sending `year_harvested` on a lot that already has one would replace it with the current year,
+ *    silently, in the same request that saves a count. Absent from the body is the only safe way to
+ *    say "leave it alone".
  *
  * The year comes from the stage date the user actually entered, not from `now`: backdating a lot to
  * last autumn is a supported thing to do on this sheet, and reading the clock instead would file it
@@ -391,17 +339,15 @@ export function yearHarvestedPatch(row, toStage, whenISO) {
 /**
  * A complete wide-PUT body from a list row, unchanged apart from the strip. Pure, exported for test.
  *
- * WAS `countPayloadFrom(row, quantityOnHand)` until V5-SEEDQTY-001, and the rename is the change:
- * the count no longer travels this way. It used to return `{ ...out, quantity_on_hand: count }`,
- * which is how a saved lot ended up reading "185 packet" in prod — the seed count written into the
- * containers column. `quantity_on_hand` now round-trips whatever the row already held and means
- * containers again; the count goes to PUT /:id/seed-measure and nowhere else.
+ * The count does not travel this way: it would land in the containers column and read as "185
+ * packet". `quantity_on_hand` round-trips whatever the row already held and means containers; the
+ * count goes to PUT /:id/seed-measure and nowhere else.
  *
- * The wide PUT survives on this page for ONE key: `year_harvested` (V5-SEEDYEARHARVESTED-001), which
- * has no narrow route. It still has to carry the whole row, because every column in the handler's
- * SET list is a bare unconditional assignment — a short body there is a wipe with a 200 on it.
+ * The wide PUT survives on this page for ONE key: `year_harvested`, which has no narrow route. It
+ * still has to carry the whole row, because every column in the handler's SET list is a bare
+ * unconditional assignment — a short body there is a wipe with a 200 on it.
  * `type` in particular is load-bearing: the handler nulls quantity_on_hand outright unless
- * body.type === 'consumable' (BUG-INVSEEDPUT400-001 is the same fact from the other side).
+ * body.type === 'consumable'.
  */
 export function listRowPutBody(row) {
   const out = { ...(row ?? {}) }
@@ -410,12 +356,11 @@ export function listRowPutBody(row) {
 }
 
 /**
- * BUG-SEEDZEROSOWABLE-001 — read the count field for a move into `toStage`. Pure, exported for test.
+ * Read the count field for a move into `toStage`. Pure, exported for test.
  *
  * @returns {{value: number|null, error: null}|{value: null, error: string}}
- *   `value` is the number to PUT as `seed_count` on /seed-measure (V5-SEEDQTY-001 — it went to
- *   `quantity_on_hand` on the wide PUT until then), or null meaning "write nothing and leave the
- *   lot's count alone". `error` is a refusal — the submit must not proceed.
+ *   `value` is the number to PUT as `seed_count` on /seed-measure, or null meaning "write nothing and
+ *   leave the lot's count alone". `error` is a refusal — the submit must not proceed.
  *
  * THE ONE ASYMMETRY IS DELIBERATE. Blank is a legitimate answer on `fermenting` and `drying` ("I
  * haven't counted") and is refused on `stored`, because that is the stage whose 0 is unreadable
@@ -424,7 +369,7 @@ export function listRowPutBody(row) {
  *
  * A blank on an in-flight stage writes NOTHING rather than 0 — the lot keeps whatever it holds. That
  * distinction is load-bearing: writing 0 for "don't know" would manufacture the exact ambiguous
- * value this whole change exists to eliminate, one stage earlier.
+ * value the required-at-`stored` rule exists to eliminate, one stage earlier.
  *
  * Rejects negatives and non-numbers rather than coercing. Number('') is 0 and Number('abc') is NaN,
  * so a bare Number() here would turn a blank into a hard zero and a typo into a silent no-op.
