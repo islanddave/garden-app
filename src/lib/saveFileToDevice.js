@@ -1,4 +1,4 @@
-// V4-PHOTOSAVE-001 — save an in-app captured photo to the device. iOS Safari / standalone PWA
+// Save an in-app captured photo to the device. iOS Safari / standalone PWA
 // IGNORES the <a download> attribute, so navigator.share({ files }) (guarded by canShare) is the
 // only path to "Save Image" / "Save to Files" there; desktop + Android fall back to a download
 // link. Must be called from a user gesture (a button tap). Returns 'shared' | 'downloaded' | 'noop'.

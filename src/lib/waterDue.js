@@ -1,11 +1,11 @@
-// Watering-severity single source of truth (L-075). Extracted verbatim from Dashboard.jsx
-// so the Dashboard WaterMeTile and the Garden-tab Today strip render IDENTICAL severity
-// tiers. daysOver = time past next_water_at; indoor seedlings escalate faster (dry out sooner).
+// Watering-severity single source of truth, extracted verbatim from Dashboard.jsx so the Dashboard
+// WaterMeTile and the Garden-tab Today strip render IDENTICAL severity tiers. daysOver = time past
+// next_water_at; indoor seedlings escalate faster (dry out sooner).
 import { P } from './constants.js'
 
-// terra's TEXT is P.severityUrgent, not P.terra (V5-TODAYREDESIGN-001 R18): P.terra on #fde8e0 is
-// 4.15:1, under AA's 4.5 for the 0.8rem chip label; P.severityUrgent is 6.42:1. The border stays
-// P.terra, so the tier still reads as terra. Shared: Today (both versions), Dashboard and CareStatus.
+// terra's TEXT is P.severityUrgent, not P.terra: P.terra on #fde8e0 is 4.15:1, under AA's 4.5 for
+// the 0.8rem chip label; P.severityUrgent is 6.42:1. The border stays P.terra, so the tier still reads
+// as terra. Shared: Today (both versions), Dashboard and CareStatus.
 export const SEVERITY_STYLES = {
   green:        { bg: P.greenPale, border: P.greenLight, text: P.green },
   gold:         { bg: P.warn,      border: P.warnBorder, text: '#7a5c00' },
@@ -13,12 +13,11 @@ export const SEVERITY_STYLES = {
   'terra-bold': { bg: '#fcd7c4',   border: P.terra,      text: P.bannerInk },
 }
 
-// BUG-CADENCEONEDAY-001 — a one-day cadence has no "overdue" state to be in. On a weekly plant
-// "3 days overdue" means the gap is 43% longer than the plant wants; on a daily plant it means the
-// calendar advanced three days, which is a fact about Tuesday, not about the plant. 82 of 228 live
-// plantings resolve to 1 (correctly, for ~54 of them — the cultivar profiles say "grow bags likely
-// daily summer" in their own words), so escalating every one of them a tier per elapsed day turns a
-// met-eight-days-running cadence into an 80-row backlog. The number stays; the backlog framing goes.
+// A one-day cadence has no "overdue" state to be in. On a weekly plant "3 days overdue" means the gap
+// is 43% longer than the plant wants; on a daily plant it means the calendar advanced three days, a
+// fact about the calendar, not the plant. Many plantings resolve to 1 (correctly: the cultivar
+// profiles say "grow bags likely daily summer"), so escalating each a tier per elapsed day would turn
+// a cadence met every day into a huge backlog. The number stays; the backlog framing goes.
 export const DAILY_INTERVAL_DAYS = 1
 export function isDailyCadence(intervalDays) { return intervalDays === DAILY_INTERVAL_DAYS }
 

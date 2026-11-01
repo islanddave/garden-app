@@ -1,17 +1,13 @@
-// src/lib/uploadPut.js
-// BUG-PHOTOUPLOADHANG-001 — the original S3 PUT was a bare window.fetch with NO bound (the
-// deliberate v3.69 decision: "a large original legitimately takes a while"). That is exactly
-// where a stuck save was traced on 2026-07-27: presign logged at the Lambda, no object ever
-// landed in S3, no register call — the PUT sat on a dead socket forever with no error and no
-// timeout, and the UI showed "Uploading…" until the app was killed.
+// The original S3 PUT with a stall watchdog. A bare window.fetch has NO bound: a PUT on a dead socket
+// sits forever with no error and no timeout, and the UI shows "Uploading…" until the app is killed
+// (the presign logs at the Lambda, no object ever lands in S3, no register call follows).
 //
 // XHR instead of fetch because fetch has no upload-progress events, and progress is the only
 // honest way to bound a big upload on a slow uplink: a short total timeout kills legitimate
 // slow-but-moving uploads (a 7MB fallback original on a weak connection), while a long one is
 // not a real bound. The watchdog aborts only when BYTES STOP MOVING for PUT_STALL_MS; a hard
 // PUT_MAX_MS ceiling backstops the pathological trickle. Progress % is surfaced so the UI can
-// show "Uploading… 43%" — which also turns the next stall report into a named, located fact.
-
+// show "Uploading… 43%", which also makes the next stall report a named, located fact.
 export const PUT_STALL_MS = 30_000;   // no progress event for this long = the socket is dead
 export const PUT_MAX_MS   = 180_000;  // absolute ceiling even for a moving upload
 

@@ -1,25 +1,25 @@
-// V4-OVERWINTERCARE-001 — the overwintering regimes as the PICKER shows them.
+// The overwintering regimes as the PICKER shows them.
 //
 // The four keys are the model; everything else here is UI copy. The keys are duplicated from
 // lambda/daily-plan/overwinter.js rather than imported because that module is CommonJS Lambda
-// source and this one is bundled into the SPA — src/lib/wateringScale.js reaches into lambda/ for a
-// JSON file, but no production SPA module imports a CJS lambda .js, and this is not the change to
-// make it the first. src/__tests__/overwinterRegimeParity.test.js holds the two lists (plus the
-// plants Lambda's allowlist) identical, so a fifth regime cannot be added to the model without
-// this picker failing loudly instead of silently omitting it.
+// source and this one is bundled into the SPA; src/lib/wateringScale.js reaches into lambda/ for a
+// JSON file, but no production SPA module imports a CJS lambda .js.
+// src/__tests__/overwinterRegimeParity.test.js holds the two lists (plus the plants Lambda's
+// allowlist) identical, so a fifth regime cannot be added to the model without this picker failing
+// loudly instead of silently omitting it.
 //
-// WHAT THE COPY HAS TO DO. Dave is standing in front of a plant deciding which of four buckets it
+// WHAT THE COPY HAS TO DO. The user is standing in front of a plant deciding which of four buckets it
 // is in, and the four are ordered by DRYING RATE, not by how alive the plant is — which is exactly
 // the counter-intuitive part of the model. So each label names the SITUATION ("held indoors"), the
 // description names the PLANTS, and the check interval is shown as the consequence of the choice.
 // Naming the interval in the picker is not decoration: it is the only place the user can see that
 // picking "cold and resting" means a monthly check rather than never.
 //
-// V4-ICON-001 (done). `iconName` is regime IDENTITY — meaningful, so it is a registry key that
-// ChoiceGrid resolves, not a glyph this module interpolates. Each one names the SITUATION the
-// label names, not the crop: the picker's whole premise is that the four buckets are drying
-// regimes, and a crop mark (the kale/garlic/ginger emoji this replaced) argues the opposite —
-// it invites "mine isn't kale, so not this one" on a row that is really about being under cover.
+// `iconName` is regime IDENTITY — meaningful, so it is a registry key that ChoiceGrid resolves, not a
+// glyph this module interpolates. Each one names the SITUATION the label names, not the crop: the
+// picker's whole premise is that the four buckets are drying regimes, and a crop mark argues the
+// opposite — it invites "mine isn't kale, so not this one" on a row that is really about being under
+// cover.
 export const OVERWINTER_REGIME_OPTIONS = [
   {
     value: 'protected_productive',
@@ -43,9 +43,8 @@ export const OVERWINTER_REGIME_OPTIONS = [
     value: 'protected_quiescent',
     iconName: 'status.dormant',
     label: 'Cold and resting',
-    // V4-OVERWINTERCARDNOISE-001 (2): "barely damp" was the second of two set-points the engine
-    // guidance also carried, and the picker is where Dave forms the mental model. Both surfaces now
-    // state the SAME single rule — lift it — so the choice and the card cannot disagree.
+    // The engine guidance and this picker state the SAME single rule — lift it — so the choice and the
+    // card cannot disagree.
     description: 'Fig or fuchsia in a cold garage. Check every 30 days — lift the pot, water only if it feels light.',
   },
 ]

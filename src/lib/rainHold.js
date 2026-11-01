@@ -1,5 +1,4 @@
-// rainHold.js — the plan's rain_skipped bucket, split by WHY the engine skipped the watering
-// (BUG-DEFERNOSTRESSOVERRIDE-001, Design A; Dave 2026-10-09: "water it on the spot").
+// The plan's rain_skipped bucket, split by WHY the engine skipped the watering.
 //
 // The engine puts two different claims in one bucket (lambda/daily-plan/engine.js rainSkipped):
 //   WAITING  held on a FORECAST — sat_kind in engine.FORECAST_SAT_KINDS. Nothing has fallen for it; if the
@@ -79,13 +78,12 @@ export function waitingRows(plan) {
 
 const plantings = (n) => n + ' planting' + (n === 1 ? '' : 's')
 export const waitingLine = (n) => 'Waiting for rain · ' + n
-// Not "covered": that is this screen's word for a frost cover. Today finish plan §3.2 (2026-10-14) makes it one
-// plain sentence in the open glance card's list; the plan's draft read "Rain already covered N plantings.", and the
-// verb stays "watered" for the reason above.
+// Not "covered": that is this screen's word for a frost cover. One plain sentence in the open glance
+// card's list; the verb stays "watered" for the reason above.
 export const coveredLine = (n) => 'Rain already watered ' + plantings(n) + '.'
 
-// Today V1's note and DrG's rationale: sentences, no list. The rain-that-fell sentence is each surface's own,
-// unchanged — it was only ever false for the forecast holds, which now get the sentence before it.
+// Today V1's note and DrG's rationale: sentences, no list. The rain-that-fell sentence is each surface's own;
+// it was only ever false for the forecast holds, which get the sentence before it.
 export function rainNoteSentences(plan) {
   const { waiting, covered } = rainSplit(plan)
   return [

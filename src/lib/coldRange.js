@@ -1,4 +1,4 @@
-// V5-WXCOLDBAND-001 — the forecast cold range beside Today's low ("as cold as 41°").
+// The forecast cold range beside Today's low ("as cold as 41°").
 //
 // The number is the WeatherNext 3 ensemble's cold end for tonight (the lowest hourly 10th percentile),
 // sent from the owner's Mac each morning and served by GET /api/daily-plan as `cold_range`
