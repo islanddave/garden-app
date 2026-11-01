@@ -1,28 +1,23 @@
-// crop-derive.js — V4-TAGSUB-001 derive engine (SHARED, byte-identical copy in lambda/tags + lambda/varieties).
-// Each Lambda is zipped from its own dir so a ../ import is NOT packaged (same constraint as household.js).
-// Kept in sync by lambda/crop-derive-copies-sync.test.js. Canonical edits land in BOTH copies.
+// crop-derive.js — V4-TAGSUB-001 derive engine (SHARED: lambda/tags is the master, lambda/varieties a copy).
+// A Lambda zip holds only its own dir, so a ../ import is NOT packaged (same constraint as household.js).
+// Held byte-identical by lambda/crop-derive-copies-sync.test.js.
 //
 // Derives read-only `type:<crop_type_slug>` and `lifecycle:<x>` tags FROM the cultivar's structured
 // crop attribute and materializes them as system-owned (owner_id='system', source='derived',
 // visibility='shared') tag rows + entity_tag links on entity_type='cultivar'. Plantings project these
 // at render time via garden_node.variety_id -> cultivar (NOT materialized per-planting).
 //
-// V4-CLASSIFY-001 adds five more DERIVED facets (same system-owned class as type/lifecycle — NOT
-// hand-assignable, so they are intentionally NOT in lambda/tags/validate.js VALID_USER_FACETS):
-//   heat (peppers, by scoville_max ceiling), determinacy (tomatoes), day_length (onions),
-//   allium_type (bulbing|bunching), basil_use (culinary|thai|tulsi). The DB tag_facet_check must
-//   already list these facets (migrations/v4-classify/0a-additive-ddl.sql).
+// The crop facets (V4-CLASSIFY-001, V4-BEANFACET-001) are the same system-owned class, NOT
+// hand-assignable, so they are intentionally NOT in lambda/tags/validate.js VALID_USER_FACETS:
+//   heat (peppers), determinacy (tomatoes), day_length (onions), allium_type, basil_use,
+//   and, gated to crop_type_slug='bean': bean_type, bean_habit, bean_use.
+// The DB tag_facet_check must already list each facet (migrations/v4-classify/0a-additive-ddl.sql,
+// migrations/v4-beanfacets/0a-additive-ddl.sql). Crop 'althaea' (marshmallow) gets NO extra facet.
 //
-// V4-BEANFACET-001 adds three more DERIVED facets, gated to crop_type_slug='bean': bean_type
-// (species group, from genus/species cols), bean_habit (bush|pole|half_runner, from name+prose),
-// bean_use (snap|shell|dry|dual_purpose, from name+prose). tag_facet_check widened in
-// migrations/v4-beanfacets/0a-additive-ddl.sql. Crop 'althaea' (marshmallow) gets NO extra facet.
-//
-// Crucible V101 deltas baked in: revive-or-insert against the soft-delete partial-unique (no dup
-// accumulation, no 42P10), type-branch guarded against drifted slugs, lifecycle whitelisted, desired-vs-
-// actual reconciliation soft-deletes stale derived links only (never user links). applyDerive takes a
-// passed-in neon `sql` connection and runs IN-PROCESS (no HTTP, no admin gate) so the varieties Lambda
-// can call it post-commit, fail-open.
+// Invariants: revive-or-insert against the soft-delete partial-unique (no duplicates, no 42P10), the
+// type branch guarded against drifted slugs, lifecycle whitelisted, and reconciliation soft-deletes
+// stale derived links only (never user links). applyDerive takes a passed-in neon `sql` connection and
+// runs IN-PROCESS (no HTTP, no admin gate) so the varieties Lambda can call it post-commit, fail-open.
 
 import { logCaughtWarning } from './db-error.js';
 
@@ -32,10 +27,9 @@ export function humanizeLifecycle(lc) {
   return String(lc).split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 }
 
-// ── V4-CLASSIFY-001 derivation helpers (pure) ───────────────────────────────────────────────────
+// ── Derivation helpers (pure) ────────────────────────────────────────────────────────────────────
 // Heat: classify a pepper by the CEILING of its Scoville range (the hottest pod it can throw). A
-// cultivar belongs to the band its scoville_max lands in; min/width ignored — e.g. Santa Fe Grande
-// (max ~8k) = Medium, not Hot. Bands chosen so cut points fall in gaps in the real collection.
+// cultivar belongs to the band its scoville_max lands in; min/width ignored.
 export const HEAT_BANDS = [
   { max: 0,        slug: 'sweet',    label: 'Sweet' },
   { max: 999,      slug: 'mild',     label: 'Mild' },
@@ -95,9 +89,8 @@ export const ALLIUM_LABELS = { bulbing: 'Bulbing', bunching: 'Bunching' };
 export function alliumType(cropSlug, prose) {
   if (cropSlug === 'garlic' || cropSlug === 'shallot') return 'bulbing';
   if (cropSlug === 'chives') return 'bunching';
-  // V4-CROPSPLIT-001: bunching onions moved off `onion` to their own slug. Without this branch the
-  // moved cultivars silently lose their allium_type facet — the gate below is `=== 'onion'`, and a
-  // dropped facet is invisible in the UI. Definitional for the slug, so no prose check is needed.
+  // Bunching onions have their own slug (V4-CROPSPLIT-001). Without this branch they silently lose
+  // their allium_type facet, since the gate below is `=== 'onion'`. Definitional, so no prose check.
   if (cropSlug === 'bunching_onion') return 'bunching';
   if (cropSlug === 'onion') {
     const s = String(prose || '').toLowerCase();
@@ -118,9 +111,9 @@ export function basilUse(cropSlug, species) {
   return 'culinary';
 }
 
-// ── Bean facets (V4-BEANFACET-001) — three independent, evidence-based facets gated to
-// crop_type_slug='bean'. Marshmallow (crop_type 'althaea') intentionally gets NO crop-specific facet
-// (monospecies Althaea officinalis — any facet would be single-valued noise; type+lifecycle only).
+// ── Bean facets — three independent, evidence-based facets gated to crop_type_slug='bean'.
+// Marshmallow (crop_type 'althaea') gets NO crop-specific facet: monospecies, so any facet would be
+// single-valued noise (type+lifecycle only).
 //
 // bean_type: botanical species group, read PRIMARILY from the structured genus/species columns; name/
 // prose is an unambiguous-only fallback. Because derivation is bean-gated, a bare epithet ('faba',
@@ -198,15 +191,10 @@ export function computeDerivedTags(cultivar, cropTypesBySlug) {
     out.push({ facet: 'type', slug: cropSlug, label: ct.display_name || cropSlug });
   }
   // BOTANICAL, and deliberately so. This chip does NOT answer "will it come back in this garden"
-  // (BUG-DERIVEDLIFECYCLE-001) — no field in the schema does, and plant_varieties.grown_as is not the
-  // one that could. Measured on prod 2026-09-02, 444 live cultivars: grown_as carried a value the
-  // column's old DEFAULT 'annual' could not have manufactured on exactly 14 rows, and all 14 already
-  // agree with this chain. So preferring grown_as improves ZERO chips and flips 245 — 186
-  // tender_perennial, 33 perennial, 26 biennial, every one to Annual on the strength of a Postgres
-  // default. Japanese Maple, Blueberry, Hosta, Jade, Christmas Cactus and Red Rose are in the 33.
-  // (The DEFAULT has since been dropped, so new rows are clean; the 358 'annual' values it already
-  // wrote are not, and are indistinguishable from curated ones.) A real as-grown axis needs a curated
-  // column that does not exist yet — see the ledger row. Pinned by crop-derive.test.js.
+  // (BUG-DERIVEDLIFECYCLE-001): no field in the schema does. plant_varieties.grown_as is not that field,
+  // because existing 'annual' values came from a column DEFAULT and are indistinguishable from curated
+  // ones, so preferring it would relabel most non-annual cultivars Annual. A real as-grown axis needs a
+  // curated column that does not exist yet. Pinned by crop-derive.test.js.
   const lifecycle = cultivar.lifecycle ?? (ct ? ct.default_lifecycle : null);
   if (lifecycle && VALID_LIFECYCLE.includes(lifecycle)) {
     out.push({ facet: 'lifecycle', slug: lifecycle, label: humanizeLifecycle(lifecycle) });

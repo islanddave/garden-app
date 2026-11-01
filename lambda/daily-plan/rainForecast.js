@@ -1,33 +1,27 @@
-// BUG-RAINFCSTONEMODEL-001 — the DAY-AHEAD rain forecast (tomorrow and the day after): amount AND chance from
-// five weather models, replacing Open-Meteo `best_match` for those fields only.
+// The DAY-AHEAD rain forecast (tomorrow and the day after): amount AND chance from five weather models,
+// replacing Open-Meteo `best_match` for those fields only (BUG-RAINFCSTONEMODEL-001).
 //
-// WHY. On 2026-09-25 Today said "0.05″ rain expected tomorrow" while every forecast Dave read said 0.5–1.5″.
-// fetchPrecip asks Open-Meteo with no `models=`, and at this point best_match's day-ahead is HRRR: hour-for-hour
-// identical to ncep_hrrr_conus on 82 of 82 days. Scored against the yard gauge, 2026-07-05..09-24, HRRR is the
-// worst day-ahead source of 23 tried (MAE 0.166″) because of a heavy tail — 0.89–2.31″ forecast five times when
-// 0.00–0.65″ fell — and on 9/26 it put Saturday at 0.14″ while ECMWF said 0.85″ and GEM 0.95″. The mean of the
-// five models below scored 0.087″ (7-day block-bootstrap CI of the difference [-0.152, -0.013]). Evidence and
-// scripts: Projects/Gardening/project-state/_rainfcst-20260925/ (seat-verification.md, seat-irrigation.md,
-// seat-regression.md). One summer, 16 wet days: re-score after a full year.
+// Why: fetchPrecip asks Open-Meteo with no `models=`, and best_match's day-ahead is effectively HRRR,
+// which scored worst of 23 sources against the yard gauge because of a heavy tail (large forecasts when
+// little fell). The mean of the five models below scored markedly better. Evidence and scripts:
+// project-state/_rainfcst-20260925/. One summer of data: re-score after a full year.
 //
 // THE CHANCE IS THE SHARE OF MODELS FORECASTING MEASURABLE RAIN (0/20/40/60/80/100%), from the same five
-// amounts. best_match's precipitation_probability_max is a max of hourly PoPs and was under-confident here (when
-// it said 10–30%, rain came on half the days); the share scored Brier 0.104 vs 0.182. Amount and chance switch
-// TOGETHER or not at all: HRRR's amount with a calibrated chance would have made 4 false "0.5″ coming" deferrals
-// (the low PoP was what hid its spikes), and this amount with the old PoP loses a correct skip. With the pair,
-// the engine's 0.50″/60% suppression gate fires on the same number of days with 0 false skips.
+// amounts. best_match's precipitation_probability_max is a max of hourly PoPs and was under-confident
+// here. Amount and chance switch TOGETHER or not at all: a calibrated chance with HRRR's amount would
+// defer on false "0.5 in coming" spikes, and this amount with the old PoP loses a correct skip.
 //
-// SCOPE — day-ahead fields only. Today's figures (today_precip_in, today_pop, the hourly remainder) stay on
-// best_match, where HRRR's hourly nowcast is what the same-day gates want; frost lows, ET0 and past days stay
-// on fetchPrecip's call untouched. That is also why this is a SEPARATE request: `models=` on fetchPrecip's URL
-// suffixes every daily and hourly key (all of them read as missing) or, with one model, moves the frost lows.
+// SCOPE: day-ahead fields only. Today's figures (today_precip_in, today_pop, the hourly remainder) stay on
+// best_match, where HRRR's nowcast suits the same-day gates; frost lows, ET0 and past days stay on
+// fetchPrecip's call. That is why this is a SEPARATE request: `models=` on fetchPrecip's URL suffixes
+// every daily and hourly key (all read as missing) or, with one model, moves the frost lows.
 //
-// ALL OR NOTHING. A partial answer — a model missing, a day missing — returns null and every day-ahead field
-// keeps its best_match value. Mixing sources field by field would pair one system's amount with another's
-// chance, which is exactly the combination measured to be worse than either.
+// ALL OR NOTHING. A partial answer (a model or a day missing) returns null and every day-ahead field keeps
+// its best_match value. Mixing sources field by field would pair one system's amount with another's
+// chance, which measured worse than either.
 //
-// MIRRORED client-side by src/lib/rainForecast.js (the live overlay on Today must print what this computes);
-// src/__tests__/rainForecastParity.test.js runs both on the same payloads.
+// MIRRORED client-side by src/lib/rainForecast.js (the live overlay on Today must print what this
+// computes); src/__tests__/rainForecastParity.test.js runs both on the same payloads.
 
 const RAIN_FCST_MODELS = Object.freeze(['gfs_global', 'ecmwf_ifs025', 'gem_seamless', 'icon_seamless', 'ncep_nbm_conus']);
 // A member counts toward the chance at 0.01″, the conventional "measurable precipitation" of a PoP.

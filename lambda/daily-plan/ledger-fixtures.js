@@ -1,9 +1,7 @@
 'use strict';
-// V4-WATERMATH-001 F2 — deterministic engine-level fixture set for the ledger acceptance tests AND
-// the committed shadow goldens (ledger-goldens.json). These are the flip gate's expected-delta
-// baseline at fixture level: each scenario is a frozen generatePlan input captured flag-OFF and
-// flag-ON, so "what changes when the flag flips" is a reviewable, committed diff — the same shape
-// the seededgate flip shipped with ("exactly 6 plantings"). Consumed by ledger-engine.test.js.
+// Frozen generatePlan inputs for the ledger acceptance tests and the committed shadow goldens
+// (ledger-goldens.json). Each scenario is captured flag-OFF and flag-ON, so "what changes when the flag
+// flips" is a reviewable, committed diff. Consumed by ledger-engine.test.js.
 const { withCoverFlags } = require('./_coverFlags');
 const ledger = require('./ledger');
 
@@ -13,9 +11,9 @@ const NOW = ledger.etMidnightMs(TODAY) + 2 * H;                 // the 02:00 nig
 const at = (d, h, m = 0) => ledger.etMidnightMs(d) + h * H + m * 60000;
 const ago = (n) => ledger.addDays(TODAY, -n);
 
-// Seeded cadence: explicit both-key intervals so container_type never silently drops a planting
-// out of every bucket (fixtures.mjs landmine). cadence_scopes rides per planting where a scenario
-// wants the researched-provenance (via 'db') path under the LIVE flag combo.
+// Seeded cadence: explicit intervals for both container keys so container_type never silently drops a
+// planting out of every bucket. cadence_scopes rides per planting where a scenario wants the
+// researched-provenance (via 'db') path.
 const SEED = (o) => ({ _seeded: true, crop: 'tomato', water_interval_days_container: 3,
   water_interval_days_inground: 5, water_method: 'soak', soil_moisture_target: 'moist',
   drought_tolerance: 'medium', ...o });
@@ -24,9 +22,8 @@ const P = (o) => withCoverFlags({ id: 'p', name: 'X', variety: 'v', genus: 'g', 
   project: 'P', project_id: 'pp', container_type: 'trough', container_size: '5 gal', covered: false,
   last_water: ago(2), substrate_start: ago(81), transplant_at: ago(400), db_cadence: SEED({}), ...o });
 
-// Flat weather: each settled day's ET0 = the site reference -> ratio exactly 1.0. ONE value for
-// every date (BUG-ETNOAMPLITUDE-001 retired the per-month table); imported rather than mirrored so a
-// retune of the reference cannot leave these fixtures silently off-ratio.
+// Flat weather: each settled day's ET0 = the site reference -> ratio exactly 1.0. Imported rather than
+// mirrored so a retune of the reference cannot leave these fixtures silently off-ratio.
 const REF = require('./ledgerParams').ET0_REF_PEAK;
 function weatherDaily({ et0 = null, tmax = 75, precipOn = {}, days = 30 } = {}) {
   const rows = [];
@@ -41,9 +38,9 @@ const HY = { recent_precip_in: 0, today_precip_in: 0, today_pop: 0, upcoming_pre
   tomorrow_precip_in: 0, tomorrow_pop: 0, today_et0_in: REF, today_tmax_f: 82 };
 const w = (d, h, depth, id) => ({ id, t: at(d, h), type: 'watering', depth });
 
-// Every scenario: { name, note, input } where input is a complete generatePlan argument bag MINUS
-// cadence/fertModel (the test supplies the bundled files) and MINUS the flag itself (captured both
-// ways). All scenarios run under the LIVE prod combo (rainCredit + todayAware ON, maxdays OFF).
+// Every scenario: { name, note, input }. input is a complete generatePlan argument bag minus
+// cadence/fertModel (the test supplies the bundled files) and minus the flag itself (captured both
+// ways). All run under the live prod combo (rainCredit + todayAware ON, maxdays OFF).
 const scenarios = [
   {
     name: 'evening-soak-wi1',

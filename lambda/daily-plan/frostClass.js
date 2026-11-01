@@ -1,28 +1,25 @@
 'use strict';
-// V4-FROST-001 slice F2 — pure crop_type_slug -> frost sensitivity BAND + per-crop-type trip points.
-// HTTP-free, deterministic, unit-testable (house pattern: lambda/daily-plan/station.js). The planting QUERY
-// lives in handler.js. Design ref: frost-alert-design-V100-20260803.md §3-4, as amended by decision D6.
+// Pure crop_type_slug -> frost sensitivity BAND + per-crop-type trip points (V4-FROST-001 slice F2).
+// HTTP-free, deterministic, unit-testable (house pattern: station.js). The planting QUERY lives in handler.js.
+// Design ref: frost-alert-design-V100-20260803.md §3-4, as amended by decision D6.
 //
-// D6 (Dave, 2026-08-04) CHANGES §3-4: thresholds are PER CROP TYPE, not one global tender/hardy split —
-// "stay true to the care engine, since crops have genuinely different cold tolerances." Delivery is still
-// ONE COALESCED alert per frost event (frostEval.js), never one message per crop.
+// D6 changes §3-4: thresholds are PER CROP TYPE, not one global tender/hardy split, because crops have
+// genuinely different cold tolerances. Delivery is still ONE COALESCED alert per frost event (frostEval.js),
+// never one message per crop.
 //
-// WHY NOT coldFor (design G2): engine.js:coldFor fires only for (a) a pepper/tomato regex on crop-or-name
-// and (b) cadence profiles carrying cold.tender. On a 30°F night it emits NO cold task for basil, melon,
-// watermelon, tomatillo, bean, nasturtium or cucurbits. Frost tiering is therefore computed HERE from a
-// sensitivity band, never reused from coldFor.
+// WHY NOT coldFor (design G2): engine.js:coldFor fires only for (a) a pepper/tomato regex on crop-or-name and
+// (b) cadence profiles carrying cold.tender, so on a 30°F night it emits NO cold task for basil, melon,
+// watermelon, tomatillo, bean, nasturtium or cucurbits. Frost tiering is computed HERE from a sensitivity
+// band, never reused from coldFor.
 //
-// WHY NOT cadence protect_below_F verbatim: cadence-data-v2.json's protect_below_F is a CONTAINER-COMFORT
-// number (pepper = 50°F: bring the pot in to keep it setting fruit), not a frost-KILL number. Adopting it
-// would fire the alert on most September nights and bury the signal. The bands below are frost-damage/kill
-// thresholds; the care engine keeps its own comfort numbers. Same split the design draws in G2.
+// WHY NOT cadence protect_below_F verbatim: it is a CONTAINER-COMFORT number (pepper = 50°F: bring the pot in
+// to keep it setting fruit), not a frost-KILL number. Adopting it would fire the alert on most September
+// nights and bury the signal. The bands below are frost-damage/kill thresholds; the care engine keeps its own
+// comfort numbers.
 //
-// PROVENANCE: the slug set was derived from LIVE prod Neon (ep-lucky-bird-amju6iqt-pooler) on 2026-08-04 —
-// 250 live plantings across 80 distinct crop_type_slug values (3 NULL), plus the FULL
-// plant_varieties.crop_type_slug domain (120 values) so a newly-planted variety of an existing crop is
-// already covered. Live-planting query = the daily-plan handler.js WHERE clause verbatim.
-// Re-checked 2026-09-18 against the wider `crop_types` table (163 live, OPS-SLUGUNIVERSESTALE-001): every
-// live crop type is banded, in UNCERTAIN_SLUGS, or in NON_PLANT_FOOD_SLUGS, and
+// PROVENANCE: the slug set was derived from the live database (every live crop_type_slug plus the full
+// plant_varieties.crop_type_slug domain), so a newly-planted variety of an existing crop is already covered.
+// Every live crop type is banded, in UNCERTAIN_SLUGS, or in NON_PLANT_FOOD_SLUGS, and
 // src/__tests__/slugUniverseConsistency.test.js holds that in both directions.
 
 const numEnv = (name, fallback) => {
@@ -32,40 +29,35 @@ const numEnv = (name, fallback) => {
 
 // ── Bands ─────────────────────────────────────────────────────────────────────────────────────────
 // Each band carries the same three trip points frostEval uses globally, so a band IS a threshold set.
-// `tender` is the D2-APPROVED baseline (advisory 40 / imminent 38 / hard-freeze 33) and is also the
-// fallback band for an unknown slug (§3-4 unknown-counted-as-tender). The other bands deviate ONLY where
-// the crop's cold tolerance genuinely differs; every deviation is justified in the slug lists below.
+// `tender` is the approved baseline (advisory 40 / imminent 38 / hard-freeze 33) and is also the fallback
+// band for an unknown slug (§3-4 unknown-counted-as-tender). The other bands deviate ONLY where the crop's
+// cold tolerance genuinely differs; every deviation is justified in the slug lists below.
 //
-// The three env names below are the prep's original global overrides. Under D6 they retarget the TENDER
-// band specifically — that keeps D2's "injectable exactly as prepared" contract intact while the other
-// bands move relative to it via FROST_BAND_THRESHOLDS_JSON or the uniform offset.
+// The three env names below are the original global overrides. Under D6 they retarget the TENDER band
+// specifically, which keeps D2's "injectable exactly as prepared" contract intact while the other bands move
+// relative to it via FROST_BAND_THRESHOLDS_JSON or the uniform offset.
 const BAND_THRESHOLDS = Object.freeze({
-  // ═══ DAVE DECISION 2026-08-07 — the two most sensitive bands are HELD to the tender baseline ═══
+  // ═══ DECISION: the two most sensitive bands are HELD to the tender baseline ═══
   //
-  // Horticulturally correct values, preserved here because they are the thing to restore, not
-  // rediscover: tropical 52/50/40 (chilling injury in the low 50s, long before frost) and
-  // chill_sensitive 47/45/36 (basil blackens at ~40F with no frost at all; cucurbits rot after a
-  // 45F night). Both are true.
+  // Horticulturally correct values, preserved because they are what to restore, not rediscover: tropical
+  // 52/50/40 (chilling injury in the low 50s, long before frost) and chill_sensitive 47/45/36 (basil blackens
+  // at ~40F with no frost at all; cucurbits rot after a 45F night). Both are true.
   //
-  // They are overridden anyway, on ALERT-FATIGUE grounds. Measured against four years of
-  // Open-Meteo actuals at the site ([site lat]N, [site lon]W), Sep 1 - Nov 15:
-  //     <= 50F (tropical imminent)        49 / 44 / 53 / 51 nights of 76   -- first trip Sep 1-4 EVERY year
-  //     <= 45F (chill_sensitive imminent) 33 / 33 / 31 / 38 nights
-  //     <= 38F (tender imminent)          14 / 15 / 16 / 19 nights
-  // while the first night that actually threatens the tender crops is Oct 9-24. Alerting two
-  // nights in three is not a signal; it is how the only operator learns to ignore the channel, and
-  // a muted channel then misses the October night that matters. The failure mode of over-alerting
-  // here is the SAME failure mode as not alerting at all, arrived at more slowly.
+  // They are overridden anyway, on ALERT-FATIGUE grounds. Against four years of site actuals (Sep 1 - Nov 15),
+  // the tropical imminent line (<= 50F) tripped on 44-53 of 76 nights, first trip Sep 1-4 EVERY year, and the
+  // chill_sensitive line (<= 45F) on 31-38, versus 14-19 for the tender line (<= 38F); the first night that
+  // threatens the tender crops is Oct 9-24. Alerting two nights in three is not a signal; it is how the only
+  // operator learns to ignore the channel, and a muted channel then misses the October night that matters.
+  // Over-alerting here has the SAME failure mode as not alerting at all, arrived at more slowly.
   //
-  // Moving tropical ALONE was considered and rejected: it inverts BAND_ORDER (basil at 45F would
-  // alert BEFORE a pothos at 38F, so the more sensitive plant warns later) and it only removes
-  // about a third of the fatigue, since chill_sensitive keeps firing 31-38 nights. Collapsing both
-  // into the tender line keeps the band table monotonic and gets the ~19-night channel.
+  // Moving tropical ALONE was rejected: it inverts BAND_ORDER (basil at 45F would alert BEFORE a pothos at
+  // 38F) and removes only about a third of the fatigue. Collapsing both into the tender line keeps the band
+  // table monotonic and gets the ~19-night channel.
   //
-  // THE ACCEPTED COST, stated plainly: a 40-45F night can damage basil, cucurbits and the potted
-  // tropicals with no alert. The mitigation is a one-time "bring the tropicals in / cut the basil"
-  // task by mid-September, not a nightly page. Revisit if the tropical population grows or if a
-  // per-plant bring-inside surface ever exists.
+  // THE ACCEPTED COST: a 40-45F night can damage basil, cucurbits and the potted tropicals with no alert. The
+  // mitigation is a one-time "bring the tropicals in / cut the basil" task by mid-September (see
+  // COLD_BY_CROP_TYPE), not a nightly page. Revisit if the tropical population grows or a per-plant
+  // bring-inside surface ever exists.
   tropical: Object.freeze({
     ADVISORY_LOW_F: numEnv('FROST_ADVISORY_LOW_F', 40),
     IMMINENT_LOW_F: numEnv('FROST_IMMINENT_LOW_F', 38),
@@ -82,8 +74,8 @@ const BAND_THRESHOLDS = Object.freeze({
     IMMINENT_LOW_F: numEnv('FROST_IMMINENT_LOW_F', 38),
     HARD_FREEZE_LOW_F: numEnv('FROST_HARD_FREEZE_LOW_F', 33),
   }),
-  // Shrug off a light frost, killed by a hard one. Alerting these at 38°F is pure noise — they are the
-  // crops still standing the morning after the first frost.
+  // Shrug off a light frost, killed by a hard one. Alerting these at 38°F is pure noise: they are the crops
+  // still standing the morning after the first frost.
   light_frost_tolerant: Object.freeze({ ADVISORY_LOW_F: 36, IMMINENT_LOW_F: 34, HARD_FREEZE_LOW_F: 30 }),
   // Unharmed or improved by frost. NEVER alerted (§3-4). null is the "no trip point exists" signal.
   hardy: null,
@@ -103,20 +95,16 @@ const SLUGS_BY_BAND = Object.freeze({
     'jade', 'echeveria', 'haworthia', 'lithops', 'christmas_cactus', 'crown_of_thorns',
     // true tropicals grown in pots here
     'avocado', 'pineapple', 'lemongrass', 'lemon_verbena',
-    // V4-TROPICALCOLD-001 (2026-08-17). All three entered the live crop_type domain AFTER the
-    // 2026-08-04 provenance pull, so they were in NO static surface and fell through to UNKNOWN_BAND.
-    // Banding them moves NO alert threshold — tropical is held to the tender baseline, which is
-    // byte-identical to UNKNOWN_BAND — but it is what makes them VISIBLE to the coverage guards, and
-    // it is the declaration the cold-profile requirement is derived from (COLD_BY_CROP_TYPE below).
-    //   ginger  — Zingiber officinale; chilling injury in the low 50s, cumulatively and irreversibly,
-    //             long before any frost. The reason this item exists.
-    //   aloe    — tender succulent; same overwinter-indoors handling as jade/echeveria.
-    //   lantana — tender tropical shrub, overwintered indoors here rather than replaced.
+    // V4-TROPICALCOLD-001: these entered the crop_type domain after the original provenance pull and fell
+    // through to UNKNOWN_BAND. Banding them moves NO alert threshold (tropical is held to the tender baseline,
+    // identical to UNKNOWN_BAND) but makes them VISIBLE to the coverage guards and is the declaration the
+    // cold-profile requirement is derived from (COLD_BY_CROP_TYPE below).
+    //   ginger  - chilling injury in the low 50s, cumulatively and irreversibly, long before any frost.
+    //   aloe    - tender succulent; same overwinter-indoors handling as jade/echeveria.
+    //   lantana - tender tropical shrub, overwintered indoors rather than replaced.
     'ginger', 'aloe', 'lantana',
-    // hoya — OPS-SLUGUNIVERSESTALE-001 (2026-09-18). Crop type minted 2026-08-30 and never banded. The
-    // one live planting is Hoya obovata, a tropical epiphyte in a hanging basket, in the heated House
-    // today (so no alert or card moves for it now). MBG Plant Finder gives the common wax plant, Hoya
-    // carnosa: winter hardy to zone 10-12, tolerating night temperatures down to 50F in winter.
+    // hoya - a tropical epiphyte (wax plant, Hoya carnosa): winter hardy to zone 10-12, tolerating night
+    // temperatures down to 50F (MBG Plant Finder).
     'hoya',
   ],
   chill_sensitive: [
@@ -135,40 +123,35 @@ const SLUGS_BY_BAND = Object.freeze({
     'pepper', 'tomato', 'tomatillo', 'eggplant',
     // killed outright by the first frost
     'bean', 'nasturtium', 'four_o_clock', 'morning_glory', 'tweedia', 'helichrysum',
-    // calibrachoa — V4-TROPICALCOLD-001: tender bedding annual in a hanging basket, frost-killed and
-    // replaced yearly rather than overwintered, so it is `tender`, not `tropical`. It gets NO cold
-    // profile below for that reason: there is nothing to save by carrying it indoors.
+    // calibrachoa - a tender bedding annual, frost-killed and replaced yearly rather than overwintered, so
+    // `tender`, not `tropical`. It gets NO cold profile below: nothing to save by carrying it indoors.
     'calibrachoa',
-    // potato: the TUBERS survive, the FOLIAGE does not — a frost ends the planting's growth.
-    // Kept at the tender baseline rather than light_frost_tolerant: foliage blackens around 31°F, so 38
-    // is an early warning rather than a wrong one, and over-alerting a potato is cheap.
+    // potato: the TUBERS survive, the FOLIAGE does not, so a frost ends the planting's growth. Kept at the
+    // tender baseline rather than light_frost_tolerant: foliage blackens around 31°F, so 38 is an early
+    // warning rather than a wrong one, and over-alerting a potato is cheap.
     'potato',
-    // pineapple_sage — BUG-PINEAPPLESAGEBAND-001. Salvia elegans, zone 8-10, top-killed by the first
-    // frost. It was typed `sage`, which is banded hardy for GARDEN sage (S. officinalis), so no frost
-    // alert could ever name it. Genus cannot tell them apart (both Salvia, as is rosemary) and a name
-    // is not an identity, so it gets a crop type of its own: migrations/v5-frostband-001 mints it and
-    // re-points the one cultivar by id. `tender`, not `tropical`: frost kills it, the 50s do not chill-
-    // injure it, and the tender band carries no crop-type cold profile (COLD_PROFILE_REQUIRED_BANDS).
-    // Its bring-it-inside threshold lives on its cultivar care profile, which the same migration
-    // corrects: that profile was a clone of garden sage's `cold` block and read tender:false.
+    // pineapple_sage (BUG-PINEAPPLESAGEBAND-001) - Salvia elegans, zone 8-10, top-killed by the first frost.
+    // It was typed `sage`, banded hardy for GARDEN sage, so no frost alert could ever name it. Genus cannot
+    // tell them apart and a name is not an identity, so it has a crop type of its own (migrations/
+    // v5-frostband-001). `tender`, not `tropical`: frost kills it, the 50s do not chill-injure it, and the
+    // tender band carries no crop-type cold profile (COLD_PROFILE_REQUIRED_BANDS). Its bring-it-inside
+    // threshold lives on its cultivar care profile.
     'pineapple_sage',
-    // OPS-SLUGUNIVERSESTALE-001 (2026-09-18). Three crop types minted 2026-09-03, none planted yet, so
-    // no alert moves today; banded now because the day one is planted is the day it would count unseen.
-    //   corn          — 'Golden Bantam' sweet corn. UMN Extension: "A corn killing freeze occurs when
-    //                   temperatures dip to 32 degrees Fahrenheit for four hours or 28 degrees for minutes."
-    //   cosmos        — 'Sensation' (C. bipinnatus): a "warm weather annual" that blooms "to frost" (MBG);
-    //                   NC State sows it after the danger of frost is past.
-    //   summer_savory — Satureja hortensis: sown once any threat of frost is past, "the same for basil
-    //                   seeds" (Herb Society of America); Illinois Extension says the same.
+    // Crop types minted but not yet planted; banded now because the day one is planted is the day it would
+    // count unseen.
+    //   corn          - sweet corn. UMN Extension: "A corn killing freeze occurs when temperatures dip to 32
+    //                   degrees Fahrenheit for four hours or 28 degrees for minutes."
+    //   cosmos        - a "warm weather annual" that blooms "to frost" (MBG).
+    //   summer_savory - sown once any threat of frost is past, "the same for basil seeds" (Herb Society of
+    //                   America).
     'corn', 'cosmos', 'summer_savory',
   ],
   light_frost_tolerant: [
     // still standing the morning after a light frost; a hard freeze finishes them
     'marigold', 'petunia', 'sunflower', 'borage',
-    // chamomile — OPS-SLUGUNIVERSESTALE-001 (2026-09-18); minted 2026-09-03, not planted yet. 'German
-    // Chamomile' (Matricaria chamomilla) is sown before the last spring frost (MBG, UW-Madison Extension),
-    // so it takes a light frost; no source found says it takes a hard one, and its flowers, the harvest,
-    // run "until frost" (UW-Madison). Borage's band, the other self-seeding annual herb, not hardy.
+    // chamomile - German chamomile is sown before the last spring frost (MBG, UW-Madison Extension), so it
+    // takes a light frost; no source says it takes a hard one, and its flowers run "until frost". Borage's
+    // band, the other self-seeding annual herb, not hardy.
     'chamomile',
   ],
   hardy: [
@@ -177,11 +160,9 @@ const SLUGS_BY_BAND = Object.freeze({
     // brassicas + cool-season greens
     'brussels_sprouts', 'collard', 'bok_choy', 'kohlrabi', 'mustard', 'arugula', 'spinach', 'lettuce',
     'endive', 'radicchio', 'celery', 'chervil', 'cilantro', 'chard',
-    // chard added 2026-08-05 (V4-SLUGCONSIST-001, found by the new cross-surface guard, not by a
-    // user report). It was mentioned in CROP_TYPE_SLUGS and in the ripeness cues but mapped to no
-    // band, so it silently counted as tender (40/38/33). Banded hardy to match 'beet': chard IS
-    // Beta vulgaris — same species, same cold tolerance. Zero live chard plantings at the time of
-    // the change, so no alert behaviour moved for anyone.
+    // chard: mentioned in CROP_TYPE_SLUGS but once mapped to no band, so it silently counted as tender
+    // (V4-SLUGCONSIST-001). Banded hardy to match 'beet': chard IS Beta vulgaris, same species and cold
+    // tolerance.
     // roots + alliums
     'parsnip', 'radish', 'rat_tail_radish', 'turnip', 'onion', 'bunching_onion', 'garlic', 'shallot', 'pea',
     // hardy perennial herbs
@@ -193,125 +174,104 @@ const SLUGS_BY_BAND = Object.freeze({
     // woody fruit + trees (first frost is not the risk; spring bloom frost is a separate concern)
     'blueberry', 'blackberry', 'black_raspberry', 'red_raspberry', 'wineberry', 'strawberry', 'peach',
     'japanese_maple',
-    // dogwood — V4-TROPICALCOLD-001: Kousa (Cornus kousa), a fully hardy zone-5 landscape tree in the
-    // ground. First frost is not a risk to it; banded to stop it counting as tender.
+    // dogwood - Kousa (Cornus kousa), a fully hardy zone-5 landscape tree in the ground; banded to stop it
+    // counting as tender.
     'dogwood',
-    // V4-TROPICALCOLD-001 (2026-08-17) — the rest of the crop_types vocabulary. Re-pinning the guard's
-    // universe from `crop_types` (142 slugs) instead of `plant_varieties.crop_type_slug` (125) exposed
-    // 16 slugs that had never been banded and were therefore counting as tender. All 16 are hardy and
-    // all have ZERO live plantings, so nothing any current planting does changes — this is forward
-    // coverage bought before the planting exists, which is the only time it is free.
+    // The rest of the crop_types vocabulary (V4-TROPICALCOLD-001): re-pinning the guard's universe from
+    // `crop_types` instead of `plant_varieties.crop_type_slug` exposed 16 never-banded slugs counting as
+    // tender. All are hardy with no live plantings, so no current planting changes; it is forward coverage
+    // bought before the planting exists, which is the only time it is free.
     // Hardy tree fruit + fruiting woody: first frost is not the risk (spring bloom frost is, and is a
-    // separate concern), same rationale as the existing peach/blueberry entries.
+    // separate concern), same rationale as the peach/blueberry entries.
     'apple', 'apricot', 'cherry', 'sour_cherry', 'nectarine', 'pear', 'plum', 'grape', 'elderberry',
     'cranberry', 'raspberry',
-    // crabapple — DATA-CRABAPPLEPROFILE-001 (2026-10-09, Dave: mark it hardy, next to apple). Minted in
-    // the app that day for the mature Malus in the ground at the site, and unbanded until now, so the
-    // frost email counted it as "unclassified" at the tender trips. Same genus and the same answer as
-    // `apple`: first frost is not a risk to an established tree. Its one planting is LIVE, unlike the
-    // sixteen above, so this one does move an alert count.
+    // crabapple (DATA-CRABAPPLEPROFILE-001) - marked hardy next to apple: same genus, same answer (first frost
+    // is not a risk to an established tree). It was unbanded, so the frost email counted it "unclassified".
     'crabapple',
     // Hardy perennial crown.
     'rhubarb',
-    // The overwintering greens — the crops that are SUPPOSED to be out in a frost. Alerting these at
-    // 38F would be the clearest possible false positive: surviving hard frost is the entire reason
-    // they are sown in August here.
+    // The overwintering greens, the crops that are SUPPOSED to be out in a frost. Alerting these at 38F would
+    // be the clearest false positive.
     'claytonia', 'mache', 'mizuna', 'tatsoi',
-    // BUG-STABLEUNKNOWNSLUGS-001 (2026-09-18). The two false alarms the Stable exposed once the alert
-    // stopped skipping it (BUG-FROSTALERTSTABLE-001). Both are banded by their own controlled slug:
-    //   hylotelephium — showy stonecrop, the plant sold as "Sedum spectabile" (Autumn Fire), zone 3.
-    //                   Minted by migrations/v5-frostband-001, which re-points that one cultivar off
-    //                   `sedum` by id. `sedum` itself stays UNCERTAIN: what is left under it is tender.
-    //   horseweed     — Erigeron canadensis, a native annual weed whose rosettes overwinter to zone 3.
-    //                   It already had a crop type of its own (minted 2026-09-07) and was never banded.
+    // BUG-STABLEUNKNOWNSLUGS-001: two false alarms the Stable exposed once the alert stopped skipping it
+    // (BUG-FROSTALERTSTABLE-001), each banded by its own controlled slug:
+    //   hylotelephium - showy stonecrop, sold as "Sedum spectabile", zone 3. Minted by migrations/
+    //                   v5-frostband-001, which re-points that cultivar off `sedum` by id. `sedum` itself
+    //                   stays UNCERTAIN: what is left under it is tender.
+    //   horseweed     - Erigeron canadensis, a native annual weed whose rosettes overwinter to zone 3.
     'hylotelephium', 'horseweed',
-    // OPS-SLUGUNIVERSESTALE-001 (2026-09-18) — crop types minted after the guard's 2026-08-17 pin, banded
-    // on the cultivars prod actually holds. The first three have one live planting each, and each was in
-    // the frost email as "unclassified" (counted tender) until this change:
-    //   goldenrod     — 'Canada' = Solidago canadensis, herbaceous perennial, zone 3-9 (MBG).
-    //   lamb_s_ear    — Stachys byzantina, herbaceous perennial, zone 4-8 (MBG). Typed `sage` (hardy) until
-    //                   its own crop type was minted on 2026-09-11, so this restores its old answer.
-    //   yarrow        — 'Summer Pastels' (Achillea millefolium) and 'Terracotta'; A. millefolium is a
-    //                   herbaceous perennial, zone 3-9 (MBG).
+    // OPS-SLUGUNIVERSESTALE-001: crop types minted after the guard's pin, banded on the cultivars prod holds.
+    // The first three were in the frost email as "unclassified" (counted tender) until banded.
+    //   goldenrod     - Solidago canadensis, herbaceous perennial, zone 3-9 (MBG).
+    //   lamb_s_ear    - Stachys byzantina, zone 4-8 (MBG). Typed `sage` (hardy) until its own crop type was
+    //                   minted, so this restores its old answer.
+    //   yarrow        - Achillea millefolium, zone 3-9 (MBG).
     // Not planted yet:
-    //   blanketflower — typed perennial, i.e. perennial Gaillardia (G. aristata zone 3-8, MBG). The annual
-    //                   G. pulchella would get its own slug, not this one.
-    //   dianthus      — 'Mixed Colors', D. caryophyllus: the species `carnation` already is, zone 5-9 or
-    //                   6-9 by cultivar (MBG); Penn State Extension files Dianthus with the hardy annuals.
-    //   snapdragon    — Antirrhinum majus: Penn State files it with the hardy annuals, and SDSU Extension:
-    //                   "Snapdragons can survive temperatures as low as 25 degrees Fahrenheit", below the
-    //                   30F trip that light_frost_tolerant would fire.
+    //   blanketflower - perennial Gaillardia (G. aristata zone 3-8, MBG). The annual G. pulchella would get
+    //                   its own slug, not this one.
+    //   dianthus      - D. caryophyllus, the species `carnation` already is, zone 5-9 or 6-9 (MBG); Penn
+    //                   State Extension files Dianthus with the hardy annuals.
+    //   snapdragon    - Antirrhinum majus: SDSU Extension, "can survive temperatures as low as 25 degrees
+    //                   Fahrenheit", below the 30F trip that light_frost_tolerant would fire.
     'goldenrod', 'lamb_s_ear', 'yarrow', 'blanketflower', 'dianthus', 'snapdragon',
   ],
 });
 
 // DELIBERATELY UNMAPPED. These fall through to `unknown` (counted in the tender band, reported separately)
 // rather than being guessed. Documented so a future reader knows the omission is a decision, not a gap.
-//   sedum   — genus spans hardy stonecrop AND tender species; the two LIVE rows are Sedum adolphii (tender),
-//             so a slug-level "hardy" guess would have been WRONG in prod today. The hardy one that turned
-//             up later (Autumn Fire, a Hylotelephium) was moved to its own `hylotelephium` slug instead
-//             (BUG-STABLEUNKNOWNSLUGS-001); banding `sedum` hardy would have silenced both S. adolphii.
-//   cactus / succulent — generic buckets; live rows are tender (Gymnocalycium, Graptosedum, Pachyphytum,
-//             Echeveria agavoides) but hardy Opuntia/Sempervivum would share the same slug. A hardy one
-//             gets its own slug, as `sempervivum` and `hylotelephium` did — never a hardy bucket.
-//   hibiscus — tropical (tender) and H. moscheutos (hardy) share the slug; live row is the tender
-//             'Mahogany Splendor' (H. acetosella).
-//   bay / rosemary — zone-8-ish woody herbs: they SURVIVE a first frost (so not "tender" in this feature's
+//   sedum   - genus spans hardy stonecrop AND tender species; the live rows are Sedum adolphii (tender), so a
+//             slug-level "hardy" guess would be WRONG. The hardy one that turned up (Autumn Fire, a
+//             Hylotelephium) moved to its own `hylotelephium` slug (BUG-STABLEUNKNOWNSLUGS-001).
+//   cactus / succulent - generic buckets; live rows are tender but hardy Opuntia/Sempervivum would share the
+//             slug. A hardy one gets its own slug, as `sempervivum` and `hylotelephium` did, never a hardy bucket.
+//   hibiscus - tropical (tender) and H. moscheutos (hardy) share the slug; the live row is tender.
+//   bay / rosemary - zone-8-ish woody herbs: they SURVIVE a first frost (so not "tender" in this feature's
 //             sense) but are overwintered indoors here (so not "never alert" either). Marginal by nature.
-//   artichoke — overwinter-marginal; not killed by first frost, not reliably hardy.
-//   flower_mix — an unopened seed blend of unknown composition.
-//   penstemon — OPS-SLUGUNIVERSESTALE-001 (2026-09-18). The genus spans hardy species (most zone 3-8) and
-//             the large-flowered bedding hybrids (P. x gloxinioides / hartwegii: "tender perennial", MSU
-//             Extension; RHS H4). The one live planting is that hybrid, identified by its flower in
-//             lane-penstemon-20260907, in a 3-inch pot: it survives a first frost and is not hardy here,
-//             the bay/rosemary case. Nothing is lost by leaving it unmapped: its cultivar care profile
-//             says cold.tender, so the handler's cadence promotion names it as "penstemons" at the tender
-//             trips, and that profile's own 35F card still fires. A hardy species gets its own slug.
+//   artichoke - overwinter-marginal; not killed by first frost, not reliably hardy.
+//   flower_mix - an unopened seed blend of unknown composition.
+//   penstemon - the genus spans hardy species (most zone 3-8) and the large-flowered bedding hybrids
+//             ("tender perennial", MSU Extension). The one live planting is that hybrid: it survives a first
+//             frost and is not hardy here, the bay/rosemary case. Nothing is lost by leaving it unmapped: its
+//             cultivar care profile says cold.tender, so the handler's cadence promotion names it at the
+//             tender trips, and that profile's own 35F card still fires. A hardy species gets its own slug.
 const UNCERTAIN_SLUGS = ['sedum', 'cactus', 'succulent', 'hibiscus', 'bay', 'rosemary', 'artichoke', 'flower_mix',
   'penstemon'];
 
-// NOT PLANTS — no frost band exists to decide (OPS-SLUGUNIVERSESTALE-001, 2026-09-18). These crop types
-// are category 'non_plant_food' (migrations/v4-putupfood-001): Put-Up's pantry classes, so a jar or a
-// loaf can be grouped by what it is. None can be a planting's type: the planting query reads the slug
-// through plant_varieties, and that migration's continuous gate post_no_variety_typed_to_a_food_class
-// keeps every variety off a food class. Named one by one rather than skipped by category, the
-// v4-harvhabitgap-001 precedent: a category exemption lets the next food class in with no record.
-// Banding one `hardy` to satisfy a guard would be a false statement about bread; if one ever did reach
-// summarize, it falls through to UNKNOWN_BAND and reads "unclassified", the right loud answer for data
-// that should not exist.
+// NOT PLANTS: no frost band exists to decide (OPS-SLUGUNIVERSESTALE-001). These crop types are category
+// 'non_plant_food' (migrations/v4-putupfood-001), Put-Up's pantry classes. None can be a planting's type: the
+// planting query reads the slug through plant_varieties, and that migration's continuous gate
+// post_no_variety_typed_to_a_food_class keeps every variety off a food class. Named one by one rather than
+// skipped by category (the v4-harvhabitgap-001 precedent): a category exemption lets the next food class in
+// with no record. Banding one `hardy` to satisfy a guard would be a false statement about bread; if one ever
+// reached summarize it falls through to UNKNOWN_BAND and reads "unclassified", the right loud answer.
 const NON_PLANT_FOOD_SLUGS = Object.freeze(['bread', 'butter', 'cheese', 'fish', 'meat', 'milk', 'yogurt']);
 
 const BAND_BY_SLUG = Object.freeze(Object.fromEntries(
   BAND_ORDER.flatMap((band) => SLUGS_BY_BAND[band].map((s) => [s, band])),
 ));
 
-// ── V4-TROPICALCOLD-001 — crop-type cold profiles (the BRING-IT-INDOORS channel) ──────────────────
+// ── V4-TROPICALCOLD-001: crop-type cold profiles (the BRING-IT-INDOORS channel) ──────────────────
 //
-// THIS IS A DIFFERENT CHANNEL FROM THE BANDS ABOVE, and the distinction is the whole item. The bands
-// drive frostEval's coalesced frost ALERT (one SMS per frost event) and are deliberately held to the
-// tender baseline for alert fatigue. `protect_below_F` here drives engine.coldFor -> tasks.cold: a
-// per-planting card in the in-app Today/CareNeeded list with a one-tap `brought_inside`. It does not
-// page anyone. That is why a low-50s number is affordable here and is not affordable in a band.
+// THIS IS A DIFFERENT CHANNEL FROM THE BANDS ABOVE, and the distinction is the whole item. The bands drive
+// frostEval's coalesced frost ALERT (one SMS per frost event) and are held to the tender baseline for alert
+// fatigue. `protect_below_F` here drives engine.coldFor -> tasks.cold: a per-planting card in the in-app
+// Today/CareNeeded list with a one-tap `brought_inside`. It pages no one, which is why a low-50s number is
+// affordable here and not in a band.
 //
-// It is also the mitigation the band decision explicitly named and left unbuilt — see the 2026-08-07
-// comment above, verbatim: "The mitigation is a one-time 'bring the tropicals in / cut the basil'
-// task by mid-September, not a nightly page." ONE-TIME is load-bearing and is not free: coldFor is
-// evaluated nightly, so without the brought_inside/brought_outside suppression in engine.coldFor
-// these become exactly the nightly nag the band decision rejected. The suppression is not a polish
-// pass on this feature, it is a precondition of it being correct.
+// It is the mitigation the band decision above names: a ONE-TIME "bring the tropicals in" task, not a
+// nightly page. ONE-TIME is load-bearing: coldFor is evaluated nightly, so without the
+// brought_inside/brought_outside suppression in engine.coldFor these become the nightly nag the band
+// decision rejected. The suppression is a precondition of this being correct.
 //
-// WHY CROP-TYPE-KEYED. cadence-data-v2.json carries cold profiles keyed by VARIETY (171 entries).
-// That key space only ever covers a plant somebody already hand-authored a row for, which is why
-// ginger — a gift plant with no variety row — could not produce a cold task at ANY temperature: no
-// by_variety entry, no `cold` key on any of the 52 by_genus_fallback genera, none on `default`.
-// crop_type_slug is the coarsest key that still carries the trait, so ONE entry covers every present
-// and future planting of that crop. Variety-level stays authoritative where it exists; this is the
-// fallback beneath it, never an override of it.
+// WHY CROP-TYPE-KEYED. cadence-data-v2.json carries cold profiles keyed by VARIETY, which only covers a plant
+// somebody hand-authored a row for (ginger, a gift plant with no variety row, could not produce a cold task
+// at ANY temperature). crop_type_slug is the coarsest key that still carries the trait, so ONE entry covers
+// every present and future planting. Variety-level stays authoritative where it exists; this is the fallback
+// beneath it, never an override.
 //
-// SCOPED TO THE `tropical` BAND ON PURPOSE. `chill_sensitive` (basil, cucurbits) is genuinely chill-
-// injured in the 40s, but it is field-planted and there is nothing to carry indoors — a "bring it in
-// tonight" card against an in-ground squash is an instruction that cannot be followed. Verified on
-// prod 2026-08-17: all 18 live tropical-band plantings are potted, ZERO in ground.
+// SCOPED TO THE `tropical` BAND ON PURPOSE. `chill_sensitive` (basil, cucurbits) is chill-injured in the 40s
+// but is field-planted with nothing to carry indoors; a "bring it in tonight" card against an in-ground
+// squash cannot be followed. All live tropical-band plantings are potted.
 const COLD_BY_CROP_TYPE = Object.freeze({
   // True tropicals — chilling injury in the low 50s, well above any frost.
   ginger:        Object.freeze({ tender: true, protect_below_F: 55 }),
@@ -339,14 +299,14 @@ const COLD_BY_CROP_TYPE = Object.freeze({
   crown_of_thorns: Object.freeze({ tender: true, protect_below_F: 50 }),
 });
 
-// The bands whose members MUST carry a cold profile. Exported so the coverage guard derives the
-// requirement from the same declaration the runtime reads, instead of a second hand-kept list that
-// can silently disagree with it (the failure mode that hid ginger).
+// The bands whose members MUST carry a cold profile. Exported so the coverage guard derives the requirement
+// from the same declaration the runtime reads, not a second hand-kept list that can silently disagree
+// (the failure mode that hid ginger).
 const COLD_PROFILE_REQUIRED_BANDS = Object.freeze(['tropical']);
 
-// The cold profile for a crop_type_slug, or null. Null means "no decision recorded" — callers must
-// treat it as UNKNOWN and must not substitute a default; silently inheriting the tender baseline is
-// precisely how a 55°F plant ended up with a 38°F answer.
+// The cold profile for a crop_type_slug, or null. Null means "no decision recorded": callers must treat it
+// as UNKNOWN and not substitute a default (silently inheriting the tender baseline is how a 55°F plant got a
+// 38°F answer).
 function coldProfileForSlug(slug) {
   const s = normalizeSlug(slug);
   return (s && COLD_BY_CROP_TYPE[s]) || null;
@@ -364,8 +324,8 @@ const TENDER_SLUGS = Object.freeze(Object.keys(CLASS_BY_SLUG).filter((s) => CLAS
 const HARDY_SLUGS = Object.freeze(SLUGS_BY_BAND.hardy.slice());
 
 // ── Display labels ────────────────────────────────────────────────────────────────────────────────
-// The coalesced alert names CROP TYPES, not plantings — that is what keeps one SMS readable when 183
-// plantings are at risk. Irregulars are listed; everything else falls through to the rule below.
+// The coalesced alert names CROP TYPES, not plantings, which keeps one SMS readable when many plantings are
+// at risk. Irregulars are listed; everything else falls through to the rule below.
 const CROP_LABELS = Object.freeze({
   tomato: 'tomatoes', tomatillo: 'tomatillos', potato: 'potatoes', sweet_potato: 'sweet potatoes',
   squash: 'squash', winter_squash: 'winter squash', okra: 'okra', basil: 'basil', coleus: 'coleus',
@@ -378,7 +338,7 @@ const CROP_LABELS = Object.freeze({
   borage: 'borage', thunbergia: 'thunbergia', cobaea: 'cobaea', torenia: 'torenia',
   bitter_melon: 'bitter melon', cucamelon: 'cucamelons', luffa: 'luffa', pineapple: 'pineapple',
   pineapple_sage: 'pineapple sage',
-  // OPS-SLUGUNIVERSESTALE-001: the rule below would say "corns", "cosmoses", "summer savories", "chamomiles".
+  // The rule below would say "corns", "cosmoses", "summer savories", "chamomiles".
   corn: 'corn', cosmos: 'cosmos', summer_savory: 'summer savory', chamomile: 'chamomile',
 });
 function cropLabel(slug) {
@@ -394,8 +354,8 @@ function cropLabel(slug) {
 // ── Threshold resolution ──────────────────────────────────────────────────────────────────────────
 // Override chain, weakest first: band defaults -> env FROST_BAND_THRESHOLDS_JSON -> env
 // FROST_THRESHOLD_OFFSET_F (uniform, the F5 rehearsal lever) -> per-call `bandThresholds`.
-// Unknown band names and non-numeric values THROW rather than silently keeping the default — a typo'd
-// override that silently kept the default is exactly the failure this feature cannot afford (§3-7).
+// Unknown band names and non-numeric values THROW rather than silently keeping the default: a typo'd override
+// that silently kept the default is the failure this feature cannot afford (§3-7).
 const TRIP_KEYS = ['ADVISORY_LOW_F', 'IMMINENT_LOW_F', 'HARD_FREEZE_LOW_F'];
 
 function applyOverrideSet(base, overrides, where) {
@@ -446,13 +406,12 @@ const normalizeSlug = (s) => (typeof s === 'string' ? s.trim().toLowerCase() : n
 //   band       the D6 threshold band actually used ('hardy' -> null thresholds, never alerted)
 //   source     'slug' | 'cadence' | 'unmapped' | 'missing'
 //
-// `opts.cadenceTender` is the cold.tender signal from cadence-data-v2.json (§3-4 "plus cold.tender
-// profiles"). It is a PROMOTION-ONLY input: it can lift an unknown into the tender band, but it can NEVER
-// override an explicit slug classification. That precedence is load-bearing, not defensive —
-// cadence-data-v2.json keys by VARIETY NAME, and by_variety['Peach'] is a PEPPER profile (crop: "pepper
-// (likely Sugar Rush Peach)", cold.tender, protect_below_F 50) which collides with the live "Peach tree"
-// planting whose variety name is also "Peach". Cadence-wins precedence would mark a mature peach tree
-// tender at 50°F.
+// `opts.cadenceTender` is the cold.tender signal from cadence-data-v2.json (§3-4 "plus cold.tender profiles").
+// It is a PROMOTION-ONLY input: it can lift an unknown into the tender band, but it can NEVER override an
+// explicit slug classification. That precedence is load-bearing: cadence-data-v2.json keys by VARIETY NAME,
+// and by_variety['Peach'] is a PEPPER profile (cold.tender, protect_below_F 50) which collides with a "Peach
+// tree" planting whose variety name is also "Peach"; cadence-wins would mark a mature peach tree tender at
+// 50°F.
 function frostClassForSlug(slug, opts = {}) {
   const T = opts.resolvedBands || resolveBandThresholds(opts.bandThresholds);
   const pack = (s, cls, countedAs, source, band) => ({
@@ -474,30 +433,28 @@ function isContainer(p) {
   return !!(t && String(t).trim() && String(t).trim().toLowerCase() !== 'in_ground');
 }
 
-// D6 indoor-exclusion, keyed on HEAT since BUG-FROSTALERTSTABLE-001 (Dave, 2026-09-18). A planting is
-// left out of the frost alert only when its location is HEATED: locations.heated
-// (migrations/v5-locheated-001), projected by handler.js as `l.heated is true as heated_resolved`.
+// D6 indoor-exclusion, keyed on HEAT since BUG-FROSTALERTSTABLE-001. A planting is left out of the frost alert
+// only when its location is HEATED: locations.heated (migrations/v5-locheated-001), projected by handler.js
+// as `l.heated is true as heated_resolved`.
 //
-// It used to read frost_covered_resolved, i.e. locations.covered, and that was the bug. `covered`
-// means rain does not reach the plant, not that frost does not. The Stable is covered and UNHEATED
-// (Dave 2026-09-17: "House is heated, Stable is unheated, shelves are all in the Stable"), so every
-// Stable planting was dropped from every frost alert, hard freeze included: 14 frost-tender plantings
-// on 2026-09-18, hurt at 40-55F, in a building that buys a few degrees at most. Dave chose to warn
-// for them at the same trips as the outdoor crops, not at the hard-freeze trip only. The email stops
-// naming a plant once it is moved into the House.
+// It used to read frost_covered_resolved (locations.covered), and that was the bug: `covered` means rain does
+// not reach the plant, not that frost does not. The Stable is covered and UNHEATED (the House is heated, the
+// shelves are all in the Stable), so every Stable planting was dropped from every frost alert, hard freeze
+// included. The decision is to warn for them at the same trips as the outdoor crops; the email stops naming a
+// plant once it is moved into the House.
 //
-// Fail-safe unchanged (BUG-NOLOCOUTDOOR-001): excluding a planting SUPPRESSES its frost alert, so
-// only a strict `=== true` excludes. An un-located planting reads heated_resolved false (SQL `IS
-// TRUE`), and a row with no flag at all reads undefined; both keep their seat in the alert. Silence
-// must never be indistinguishable from safety. frost_covered_resolved still exists for its other
-// readers (ledger.js exposureClass) and is deliberately NOT read here.
+// Fail-safe unchanged (BUG-NOLOCOUTDOOR-001): excluding a planting SUPPRESSES its frost alert, so only a
+// strict `=== true` excludes. An un-located planting reads heated_resolved false (SQL `IS TRUE`), and a row
+// with no flag at all reads undefined; both keep their seat in the alert. Silence must never be
+// indistinguishable from safety. frost_covered_resolved still exists for its other readers (ledger.js
+// exposureClass) and is deliberately NOT read here.
 function isHeatedDefault(p) {
   return !!(p && p.heated_resolved === true);
 }
 
 // Classify a list of plantings and produce the exposure summary frostEval's copy consumes.
-// Each planting is expected to carry { id, name, crop_type_slug, container_type, status, heated_resolved }
-// — a superset of what the daily-plan query already selects, plus crop_type_slug via the plant_varieties join.
+// Each planting is expected to carry { id, name, crop_type_slug, container_type, status, heated_resolved }:
+// a superset of what the daily-plan query selects, plus crop_type_slug via the plant_varieties join.
 // `opts.isCovered` / `opts.excludeCovered` and the `coveredExcluded*` outputs keep their D6 names for the
 // callers and frostEval provenance that read them; what they count is now "indoors in a HEATED location".
 function summarize(plantings, opts = {}) {
@@ -515,11 +472,11 @@ function summarize(plantings, opts = {}) {
     tenderPlantings: [], unknownPlantings: [],
     unknownSlugs: [],
     // D6: named crop types, each carrying ITS OWN trip points. This is what makes one coalesced alert
-    // possible — the message names ~10 crop types instead of ~183 plantings.
+    // possible: the message names a handful of crop types instead of every planting.
     byCropType: [],
-    // D6: at-risk plantings suppressed because they sit in a HEATED location (BUG-FROSTALERTSTABLE-001;
-    // an unheated covered building such as the Stable is NOT excluded). Reported (never silent) so a
-    // shrinking alert is explainable, but deliberately kept OUT of the SMS body to protect its length.
+    // D6: at-risk plantings suppressed because they sit in a HEATED location (an unheated covered building
+    // such as the Stable is NOT excluded). Reported (never silent) so a shrinking alert is explainable, but
+    // kept OUT of the SMS body to protect its length.
     coveredExcluded: 0, coveredExcludedSlugs: [],
     bands: resolvedBands,
   };
@@ -563,9 +520,9 @@ function summarize(plantings, opts = {}) {
       };
       byType.set(key, g);
     }
-    // BUG-INGROUND39FSLIVER-001 — every planting id, uncapped (unlike `names`), so frostEval.frostCoverage can
+    // BUG-INGROUND39FSLIVER-001: every planting id, uncapped (unlike `names`), so frostEval.frostCoverage can
     // say which plantings a tripped crop covers without re-deriving this grouping. Never reaches the message,
-    // the dedup key or alerts_sent: those read slug/label/count/level only.
+    // the dedup key or alerts_sent (those read slug/label/count/level only).
     g.ids.push(p.id);
     g.count++;
     if (container) g.containers++;
@@ -578,8 +535,8 @@ function summarize(plantings, opts = {}) {
   const rank = (x) => (x.container ? 0 : 2) + ((x.status === 'flowering' || x.status === 'fruiting') ? 0 : 1);
   out.tenderPlantings.sort((a, b) => rank(a) - rank(b));
   out.unknownPlantings.sort((a, b) => rank(a) - rank(b));
-  // Crop types: the most exposed first — most containers, then most plantings, then alphabetical so the
-  // ordering is fully deterministic (a message that reshuffles between runs reads as a different alert).
+  // Crop types: the most exposed first (most containers, then most plantings, then alphabetical) so the
+  // ordering is deterministic; a message that reshuffles between runs reads as a different alert.
   out.byCropType = [...byType.values()].sort((a, b) =>
     (b.containers - a.containers) || (b.count - a.count) || String(a.label).localeCompare(String(b.label)));
   return out;

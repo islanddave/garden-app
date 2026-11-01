@@ -1,98 +1,73 @@
 'use strict';
-// ── V5-LEGACYEXCEPTIONCARE-001 — the drought signal ───────────────────────────────────────────────
-// Consecutive settled days with NO ROOT-ZONE-WETTING RAIN. Dave's ruling, 2026-09-08: fire after 20
-// consecutive days without a single day of >=0.60 in.
+// The drought signal (V5-LEGACYEXCEPTIONCARE-001, V5-DROUGHTSPACE-001): consecutive settled days with NO
+// ROOT-ZONE-WETTING RAIN. Product ruling: fire after 20 consecutive days without a single day of >=0.60 in.
 //
 // WHAT THIS IS NOT, and the distinction is load-bearing in every user-visible string this file emits:
-// 0.60 in is the in-ground **deep** class of the app's own RAIN_DEPTH_TIERS, not `light` (0.10) and not
-// a gauge's tipping resolution (0.01). So the statistic is "no DEEP SOAK in N days" — NEVER "no rain in
-// N days". Calling a deep-soak threshold "rain" is the exact category slip that falsified the first
-// version of crucible Verdict 3 (project-state/crucible-weathercue-verdict-V100-20260908.md, the
-// correction block): that verdict fixed the depth from the `light` row and the day-count from
-// `deep`-row evidence, which specified a branch that fires zero times in the whole archive.
+// 0.60 in is the in-ground **deep** class of RAIN_DEPTH_TIERS, not `light` (0.10) and not a gauge's tipping
+// resolution (0.01). The statistic is "no DEEP SOAK in N days", NEVER "no rain in N days". Calling a deep-soak
+// threshold "rain" is the category slip that falsified the first version of crucible Verdict 3 (see the
+// correction block in project-state/crucible-weathercue-verdict-V100-20260908.md).
 //
-// WHY (0.60, 20) AND NOT A PAIR THAT FITS THIS SEASON BETTER. Depth and day-count are ONE parameter.
-// Measured over live weather_daily 2026-05-10..2026-09-07 (121 rows, zero null precip_in), runs >=20d
-// at 0.10 in: 0. At 0.25 in: 0. At 0.60 in: 2 (2026-05-25..2026-06-21 and 2026-08-04..2026-08-31, the
-// latter taking 0.81 in across 28 days). (0.60, 20) is the only pairing NOT read off this season's own
-// maxima — Dave described it before any measurement — so it is the only one that is not fitted to the
-// single sample it would then be validated against. The alternatives (0.10 in with 13 or 10 days) are
-// the same free-variable objection that rejected ET0-deficit's crop coefficient, wearing a new coat.
+// WHY (0.60, 20). Depth and day-count are ONE parameter. Over the first season's weather_daily, runs of
+// 20+ days occurred at 0.60 in but not at 0.10 or 0.25. (0.60, 20) is the only pairing not read off that
+// season's own maxima (it was specified before any measurement), so it is the only one not fitted to the
+// single sample it would be validated against.
 //
-// DO NOT REINTRODUCE ET0 DEFICIT. Rejected on measurement, not taste: a Kc between 0.55 and 1.00 swings
-// the peach's stress-day count 0% -> 64%, and the schema carries no column for Kc, root depth or soil
-// texture. Deficit remains excellent EVIDENCE and is published in the bergamot guide; it is not a trigger.
+// DO NOT REINTRODUCE ET0 DEFICIT. Rejected on measurement: a Kc between 0.55 and 1.00 swings the stress-day
+// count 0% -> 64%, and the schema carries no column for Kc, root depth or soil texture. Deficit is good
+// EVIDENCE (published in the bergamot guide), not a trigger.
 //
-// ── V5-DROUGHTSPACE-001 (Dave, 2026-09-08) — THE COUNTER MUST HONOUR WHAT HE ACTUALLY DID ────────
-// Verbatim: "ensure it is not just about watering events but also rain events auto logged."
-// Two sources were investigated against live prod (garden_ro, 2026-09-08). They did NOT get the same
-// answer, and the difference is the whole of this change:
+// THE COUNTER MUST HONOUR WHAT THE GARDENER ACTUALLY DID (V5-DROUGHTSPACE-001): "not just watering events
+// but also rain events auto logged". The two sources got different answers:
 //
-//   AUTO-LOGGED RAIN EVENTS -> REFUSED AS A RESET SOURCE. They are weather_daily.precip_in under a
-//   different primary key, not a second observation. handler.js logRainEvents SELECTS the day's
-//   weather_daily row, rainLog.rainDecision gates it on precip_source='gauge_merged' AND
-//   precip_in > 0.10, and the amount written to event_log.quantity_numeric IS that precip_in.
-//   Measured: 17 rain-event days in the whole record, ZERO without a matching weather_daily row,
-//   ZERO whose quantity differs from that row's precip_in. So a rain event is a STRICT SUBSET of what
-//   this counter already reads (gauge-only, and the counter reads every source), and can never reset a
-//   day weather_daily does not already reset. Adding it would be double-counting by definition.
-//   Manual rain events (686 rows, 6 days, all pre-2026-07-19 — Dave logging rain by hand) carry NO
-//   quantity at all and cannot be compared to a 0.60 in bar. weather_daily's upsert is quality-ranked
-//   (WEATHER_DAILY_CONFLICT_SET) so a gauge figure can never be downgraded by a later model pass
-//   either, which closes the last door in which a rain event could be the more faithful record.
-//   droughtsignal.test.js pins this with the live 2026-09-06 day: 0.29 in, 218 auto-logged rain
-//   events, and it MUST still count as a dry day. That test is the guard against a future lane
-//   "fixing" this by adding rain events as a second source.
+//   AUTO-LOGGED RAIN EVENTS -> REFUSED AS A RESET SOURCE. They are weather_daily.precip_in under a different
+//   primary key, not a second observation: handler.js logRainEvents selects the day's weather_daily row,
+//   rainLog.rainDecision gates it on precip_source='gauge_merged' AND precip_in > 0.10, and the event's
+//   quantity_numeric IS that precip_in. A rain event is a strict subset of what this counter already reads,
+//   so adding it would double-count. Manual rain events carry no quantity and cannot be compared to a 0.60 in
+//   bar. weather_daily's upsert is quality-ranked (WEATHER_DAILY_CONFLICT_SET), so a gauge figure is never
+//   downgraded by a later model pass. droughtsignal.test.js pins this with a 0.29 in day carrying hundreds
+//   of auto-logged rain events, which MUST still count as dry; it guards against a future lane "fixing"
+//   this by adding rain events as a second source.
 //
-//   WATERING EVENTS -> ACCEPTED, at Space scope only, and NOT by a fabricated depth. There is no
-//   volume anywhere: quantity_numeric is NULL on all 10,229 watering events. What exists is
-//   metadata.water_depth, the app's OWN ordinal class ('light'|'normal'|'deep' — the same three
-//   values, same spelling, that ledger.rainDepthClass maps precip into), on 1,337 of them. A
-//   'deep' watering and a >=0.60 in rain day are the same class in the app's own model, so this is
-//   the app's existing vocabulary, not an inches equivalence invented here. An UNANNOTATED watering
-//   is NOT evidence of a deep soak: ledger.js already rules that absent/unknown reads as 'normal',
-//   and this module honours that ruling rather than inventing a second one.
+//   WATERING EVENTS -> ACCEPTED, at Space scope only, and NOT by a fabricated depth. No volume exists
+//   (quantity_numeric is NULL on watering events). What exists is metadata.water_depth, the app's own
+//   ordinal class ('light'|'normal'|'deep', the values ledger.rainDepthClass maps precip into). A 'deep'
+//   watering and a >=0.60 in rain day are the same class in the app's own model: its existing vocabulary,
+//   not an inches equivalence invented here. An UNANNOTATED watering is NOT evidence of a deep soak:
+//   ledger.js rules that absent/unknown reads as 'normal', and this module honours that.
 const LP = require('./ledgerParams');
 
-// DERIVED, deliberately not a literal — this IS the in-ground `deep` class, and saying so in code is
-// what keeps the trigger and the credit model talking about the same physical event. Same posture as
-// ledgerParams' RAIN_DEPTH.unknown derivation, and it carries the same obligation: RAIN_DEPTH_TIERS is
-// documented as the #1 soak-tune target, so a retune would silently move this trigger. That is why
-// droughtsignal.test.js pins what this evaluates to TODAY (0.60) as a canary — a retune goes red in a
-// named test and reaches Dave, instead of quietly re-ruling a decision he made.
+// DERIVED, deliberately not a literal: this IS the in-ground `deep` class, and saying so in code keeps the
+// trigger and the credit model describing the same physical event. RAIN_DEPTH_TIERS is the #1 soak-tune
+// target, so a retune would silently move this trigger; droughtsignal.test.js pins today's value (0.60) as a
+// canary so a retune goes red in a named test instead of quietly re-ruling a product decision.
 const DEEP_SOAK_IN = LP.RAIN_DEPTH_TIERS.in_ground.deep;
-// Dave's ruling. A literal, because it is a judgement about his plants and not a derivable quantity.
+// The product ruling. A literal, because it is a judgement about the plants, not a derivable quantity.
 const DRY_DAYS = 20;
-// Read window. Must exceed DRY_DAYS: 20 is the minimum needed to make the CLAIM, the headroom is what
-// lets the note report the run's true length (the real 2026-08 run is 28 days) instead of capping at 20.
+// Read window. Must exceed DRY_DAYS: 20 is the minimum to make the CLAIM, the headroom lets the note report
+// the run's true length instead of capping at 20.
 const WINDOW_DAYS = 30;
 
-// ── THE AGGREGATION RULE, AND WHY IT IS THIS ONE ─────────────────────────────────────────────────
-// Rain falls on the whole Space; watering is logged per planting. So "did the GARDEN get deep water"
-// cannot be answered by "did ANY planting get deep water" — Dave's own framing: watering two plants in
-// a hundred-plant Space is not a garden-wide soak. A day resets the garden-wide counter only when a
-// deep watering SESSION covered at least this fraction of the plantings the run generated a plan for.
+// ── THE AGGREGATION RULE ─────────────────────────────────────────────────────────────────────────
+// Rain falls on the whole Space; watering is logged per planting. "Did ANY planting get deep water" does
+// not answer "did the GARDEN get deep water" (watering two plants in a hundred is not a garden-wide soak).
+// A day resets the garden-wide counter only when a deep watering SESSION covered at least this fraction of
+// the plantings the run generated a plan for.
 //
-// A THIRD IS A JUDGEMENT AND IS LABELLED AS ONE. It is not derivable, so it is a named constant with a
-// canary, exactly like DRY_DAYS. It was chosen from the CLAIM (a fraction below which "the garden had
-// deep water" stops being a fair description of the day) and only then checked against the record —
-// that order matters, because a bar read off the sample is the free-variable objection that killed
-// ET0 deficit. Measured live 2026-09-08 over every deep-watering day in the record, against a plan
-// population of 216:
-//     ET 2026-08-24  113/216 = 52.3%   a real session (186 of 216 watered that evening)  -> RESETS
-//     ET 2026-08-28   20/216 =  9.3%   spot-watering                                     -> does not
-//     ET 2026-08-31   10/216 =  4.6%   spot-watering                                     -> does not
-//     ET 2026-09-03    5/216 =  2.3%   spot-watering                                     -> does not
-// The distribution is bimodal (he waters the garden, or he spots a few plants), so 1/3 and 1/2 agree
-// on every day in the record; 1/3 is chosen because it sits ~19 points above the highest non-session
-// day and ~19 below the lowest session day, where 1/2 clears 2026-08-24 by 2.3 points and would flip
-// on a change in annotation habit rather than in the garden. It also errs toward the failure Dave
-// named — the app telling him the garden is dry on a day he watered it.
+// A THIRD IS A JUDGEMENT AND IS LABELLED AS ONE: not derivable, so a named constant with a canary, like
+// DRY_DAYS. It was chosen from the CLAIM (the fraction below which "the garden had deep water" stops being
+// fair) and only then checked against the record, because a bar read off the sample is the free-variable
+// objection that killed ET0 deficit. The recorded deep-watering days were bimodal: real sessions
+// (roughly half the plan population) versus spot-watering (under 10%). 1/3 sits about 19 points from the
+// nearest day on either side; 1/2 would clear the lowest session day by 2.3 points and flip on a change in
+// annotation habit rather than in the garden. It also errs toward the failure the owner named: the app
+// saying the garden is dry on a day it was watered.
 const DEEP_WATER_SPACE_FRACTION = 1 / 3;
-// A watering carrying an explicit water_depth_source of 'default' is the SYSTEM's assumption, not
-// Dave's statement, and must never reset a garden-wide claim about what he did. A missing source is
-// treated as a declaration (fail-OPEN) because validators.js permits water_depth without a source, and
-// a guard that goes silent the day the client stops sending an optional key is a guard that is not there.
+// A watering carrying an explicit water_depth_source of 'default' is the SYSTEM's assumption, not the
+// user's statement, and must never reset a garden-wide claim about what they did. A missing source is
+// treated as a declaration (fail-OPEN) because validators.js permits water_depth without a source, and a
+// guard that goes silent the day the client stops sending an optional key is not a guard.
 const SYSTEM_DEPTH_SOURCE = 'default';
 const DEEP = 'deep';
 
@@ -104,21 +79,19 @@ function shiftDays(iso, n) {
 }
 function windowStart(today, days = WINDOW_DAYS) { return shiftDays(today, -days); }
 
-// The 30-day precip series, read UNCONDITIONALLY — this is the whole point of the module.
+// The 30-day precip series, read UNCONDITIONALLY: that is the point of the module.
 //
-// It does NOT ride readWeatherDaily, which is gated on CARE_WATER_LEDGER_ENABLED and therefore returns
-// null in every production run (the flag is absent from the live garden-daily-plan env, verified in AWS
-// 2026-09-08). Flipping that flag would arm the entire Water Ledger fold for both users at once, which
-// the verdict's "What NOT to do" forbids as an opening move; so the drought path gets its own series and
-// the ledger path keeps behaving exactly as it does today whether the flag is on or off.
+// It does NOT ride readWeatherDaily, which is gated on CARE_WATER_LEDGER_ENABLED and so returns null in every
+// production run (the flag is absent from the live env). Flipping it would arm the whole Water Ledger fold
+// for both users at once, which the verdict forbids as an opening move; the drought path gets its own series
+// and the ledger path behaves as before whether the flag is on or off.
 //
-// The seededgate reachability argument that justifies gating readWeatherDaily does not apply here: this
-// same handler already writes weather_daily UNCONDITIONALLY on every non-dry run (writeWeatherDaily,
-// immediately above the call site), so the relation is known to exist by the time this read is issued.
+// The seededgate reachability argument for gating readWeatherDaily does not apply: this handler already
+// writes weather_daily UNCONDITIONALLY on every non-dry run (writeWeatherDaily, just above the call site),
+// so the relation exists by the time this read is issued.
 //
-// Fails to null, and the null is for OBSERVABILITY, not for safety — evaluateDrought's coverage check
-// refuses an empty or short series on its own, so a fail-open [] would be equally safe. Returning null
-// lets the handler log "read failed" distinctly from "read fine, 5 dry days".
+// Fails to null, for OBSERVABILITY not safety (evaluateDrought's coverage check refuses an empty or short
+// series on its own): null lets the handler log "read failed" distinctly from "read fine, 5 dry days".
 async function readDroughtSeries(pg, spaceId, fromDate, toDate) {
   try {
     const { rows } = await pg.query(
@@ -136,19 +109,17 @@ async function readDroughtSeries(pg, spaceId, fromDate, toDate) {
 
 // The window's DEEP watering events, one row per (ET day, planting). V5-DROUGHTSPACE-001.
 //
-// BUCKETED IN America/New_York, NOT by a bare ::date. The Lambda's session is GMT, and the 130-planting
-// session that this whole change exists to honour was logged at 00:57 UTC — 20:57 ET the PREVIOUS
-// evening. A bare event_date::date files an evening watering under tomorrow, one day out of step with
-// weather_daily (whose "date" is the ET civil day) and with the day Dave believes he watered. ledger.js
-// buckets by America/New_York for the same reason; this matches it rather than inventing a second clock.
+// BUCKETED IN America/New_York, NOT by a bare ::date. The Lambda's session is GMT, so an evening watering
+// logged at 00:57 UTC is 20:57 ET the PREVIOUS day; a bare event_date::date would file it under tomorrow,
+// out of step with weather_daily (whose "date" is the ET civil day) and with the day the user watered.
+// ledger.js buckets by America/New_York for the same reason.
 //
 // NOT space-scoped in SQL: the caller intersects against the Space's own planting set, which is both the
-// scope AND the denominator, so the two cannot drift. Read once per run, not once per Space.
-// The +-1 day margins absorb the date->timestamptz cast, exactly as readLedgerEvents does.
+// scope AND the denominator, so the two cannot drift. Read once per run, not once per Space. The +-1 day
+// margins absorb the date->timestamptz cast, as readLedgerEvents does.
 //
-// Fails to null, and null here is NOT "no waterings" — see evaluateDrought's water_events_unavailable
-// branch. A failed read means we cannot say whether he watered, and this signal refuses rather than
-// answers wrongly.
+// Fails to null, and null is NOT "no waterings": see evaluateDrought's water_events_unavailable branch. A
+// failed read means we cannot say whether they watered, so the signal refuses rather than answers wrongly.
 async function readDeepWaterDays(pg, fromDate, toDate) {
   try {
     const { rows } = await pg.query(
@@ -169,20 +140,18 @@ async function readDeepWaterDays(pg, fromDate, toDate) {
   }
 }
 
-// Pure. Rows -> the set of ET days on which a deep watering SESSION covered enough of this Space to
-// falsify a garden-wide "no deep soak" claim. `plantIds` is the Space's plan population and serves as
-// BOTH the scope filter and the denominator, so the fraction can never be computed against a
-// population the numerator was not drawn from.
+// Pure. Rows -> the set of ET days on which a deep watering SESSION covered enough of this Space to falsify
+// a garden-wide "no deep soak" claim. `plantIds` is the Space's plan population and is BOTH the scope
+// filter and the denominator, so the fraction is never computed against a population the numerator was not
+// drawn from.
 //
-// `coverage` carries every candidate day's count whether it qualified or not — a day that missed the
-// bar by one planting and a day with no waterings at all are different facts, and only one of them is
-// worth Dave's attention in CloudWatch.
+// `coverage` carries every candidate day's count whether it qualified or not: a day that missed the bar by
+// one planting differs from a day with no waterings, and only one is worth attention in CloudWatch.
 function deepWaterResetDays(rows, plantIds, opts = {}) {
   const fraction = opts.fraction != null ? opts.fraction : DEEP_WATER_SPACE_FRACTION;
   const pop = plantIds instanceof Set ? plantIds : new Set(Array.isArray(plantIds) ? plantIds.map(String) : []);
   const out = { days: new Set(), coverage: {}, population: pop.size, fraction, required: 0, unavailable: false };
-  // A Space with no plantings has no garden to make a claim about and no watering that could reset one.
-  // That is a legitimate empty answer, NOT an unavailable read.
+  // A Space with no plantings has no garden to claim about: a legitimate empty answer, NOT an unavailable read.
   if (!Array.isArray(rows)) { out.unavailable = true; return out; }
   if (pop.size === 0) return out;
   out.required = Math.max(1, Math.ceil(fraction * pop.size));
@@ -204,20 +173,19 @@ function deepWaterResetDays(rows, plantIds, opts = {}) {
 
 // Walk back from `asOfDate` counting days whose measured precip is under the deep-soak bar.
 //
-// THE COVERAGE GUARD IS THE POINT, not decoration. The claim being made is "no deep soak in the 20 days
-// ENDING asOfDate". A 20-day counter handed 14 days of data will happily report "no deep soak in 14
-// days" and never fire, and a counter that skips a hole treats a day that may have carried 2 in of rain
-// as dry. So a missing or non-finite day is ABSENT, never dry: the walk stops there, and if it stopped
-// before 20 confirmed days the verdict is `insufficient` — refuse loudly rather than answer wrongly.
-// Every day the fire decision rests on is one this function has actually seen a number for.
+// THE COVERAGE GUARD IS THE POINT. The claim is "no deep soak in the 20 days ENDING asOfDate". A counter
+// handed 14 days would report "no deep soak in 14 days" and never fire, and one that skips a hole treats a
+// possibly very wet day as dry. So a missing or non-finite day is ABSENT, never dry: the walk stops there,
+// and if it stopped before 20 confirmed days the verdict is `insufficient`. Every day the fire decision
+// rests on is one this function actually saw a number for.
 //
 // `>=` matches ledger.rainDepthClass's `precipIn >= t.deep`, so a day that classifies as a deep soak for
-// rain credit is the same day that resets this counter. Exactly 0.60 in resets.
+// rain credit also resets this counter. Exactly 0.60 in resets.
 //
-// V5-DROUGHTSPACE-001 — `opts.waterResetDays` (a Set of ET days from deepWaterResetDays) resets the
-// counter too. Omit it and this function behaves exactly as it did before the change.
+// V5-DROUGHTSPACE-001: `opts.waterResetDays` (a Set of ET days from deepWaterResetDays) resets the counter
+// too. Omit it and this function behaves as it did before that change.
 //
-// status: 'dry' (fire) | 'ok' (no fire, and we know it) | 'insufficient' (cannot say — never fires)
+// status: 'dry' (fire) | 'ok' (no fire, and we know it) | 'insufficient' (cannot say; never fires)
 function evaluateDrought(rows, opts = {}) {
   const deepSoakIn = opts.deepSoakIn != null ? opts.deepSoakIn : DEEP_SOAK_IN;
   const dryDaysRequired = opts.dryDays != null ? opts.dryDays : DRY_DAYS;
@@ -227,9 +195,8 @@ function evaluateDrought(rows, opts = {}) {
   const base = { deepSoakIn, dryDaysRequired, dryDays: 0, lastDeepSoakDate: null, lastDeepWaterDate: null,
     resetBy: null, truncated: false, asOfDate: asOfDate || null };
   if (!isIso(asOfDate)) return { ...base, status: 'insufficient', gap: 'no_as_of_date', covered: 0 };
-  // The watering read failed. "He did not water" and "we could not find out whether he watered" are
-  // different answers, and only one of them supports telling him his garden is dry — the failure this
-  // whole change exists to stop. Refuse, loudly, exactly as the short-series guard does.
+  // The watering read failed. "Did not water" and "could not find out whether they watered" are different
+  // answers, and only the first supports saying the garden is dry. Refuse, as the short-series guard does.
   if (opts.waterEventsUnavailable === true) {
     return { ...base, status: 'insufficient', gap: 'water_events_unavailable', covered: 0 };
   }
@@ -238,8 +205,8 @@ function evaluateDrought(rows, opts = {}) {
   const byDate = new Map();
   for (const r of rows) {
     if (!r || !isIso(r.date)) continue;
-    // Number(null) and Number('') are both 0, which would silently make a MISSING reading the driest
-    // possible day. Rejected before the coercion, not after — the numeric guard alone cannot see it.
+    // Number(null) and Number('') are both 0, which would make a MISSING reading the driest possible day.
+    // Rejected before the coercion; the numeric guard alone cannot see it.
     if (r.precip_in == null || r.precip_in === '') continue;
     const p = Number(r.precip_in);                   // pg numeric arrives as a string
     if (!Number.isFinite(p) || p < 0) continue;      // garbage: absent, NOT dry
@@ -248,9 +215,8 @@ function evaluateDrought(rows, opts = {}) {
 
   let dryDays = 0, lastDeepSoakDate = null, lastDeepWaterDate = null, resetBy = null, truncated = false, day = asOfDate;
   for (;;) {
-    // CHECKED FIRST, ahead of the coverage hole. A logged deep watering is direct evidence of what
-    // happened in the garden and does not depend on the weather archive having a row for that day, so a
-    // gap in weather_daily must not blind the counter to a soak Dave logged himself.
+    // CHECKED FIRST, ahead of the coverage hole: a logged deep watering is direct evidence that does not
+    // depend on the weather archive having a row for that day.
     if (waterDays.has(day)) { lastDeepWaterDate = day; resetBy = 'watering'; break; }
     if (!byDate.has(day)) { truncated = true; break; }           // hole: cannot claim past here
     if (byDate.get(day) >= deepSoakIn) { lastDeepSoakDate = day; resetBy = 'rain'; break; }   // reset
@@ -267,24 +233,22 @@ function evaluateDrought(rows, opts = {}) {
     lastDeepWaterDate, resetBy, truncated, covered: dryDays };
 }
 
-// The user-visible string. WORDING IS PART OF DAVE'S RULING: it names the DEEP SOAK, never "rain in N
-// days". droughtsignal.test.js asserts both halves of that — the presence of "deep soak" and the absence
-// of a bare "no rain in" — so the category slip cannot come back through a reword.
+// The user-visible string. WORDING IS PART OF THE RULING: it names the DEEP SOAK, never "rain in N days".
+// droughtsignal.test.js asserts both halves (the presence of "deep soak", the absence of a bare "no rain
+// in"), so the category slip cannot come back through a reword.
 function droughtNote(state) {
   if (!state || state.status !== 'dry') return null;
   return `Drought signal — no deep soak (>=${state.deepSoakIn.toFixed(2)} in of rain in one day) in `
     + `${state.truncated ? 'at least ' : ''}${state.dryDays} days. Check soil moisture at root depth.`;
 }
 
-// ── V5-DROUGHTSPACE-001 — the GARDEN-WIDE line (Dave's ruling: one line, once, not per plant) ─────
-// The dryness is measured per Space and is identical for every planting in it, so per-plant repetition
-// would say the same sentence up to 216 times. It is also how he described the problem: he noticed THE
-// GARDEN was dry.
+// ── V5-DROUGHTSPACE-001: the GARDEN-WIDE line (one line, once, not per plant) ──────────────────────
+// Dryness is measured per Space and is identical for every planting in it, so per-plant repetition would
+// say the same sentence once per planting.
 //
-// SAME WORDING DISCIPLINE, and the test suite pins it here too: it names the DEEP SOAK and never says
-// "no rain in N days". It also names the watering half of the rule, because a number Dave cannot
-// explain to himself ("why does it say 6 days when it hasn't rained in 28?") is a number he stops
-// trusting — and after this change the answer really is "because you watered the garden on the 24th".
+// SAME WORDING DISCIPLINE, pinned by the test suite here too: it names the DEEP SOAK, never "no rain in N
+// days". It also names the watering half of the rule, because a number the user cannot explain ("why 6 days
+// when it hasn't rained in 28?") is one they stop trusting.
 function gardenDroughtNote(state) {
   if (!state || state.status !== 'dry') return null;
   return `The garden has not had a deep soak in ${state.truncated ? 'at least ' : ''}${state.dryDays} days`
@@ -293,8 +257,7 @@ function gardenDroughtNote(state) {
 }
 
 // The Space-level payload key, or null when the signal is not firing. Null means the caller spreads
-// NOTHING, so a non-firing day writes a byte-identical plan row — the same conditional-spread discipline
-// the hydrology station keys use.
+// NOTHING, so a non-firing day writes a byte-identical plan row (the hydrology station keys do the same).
 function gardenDrought(state) {
   const note = gardenDroughtNote(state);
   if (!note) return null;

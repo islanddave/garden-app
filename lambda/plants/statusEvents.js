@@ -1,9 +1,8 @@
-// V3-EVENT-003 — planting/project status changes as first-class events (plants-lambda copy).
-// Pure, DB-free: change predicate + the frozen auto-note string + the frozen metadata contract.
-// The actual INSERT lives inline in each lambda's status-update transaction (event_log /
-// entity_memory have RLS, so the caller must set_config the actor first). Labels are a server
-// copy of src/lib/constants.js PLANT_STATUS_MAP / PROJECT_STATUS_MAP and get stored verbatim
-// into event_log.notes at write time; keep them in lockstep with constants.js.
+// V3-EVENT-003 — planting/project status changes as first-class events.
+// Pure, DB-free: change predicate, the frozen auto-note string and the frozen metadata contract.
+// The INSERT lives inline in each lambda's status-update transaction (event_log and entity_memory have
+// RLS, so the caller must set_config the actor first). Labels are a server copy of src/lib/constants.js
+// PLANT_STATUS_MAP / PROJECT_STATUS_MAP, stored verbatim into event_log.notes; keep them in lockstep.
 const PLANT_STATUS_LABELS = {
   seed: 'Seed', rooting: 'Rooting', seedling: 'Seedling', vegetative: 'Vegetative',
   flowering: 'Flowering', fruiting: 'Fruiting', harvested: 'Harvested', dormant: 'Dormant',

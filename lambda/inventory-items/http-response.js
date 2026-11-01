@@ -1,42 +1,30 @@
 // http-response.js — V4-APIGZIP-001 shared JSON responder with negotiated gzip.
 //
-// Lambda Function URLs do NOT compress for you. Measured live 2026-08-17 against the plants URL:
-// a 28,251-byte JSON response requested WITH Accept-Encoding came back Content-Length: 28251, no
-// Content-Encoding, Vary: Origin — while the SAME app's CloudFront asset returns content-encoding:
-// gzip under identical request headers. The client was never the limitation; nothing on the
-// Function-URL path was setting an encoding. Reconstructed from prod rows the same day, the
-// /api/plants list body is 591,905 B and gzips to 113,259 B (5.23x, 80.9% off the wire).
+// Lambda Function URLs do NOT compress for you: nothing on the Function-URL path sets a
+// Content-Encoding, so a large JSON body goes out identity unless the handler gzips it.
 //
 // The Function-URL contract for a compressed body is exact and unforgiving: `body` must be a
 // BASE64 STRING with isBase64Encoded: true. The service base64-decodes it and puts the raw bytes on
 // the wire with its own Content-Length. Returning the gzip Buffer directly instead would be
 // JSON-serialized by the runtime into {"type":"Buffer","data":[...]} and shipped as that literal.
 //
-// DEPLOY NOTE (mirrors household.js / photo-access.js): each Lambda is zipped from its OWN dir
-// (deploy-lambda.yml: `cd lambda/<fn> && zip -r ../<fn>.zip .`), so a `../http-response.js` import
-// is NOT packaged and the handler 502s at module load. An IDENTICAL copy lives in each adopting
-// Lambda dir and is imported as `./http-response.js`; copies are kept byte-identical by
-// lambda/http-response-copies-sync.test.js.
+// DEPLOY NOTE (mirrors household.js / photo-access.js): a Lambda zip holds only its own dir, so a
+// `../http-response.js` import 502s at module load. An IDENTICAL copy lives in each adopting Lambda dir,
+// imported as `./http-response.js`, held byte-identical by lambda/http-response-copies-sync.test.js.
 //
-// node:zlib ONLY — no new runtime dependency. garden-daily-plan-read runs a 42.9% cold-start rate,
-// so init weight is not free: a cold `import('node:zlib')` measures 0.85 ms locally against the
-// hundreds of ms this Lambda already spends loading @aws-sdk/*, @clerk/backend and the neon driver.
+// node:zlib ONLY — no new runtime dependency; cold-start weight is not free.
 import { gzipSync } from 'node:zlib';
 
-// Below this many UTF-8 bytes the response is sent identity. Justification, measured on real bodies:
-//   · gzip INFLATES the small JSON this API actually returns — {"error":"Unauthorized"} is 24 B in
-//     and 44 B out; the longest 400 text is 59 B in, 74 B out. Every error path is in that class.
-//   · the most a sub-1 KB body can save is a few hundred bytes — less than one 1460-byte TCP
-//     segment and smaller than the response headers, so it cannot remove a round trip.
-//   · it keeps every error/no-content path on the byte-identical pre-change code path, which is
-//     what bounds the blast radius of turning this on for a live API.
-// One real plant row is 1,099 B and compresses to 517 B, so the first thing ABOVE the threshold
-// already pays for itself. Overridable per call (see minBytes) — the rollout tunes per route.
+// Below this many UTF-8 bytes the response is sent identity:
+//   · gzip INFLATES the small JSON this API returns ({"error":"Unauthorized"} is 24 B in, 44 B out),
+//     and every error path is in that class.
+//   · a sub-1 KB body saves less than one TCP segment, so it cannot remove a round trip.
+//   · it keeps every error/no-content path on the uncompressed code path, which bounds the blast radius.
+// Overridable per call (see minBytes) — the rollout tunes per route.
 export const MIN_GZIP_BYTES = 1024;
 
-// zlib's default. Measured on the 688,637 B two-URL plants body: L1 153,500 B / 2.5 ms,
-// L4 132,813 B / 4.2 ms, L6 126,274 B / 5.4 ms, L9 124,953 B / 6.9 ms (local, per call). The knee is
-// L4–L6; L9 buys 1,321 B for +28% CPU. Drop to L4 if CloudWatch Duration ever says this matters.
+// zlib's default. The size/CPU knee is L4–L6 and L9 buys little more for +28% CPU. Drop to L4 if
+// CloudWatch Duration ever says this matters.
 export const GZIP_LEVEL = 6;
 
 // Accept-Encoding is what makes compression legal, and Origin is what the Function URL's own CORS
@@ -104,23 +92,14 @@ export function jsonResponse(statusCode, body, { acceptEncoding = '', headers = 
   };
 }
 
-// OPS-GZIPHEADERPROOF-001 — the negotiation outcome, as ONE structured CloudWatch line per
-// invocation. This exists because the effectiveness of V4-APIGZIP-001 turned out to be
-// unverifiable by every other route, which a session on 2026-08-17 established the hard way:
-//   - An UNAUTHENTICATED probe cannot show it: the 401 body is 24 B, far under MIN_GZIP_BYTES, so
-//     it takes the identity branch by design. (It does prove the responder is live — the real prod
-//     401 returns `vary: Accept-Encoding, Origin`.)
-//   - The BROWSER cannot show it: garden-app is a PWA and its Service Worker intercepts every
-//     request, so PerformanceResourceTiming reports transferSize 0 and encodedBodySize mirroring
-//     decodedBodySize. Measured against a control whose answer is known — the CloudFront bundle,
-//     which is served brotli at ~428 kB — the API reads a 1.00 ratio too. The instrument is blind
-//     here, so a 1.00 from it is NOT evidence of an uncompressed response.
-//   - That left "one authenticated curl", which is a manual act nobody repeats, and the design
-//     FAILS SAFE, so an inert deploy and a working one look identical from outside.
-// A log line converts a one-off manual check into a standing observable that answers the question
-// for every future adopting Lambda for free. `ae` is the raw Accept-Encoding, which is a transport
-// preference and carries nothing user-identifying; it is truncated because a long junk header
-// should not be able to inflate log spend.
+// OPS-GZIPHEADERPROOF-001 — the negotiation outcome, as ONE structured CloudWatch line per invocation.
+// No other route can show whether gzip took effect:
+//   - An UNAUTHENTICATED probe sees a 401 body far under MIN_GZIP_BYTES, which is identity by design.
+//   - The BROWSER cannot show it: the PWA's Service Worker intercepts every request, so
+//     PerformanceResourceTiming reports a 1.00 ratio whatever was sent.
+//   - The design FAILS SAFE, so an inert deploy and a working one look identical from outside.
+// `ae` is the raw Accept-Encoding, a transport preference with nothing user-identifying; it is truncated
+// so a long junk header cannot inflate log spend.
 function logNegotiation(acceptEncoding, encoded) {
   try {
     console.log(JSON.stringify({

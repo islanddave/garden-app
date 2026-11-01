@@ -1,19 +1,16 @@
-// photo-access.js — V4-PHOTOCDN-001 P1 issuance seam (single access-resolver).
-// resolvePhotoViewUrl routes ALL photo GET-URL issuance through one place so the runtime
-// kill-flag PHOTO_CDN_ENABLED can switch between the legacy S3 presign path (default/OFF —
-// byte-identical to pre-seam behavior) and CloudFront signed URLs against the dedicated photos
-// distribution (ON). Sharing (V4-PHOTOSHARE-001) later = a new branch here, zero call-site edits.
+// photo-access.js — V4-PHOTOCDN-001 single access-resolver for photo GET URLs.
+// resolvePhotoViewUrl routes ALL photo GET-URL issuance through one place so the runtime kill-flag
+// PHOTO_CDN_ENABLED can switch between the S3 presign path (default/OFF) and CloudFront signed URLs
+// against the dedicated photos distribution (ON). A new access mode is a new branch here, with no
+// call-site edits.
 //
-// DEPLOY NOTE (mirrors household.js): each Lambda is zipped from its OWN dir
-// (deploy-lambda.yml: `cd lambda/<fn> && zip -r ../<fn>.zip .`), so a `../photo-access.js` import
-// is NOT packaged and 502s at module load. An IDENTICAL copy of this file lives in each signer dir
-// (photos, plants, projects, locations, inventory-items), imported as `./photo-access.js`; copies
-// are kept byte-identical by lambda/photo-access-copies-sync.test.js.
+// DEPLOY NOTE (mirrors household.js): a Lambda zip holds only its own dir, so a `../photo-access.js`
+// import 502s at module load. An IDENTICAL copy lives in each signer dir, imported as
+// `./photo-access.js`, held byte-identical by lambda/photo-access-copies-sync.test.js.
 //
-// BYTE-IDENTITY (flag OFF): the caller passes its OWN existing presign helper as `presign`; the OFF
-// branch returns presign(storagePath) verbatim — the exact pre-seam code path (same S3 client, same
-// expiresIn). No new import executes on the OFF path (cloudfront-signer + secrets-manager are lazily
-// imported INSIDE the ON branch), so a packaging miss can NEVER 502 an OFF Lambda.
+// BYTE-IDENTITY (flag OFF): the caller passes its OWN presign helper as `presign`; the OFF branch returns
+// presign(storagePath) verbatim. No new import executes on the OFF path (cloudfront-signer and
+// secrets-manager are lazily imported INSIDE the ON branch), so a packaging miss can NEVER 502 an OFF Lambda.
 
 export const PHOTO_URL_TTL_SECONDS = 900; // 15 min — shared by both paths (keep OFF/ON in lockstep)
 
@@ -37,8 +34,8 @@ async function cdnPrivateKey(sm) {
 
 // Sign an originals-passthrough (/o/*) CloudFront URL for a raw S3 storage key. The distro's
 // viewer-request function (photocdn-strip-o-prefix) strips the leading /o before S3, so the signed
-// path is /o/<key> and the origin object is <key>. keyPairId = the CloudFront PUBLIC KEY id
-// (K1JIPLZ9SVNU1N), a member of the trusted key group attached to /o/*.
+// path is /o/<key> and the origin object is <key>. keyPairId = the CloudFront PUBLIC KEY id, a member
+// of the trusted key group attached to /o/*.
 async function signCdnOriginalUrl(storagePath, sm) {
   const { getSignedUrl } = await import('@aws-sdk/cloudfront-signer');
   const url = `https://${process.env.PHOTO_CDN_DOMAIN}/o/${encodeKeyPath(storagePath)}`;

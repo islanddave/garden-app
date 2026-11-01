@@ -1,4 +1,4 @@
-// household.js — Household Mode scope helper (V2 multi-user bridge) and the SEC-13a household gate.
+// household.js — Household Mode scope helper and the household gate.
 // HOUSEHOLD-MODE: remove at V3-ROLES (DB-layer RLS via current_user_role() replaces this).
 // householdScope returns the set of owner Clerk IDs whose rows a request may see/modify.
 //
@@ -6,11 +6,10 @@
 // of it; otherwise return just their own id. A non-member who authenticates must NEVER see
 // the household's data. Fail-closed: empty/unset/whitespace env -> [userId] (single-user).
 //
-// DEPLOY NOTE: each Lambda is zipped from its OWN directory (deploy-lambda.yml / deploy-staging.yml:
-// `cd lambda/<fn> && zip -r ../<fn>.zip .`), so a `../household.js` import is NOT packaged and the
-// handler 502s at module load. Therefore an IDENTICAL copy of this file lives in each in-scope
-// Lambda dir and is imported as `./household.js`. This file (lambda/household.js) is the canonical
-// source + unit-test target; copies are kept byte-identical by lambda/household-copies-sync.test.js.
+// DEPLOY NOTE: a Lambda zip holds only its own dir, so a `../household.js` import is NOT packaged and the
+// handler 502s at module load. An IDENTICAL copy of this file lives in each in-scope Lambda dir and is
+// imported as `./household.js`; this file is the canonical source, and the copies are kept byte-identical by
+// lambda/household-copies-sync.test.js.
 // The one read of GARDEN_HOUSEHOLD_IDS: comma-separated Clerk subs, trimmed, empties dropped.
 function householdList() {
   return (process.env.GARDEN_HOUSEHOLD_IDS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
@@ -35,15 +34,13 @@ export function householdGate(userId) {
   return { status: 403, body: { error: 'Forbidden' } };
 }
 
-// ── V4-AUTHZSWEEP-001 — write-FK ownership loaders ────────────────────────────────────────────────
-// A cross-entity FK column (plants.location_id, inventory_items.location_id, plants.parent_plant_id,
-// …) has a DB-level FK that enforces EXISTENCE but says nothing about OWNERSHIP. Every write path
-// that accepts one of these ids from a request body must therefore prove the referenced row is in
-// the caller's household BEFORE storing it — otherwise an authenticated user can pin their own row
-// to another household's location/planting/item, which (a) writes a cross-household FK and (b) leaks
-// the referenced row's fields back through any read surface that JOINs it.
+// ── Write-FK ownership loaders (V4-AUTHZSWEEP-001) ───────────────────────────────────────────────
+// A DB foreign key proves a referenced row EXISTS, not that the caller OWNS it. Every write path that
+// accepts a cross-entity id (plants.location_id, inventory_items.location_id, plants.parent_plant_id, …)
+// from a request body must prove the row is in the caller's household BEFORE storing it, or an
+// authenticated user can pin their row to another household's and read its fields back through any JOIN.
 //
-// Contract (uniform, mirrors the shipped preservation/index.js loaders):
+// Contract (uniform, mirrors the preservation/index.js loaders):
 //   • return the row on success, null on ANY failure — absent id, out-of-household, soft-deleted.
 //   • NO existence oracle: callers must answer a null with the same generic 400 they would give for
 //     a malformed id, never "not found" vs "forbidden" — that distinction is itself a leak.
@@ -54,16 +51,13 @@ export function householdGate(userId) {
 //   • owner columns are per-table and were verified against live prod, NOT assumed:
 //       locations.created_by · inventory_items.created_by · spaces.created_by
 //       plants: its container's created_by, OR its own when it has no container.
-// These live here rather than per-handler so the predicate has ONE canonical home; each Lambda is
-// zipped from its own dir, so this file is copied per-dir (see DEPLOY NOTE above) and the copies are
-// held byte-identical by lambda/household-copies-sync.test.js.
+// These live here so the predicate has ONE canonical home; the per-dir copies are explained by the
+// DEPLOY NOTE above.
 
-// A malformed id must answer the SAME generic null these loaders give a foreign id — never a 22P02
-// ("invalid input syntax for type uuid") that falls through the handler's catch to an opaque 500.
-// That 500 is both a worse client contract and a weak side channel: 500 = "syntactically invalid",
-// 400 = "valid uuid, but not yours". Identical to the constant in authz-parents.js; the two files
-// merge in the consolidating sweep. (V4-AUTHZRESIDUE-001 — previously only authz-parents.js carried
-// this guard, so a malformed location_id / inventory_item_id / space_id still 500'd.)
+// A malformed id must answer the SAME generic null these loaders give a foreign id, never a 22P02 that
+// falls through the handler's catch to an opaque 500: that 500 is a weak side channel (500 = "syntactically
+// invalid", 400 = "valid uuid, but not yours"). Identical to the constant in authz-parents.js; the two
+// files merge in the consolidating sweep.
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Verify a location_id is one the caller may attach to. Soft-deleted locations are rejected.
@@ -90,12 +84,10 @@ export async function loadOwnedInventoryItem(sql, itemId, householdIds) {
   return rows.length ? rows[0] : null;
 }
 
-// Verify a space_id. Consumed by V4-SPACEPHOTO-001 in lambda/photos (attach + set-featured).
-// NO deleted_at predicate — the spaces table has no such column (verified live, V-P2).
-// spaces.created_by is still NULLABLE, but the one live space row IS populated on BOTH prod and
-// the staging branch (re-verified 2026-07-31), so this predicate no longer rejects every space —
-// the earlier backfill prerequisite is discharged. Deliberately strict rather than adding an
-// `OR created_by IS NULL` escape, which would make an unowned space writable by any household.
+// Verify a space_id. Consumed by lambda/photos (attach + set-featured).
+// NO deleted_at predicate: the spaces table has no such column.
+// spaces.created_by is still NULLABLE. Deliberately strict rather than adding an `OR created_by IS NULL`
+// escape, which would make an unowned space writable by any household.
 export async function loadOwnedSpace(sql, spaceId, householdIds) {
   if (!UUID_RE.test(String(spaceId))) return null;
   const rows = await sql`
@@ -108,15 +100,13 @@ export async function loadOwnedSpace(sql, spaceId, householdIds) {
 
 // Verify a photo_id the caller is attaching to one of their own rows (plant_varieties.photo_id,
 // inventory_items.featured_image_id, preservation_log.photo_id). photos.created_by is the owner
-// column (verified live — photos ALSO carries a stale `uploaded_by`, which is NOT the owner column
-// and must never be used here; see the locations featured-photo assertion in authz-write-fk.test.js).
+// column (photos ALSO carries a stale `uploaded_by`, which is NOT the owner column and must never be
+// used here; see the locations featured-photo assertion in authz-write-fk.test.js).
 //
-// BUG-AUTHZFKENUM-001: lifted verbatim from the module-private loadOwnedPhoto in
-// lambda/preservation/index.js, which was the only surface that had one. Two consumers now need the
-// same predicate (varieties.photo_id, inventory-items.featured_image_id) and a third private copy is
-// how dialects are born. preservation keeps its own copy for now — it is byte-equivalent to this and
-// is asserted as such by the preservation arm of authz-write-fk.test.js; deleting it in favour of
-// this import belongs to the consolidating sweep that also collapses authz-parents.js.
+// Lifted verbatim from the module-private loadOwnedPhoto in lambda/preservation/index.js. preservation
+// keeps its own copy for now: it is byte-equivalent to this and asserted as such by the preservation arm
+// of authz-write-fk.test.js. Deleting it in favour of this import belongs to the consolidating sweep that
+// also collapses authz-parents.js.
 export async function loadOwnedPhoto(sql, photoId, householdIds) {
   if (!UUID_RE.test(String(photoId))) return null;
   const rows = await sql`

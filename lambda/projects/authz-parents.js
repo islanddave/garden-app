@@ -1,26 +1,21 @@
 // authz-parents.js — body-supplied PARENT-id ownership loaders (BUG-PARENTOWN-001).
 //
-// THE PATTERN THIS CLOSES (5 known instances: BUG-TAGENTOWN-001, BUG-PHOTOLOCAUTHZ-001, events POST,
-// photos POST, plants POST): a DB foreign key proves the referenced row EXISTS; it never proves the
-// caller OWNS it. Any write path that takes a parent id straight from the request body must therefore
-// prove household ownership BEFORE the insert, or an authenticated non-member can hang their row off
-// another household's container/planting/event — which both writes a cross-household FK and, through
-// any read surface that JOINs the parent, turns into a cross-household READ.
+// A DB foreign key proves the referenced row EXISTS; it never proves the caller OWNS it. Any write path
+// that takes a parent id straight from the request body must prove household ownership BEFORE the insert,
+// or an authenticated non-member can hang their row off another household's container/planting/event,
+// which writes a cross-household FK and, through any read surface that JOINs the parent, becomes a
+// cross-household READ.
 //
 // WHY THIS FILE EXISTS ALONGSIDE household.js (read this before adding a third home).
-// household.js is the canonical home for ownership loaders and already carries loadOwnedLocation /
-// loadOwnedInventoryItem / loadOwnedSpace / loadOwnedPlanting / warnRejectedFk. These three belong
-// there too. They are HERE only because household.js is held byte-identical across SIXTEEN Lambda
-// dirs by lambda/household-copies-sync.test.js, so it cannot be extended from a change scoped to
-// lambda/photos + lambda/plants without editing fourteen out-of-scope dirs. FOLLOW-UP (do this in the
-// consolidating sweep that also fixes events POST): move these three into household.js, delete this
-// file and its copies, and drop lambda/authz-parents-copies-sync.test.js.
+// household.js is the canonical home for ownership loaders; these belong there too. They are HERE only
+// because household.js is held byte-identical across many Lambda dirs by lambda/household-copies-sync.test.js,
+// so it could not be extended from a change scoped to lambda/photos + lambda/plants. FOLLOW-UP (in the
+// consolidating sweep that also fixes events POST): move these into household.js, delete this file and its
+// copies, and drop lambda/authz-parents-copies-sync.test.js.
 //
-// DEPLOY NOTE (same as household.js): each Lambda is zipped from its OWN directory
-// (`cd lambda/<fn> && zip -r ../<fn>.zip .`), so a `../authz-parents.js` import is NOT packaged and
-// the handler 502s at module load. An IDENTICAL copy therefore lives in each consuming Lambda dir and
-// is imported as `./authz-parents.js`. This file is the canonical source; copies are held
-// byte-identical by lambda/authz-parents-copies-sync.test.js.
+// DEPLOY NOTE (same as household.js): a Lambda zip holds only its own dir, so a `../authz-parents.js`
+// import 502s at module load. An IDENTICAL copy lives in each consuming Lambda dir, imported as
+// `./authz-parents.js`, held byte-identical by lambda/authz-parents-copies-sync.test.js.
 //
 // CONTRACT (identical to household.js's loaders — one pattern, not a dialect per site):
 //   • return the row on success, null on ANY failure — absent id, out-of-household, soft-deleted.
@@ -32,22 +27,20 @@
 //     returns [''] and `'' = ANY(ARRAY[''])` is TRUE in Postgres, so an empty sub is a live ownership
 //     value rather than a no-match.
 //
-// Owner columns were verified against live prod, not assumed:
+// Owner columns:
 //   plant_projects.created_by · event_log.created_by (+ its container's) · plants.created_by (+ its
 //   container's). `container` and `garden_node` are VIEWS over `plant_projects` and `plants`; these
 //   predicates address the BASE TABLES, which is also where the CHECK constraints live.
 
-// A malformed id must answer the SAME generic null these loaders give a foreign id — not a 22P02
-// that falls through the handler's catch to an opaque 500 (which is both a worse client contract and
-// a weak side-channel: 500 = "syntactically invalid", 400 = "valid uuid, but not yours"). The
-// household.js loaders do NOT carry this guard; a malformed location_id / inventory_item_id still
-// 500s, which is pre-existing and should be fixed when these merge into household.js.
+// A malformed id must answer the SAME generic null these loaders give a foreign id, not a 22P02 that
+// falls through the handler's catch to an opaque 500 (a weak side channel: 500 = "syntactically invalid",
+// 400 = "valid uuid, but not yours"). Identical to the constant in household.js.
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Verify a container/project id (plants.project_id, photos.project_id, event_log.project_id).
-// Byte-for-byte the predicate already shipped as lambda/tags/index.js entityExists('project').
+// Byte-for-byte the predicate shipped as lambda/tags/index.js entityExists('project').
 // Soft-deleted containers are rejected: attaching a NEW row to a deleted container is not a
-// legitimate flow, and it matches photos/index.js:1045 + findings/index.js:83, which already do.
+// legitimate flow, and photos and findings reject them too.
 export async function loadOwnedProject(sql, projectId, householdIds) {
   if (!UUID_RE.test(String(projectId))) return null;
   const rows = await sql`
@@ -59,32 +52,25 @@ export async function loadOwnedProject(sql, projectId, householdIds) {
   return rows.length ? rows[0] : null;
 }
 
-// Pick the container a NEW planting belongs in when the caller supplied none. Derives server-side,
-// on the same principle deriveEventProjectId already applies to events: a client cannot be relied on
-// to get this right, and one of them demonstrably does not — CaptureFlow ("Snap") posts
-// `project_id: null` on every create (src/pages/CaptureFlow.jsx:386), which is how 7 project-less
-// plantings reached prod between 2026-08-13 and 2026-08-30. plants/index.js:1610 records 269/269
-// plantings carrying a project on 2026-08-04, so this is a regression with a date, not the design.
+// Pick the container a NEW planting belongs in when the caller supplied none. Derives server-side, as
+// deriveEventProjectId does for events: a client cannot be relied on to send the project (CaptureFlow
+// posts `project_id: null` on every create).
 //
 // MATCHED ON CROP TYPE, NOT "the household's first container", and that distinction is the whole
-// design. On this system the container's NAME IS THE PUBLISHED CROP — gam-site's crop_label_sql
-// reads plant_projects.name onto a public page — so an arbitrary container does not file a row
-// untidily, it publishes a tomato to the world as a pepper. A wrong container is worse than none.
+// design. The container's NAME IS THE PUBLISHED CROP (gam-site's crop_label_sql reads plant_projects.name
+// onto a public page), so an arbitrary container publishes a tomato to the world as a pepper. A wrong
+// container is worse than none.
 //
-// DELIBERATELY FIND-ONLY; it never creates a container. Three live plantings (yarrow, dogwood,
-// hydrangeas) have no crop-type container to match and stay NULL, which is a supported state with
-// its own authorization arm — see the `project_id IS NULL` conjunct below. Minting a container from
-// a write path would put a row into the world nobody asked for, named by a guess, on a site where
-// that name is public.
+// DELIBERATELY FIND-ONLY; it never creates a container. A planting with no crop-type container to match
+// stays NULL, a supported state with its own authorization arm (the `project_id IS NULL` conjunct below).
+// Minting a container from a write path would publish a name chosen by a guess.
 //
 // THE `other = 0` GUARD IS WHAT MAKES THE MATCH SAFE. A candidate must hold plantings of the target
 // crop and NOTHING ELSE. A mixed container (a bed, a grouping) can hold tomatoes without being "the
-// tomato container", so matching on presence alone would file into it. Requiring purity means only
-// the per-crop containers this garden actually uses can win. Verified against live prod 2026-08-30:
-// tomato→Tomatoes, pepper→Peppers, pothos→Pothos, tradescantia→Tradescantia, and yarrow/dogwood→NULL.
+// tomato container", so matching on presence alone would file into it.
 //
 // Returns null on ANY uncertainty — unknown cultivar, cultivar with no crop type, no pure container.
-// Null is the status quo, so this helper's failure mode is "behaves exactly as it did before".
+// Null is the status quo, so the failure mode is "behaves as it did before".
 //
 // No ownership gate is needed on its output: the predicate is household-scoped
 // (`pp.created_by = ANY(householdIds)`), so it can only return a container the caller already owns.
@@ -123,14 +109,11 @@ export async function resolveContainerForCultivar(sql, cultivarId, householdIds)
 // it away — see the long comment on the PUT predicate in lambda/plants/index.js.
 //
 // DELIBERATE DIVERGENCE from household.js loadOwnedPlanting(), which is the same query MINUS that
-// conjunct (`gn.created_by = ANY(h) OR pp.created_by = ANY(h)`) and is therefore strictly looser.
-// This is the stricter, canonical form; the looser one is the outlier and should be reconciled to
-// this in the consolidating sweep (lambda/preservation is its remaining consumer).
-// `project_id` is returned (BUG-EVENTPROJPLANTPAIR-001) because the planting owns the project on
-// every row that has one: event_log's writers derive their project_id from this column rather than
-// from the request body. It costs nothing — this query already runs and already reads this row —
-// and returning it here is what lets the derivation happen WITHOUT a second round trip. Callers
-// that only need the ownership verdict keep ignoring the extra column.
+// conjunct and is therefore strictly looser. This is the canonical form; the looser one should be
+// reconciled to it in the consolidating sweep (lambda/preservation is its remaining consumer).
+// `project_id` is returned (BUG-EVENTPROJPLANTPAIR-001) because the planting owns the project on every
+// row that has one: event_log's writers derive their project_id from it rather than from the request
+// body, without a second round trip. Callers that only need the ownership verdict ignore it.
 export async function loadOwnedPlantingRef(sql, plantId, householdIds) {
   if (!UUID_RE.test(String(plantId))) return null;
   const rows = await sql`
@@ -150,26 +133,20 @@ export async function loadOwnedPlantingRef(sql, plantId, householdIds) {
 // is not. The own-created_by arm is exact rather than approximate here — the shipped RLS policy
 // events_creator_delete already scopes deletes that way.
 //
-// THE FALLBACK ARM CARRIES ITS OWN PLANTING GUARD, and that is not belt-and-braces (adversarial
-// review, finding 3). event_log has a SECOND parent, plant_id, which the two ownership arms above
-// never inspect. Without the guard the chain is: attacker creates a project-less event anchored to
-// the VICTIM's planting → the fallback arm passes on the attacker's own created_by → the attacker
-// attaches a photo with that event_id and this loader waves it through. That would make the photos
-// gate bypassable via a two-request detour, and it would depend on a predicate in a DIFFERENT Lambda
-// to be safe. It is now self-contained.
+// THE FALLBACK ARM CARRIES ITS OWN PLANTING GUARD, and that is not belt-and-braces. event_log has a
+// SECOND parent, plant_id, which the two ownership arms never inspect. Without the guard an attacker
+// creates a project-less event anchored to the VICTIM's planting, the fallback arm passes on the
+// attacker's own created_by, and the attacker attaches a photo with that event_id: the photos gate
+// would be bypassable in two requests and would depend on a predicate in a DIFFERENT Lambda.
 //
-// SCOPED TO THE FALLBACK ARM ONLY — measured, not assumed. Applying the same guard to the
-// container-owned arm looks tidier and is WRONG: 39 live household events are anchored to a
-// SOFT-DELETED planting (their planting was deleted after the event), and one live photo hangs off
-// one of them, so a both-arms guard would reject 1 of the 735 event-attached photos and 39 events.
-// A predicate that quietly narrows real access is worse than the bug. On the fallback arm the cost
-// is 0 by construction: prod has zero live project-less events today (the validator relax in
-// lambda/events creates the first ones).
+// SCOPED TO THE FALLBACK ARM ONLY. Applying the same guard to the container-owned arm looks tidier and
+// is WRONG: events anchored to a SOFT-DELETED planting (deleted after the event) are legitimate, and a
+// both-arms guard would reject them and their photos. A predicate that quietly narrows real access is
+// worse than the bug.
 //
 // NO `pp.deleted_at IS NULL` conjunct, deliberately: lambda/events' own PUT/DELETE predicates do not
 // carry one, and adding it here only would make an event attachable by its owning Lambda but not by
-// photos. Measured cost of adding it against live prod was zero (735 = 735), so this is a
-// consistency choice, not a data-driven one — revisit it for ALL event paths at once or not at all.
+// photos. Revisit it for ALL event paths at once or not at all.
 export async function loadOwnedEvent(sql, eventId, householdIds) {
   if (!UUID_RE.test(String(eventId))) return null;
   const rows = await sql`
