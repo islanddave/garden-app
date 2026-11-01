@@ -6,7 +6,7 @@
 // loads no images, so what the card ASKS for (which photo id, which tier) is what can be pinned here;
 // bytes and geometry are gate:seeds-page's and phototier-bytes'.
 import React, { useState } from 'react'
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach, onTestFinished } from 'vitest'
 import { render, screen, waitFor, act, fireEvent, cleanup, within } from '@testing-library/react'
 
 const { fetchSpy } = vi.hoisted(() => ({ fetchSpy: vi.fn() }))
@@ -264,6 +264,11 @@ describe('My seeds — what each card says', () => {
   })
 
   it('a heat that cannot fit moves to the NEXT LINE, whole — never dropped: a rigid item of the wrapping line after the amount, its " · " outside it, the tail after it', async () => {
+    // A lot still drying shows its stage year (ageOf), and the stage began on the clock. Pin it in 2026 so
+    // the "harvested 2026" tail below keeps meaning this season's year.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-10-15T12:00:00'))
+    onTestFinished(() => vi.useRealTimers())
     rows = [pepper({
       id: 'lantern', name: 'Hot Paper Lantern — saved 2026', variety_name: 'Hot Paper Lantern', seed_stage: 'drying',
       source_plant_id: 'pl', seed_count: 1200, seed_count_estimated: true, seed_weight_g: 12.5,

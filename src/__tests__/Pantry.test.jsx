@@ -2,7 +2,7 @@
 // bridge, through the real PutUp page against a fake shaped EXACTLY like the pinned pantry contract
 // (helpers/pantryFake.js). Each assertion is on what the person sees or on the wire.
 import React from 'react'
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, onTestFinished } from 'vitest'
 import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react'
 import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom'
 import { installStoragePolyfill } from './helpers/storagePolyfill.js'
@@ -90,6 +90,11 @@ describe('the Pantry segment (V4 §2.5, §6.1)', () => {
   // AMENDED (Put-Up UX pass R1, F22): grouped By place a row sits under its place's heading and does not
   // repeat it. The detail line is asserted from the name's end, so nothing may stand before "where from".
   it('a row says name · where from · what is left · the discard chip · From the garden — its place is the heading above it', async () => {
+    // shortDay prints the year only when it is not the clock's year. Pin the clock in 2026 so
+    // "Feb 1, 2027" keeps proving the qualifier.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-10-15T12:00:00'))
+    onTestFinished(() => vi.useRealTimers())
     renderPantry()
     const open = await screen.findByTestId('pantry-row-open-put_up:jar-reaper')
     expect(open.textContent).toContain('Megatron reaper')

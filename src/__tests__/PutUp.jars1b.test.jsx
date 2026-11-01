@@ -10,7 +10,7 @@
 // discard chip — the row contract carries no size or put-up date) and the "used-up bag" arm (the server
 // no longer lists a used-up jar).
 import React from 'react'
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, onTestFinished } from 'vitest'
 import { render, screen, fireEvent, waitFor, act, cleanup } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { installStoragePolyfill } from './helpers/storagePolyfill.js'
@@ -83,6 +83,10 @@ describe('the Pantry row says its name, its place, what is left and its discard 
 
   // MUTATION: drop the basis words from the chip -> the literal loses "general figure" and reds.
   it('says the discard-by in the §3.2 words', async () => {
+    // The year is printed only when it is not the clock's year: pin the clock in 2026 so the literal holds.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-10-15T12:00:00'))
+    onTestFinished(() => vi.useRealTimers())
     await renderList()
     expect(document.body.textContent).toContain('discard by Feb 1, 2027 · general figure: hot sauce, fridge')
     expect(document.body.textContent).not.toContain('use by')
