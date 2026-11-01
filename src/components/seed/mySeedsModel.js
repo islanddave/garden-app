@@ -1,15 +1,14 @@
-// src/components/seed/mySeedsModel.js — V5-SEEDSTAB-001. What one row of My seeds SAYS, as pure
-// functions, so the page and its tests read the same answer.
+// src/components/seed/mySeedsModel.js — what one row of My seeds SAYS, as pure functions, so the page and its tests
+// read the same answer.
 //
-// My seeds answers "what seed do I have?" over every packet and saved lot — ~330 rows, 289 cultivars,
-// pepper and tomato half of them. Each row is one packet or lot, and its second line is ordered
-// quantity first so an ellipsis cuts the vendor, never the amount: state chips · how much · where
-// from · how old.
+// My seeds answers "what seed do I have?" over every packet and saved lot. Each row is one packet or lot, and its
+// second line is ordered quantity first so an ellipsis cuts the vendor, never the amount: state chips · how much ·
+// where from · how old.
 //
-// STATE CHIPS use the SOW ENGINE's predicates, in the engine's order and in the engine's words — so a
-// lot that is "Fermenting" here is exactly the lot Sow now files under Still in process, and a packet
-// that sits under Sowed previously is exactly the one Sow now calls sowed previously. Re-deciding any
-// of these here would let the two views disagree about one jar.
+// STATE CHIPS use the SOW ENGINE's predicates, in the engine's order and in the engine's words, so a lot that is
+// "Fermenting" here is exactly the lot Sow now files under Still in process, and a packet that sits under Sowed
+// previously is exactly the one Sow now calls sowed previously. Re-deciding any of these here would let the two views
+// disagree about one jar.
 import { formatQty } from '../../lib/format.js'
 import { isInProcess, isUnstartedSave, isDepleted, isArchivedForSeason } from '../../lib/sowEngine.js'
 import { elapsedDays, fermentUrgency, lotMeasure, isSavedLot, isF2Lot, F2_LABEL } from './seedLots.js'
@@ -36,13 +35,12 @@ export function rowTitle(i) {
 
 const plural = (n, one, many) => (String(n) === '1' ? one : many)
 
-// How much. A saved lot is measured in SEED (count or weight) — every saved lot is "1 packet", which
-// says nothing — and says nothing at all when nobody has counted it. A bought packet is measured in
-// what the shelf holds: packets, or seeds when the unit is `each`.
+// How much. A saved lot is measured in SEED (count or weight), since every saved lot is "1 packet", which says
+// nothing, and says nothing at all when nobody has counted it. A bought packet is measured in what the shelf holds:
+// packets, or seeds when the unit is `each`.
 //
-// EXACTLY "1 packet" says nothing and is left out (V5-SEEDCARDS-001, UX spec §1.3): 304 of 327 rows
-// printed the same 11 characters — 68px of a 255px line — for a fact the eye had to skip on every row.
-// Every other amount ("2 packets", "272 seeds", "0.5 oz", a saved lot's count) still shows, whole.
+// EXACTLY "1 packet" says nothing and is left out: it was the same eleven characters on nearly every row, for a fact
+// the eye had to skip. Every other amount ("2 packets", "272 seeds", "0.5 oz", a saved lot's count) still shows, whole.
 export function howMuch(i) {
   if (isSavedLot(i)) return lotMeasure(i)
   const qty = formatQty(i?.quantity_on_hand)
@@ -54,12 +52,12 @@ export function howMuch(i) {
   return `${qty} ${unit}`
 }
 
-// Where from. `source` is an order reference on prod, so the vendor comes from the registry through
-// `vendorOf`; a saved lot names its origin instead, and a packet with no recorded vendor says nothing.
+// Where from. `source` is an order reference on prod, so the vendor comes from the registry through `vendorOf`; a
+// saved lot names its origin instead, and a packet with no recorded vendor says nothing.
 //
-// V5-SEEDMULTIPARENT-001 release 2b: a jar gathered off two or more plantings says "plants". The count is
-// the parent set's (`source_plants`, every element); a row with no set to read, or SEED_MULTI_PARENT off,
-// keeps the one-plant words. scripts/seed_label_ambiguity.py where_from is this function's port.
+// A jar gathered off two or more plantings says "plants". The count is the parent set's (`source_plants`, every
+// element); a row with no set to read, or SEED_MULTI_PARENT off, keeps the one-plant words.
+// scripts/seed_label_ambiguity.py where_from is this function's port.
 export function whereFrom(i, vendorOf) {
   if (SEED_MULTI_PARENT && parentSetFacts(i?.source_plants).plantings.length >= 2) return 'Saved from my plants'
   if (i?.source_plant_id != null && i.source_plant_id !== '') return 'Saved from my plant'
@@ -102,8 +100,8 @@ export function stateChips(i, { now = new Date(), year = now.getFullYear() } = {
       const level = fermentUrgency(i, now)
       chips.push({
         key: 'fermenting',
-        // "Ferment", the ferment line's own word (V5-SEEDCARDS-001): ~20px back on a line that now
-        // leads with a supplier chip, which is the margin the worst row needs on CI's wider fonts.
+        // "Ferment", the ferment line's own word: ~20px back on a line that leads with a supplier chip, which is the
+        // margin the worst row needs on CI's wider fonts.
         label: d == null ? 'Ferment' : d <= 0 ? 'Ferment · today' : `Ferment · day ${d}`,
         tone: level === 'alarm' ? 'danger' : level === 'warn' ? 'warn' : 'info',
       })
@@ -116,27 +114,24 @@ export function stateChips(i, { now = new Date(), year = now.getFullYear() } = {
   if (isArchivedForSeason(i, year)) chips.push({ key: 'archived', label: 'Archived for this season', tone: 'neutral' })
   const status = String(i?.status ?? 'active')
   if (status !== 'active') chips.push({ key: 'status', label: status[0].toUpperCase() + status.slice(1), tone: 'neutral' })
-  // V5-SEEDSTAB-001 slice 3 — the one chip that is not an engine state: a lot saved off an F1 plant is
-  // F2 seed (seedLots.isF2Lot). LAST and NEUTRAL, deliberately. Last, so a live state ("Ferment · day
-  // 5", "Drying") keeps the first place and stays whole; neutral in tone, because it is a fact about the
-  // seed, not an alarm. Where it sits on line 2 is lineLayout's call, below. Bought F1 packets never get it.
+  // The one chip that is not an engine state: a lot saved off an F1 plant is F2 seed (seedLots.isF2Lot). LAST and
+  // NEUTRAL, deliberately. Last, so a live state ("Ferment · day 5", "Drying") keeps the first place and stays whole;
+  // neutral in tone, because it is a fact about the seed, not an alarm. Where it sits on line 2 is lineLayout's call,
+  // below. Bought F1 packets never get it.
   if (isF2Lot(i)) chips.push({ key: 'f2', label: F2_LABEL, tone: 'neutral' })
   return chips
 }
 
-// ── Line 2's layout: which chips are WHOLE ITEMS of the line and which GIVE WAY ─────────────────────
-// MySeeds renders line 2 from this (UX spec §1.3). Every row's line 2 is ONE line that WRAPS rather than
-// drop the heat (BUG-MYSEEDSF2HIDESSHU-001, Dave 2026-09-24, on his phone at 426px: "I want the shu
-// shown" — "I still prefer seeing heat … it is info for decisions/guidance for me"). The supplier chip,
-// the live state chip (a lot in process), the F2 chip, the amount and the heat are whole items of the
-// line; when one line cannot hold them, what does not fit — in practice the heat — moves to the next
-// line, whole. A heat is shown whole or not at all, and it is always shown. The other chips
-// (`giveWayChips`: "Archived for this season", a status, "Not started") ellipsise before the heat has to
-// move; the tail (where from · how old) follows the heat and is cut first. A row that fits stays one line.
-//   · an F2 row: the F2 chip is a whole item of the line, after any live chip, and the amount follows it —
-//     the chip never costs the heat (the slice 3 amendment, abf8bf1, dropped the heat for it). Any other
-//     chip comes after the amount.
-//   · every other row: the chips that give way come before the amount, as they always have.
+// Line 2's layout: which chips are WHOLE ITEMS of the line and which GIVE WAY. MySeeds renders line 2 from this. Every
+// row's line 2 is ONE line that WRAPS rather than drop the heat (the heat is wanted on the phone). The supplier chip,
+// the live state chip (a lot in process), the F2 chip, the amount and the heat are whole items of the line; when one
+// line cannot hold them, what does not fit (in practice the heat) moves to the next line, whole. A heat is shown whole
+// or not at all, and it is always shown. The other chips (`giveWayChips`: "Archived for this season", a status, "Not
+// started") ellipsise before the heat has to move; the tail (where from · how old) follows the heat and is cut first.
+// A row that fits stays one line.
+//   · an F2 row: the F2 chip is a whole item of the line, after any live chip, and the amount follows it; the chip
+//     never costs the heat. Any other chip comes after the amount.
+//   · every other row: the chips that give way come before the amount.
 export function lineLayout(i, { now, year } = {}) {
   const chips = stateChips(i, { now, year })
   const live = chips[0] && chips[0].tone !== 'neutral' ? chips[0] : null
@@ -144,8 +139,8 @@ export function lineLayout(i, { now, year } = {}) {
   return { live, f2, giveWayChips: chips.filter((c) => c !== live && c !== f2) }
 }
 
-// Where from, for the TAIL of line 2: a saved lot's origin words. A bought packet's vendor is not
-// repeated here — the supplier chip that leads the line already names it (V5-SEEDCARDS-001).
+// Where from, for the TAIL of line 2: a saved lot's origin words. A bought packet's vendor is not repeated here; the
+// supplier chip that leads the line already names it.
 export function originNote(i) {
   return whereFrom(i, null)
 }
@@ -166,9 +161,9 @@ export function lineText(i, { vendorOf, now, year } = {}) {
   return [vendor ? supplierLabel(vendor) : '', ...ordered].filter(Boolean).join(' · ')
 }
 
-// Sowed previously — Dave's term, and Sow now's section — is a packet there is none of left. Never a
-// lot still being made (a fermenting jar at 0 is not used up) and never an unstarted save: the engine
-// resolves those two AHEAD of depletion, and so does this.
+// Sowed previously (Sow now's section) is a packet there is none of left. Never a lot still being made (a fermenting
+// jar at 0 is not used up) and never an unstarted save: the engine resolves those two AHEAD of depletion, and so does
+// this.
 export function isSowedPreviously(i) {
   return isDepleted(i) && !isInProcess(i) && !isUnstartedSave(i)
 }
@@ -177,17 +172,16 @@ export const SORTS = [
   { value: 'name',   label: 'Name' },
   { value: 'oldest', label: 'Oldest' },
   { value: 'newest', label: 'Newest' },
-  // V5-SEEDCARDS-001 — Dave: "for peppers, to sort them by expected SHU". Offered only when at least
-  // two rows carry a heat figure (MySeeds decides; a control that cannot change the answer is hidden).
+  // Sort by expected SHU, for peppers. Offered only when at least two rows carry a heat figure (MySeeds decides; a
+  // control that cannot change the answer is hidden).
   { value: 'heat',   label: 'Heat' },
 ]
 
-// ── Heat (V5-SEEDCARDS-001) ────────────────────────────────────────────────────────────────────────
-// A cultivar's expected Scoville range, from the list row's cultivar facts. The SORT KEY is the top of
-// the range (a "hottest first" list ranks a 100k-350k habanero above a 100k-150k one), falling back
-// to the bottom when only one end is known. A best guess (scoville_source 'inference') is marked where
-// it is SHOWN, never here: heatLabel's formatter (varietySpec.shuLabel) prefixes the WORD "est.", so a
-// guess never reads as a stated number; Hottest ranks it by the same key as any other figure.
+// Heat: a cultivar's expected Scoville range, from the list row's cultivar facts. The SORT KEY is the top of the range
+// (a "hottest first" list ranks a 100k-350k habanero above a 100k-150k one), falling back to the bottom when only one
+// end is known. A best guess (scoville_source 'inference') is marked where it is SHOWN, never here: heatLabel's
+// formatter (varietySpec.shuLabel) prefixes the WORD "est.", so a guess never reads as a stated number; Hottest ranks
+// it by the same key as any other figure.
 export function heatOf(i) {
   const mn = i?.scoville_min, mx = i?.scoville_max
   if (mn == null && mx == null) return null
@@ -198,12 +192,11 @@ export function heatLabel(i) {
   return heatOf(i) ? shuLabel(i) : ''
 }
 
-// ── Supplier facet (V5-SEEDCARDS-001) ──────────────────────────────────────────────────────────────
-// Options for the supplier filter, from the PRE-filter rows (a facet derived from its own filtered
-// output collapses to whatever is selected). Count-descending, ties by label; rows with no supplier on
-// record (saved lots, and packets whose vendor was never entered) are one "No supplier" option, last.
-// The value is the folded name (supplierPalette.supplierKey) — the same key the colours use, and
-// stable across environments where registry uuids are not.
+// Supplier facet: options for the supplier filter, from the PRE-filter rows (a facet derived from its own filtered
+// output collapses to whatever is selected). Count-descending, ties by label; rows with no supplier on record (saved
+// lots, and packets whose vendor was never entered) are one "No supplier" option, last. The value is the folded name
+// (supplierPalette.supplierKey), the same key the colours use, and stable across environments where registry uuids
+// are not.
 export const NO_SUPPLIER_VALUE = '__none__'
 export function supplierOf(i, vendorOf) {
   const name = vendorOf ? String(vendorOf(i) ?? '').trim() : ''
@@ -230,21 +223,19 @@ export function matchesSuppliers(i, selected, vendorOf) {
   return selected.has(s ? s.key : NO_SUPPLIER_VALUE)
 }
 
-// ── One filter object (V5-SEEDCARDS-001) ───────────────────────────────────────────────────────────
-// Search, crop chips and supplier chips are ONE value, so "is anything filtering?", "clear them" and
-// the write-never-lands-out-of-sight notice can never enumerate a different subset of them — a third
-// facet added to two of three sites is exactly how a just-saved row ends up hidden with no notice.
+// One filter object: search, crop chips and supplier chips are ONE value, so "is anything filtering?", "clear them" and
+// the write-never-lands-out-of-sight notice can never enumerate a different subset of them. A third facet added to two
+// of three sites is how a just-saved row ends up hidden with no notice.
 export function isFilterActive(f) {
   return !!(f && (String(f.q ?? '').trim() || (f.crops && f.crops.size > 0) || (f.suppliers && f.suppliers.size > 0)))
 }
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
 
-// Name: grouped by crop (the caller groups), A→Z inside. Oldest seed first: flat, by the age year,
-// unknown years last. Newest added: flat, created_at descending, then id — July's intake put 104
-// rows on one day, so the tie-break is what makes the order stable. Heat: grouped by crop like Name
-// (the caller groups), hottest first inside a group — only peppers carry a figure, so every other
-// group reads A→Z exactly as under Name.
+// Name: grouped by crop (the caller groups), A→Z inside. Oldest seed first: flat, by the age year, unknown years last.
+// Newest added: flat, created_at descending, then id (a bulk intake can put a hundred rows on one day, so the
+// tie-break is what makes the order stable). Heat: grouped by crop like Name (the caller groups), hottest first inside
+// a group; only peppers carry a figure, so every other group reads A→Z exactly as under Name.
 export function sortRows(rows, sort) {
   const byTitle = (a, b) => collator.compare(rowTitle(a), rowTitle(b)) || String(a.id).localeCompare(String(b.id))
   const out = [...rows]
@@ -276,12 +267,12 @@ export function sortRows(rows, sort) {
   return out.sort(byTitle)
 }
 
-// Crop groups for the grouped sorts, with rows that name no crop in their own group LAST rather than
-// dropped (prod has none today; a row must never vanish for it).
+// Crop groups for the grouped sorts, with rows that name no crop in their own group LAST rather than dropped (a row
+// must never vanish for it).
 //
-// ORDER (V5-SEEDCARDS-001, UX spec §3.2): the crops PINNED in the chip row first, in pin order, then
-// every other crop A→Z. Once groups are collapsed the list IS the overview, and A→Z put Pepper (103
-// rows) 53rd and Tomato (52) 68th of 73 headers. `leadSlug` (the Hottest sort's pepper) goes first.
+// ORDER: the crops PINNED in the chip row first, in pin order, then every other crop A→Z. Once groups are collapsed
+// the list IS the overview, and A→Z would bury Pepper and Tomato far down the headers. `leadSlug` (the Hottest sort's
+// pepper) goes first.
 export const NO_CROP = '__none__'
 export function groupByCrop(rows, labelOf, { pinned = [], leadSlug = null } = {}) {
   const groups = new Map()
@@ -302,9 +293,8 @@ export function groupByCrop(rows, labelOf, { pinned = [], leadSlug = null } = {}
       || collator.compare(a.label, b.label))
 }
 
-// ── Which crop groups are open (V5-SEEDCARDS-001, UX spec §3.5–§3.6) ───────────────────────────────
-// Collapsed by default. A group is open when the user did not close it AND (they opened it, OR a rule
-// opens it): any active filter opens every group that still has rows (a filter means "show me the
+// Which crop groups are open. Collapsed by default. A group is open when the user did not close it AND (they opened
+// it, OR a rule opens it): any active filter opens every group that still has rows (a filter means "show me the
 // seeds"; no filter means "show me the kinds"); the Hottest sort opens the pepper group.
 export function groupIsOpen(slug, { openGroups, closedByUser, filterActive, sort }) {
   if (closedByUser?.has(slug)) return false

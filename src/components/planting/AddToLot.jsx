@@ -1,11 +1,10 @@
-// src/components/planting/AddToLot.jsx — V5-SEEDLOTADDITION-001 (seed release 3). "Put it in a seed lot
-// I already started": the lot list and the add form. Both render INSIDE SaveSeedSheet's <Sheet>, in the
-// place of the new-lot form, and only while seedAdditions.addToLotAvailable() answers on.
+// src/components/planting/AddToLot.jsx — "Put it in a seed lot I already started": the lot list and the add form.
+// Both render INSIDE SaveSeedSheet's <Sheet>, in the place of the new-lot form, and only while
+// seedAdditions.addToLotAvailable() answers on.
 //
-// More seed off a plant used to mean a second lot, or a count typed over the first one. This puts
-// today's seed into the lot that is already drying: one POST that adds the plant to the lot if it is
-// new there, re-files the lot as a mix when the plant is another variety, raises the count, and keeps
-// its own row for the picking.
+// More seed off a plant would otherwise mean a second lot, or a count typed over the first one. This puts today's
+// seed into the lot that is already drying: one POST that adds the plant to the lot if it is new there, re-files the
+// lot as a mix when the plant is another variety, raises the count, and keeps its own row for the picking.
 //
 // THE WRITES, each awaited before the next:
 //   0. POST /api/varieties/blend { create: true } — only when the plant is another variety than the lot

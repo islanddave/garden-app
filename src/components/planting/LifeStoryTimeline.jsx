@@ -1,5 +1,5 @@
-// V4-PLANTINGUI-001 — life-story milestone spine. Renders buildLifeStory(planting) as a vertical
-// timeline (lifecycle arc), distinct from the full Event log ledger below it. Current skin.
+// Life-story milestone spine. Renders buildLifeStory(planting) as a vertical timeline (lifecycle arc), distinct from
+// the full Event log ledger below it.
 import React from 'react'
 import { P } from '../../lib/constants.js'
 import Icon from '../Icon.jsx'
@@ -23,10 +23,9 @@ export default function LifeStoryTimeline({ planting }) {
             <span aria-hidden="true" style={{ position: 'absolute', left: 15, top: 32, bottom: 0,
               width: 2, backgroundColor: P.greenLight }} />
           )}
-          {/* 22, not the emoji's 0.95rem/~15px: an inline SVG has no side bearings, so matching the
-              emoji's nominal size would draw a visibly smaller mark inside the same 32px node. 22
-              also clears Icon's 21px master crossover, so this takes the 24 master — the 18 master
-              closes the planted-out trough at this size. */}
+          {/* 22, not the emoji's 0.95rem/~15px: an inline SVG has no side bearings, so matching the emoji's nominal */}
+          {/* size would draw a visibly smaller mark inside the same 32px node. 22 also clears Icon's 21px master */}
+          {/* crossover, so this takes the 24 master; the 18 master closes the planted-out trough at this size. */}
           <span aria-hidden="true" style={{ width: 32, height: 32, borderRadius: '50%', flexShrink: 0,
             backgroundColor: P.greenPale, border: `1px solid ${P.greenLight}`, display: 'flex',
             alignItems: 'center', justifyContent: 'center', color: P.green, zIndex: 1 }}>

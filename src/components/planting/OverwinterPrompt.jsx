@@ -1,21 +1,16 @@
-// V4-OVERWINTERCARE-001 — the affordance that turns overwintering ON for a planting.
+// The affordance that turns overwintering ON for a planting. The evaluation path reads care_profile's overwintering
+// attribute; this is the tap that writes it.
 //
-// v4.34.0 shipped the whole evaluation path and nothing that could write to it: the attribute was
-// reachable only by hand-writing a jsonb row into care_profile, so in practice the feature did not
-// exist. This is the tap.
+// WHY IT LIVES ON THE PLANTING PAGE, next to the care band rather than inside the Garden editor. The decision is made
+// in front of the plant ("I just put the row cover on this bed") and the planting page is where that thought lands.
+// The Garden editor is three taps away behind /garden?edit=<id>, writes plants columns through a COALESCE-merge PUT,
+// and has no idiom for a key in another table. Ordered directly under CareStatus because it CHANGES what CareStatus
+// will say.
 //
-// WHY IT LIVES ON THE PLANTING PAGE, next to the care band rather than inside the Garden editor.
-// The decision is made in front of the plant — "I just put the row cover on this bed" — and the
-// planting page is where that thought lands. The Garden editor is three taps away behind /garden
-// ?edit=<id>, writes plants columns through a COALESCE-merge PUT, and has no idiom for a key in
-// another table; V4-ARCHIVEINPLACE-001 already moved a control OUT of it for exactly the
-// reach reason. Ordered directly under CareStatus because it CHANGES what CareStatus will say.
-//
-// DELIBERATELY LOW SALIENCE, and always present. Same chrome-less tappable-row shape as
-// TransplantDatePrompt (0.82rem, tinted verb phrase, >=44px touch target, no card, no banner, no
-// colour block) — this is a setting, not a nudge, and the reward-UX rules put a permanent control
-// at the bottom of the salience ladder. It does NOT hide itself outside winter: gating a garden
-// affordance on the calendar is exactly what the no-date-based-gating rule forbids, and the
+// DELIBERATELY LOW SALIENCE, and always present. Same chrome-less tappable-row shape as TransplantDatePrompt (0.82rem,
+// tinted verb phrase, >=44px touch target, no card, no banner, no colour block): this is a setting, not a nudge, and
+// the reward-UX rules put a permanent control at the bottom of the salience ladder. It does NOT hide itself outside
+// winter: gating a garden affordance on the calendar is what the no-date-based-gating rule forbids, and the
 // overwinter decision is made when the cover goes on, not when a date passes.
 import React, { useState } from 'react'
 import { P } from '../../lib/constants.js'
@@ -120,9 +115,9 @@ export default function OverwinterPrompt({ planting, onUpdated }) {
           />
           {err && <div role="alert" style={{ fontSize: '0.82rem', color: P.terra }}>{err}</div>}
           <Button onClick={() => submit(false)} loading={saving} loadingLabel="Saving…">Save</Button>
-          {/* The undo half, shown only when there is something to undo. A jsonb key is deletable and
-              this is the control that deletes it — the reversibility the attribute was chosen over a
-              status value FOR is only real if it is reachable from the same place that set it. */}
+          {/* The undo half, shown only when there is something to undo. A jsonb key is deletable and this is the */}
+          {/* control that deletes it: the reversibility the attribute was chosen over a status value FOR is only real */}
+          {/* if it is reachable from the same place that set it. */}
           {currentRegime && (
             <Button variant="secondary" onClick={() => submit(true)} disabled={saving}>
               Not overwintering

@@ -1,4 +1,4 @@
-// src/components/planting/GrowthStrip.jsx — V200 Slice 5b.
+// src/components/planting/GrowthStrip.jsx — presentational growth-narrative primitive.
 // Presentational growth-narrative primitive. Lives OUTSIDE src/components/forms/ (like Lightbox),
 // so it is NOT in the no-hex/no-emoji ESLint scope; even so it sources palette colors from P and
 // glyphs from Icon — the only literals are the same rgba-black overlay Lightbox uses.
@@ -128,17 +128,13 @@ function GrowthCompare({ list, onOpen, indexBase, reduceMotion }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      {/* Compare / playback stage.
-          BUG-TIERLESSPHOTOS-001 left these three on the FULL tier DELIBERATELY, and the milestone
-          strip below is where that ticket's saving actually is. Measured box: 320 x 239.5 CSS px,
-          i.e. 840 x 629 DEVICE px at Dave's dpr 2.625. The thumb derivative is 800px on its LONGEST
-          edge (lambda/photos thumb-upload-url), so a landscape thumb is 800 wide — 0.95x of what
-          this box wants, fine — but a PORTRAIT one is 600 wide and objectFit:cover would upscale it
-          1.4x. This is the surface whose entire job is looking closely at how a plant changed, and
-          two elements is not a payload argument: the win here is 24 thumbs, not 26.
-          They are on <PhotoView> anyway (default tier=FULL, so byte-identical to the <PhotoImg>
-          this replaced) because being on the primitive is what makes the tier a prop change later
-          rather than a hand-rolled `thumb_url ||` the V4-PHOTOMODEL-001 drift guard would flag. */}
+      {/* Compare / playback stage. These three stay on the FULL tier DELIBERATELY; the milestone strip below is where */}
+      {/* the thumb saving is. Measured box: 320 x 239.5 CSS px, i.e. 840 x 629 DEVICE px at dpr 2.625. The thumb */}
+      {/* derivative is 800px on its LONGEST edge (lambda/photos thumb-upload-url), so a landscape thumb is 800 wide, */}
+      {/* fine, but a PORTRAIT one is 600 wide and objectFit:cover would upscale it 1.4x. This surface exists to look */}
+      {/* closely at how a plant changed, and two elements is not a payload argument. They are on PhotoView anyway */}
+      {/* (default tier=FULL, byte-identical to a bare image) because being on the primitive makes the tier a prop */}
+      {/* change later rather than a hand-rolled thumb-url fallback the photoPrimitive drift guard would flag. */}
       <div ref={boxRef} style={{ position: 'relative', width: '100%', aspectRatio: '4 / 3',
         maxHeight: 360, borderRadius: 12, overflow: 'hidden', backgroundColor: P.cream,
         border: `1px solid ${P.border}` }}>
@@ -215,10 +211,10 @@ function GrowthCompare({ list, onOpen, indexBase, reduceMotion }) {
         </div>
       )}
 
-      {/* Milestone thumbnails — open the Lightbox at the photo's gallery index. data-hscroll marks
-          this as a horizontal scroller so the PlantingDetail swipe-pager cedes horizontal drags
-          here (it checks e.target.closest('[data-hscroll]')); overscroll-behavior-x contains the
-          rubber-band so a boundary drag doesn't trigger browser history nav. */}
+      {/* Milestone thumbnails open the Lightbox at the photo's gallery index. data-hscroll marks this as a horizontal */}
+      {/* scroller so the PlantingDetail swipe-pager cedes horizontal drags here (it checks */}
+      {/* e.target.closest('[data-hscroll]')); overscroll-behavior-x contains the rubber-band so a boundary drag does */}
+      {/* not trigger browser history nav. */}
       <div data-hscroll style={{ display: 'flex', gap: 8, overflowX: 'auto', overscrollBehaviorX: 'contain', paddingBottom: 4 }}>
         {list.map((p, i) => (
           <button key={p.id || i} type="button"
@@ -226,14 +222,12 @@ function GrowthCompare({ list, onOpen, indexBase, reduceMotion }) {
             aria-label={`Open growth photo ${i + 1}${photoDate(p) ? ` from ${fmtShort(photoDate(p))}` : ''}`}
             style={{ flex: '0 0 auto', width: 64, padding: 0, border: 'none', background: 'transparent',
               cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 3, alignItems: 'center' }}>
-            {/* BUG-TIERLESSPHOTOS-001 — 64 x 64 CSS (168 device px), rendered ONCE PER PHOTO, so a
-                24-photo planting drew 24 full ORIGINALS into postage stamps. /api/photos already
-                signs thumb_url on every one of these rows (lambda/photos, BUG-PHOTOBLANK-001), and
-                the thumb's SHORT edge is 600px — 3.5x oversampled for this box in the worst
-                orientation, so there is no sharpness left to lose. A photo whose thumb OBJECT is
-                missing (16.5% of live rows) degrades to p.view_url on load error with no network:
-                both URLs came down in the same list response, which is exactly what handing the
-                whole row to <PhotoView> buys over picking a URL here. */}
+            {/* 64 x 64 CSS (168 device px), rendered ONCE PER PHOTO, so the full original would be drawn into a postage */}
+            {/* stamp for every photo. /api/photos signs thumb_url on every one of these rows (lambda/photos), and the */}
+            {/* thumb's SHORT edge is 600px, 3.5x oversampled for this box in the worst orientation, so no sharpness is */}
+            {/* lost. A photo whose thumb OBJECT is missing degrades to p.view_url on load error with no network: both */}
+            {/* URLs came down in the same list response, which is what handing the whole row to PhotoView buys over */}
+            {/* picking a URL here. */}
             <PhotoView photo={p} tier={TIER.THUMB} alt="" aria-hidden="true"
               style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 8,
                 border: `1px solid ${P.border}`, display: 'block' }} />

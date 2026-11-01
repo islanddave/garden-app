@@ -1,16 +1,15 @@
 // src/components/planting/PlantingKitchen.jsx
-// B′ release 3 — the planting page's kitchen section (V4 §2.5 "Planting page"): what was put up from the
-// planting (the shipped PutUpFromPlanting, now with "from <batch> →" and each jar's "Next time…" lines),
-// what is kept fresh from it (pantry items with this plant_id) and every batch that used it — directly or
-// through stock drawn from it. A list, never a sum or a percentage. Plain markup; no new visual design.
+// The planting page's kitchen section (V4 §2.5 "Planting page"): what was put up from the planting (PutUpFromPlanting,
+// with "from <batch> →" and each jar's "Next time…" lines), what is kept fresh from it (pantry items with this
+// plant_id) and every batch that used it, directly or through stock drawn from it. A list, never a sum or a
+// percentage. Plain markup.
 //
-// One read: GET /api/kitchen-batches?plant_id=. If it fails or answers nothing, the shipped put-up list
-// still renders exactly as before and the two new lists stay away (no error state on a planting page).
+// One read: GET /api/kitchen-batches?plant_id=. If it fails or answers nothing, the put-up list still renders on its
+// own and the two other lists stay away (no error state on a planting page).
 //
-// Put-Up UX pass R1: a link to a batch is a 48 px target and carries where it came from (router state
-// `from`, putup/origin.js), so the batch's Back can read "← <this planting>" and return here; a stored
-// "Next time (2026-09-02): …" line is read as "Next time: … · Sep 2" (putup/howItWasMade.js nextTimeWords,
-// the same reading the Pantry's row sheet gives it).
+// A link to a batch is a 48 px target and carries where it came from (router state `from`, putup/origin.js), so the
+// batch's Back can read "← <this planting>" and return here; a stored "Next time (YYYY-MM-DD): …" line is read as
+// "Next time: … · Sep 2" (putup/howItWasMade.js nextTimeWords, the same reading the Pantry's row sheet gives it).
 import React, { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { P, T } from '../../lib/tokens.js'
@@ -33,11 +32,10 @@ function NextTime({ lines, testid, now }) {
   )
 }
 
-// `now` (optional): the clock dates are read against; a test pins it.
-// Put-Up R2a, lane K: the put-up section hosts the "Put something up" door. A save or an Undo there bumps
-// `reload`, so this read runs again too — a "Fresh, as picked" save is a pantry item and shows only under
-// Kept fresh, which is THIS read, not the put-up list's. A re-read keeps what is shown until it answers.
-// `onSheetOpenChange(open)` (optional, the page's) is handed down to the door's host as it is.
+// `now` (optional): the clock dates are read against; a test pins it. The put-up section hosts the "Put something up"
+// door. A save or an Undo there bumps `reload`, so this read runs again too: a "Fresh, as picked" save is a pantry
+// item and shows only under Kept fresh, which is THIS read, not the put-up list's. A re-read keeps what is shown until
+// it answers. `onSheetOpenChange(open)` (optional, the page's) is handed down to the door's host as it is.
 export default function PlantingKitchen({ planting, fetch, now, onSheetOpenChange }) {
   const [data, setData] = useState(null)
   const [shown, setShown] = useState([])

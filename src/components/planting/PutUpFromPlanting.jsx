@@ -1,62 +1,52 @@
-// PutUpFromPlanting — V4-PUTUPLINK-001. "What came off THIS planting, and what became of it."
-// The read end of the seed → planting → harvest → put-up spine: PutUp.jsx writes preservation_log
-// .plant_id, this renders it back on the planting that produced it.
+// PutUpFromPlanting: "What came off THIS planting, and what became of it." The read end of the seed -> planting ->
+// harvest -> put-up spine: PutUp.jsx writes preservation_log.plant_id, this renders it back on the planting that
+// produced it.
 //
-// Data: GET /api/preservation/whats-put-up?plant_id=<id>&include_consumed=1. The Lambda returns
-// storage-grouped records already scoped to the planting, so this flattens the groups and keeps each
-// group's label as the row's storage location — there is no per-record storage_label on the
-// projection.
+// Data: GET /api/preservation/whats-put-up?plant_id=<id>&include_consumed=1. The Lambda returns storage-grouped
+// records already scoped to the planting, so this flattens the groups and keeps each group's label as the row's
+// storage location (there is no per-record storage_label on the projection).
 //
-// V4-HARVESTFATE-001 — WHY include_consumed, and why this section is two readings rather than one.
-// The endpoint's default drops a fully-consumed jar, which is correct for the Pantry ("what is in the
-// freezer") and WRONG here: this is the only surface that answers "where did this planting's harvest
-// go", and on the default the answer silently reverts to "nothing" the day the last jar is finished.
-// So the fetch keeps consumed rows and the component separates them — what is STILL THERE, then what
-// was USED (gone, but still the planting's history). THIS SECTION KEEPS ITS OWN READ: the Pantry's
-// list drops a finished jar, and here a finished jar is the answer.
+// WHY include_consumed, and why this section is two readings rather than one. The endpoint's default drops a
+// fully-consumed jar, which is correct for the Pantry ("what is in the freezer") and WRONG here: this is the only
+// surface that answers "where did this planting's harvest go", and on the default the answer silently reverts to
+// "nothing" the day the last jar is finished. So the fetch keeps consumed rows and the component separates them: what
+// is STILL THERE, then what was USED (gone, but still the planting's history). This section keeps its own read.
 //
-// Put-Up UX pass R1 — A LIST, AND ONLY A LIST. The headline that counted containers, listed units and
-// totalled put-ups is gone (V4 §2.5: a list, never a sum; "fl oz" stood alone in it), and with it the
-// "N use soon" pill. Each row now says what the Pantry says about the same jar:
+// A LIST, AND ONLY A LIST (V4 §2.5: a list, never a sum). Each row says what the Pantry says about the same jar:
 //   its name · its place · how many are left (on EVERY row still there) · when it was put up, and
-//   the discard-date sentence from putup/jarWords.js — "discard by … · <where the date came from>",
-//   "use by …" only for cured and cellared produce — tinted (putup/soonTint.js) when the server says
-//   it is soon or past. The sentence carries the state; the tint is a second channel, not an alert.
-// A used row is dimmed, says "all used", and carries no date sentence: a finished jar is never asked
-// to be used soon.
+//   the discard-date sentence from putup/jarWords.js ("discard by … · <where the date came from>", "use by …" only
+//   for cured and cellared produce), tinted (putup/soonTint.js) when the server says it is soon or past. The sentence
+//   carries the state; the tint is a second channel, not an alert.
+// A used row is dimmed, says "all used", and carries no date sentence: a finished jar is never asked to be used soon.
 //
-// Deliberately READ-ONLY. Edit / "mark used" / remove all live on the Put-Up surface; duplicating
-// the mutation affordances here would mean two places to keep in step with the PUT full-replace
-// contract. The one action this section offers is adding: "Put something up from this planting".
+// Deliberately READ-ONLY. Edit / "mark used" / remove all live on the Put-Up surface; duplicating the mutation
+// affordances here would mean two places to keep in step with the PUT full-replace contract. The one action this
+// section offers is adding: "Put something up from this planting".
 //
-// Put-Up R2a, lane K — THE DOOR OPENS HERE, IN PLACE. The link used to go to Put-Up's Log form with
-// this planting as router-state prefill; it is now a button that opens the Pantry's own door
-// (PutSomethingUpSheet) on this page, seeded with this planting (plantingKitchen.doorWhatOf). No
-// navigation and no router state: X, Back and Save all leave him on the planting, and nothing is
-// armed, read or written until the button is tapped. This component is the door's HOST:
-//   · it closes the door on Save (the door never closes itself after a save) and shows what the
-//     SERVER answered, in completionWords, on the Pantry's own line (CompletionLine) with Undo —
-//     directly above the button, which is where his eyes and his focus are. No timer: it goes on ×,
-//     or with the page;
+// THE DOOR OPENS HERE, IN PLACE: a button that opens the Pantry's own door (PutSomethingUpSheet) on this page, seeded
+// with this planting (plantingKitchen.doorWhatOf). No navigation and no router state: X, Back and Save all leave the
+// user on the planting, and nothing is armed, read or written until the button is tapped. This component is the
+// door's HOST:
+//   · it closes the door on Save (the door never closes itself after a save) and shows what the SERVER answered, in
+//     completionWords, on the Pantry's own line (CompletionLine) with Undo, directly above the button. No timer: it
+//     goes on ×, or with the page;
 //   · after a Save and after an Undo it re-reads BOTH of the page's reads: this list (a put-up), and
 //     PlantingKitchen's kept-fresh read (a "Fresh, as picked" item), through onStockChanged;
-//   · a re-read never blanks the section: the door, the line and the button stay mounted, in the
-//     same place in the tree whether the list is empty or not, so focus and the line's own state
-//     (Undone) survive the list changing under them;
-//   · onSheetOpenChange(open) tells the page while the door is open, so a sideways swipe or an arrow
-//     key inside it cannot page to another planting with the sheet on screen.
+//   · a re-read never blanks the section: the door, the line and the button stay mounted, in the same place in the
+//     tree whether the list is empty or not, so focus and the line's own state (Undone) survive the list changing
+//     under them;
+//   · onSheetOpenChange(open) tells the page while the door is open, so a sideways swipe or an arrow key inside it
+//     cannot page to another planting with the sheet on screen.
 // No "Start a batch instead" here (no onStartBatchInstead: the door then draws no such line).
 import React, { useCallback, useMemo, useState, useEffect, useRef } from 'react'
 import { P, T } from '../../lib/tokens.js'
 import PutUpPhotoThumb from '../PutUpPhotoThumb.jsx'
-// V4-PUTUPSESSION-001 slice 1 — the "around" wording lives in exactly one module. This surface is
-// the second reader of preserved_at (PutUp's RecordRow is the first) and would otherwise present a
-// freezer-walk estimate as a date the user picked, which is the defect the slice exists to close.
+// The "around" wording lives in exactly one module. This surface is the second reader of preserved_at (PutUp's
+// RecordRow is the first) and would otherwise present a freezer-walk estimate as a date the user picked.
 import { describeApprox } from '../../lib/putUpSession.js'
-// Put-Up release F: the jar's words come from the one module every put-up surface says them in. A jar
-// may have NO size (the quantity pair is NULL from 1b — Put it up's "no size" rows, F's bottlings), and
-// its quantity is the row's TOTAL (contract-F A3). Printed raw, that read "null null" and "Photo of null
-// put up" here.
+// The jar's words come from the one module every put-up surface says them in. A jar may have NO size (the quantity
+// pair is NULL for "no size" rows and bottlings), and its quantity is the row's TOTAL. Printed raw, that read
+// "null null" and "Photo of null put up".
 import { sizeWords } from '../putup/jarWords.js'
 import { SOON_CHIP_STYLE } from '../putup/soonTint.js'
 import PutSomethingUpSheet from '../pantry/PutSomethingUpSheet.jsx'
@@ -64,26 +54,23 @@ import CompletionLine from '../pantry/CompletionLine.jsx'
 import { completionWords } from '../pantry/putSomethingUp.js'
 import { isUsedUp, leftWords, plantingDiscardWords, isSoonOrPast, doorWhatOf } from './plantingKitchen.js'
 
-// V4-PUTUPPROV-001 — NO PROVENANCE LINE HERE, AND THAT IS DELIBERATE. This component fetches
-// whats-put-up?plant_id=<id>, so every row it can render has a non-null plant_id; the provenance
-// design's client clear and its chk_preservation_log_source_plant CHECK together guarantee those
-// rows are own_garden or NULL — both of which render nothing anyway. Adding the line here would be
-// dead code that manufactures confidence provenance is visible in three places when it is visible
-// in two (PutUp RecordRow and PutUpUseSoonBand). The D6 method label below IS needed.
-// Put-Up R2a (UX 3.4 row 4): every VALUE is the one putup/putItUp.js METHOD_LABELS says — the door's and
-// the Pantry's words — so a row here reads as the chip it was put up with (PutUpR2K.host.test.jsx binds them).
+// NO PROVENANCE LINE HERE, AND THAT IS DELIBERATE. This component fetches whats-put-up?plant_id=<id>, so every row it
+// can render has a non-null plant_id; the provenance design's client clear and its chk_preservation_log_source_plant
+// CHECK together guarantee those rows are own_garden or NULL, both of which render nothing anyway. Adding the line
+// here would be dead code. The method label below IS needed: every VALUE is the one putup/putItUp.js METHOD_LABELS
+// says (the door's and the Pantry's words), so a row here reads as the chip it was put up with
+// (PutUpR2K.host.test.jsx binds them).
 const METHOD_LABELS = {
   roast_freeze: 'Roast & freeze', whole_freeze: 'Freeze whole', blanch_freeze: 'Blanch & freeze',
   dehydrate: 'Dehydrate', powder: 'Powder', passata: 'Passata / sauce',
   can_water_bath: 'Water-bath can', can_pressure: 'Pressure can', jam_preserve: 'Jam / preserve',
   ferment: 'Ferment', cure_store: 'Cure & store', cold_store: 'Cold store',
-  purchased_preserved: 'Bought already preserved',   // D6 (V4-PUTUPPROV-001)
-  // V4-PUTUPTAXONOMY-001 (BD-034). This map is the least dangerous of the three — the row below falls
-  // back to the raw slug — so an omission surfaces as "ferment_mash" rather than as a blank. Ugly
-  // is still a defect, and the parity test binds all three regardless.
+  purchased_preserved: 'Bought already preserved',
+  // The row below falls back to the raw slug, so an omission here surfaces as "ferment_mash" rather than as a blank.
+  // Ugly is still a defect, and the parity test (putUpMethodParity.test.js) binds all three maps regardless.
   quick_pickle: 'Quick / vinegar pickle', pesto: 'Pesto', hot_sauce: 'Hot sauce',
   ferment_mash: 'Fermenting mash (unfinished)',
-  candy: 'Candied (pieces or sweets)',   // V5-PUTUPCANDY-001; R2a: the door's chip, not PutUp.jsx's picker
+  candy: 'Candied (pieces or sweets)',   // the door's chip, not PutUp.jsx's picker
   other: 'Other',
 }
 
@@ -100,21 +87,20 @@ function prettyDate(v) {
 const logLink = { display: 'inline-flex', alignItems: 'center', minHeight: T.buttonMinHeight, color: P.green,
   fontSize: '0.85rem', fontWeight: 600, textDecoration: 'underline',
   background: 'none', border: 'none', padding: 0, fontFamily: 'inherit', cursor: 'pointer' }
-// Put-Up R2a (UX seat, delta section 5). The button's words: before anything is put up, and after.
+// The button's words: before anything is put up, and after.
 export const DOOR_FIRST_TEXT = 'Put something up from this planting'
 export const DOOR_MORE_TEXT = 'Put up more from this planting'
 // True after a "Fresh, as picked" save too: that is in the pantry, not put up, and lists under Kept fresh.
 export const EMPTY_TEXT = 'Nothing put up from this planting yet.'
 
-// B′ release 3 (V4 §2.5 "Planting page") — OPTIONAL props (the R2a two: the door still opens with them
-// absent, and nobody is told):
+// OPTIONAL props (the door still opens with them absent, and nobody is told):
 //   onRows(rows)    the rows it shows, each time they are read (PlantingKitchen uses the ids to decide which
 //                   batch reads "from <batch> →" on a jar row instead of as a row of its own);
 //   renderExtra(r)  extra lines under a jar row ("from <batch> →", its "Next time…" lines);
-//   onStockChanged()       (R2a) a save or an Undo here changed what this planting has: re-read your own;
-//   onSheetOpenChange(on)  (R2a) the door opened (true) or closed (false); never called at rest.
-// `now` (optional): the clock the date sentence is read against (a year is said only when it is not
-// this one); a test pins it.
+//   onStockChanged()       a save or an Undo here changed what this planting has: re-read your own;
+//   onSheetOpenChange(on)  the door opened (true) or closed (false); never called at rest.
+// `now` (optional): the clock the date sentence is read against (a year is said only when it is not this one); a
+// test pins it.
 export default function PutUpFromPlanting({ planting, fetch, onRows, renderExtra, now, onStockChanged, onSheetOpenChange }) {
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
@@ -127,10 +113,9 @@ export default function PutUpFromPlanting({ planting, fetch, onRows, renderExtra
   const nowDate = useMemo(() => (now != null ? new Date(now) : new Date()), [now])
   const what = useMemo(() => doorWhatOf(planting), [planting])
 
-  // The planting whose rows are on screen. A read for the SAME planting (a re-read after a save or an Undo,
-  // or the page handing down a fresh copy of the planting) replaces the rows when it answers and blanks
-  // nothing meanwhile; a failed one leaves them as they were. Only a different planting starts over —
-  // "Loading…", and no line from the last one.
+  // The planting whose rows are on screen. A read for the SAME planting (a re-read after a save or an Undo, or the page
+  // handing down a fresh copy of the planting) replaces the rows when it answers and blanks nothing meanwhile; a failed
+  // one leaves them as they were. Only a different planting starts over: "Loading…", and no line from the last one.
   const shownForRef = useRef(null)
   useEffect(() => {
     if (!planting?.id) return
@@ -192,10 +177,9 @@ export default function PutUpFromPlanting({ planting, fetch, onRows, renderExtra
 
   return (
     <div>
-      {/* What is still there first, then the used-up rows. Both are listed — a finished jar is the ANSWER
-          to "where did it go", so hiding it would leave the section quieter the more of the harvest
-          actually got eaten, which is backwards. A used row is dimmed and says "all used" instead of a
-          count left; it never carries a date sentence. */}
+      {/* What is still there first, then the used-up rows. Both are listed: a finished jar is the ANSWER to "where did */}
+      {/* it go", so hiding it would leave the section quieter the more of the harvest got eaten. A used row is dimmed */}
+      {/* and says "all used" instead of a count left; it never carries a date sentence. */}
       {empty ? (
         <div style={{ fontSize: '0.875rem', color: P.mid, marginBottom: 2 }}>{EMPTY_TEXT}</div>
       ) : (
@@ -242,9 +226,9 @@ export default function PutUpFromPlanting({ planting, fetch, onRows, renderExtra
       </ul>
       )}
 
-      {/* The saved line, then the button: ONE place in the tree whether the list is empty or not, so the
-          first put-up turning "Put something up…" into "Put up more…" keeps focus on the same button, and
-          an Undo that empties the list keeps the line's own "Undone". No name to say → no door. */}
+      {/* The saved line, then the button: ONE place in the tree whether the list is empty or not, so the first put-up */}
+      {/* turning "Put something up…" into "Put up more…" keeps focus on the same button, and an Undo that empties the */}
+      {/* list keeps the line's own "Undone". No name to say, no door. */}
       {what && (
         <div style={{ marginTop: empty ? 0 : 2 }}>
           {completion && (

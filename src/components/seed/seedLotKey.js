@@ -1,4 +1,4 @@
-// src/components/seed/seedLotKey.js — BUG-NEWLOTNOIDEMPOTENCYKEY-001. The key a NEW seed lot's create
+// src/components/seed/seedLotKey.js — the key a NEW seed lot's create
 // carries (SaveSeedSheet.jsx, POST /api/inventory-items), so that a draft saved twice can be answered
 // with one lot instead of making two.
 //
