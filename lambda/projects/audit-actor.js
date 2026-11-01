@@ -1,5 +1,5 @@
-// audit-actor.js: one write batch that names its actor. Byte copies ship in varieties, events, plants, projects and
-// preservation (scripts/lambda-copies.json); each Lambda zips only its own dir.
+// audit-actor.js: one write batch that names its actor. Byte copies ship in varieties, events, plants, projects,
+// preservation and photos (scripts/lambda-copies.json); each Lambda zips only its own dir.
 // The audit triggers read app.actor_clerk_sub, and the neon HTTP driver runs each bare `await sql` as its own
 // transaction, so the GUC must be element 0 of the SAME sql.transaction batch (lambda/audit-actor-guc.test.js).
 
