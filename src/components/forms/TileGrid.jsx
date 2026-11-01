@@ -1,11 +1,8 @@
-// src/components/forms/TileGrid.jsx
-// V4-THEME-001 (V200 Pass B) — responsive tile-grid LAYOUT primitive. The §12 "2-col photo
-// grid" (Garden Plants) and "3-col square wall" (Photos) both compose from this. It owns the
-// grid container only (columns, gap, responsive auto-fit, empty state) — NOT the image tile
-// itself (image lazy-load / thumbnail / fallback stays in the consumer or the still-deferred
-// MediaTile slot, FROZEN.md). a11y: role=list + listitem so a tile collection is announced as
-// a list; pass `ariaLabel`. Empty state (RES-2) shows the `empty` node instead of a blank grid.
-// Ships DARK (no runtime importer until the adopting slice).
+// Responsive tile-grid LAYOUT primitive: the 2-col photo grid (Garden Plants) and the 3-col square
+// wall (Photos). It owns the grid container only (columns, gap, responsive auto-fit, empty state),
+// NOT the image tile itself (lazy-load / thumbnail / fallback stays in the consumer or the
+// still-deferred MediaTile slot, FROZEN.md). a11y: role=list + listitem so a tile collection is
+// announced as a list; pass `ariaLabel`. The `empty` node shows instead of a blank grid.
 import React from 'react'
 import { P } from '../../lib/constants.js'
 import useImageWindow from '../../hooks/useImageWindow.js'
@@ -19,10 +16,9 @@ export default function TileGrid({
   empty = null,
   ariaLabel,
   style,
-  windowSize,            // BUG-PHOTOTHUMB-001: opt-in. Render at most this many tiles, growing on
-                         // scroll + a "Show more" button. Set it on any grid whose tiles carry
-                         // photos — an unbounded photo grid freezes the renderer (see
-                         // useImageWindow.js). Omitted = every tile renders, byte-identical to before.
+  windowSize,            // opt-in: render at most this many tiles, growing on scroll + a "Show
+                         // more" button. Set it on any grid whose tiles carry photos; an unbounded
+                         // photo grid freezes the renderer (see useImageWindow.js).
   ...rest
 }) {
   const windowed = Number.isFinite(windowSize) && windowSize > 0

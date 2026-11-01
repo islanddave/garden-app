@@ -1,29 +1,24 @@
-// src/components/forms/PlantForm.jsx
-// Lane D / Phase E (E1) — unified create/edit plant form. UNION of the field-sets
-// previously hand-rolled in ProjectDetail (add-plant) and Plants (add + edit):
-// core (name / quantity / variety / notes) + status + an optional project picker +
-// a collapsed "Planting details" block (sown date / initial qty / source / lineage).
+// Unified create/edit plant form: the UNION of the field-sets previously hand-rolled in
+// ProjectDetail (add-plant) and Plants (add + edit): core (name / quantity / variety / notes) +
+// status + an optional project picker + a collapsed "Planting details" block (sown date / initial
+// qty / source / lineage).
 //
-// Presentational + controlled ONLY. The host page owns its submit handler and payload
-// builder, so the /api/plants wire contract is unchanged (verified against the plants
-// Lambda 2026-06-04: POST treats missing status as NULL; PUT is a COALESCE merge so a
-// blank field is a no-op; qty_initial server-defaults to quantity; source_type '' must
-// be coerced to null by the host or it 400s). Legacy genus/species free-text are
-// intentionally DROPPED — the Lambda neither writes nor returns plants.genus/species;
-// taxonomy lives on the linked variety (variety_id -> plant_varieties via VarietyPicker).
-//
-// Built on the Phase A primitives (Field/Input/Select/Textarea/Button/StatusSelect/
-// ErrorBanner) + VarietyPicker, so all surfaces share one chrome + a11y wiring.
+// Presentational + controlled ONLY. The host page owns its submit handler and payload builder, so
+// the /api/plants wire contract is unchanged (POST treats missing status as NULL; PUT is a COALESCE
+// merge so a blank field is a no-op; qty_initial server-defaults to quantity; source_type '' must
+// be coerced to null by the host or it 400s). Legacy genus/species free-text are intentionally
+// DROPPED: the Lambda neither writes nor returns plants.genus/species; taxonomy lives on the linked
+// variety (variety_id -> plant_varieties via VarietyPicker).
 //
 // Controlled contract:
 //   value     object  — { name, quantity, variety, notes, status, project_id?,
 //                         sown_at, sown_at_approx, qty_initial, source_type,
 //                         source_id, acquired_from_source_id,
 //                         source_ref, source_generation, lineage_note }
-//             source_id / acquired_from_source_id (V4-SOURCEREG-001) are patched out of here like
-//             every other key, so a HOST that enumerates its payload keys must name them or the
-//             chosen id is dropped between this form and the wire. All three hosts enumerate
-//             (PlantingEditor:218/265, ProjectDetail:439, CaptureFlow:464) — see the wiring report.
+//             source_id / acquired_from_source_id are patched out of here like every other key, so a
+//             HOST that enumerates its payload keys must name them or the chosen id is dropped
+//             between this form and the wire. All three hosts (PlantingEditor, ProjectDetail,
+//             CaptureFlow) enumerate them.
 //   onChange  (patch) => void   — host merges: onChange={p => setForm(f => ({ ...f, ...p }))}
 //   onSubmit  (e) => void       — host's existing submit handler (builds + sends payload)
 //   submitting bool             — disables submit + swaps label
@@ -61,8 +56,8 @@ export default function PlantForm({
   onCancel,
   showProjectSelect = false,
   projects = [],
-  plantingOptions = [],    // V3-LINEAGE-001: [{id,name}] candidate source plantings; picker hidden when empty
-  locations = [],          // V3-PLANTLOC-001: [{id,full_path}] active locations; field hidden when empty
+  plantingOptions = [],    // [{id,name}] candidate source plantings; picker hidden when empty
+  locations = [],          // [{id,full_path}] active locations; field hidden when empty
   projectOptions = null,   // optional <option> children (e.g. hierarchical <ProjectOptions/>); overrides flat `projects`
   extraActions = null,     // optional node appended to the button row (e.g. a Remove button on edit)
   idPrefix = 'plant',
@@ -82,20 +77,18 @@ export default function PlantForm({
             onChange={e => set({ name: e.target.value })}
             placeholder={'e.g. "Megatron Jalapeno" or "Serrano seedlings"'} />
         </Field>
-        {/* BUG-PLANTQTYSTEP-001 — `step="1"` and `inputMode="numeric"` state the integer contract at
-            the point of entry. plants.quantity is numeric(10,3) in the schema, which reads like an
-            invitation to allow fractions here; it is not. This box counts PLANTS, and every sibling
-            counter on the row (qty_initial / qty_current / qty_harvested / qty_lost / seeds_sown /
-            seeds_germinated) is an `integer` column — quantity is the lone numeric, and lambda/events
-            casts it `::int` downstream anyway. The server refuses a non-integer with a 400 as of this
-            change (lambda/plants/validate.js validateQuantity), so this is the near half of one
-            contract rather than the only thing holding the line.
+        {/* `step="1"` and `inputMode="numeric"` state the integer contract at the point of entry.
+            plants.quantity is numeric(10,3) in the schema, which reads like an invitation to allow
+            fractions here; it is not. This box counts PLANTS, every sibling counter on the row
+            (qty_initial / qty_current / qty_harvested / qty_lost / seeds_sown / seeds_germinated) is
+            an `integer` column, and lambda/events casts quantity `::int` downstream anyway. The
+            server refuses a non-integer with a 400 (lambda/plants/validate.js validateQuantity), so
+            this is the near half of one contract rather than the only thing holding the line.
 
-            `step="1"` is behaviourally identical to the HTML default that was already applying — the
-            value is that the next reader sees a DECISION instead of an omission, and that reaching
-            for `step="any"` now means overwriting an explicit "1" rather than filling a blank.
-            `inputMode="numeric"` matches the two seed-count boxes below and keeps Android's keypad
-            off the decimal point, which is where a fraction would otherwise be typed. */}
+            `step="1"` equals the HTML default; the value is that the next reader sees a DECISION
+            instead of an omission, and that reaching for `step="any"` means overwriting an explicit
+            "1". `inputMode="numeric"` matches the two seed-count boxes below and keeps Android's
+            keypad off the decimal point, where a fraction would otherwise be typed. */}
         <Field label="Quantity" htmlFor={`${pid}-qty`}>
           <Input id={`${pid}-qty`} type="number" min="1" step="1" inputMode="numeric" value={v.quantity}
             onChange={e => set({ quantity: e.target.value })} />
@@ -125,12 +118,12 @@ export default function PlantForm({
           value={v.variety}
           onChange={(variety) => set({ variety })}
           placeholder="Search or create a variety…"
-          // BUG-VARIETYGENUSUI-001 — the ONE host that gets the create-stage Genus/Species inputs.
-          // This is the re-key surface: the user is standing over the plant, correcting what it is
-          // (Snapdragon -> Penstemon, 2026-09-07), which is the moment botanical identity is both
-          // known and load-bearing. The other four pickers (Put-Up, AddSeeds, InventoryAdd,
-          // SaveSeedSheet) are transcription flows — a jar label or a seed packet — where the crop
-          // and cultivar are what the user has and a genus box is two more fields to skip past.
+          // The ONE host that gets the create-stage Genus/Species inputs. This is the re-key
+          // surface: the user is standing over the plant, correcting what it is (Snapdragon ->
+          // Penstemon), which is the moment botanical identity is both known and load-bearing. The
+          // other four pickers (Put-Up, AddSeeds, InventoryAdd, SaveSeedSheet) are transcription
+          // flows (a jar label or a seed packet) where the crop and cultivar are what the user has
+          // and a genus box is two more fields to skip past.
           allowIdentity
         />
       </Field>
@@ -164,21 +157,20 @@ export default function PlantForm({
             </label>
           </div>
 
-          {/* ── V4-SEEDGERMRATE-001 (BD-057) — the two seed counts ───────────────────────────────
-              Placed directly under the SOWN date, and above "Initial quantity", because that is the
-              order the numbers are learned in: you sow n seeds on a date, some come up, and only
-              then do you know how many plants you have. Putting them below the plant count would
-              read as a breakdown OF it, which is the one thing they are not — sow 20, get 14 up,
-              keep 12 after thinning, and all three numbers are different.
+          {/* The two seed counts sit directly under the SOWN date, above "Initial quantity", because
+              that is the order the numbers are learned in: you sow n seeds on a date, some come up,
+              and only then do you know how many plants you have. Below the plant count they would
+              read as a breakdown OF it, which they are not (sow 20, get 14 up, keep 12 after
+              thinning: all three numbers differ).
 
-              Two separate fields rather than one "rate": Dave's Q1 answer, and the reason is that
-              the app can then tell 7-from-10 apart from 70-from-100. A packet's rate is
-              SUM(germinated)/SUM(sown) across every planting that names it, so the counts have to
-              survive individually for the combining to mean anything.
+              Two separate fields rather than one "rate", so the app can tell 7-from-10 apart from
+              70-from-100: a packet's rate is SUM(germinated)/SUM(sown) across every planting that
+              names it, so the counts have to survive individually for the combining to mean
+              anything.
 
-              `optional` on both: a planting that did not come from seed, or one Dave never counted,
-              must not be nagged. Blank stays NULL all the way down (PlantingEditor -> Lambda), and
-              NULL means "not counted" while 0 means "none came up". */}
+              `optional` on both: a planting that did not come from seed, or one never counted, must
+              not be nagged. Blank stays NULL all the way down (PlantingEditor -> Lambda), and NULL
+              means "not counted" while 0 means "none came up". */}
           <div style={{ display: 'flex', gap: 12 }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <Field label="Seeds sown" htmlFor={`${pid}-seedsown`} optional
@@ -199,10 +191,8 @@ export default function PlantForm({
               </Field>
             </div>
           </div>
-          {/* The rate, shown the moment both numbers exist — the whole point of collecting them,
-              and it costs nothing to show here rather than making Dave open the packet to see
-              whether what he just typed was sensible. Guarded on sown > 0 so a mid-typing state
-              never divides by zero. */}
+          {/* The rate, shown the moment both numbers exist, so the user can check what they just
+              typed was sensible. Guarded on sown > 0 so a mid-typing state never divides by zero. */}
           {Number(v.seeds_sown) > 0 && String(v.seeds_germinated ?? '').trim() !== '' && (
             <div data-testid="seed-rate-inline"
               style={{ fontSize: '0.78rem', color: P.mid, marginTop: -6 }}>
@@ -224,22 +214,21 @@ export default function PlantForm({
               options={PLANT_SOURCE_OPTIONS} />
           </Field>
 
-          {/* ── V4-SOURCEREG-001 — the controlled provenance registry, THREE fields deep ────────────
-              These sit under the `Source` Select above and are a DIFFERENT AXIS from it, not a
-              refinement of it. That Select is PLANT_SOURCE_OPTIONS: the TRANSACTION (seed packet /
-              bought as transplant / gift). These two are the PLACE: `plants.source_id` = who grew,
-              bred, packed or gave it, `plants.acquired_from_source_id` = the shop or venue where it
-              changed hands. dropdownRegistry.js:38-55 keeps a third such vocabulary twenty lines
-              from the second with an explicit "Do not unify them" — same reason, same answer here.
+          {/* The controlled provenance registry, THREE fields deep. These sit under the `Source`
+              Select above and are a DIFFERENT AXIS from it, not a refinement of it. That Select is
+              PLANT_SOURCE_OPTIONS: the TRANSACTION (seed packet / bought as transplant / gift).
+              These two are the PLACE: `plants.source_id` = who grew, bred, packed or gave it,
+              `plants.acquired_from_source_id` = the shop or venue where it changed hands.
+              dropdownRegistry.js keeps a third such vocabulary beside the second with an explicit
+              "Do not unify them"; same reason, same answer here.
 
               Labelled Origin / Acquired from rather than Source / Acquired from, because the Select
               above already owns the visible word "Source" on this form and two fields with one
-              accessible name is the a11y defect, not a copy preference. The contrast is also what
-              teaches the distinction: both ARE sources, and only the pairing says which is which.
+              accessible name is the a11y defect, not a copy preference. The contrast also teaches
+              the distinction: both ARE sources, and only the pairing says which is which.
 
-              INLINE, never behind a button (Dave: "there is no point in having to click to get to a
-              search/sort/filter"), and `required={false}` on both — provenance is optional on every
-              existing row and 567 of them carry only the free text below. */}
+              INLINE, never behind a button, and `required={false}` on both: provenance is optional
+              on every existing row, and many carry only the free text below. */}
           <Field label="Origin" htmlFor={`${pid}-srcid`} optional
             help="Who grew, bred, packed or gave it.">
             <SourcePicker
@@ -256,12 +245,12 @@ export default function PlantForm({
               data-testid="plant-origin" />
           </Field>
 
-          {/* Rendered only once an origin exists — a control appears when it can change the answer.
+          {/* Rendered only once an origin exists: a control appears when it can change the answer.
               Before that it is asking "different from what?".
 
               chk_plants_source_distinct rejects a row naming one source twice, so the equal case is
-              surfaced through Field's own `error` slot rather than a second child — Field takes
-              exactly ONE element child and contract-errors on two. The host owns submit here, so
+              surfaced through Field's own `error` slot rather than a second child (Field takes
+              exactly ONE element child and contract-errors on two). The host owns submit here, so
               this form can only WARN; the two inventory pages block the save. */}
           {(v.source_id ?? '') !== '' && (
             <Field label="Acquired from" htmlFor={`${pid}-acqid`} optional
@@ -280,9 +269,9 @@ export default function PlantForm({
           )}
 
           {/* KEPT, relabelled. `plants.source_ref` is the only home for the facts with no column
-              anywhere in this design — order numbers, lot codes, "(HOMESTEAD discount)", the day of
-              a gift — and 567 rows already carry that text. The old label ("Source reference") read
-              as a second place to type a vendor name, which is what the picker above is for now. */}
+              anywhere in this design (order numbers, lot codes, discounts, the day of a gift). The
+              old label ("Source reference") read as a second place to type a vendor name, which is
+              what the picker above is for now. */}
           <Field label="Order / lot reference" htmlFor={`${pid}-sref`} optional
             help="Order number, lot code, discount, date — anything with no field of its own.">
             <Input id={`${pid}-sref`} value={v.source_ref}
@@ -302,14 +291,13 @@ export default function PlantForm({
               placeholder="e.g. Dave's Glass Gem F4 selection" />
           </Field>
 
-          {/* PLANT-CONTAINER-001 / V4-POT-001: pot/bag descriptor; columns live on prod.
-              container_size is free text (accepts gal/L/in/cm/etc). */}
+          {/* Pot/bag descriptor. container_size is free text (accepts gal/L/in/cm/etc). */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
             <Field label="Pot / bag type" htmlFor={`${pid}-ctype`} optional>
               <Select id={`${pid}-ctype`} value={v.container_type ?? ''}
                 onChange={e => {
                   const ct = e.target.value || null
-                  // V3-SOLOCUP-001: Solo cup defaults size to 0.5 qt (2 cups) when size is blank.
+                  // Solo cup defaults size to 0.5 qt (2 cups) when size is blank.
                   if (ct === 'solo_cup' && !(v.container_size ?? '').trim()) set({ container_type: ct, container_size: '0.5 qt' })
                   else set({ container_type: ct })
                 }}
@@ -322,7 +310,7 @@ export default function PlantForm({
             </Field>
           </div>
 
-          {/* V3-PLANTLOC-001: per-planting location; rendered only when active locations are supplied. */}
+          {/* Per-planting location; rendered only when active locations are supplied. */}
           {locations.length > 0 && (
             <Field label="Location" htmlFor={`${pid}-loc`} optional style={{ marginBottom: 14 }}>
               <Select id={`${pid}-loc`} value={v.location_id ?? ''}
@@ -331,9 +319,9 @@ export default function PlantForm({
             </Field>
           )}
 
-          {/* V3-LINEAGE-001: link this planting to the source planting it was cloned/cut from.
-              Optional; rendered only when candidate plantings are supplied. The parent_plant_id
-              write path already exists in lambda/plants (POST+PUT). */}
+          {/* Link this planting to the source planting it was cloned/cut from. Optional; rendered
+              only when candidate plantings are supplied. The parent_plant_id write path already
+              exists in lambda/plants (POST+PUT). */}
           {plantingOptions.length > 0 && (
             <Field label="Source planting" htmlFor={`${pid}-parent`} optional>
               <Select id={`${pid}-parent`} value={v.parent_plant_id ?? ''}
