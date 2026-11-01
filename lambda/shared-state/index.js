@@ -2,12 +2,11 @@ import { neon } from '@neondatabase/serverless';
 import { householdActive } from './household.js';
 import { requestContext } from './request-context.js';
 
-// garden_shared_state — the shared-garden reward substrate (V3-REWARDSTATE-001).
-// Workspace-shared (not per-user): until V4 Workspaces there is no `workspaces` table on
-// prod, so every authenticated household member reads/writes the SAME row set under the
-// denormalized SENTINEL workspace value. SENTINEL mirrors gv.sentinel_workspace() and the
-// workspace_id DEFAULT on the 8 Foundation tables. The data is common to the household, so the
-// caller must be a household MEMBER, not just a logged-in user (BUG-AUTHZLAMBDA-001 B6).
+// garden_shared_state: the shared-garden reward substrate (V3-REWARDSTATE-001). Workspace-shared, not
+// per-user: there is no `workspaces` table on prod, so every household member reads/writes the SAME row
+// set under the denormalized SENTINEL workspace value (mirrors gv.sentinel_workspace() and the workspace_id
+// DEFAULT on the 8 Foundation tables). The data is common to the household, so the caller must be a
+// household MEMBER, not just a logged-in user (BUG-AUTHZLAMBDA-001 B6).
 const SENTINEL_WORKSPACE = '00000000-0000-0000-0000-000000000001';
 
 const CORS = {}; // Lambda URL config is sole CORS source — handler must not duplicate
@@ -37,10 +36,9 @@ export const handler = async (event) => {
   const { userId, sql } = ctx;
 
   // The shared row belongs to one household, and a one-entry list is not a household, so it refuses even
-  // its one member, still before any statement (the kit's neon() client issues nothing until queried). The
-  // client turns any non-OK into null and renders nothing, so this log line is the only place a denial is
-  // visible. Known limitation: one global list over a sentinel-pinned row; per-Space gating comes with
-  // Spaces. Guard: membership-gate.test.js.
+  // its one member, still before any statement. The client turns any non-OK into null and renders nothing,
+  // so this log line is the only place a denial is visible. Known limitation: one global list over a
+  // sentinel-pinned row; per-Space gating comes with Spaces. Guard: membership-gate.test.js.
   if (!householdActive()) {
     console.warn(JSON.stringify({ msg: 'household-membership-denied', userId, reason: 'env-missing' }));
     return resp(403, { error: 'Forbidden' });
@@ -118,11 +116,9 @@ export const handler = async (event) => {
         return resp(400, { error: `by must be at most ${TALLY_BY_MAX}` });
       }
       const by = Number.isInteger(body.by) && body.by > 0 ? body.by : 1;
-      // Atomic single-statement increment. The row-level lock taken on the ON CONFLICT
-      // UPDATE serializes concurrent +by writes so none are lost (the migration dry-run
-      // proved 2x100 concurrent = 200). Deliberately NO optimistic-version guard here: a
-      // version-mismatch retry loop would shed concurrent increments. version still bumps
-      // via the gv.bump_version trigger.
+      // Atomic single-statement increment. The row-level lock on the ON CONFLICT UPDATE serializes
+      // concurrent +by writes so none are lost. Deliberately NO optimistic-version guard: a version-mismatch
+      // retry loop would shed concurrent increments. version still bumps via the gv.bump_version trigger.
       const rows = await sql`
         INSERT INTO garden_shared_state (workspace_id, kind, natural_key, counter)
         VALUES (${SENTINEL_WORKSPACE}::uuid, 'incentive_counter', ${key}, ${by})

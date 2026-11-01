@@ -1,8 +1,8 @@
-// V4-HARVESTCENTER-001 (Put-Up) — storage_location vocab CRUD Lambda.
-// Mirrors lambda/locations/index.js (auth/scope/resp skeleton, soft-delete, idempotent DELETE)
-// but scoped on user_id (not created_by) and with no hierarchy/photo/with-path surface.
-// storage_location = { id, user_id, label, kind CHECK(deep_freezer|fridge_freezer|fridge|
-//   pantry|cold_storage|other), created_at, deleted_at }. Per-user, Soft-Delete-Only.
+// storage_location vocab CRUD Lambda (V4-HARVESTCENTER-001, Put-Up). Mirrors lambda/locations/index.js
+// (auth/scope/resp skeleton, soft-delete, idempotent DELETE) but scoped on user_id (not created_by) and
+// with no hierarchy/photo/with-path surface. storage_location = { id, user_id, label, kind
+// CHECK(deep_freezer|fridge_freezer|fridge|pantry|cold_storage|other), created_at, deleted_at }.
+// Per-user, Soft-Delete-Only.
 import { neon } from '@neondatabase/serverless';
 import { householdScope } from './household.js';
 import { requestContext } from './request-context.js';
@@ -34,48 +34,42 @@ export function validateUpdate(body) {
   return null;
 }
 
-// Put-Up release 1a — the answer to a DUPLICATE PLACE, given before the constraint that raises it.
-//
-// Release 1b adds UNIQUE (user_id, kind, lower(label)) WHERE deleted_at IS NULL on storage_location
-// (V4's data model, 1b) while THIS code is the deployed writer, and until now a 23505 here fell
-// through to a bare 500 that the shipped "+ New location" form retries once and then shows as
-// "try again (SRV)" — sometimes for a place that already exists, since its own retry after a lost
-// response re-sends a create that already landed. So both writers answer it now, in 1a, while no
-// database carries the index and the branch is dormant:
-//   POST — FIND-OR-CREATE (V4's place find-or-create): the caller's live place with that kind and
-//     that name, whatever its case, comes back with 200 and `existing: true`. Every shipped caller
-//     only needs the row (it selects row.id), so a create that turns out to be a pick still lands
-//     the jar in the right place.
-//   PUT — a rename or re-kind onto a name the owner already uses cannot be turned into a pick, so it
-//     is refused: 409 `place_exists` carrying the other place's id.
+// DUPLICATE PLACE (Put-Up release 1a): answered before the constraint that raises it. Release 1b adds
+// UNIQUE (user_id, kind, lower(label)) WHERE deleted_at IS NULL while THIS code is the deployed writer, and
+// a 23505 would fall through to a bare 500 that the "+ New location" form retries and shows as "try again
+// (SRV)" (sometimes for a place that already exists, since a retry after a lost response re-sends a create
+// that already landed). So both writers answer it now, while the branch is dormant:
+//   POST: FIND-OR-CREATE. The caller's live place with that kind and name, whatever its case, comes back
+//     with 200 and `existing: true`. Every shipped caller only needs the row (it selects row.id).
+//   PUT: a rename or re-kind onto a name the owner already uses cannot become a pick, so it is refused:
+//     409 `place_exists` carrying the other place's id.
 // Every coded 409 carries a plain-words `message`, mirrored in `error` (which apiFetch surfaces).
 const PLACE_EXISTS_WORDS = 'You already have a place with that name. Pick it instead, or use a different name.';
 function placeExists(existingId) {
   return { error: PLACE_EXISTS_WORDS, code: 'place_exists', message: PLACE_EXISTS_WORDS, existing_id: existingId };
 }
 
-// Put-Up R2a — the two refusals a place answers, and the words of each.
+// Put-Up R2a: the two refusals a place answers, and the words of each.
 //
-// RE-KIND. A put-up's discard-by date can be WORKED OUT from the kind of place it sits in (a general
-// figure, the house figure for candy, a recipe's "how long, and where"). Changing the kind under such
-// a date leaves it standing on a kind of place the food is no longer recorded at, so a PUT that
-// CHANGES the kind is refused while the place holds one. What counts is one put-up that is live by
-// the Pantry's own predicate (lambda/preservation/pantryRoutes.js listPantry: not removed,
-// COALESCE(remaining_count, package_count) > 0, not consumed), has a stored date, and whose basis is
-// table, house, recipe or unrecorded (NULL: its origin is unknown, and here unknown is not read as
-// "his own date"). A typed date, "no date", a used-up or a removed put-up never count.
-//   * A PUT is a re-kind only when `kind` is sent AND differs from the stored kind. The shipped
-//     "Edit locations" form sends { label, kind } on every Save, a plain rename included, so a rule
-//     keyed on the key's presence would refuse every rename of a place that holds dated put-ups.
+// RE-KIND. A put-up's discard-by date can be WORKED OUT from the kind of place it sits in (a general figure,
+// the house figure for candy, a recipe's "how long, and where"). Changing the kind under such a date
+// strands it, so a PUT that CHANGES the kind is refused while the place holds one. What counts is one
+// put-up that is live by the Pantry's own predicate (lambda/preservation/pantryRoutes.js listPantry: not
+// removed, COALESCE(remaining_count, package_count) > 0, not consumed), has a stored date, and whose basis
+// is table, house, recipe or unrecorded (NULL: origin unknown, which is not read as "his own date"). A
+// typed date, "no date", a used-up or a removed put-up never count.
+//   * A PUT is a re-kind only when `kind` is sent AND differs from the stored kind. The "Edit locations"
+//     form sends { label, kind } on every Save, so a rule keyed on the key's presence would refuse every
+//     rename of a place that holds dated put-ups.
 //   * A refused PUT writes nothing, the name included: the check and the write are ONE statement.
 //
-// DELETE. Refused while the place holds anything: a live put-up (the same liveness, whatever its date)
-// or a pantry item that is not removed and not used up. A deleted place keeps its Pantry heading but
-// can no longer be listed, renamed or picked, so an empty place is the only one that can go. A going
-// batch's stage that names the place does not block (as before R2a).
+// DELETE. Refused while the place holds anything: a live put-up (same liveness, whatever its date) or a
+// pantry item that is not removed and not used up. A deleted place keeps its Pantry heading but can no
+// longer be listed, renamed or picked, so only an empty place can go. A going batch's stage that names the
+// place does not block.
 //
-// Each answer is a coded 409 carrying `n` and one plain sentence, the same in `message` and `error`:
-// a cached older bundle prints `message`, then `error`, exactly as sent, so these are user copy.
+// Each answer is a coded 409 carrying `n` and one plain sentence, the same in `message` and `error`: a
+// cached older bundle prints `message`, then `error`, exactly as sent, so these are user copy.
 export function placeHasDatedJars(n) {
   const words = n === 1
     ? '1 put-up in this place has a date worked out from the kind of place it is now. Set its date by hand, or move it somewhere else, then change the kind.'
@@ -89,8 +83,8 @@ export function placeInUse(n) {
   return { error: words, code: 'place_in_use', message: words, n };
 }
 
-// One line per place write and per refusal. storage_location has no updated_at, no trigger and no
-// audit row, so without this a rename, a re-kind, a delete or an "it won't let me" leaves no trace.
+// One line per place write and per refusal. storage_location has no updated_at, trigger or audit row, so
+// without this a rename, re-kind, delete or refusal leaves no trace.
 function logPlace(event, fields) {
   console.log(JSON.stringify({ event, ...fields }));
 }
@@ -114,17 +108,15 @@ export const handler = async (event) => {
         const body = JSON.parse(event.body ?? '{}');
         const verr = validateUpdate(body);
         if (verr) return resp(400, { error: verr });
-        // Put-Up release 1b (05 §6a "place labels"): trimmed on every writer, as the POST already
-        // trims, so " Fridge" and "Fridge" cannot become two places under the (user, kind,
-        // lower(label)) key — and a rename cannot slip past the clash check below by a space.
+        // Put-Up release 1b: trimmed on every writer, as the POST already trims, so " Fridge" and "Fridge"
+        // cannot become two places under the (user, kind, lower(label)) key or slip past the clash check.
         const label = body.label == null ? null : String(body.label).trim();
         let rows;
         try {
-          // Put-Up R2a: the re-kind refusal (see placeHasDatedJars above), decided IN the write. `target`
-          // is the place as this statement's snapshot sees it; `dated` counts what would be stranded;
-          // the UPDATE runs only for a save that sends no kind, sends the stored kind (a rename), or
-          // finds nothing dated. One row comes back whenever the place exists: written, or refused
-          // with `n`. No row is the same 404 as ever.
+          // Re-kind refusal (see placeHasDatedJars above), decided IN the write. `target` is the place as this
+          // statement's snapshot sees it; `dated` counts what would be stranded; the UPDATE runs only for a
+          // save that sends no kind, sends the stored kind (a rename), or finds nothing dated. One row comes
+          // back whenever the place exists: written, or refused with `n`. No row is the 404.
           rows = await sql`
             WITH target AS (
               SELECT id, user_id, label, kind, created_at, deleted_at
@@ -207,13 +199,11 @@ export const handler = async (event) => {
       }
 
       if (method === 'DELETE') {
-        // BUG-DELNOOPOK-001: RETURNING-gated. Was an unconditional {ok:true}, so a not-found /
-        // already-deleted / not-owned DELETE reported success; now 404, matching the PUT at :102.
-        // No slug arm here (unlike locations) — storage_location has no slug column and this
-        // route has only ever resolved by uuid on every verb.
-        // Put-Up R2a: the in-use refusal (see placeInUse above), decided IN the write, as the re-kind
-        // is. `held` counts what is stored here; the soft-delete runs only when that is nothing. One
-        // row comes back whenever the place exists: gone, or refused with `n`.
+        // BUG-DELNOOPOK-001: RETURNING-gated, so a not-found / already-deleted / not-owned DELETE is a 404.
+        // No slug arm (unlike locations): storage_location has no slug column.
+        // The in-use refusal (see placeInUse above) is decided IN the write, as the re-kind is. `held` counts
+        // what is stored here; the soft-delete runs only when that is nothing. One row comes back whenever
+        // the place exists: gone, or refused with `n`.
         const rows = await sql`
           WITH target AS (
             SELECT id, kind

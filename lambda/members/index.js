@@ -1,26 +1,20 @@
-// /api/members — PLANT-ASSIGN-001 household roster read. GET-only, Clerk-authed. Lists the CALLER'S
-// HOUSEHOLD's users (Clerk is the identity source of truth — there is no DB roster table; profiles holds
-// only some users) so the caretaker AssigneePicker can offer Dave/Jen. Mirrors the lambda/findings
-// auth/secrets seam; NO Neon (no DB read). A normal Fn-URL lambda (auto-gets a Function URL + CORS from
-// deploy-lambda.yml).
-// 0A.6 (devops-review plan): previously returned EVERY Clerk user — email included — to ANY
-// authenticated caller. Now: roster = Clerk list ∩ householdScope(caller), and email is dropped from
-// the response (consumer grep 2026-07-28: AssigneePicker/Garden/Findings/Today render id +
-// display_name only; displayName() still uses email server-side as a label fallback).
-// householdScope is fail-closed: GARDEN_HOUSEHOLD_IDS unset -> [caller]. Both deploy workflows
-// read-merge that env onto garden-members (mirroring the harvests B1 step) so the deployed roster
-// does not silently collapse to the caller alone.
+// /api/members: PLANT-ASSIGN-001 household roster read. GET-only, Clerk-authed. Lists the CALLER'S
+// HOUSEHOLD's users so the caretaker AssigneePicker can offer Dave/Jen. Clerk is the identity source of
+// truth (there is no DB roster table; profiles holds only some users), so there is NO Neon read. Mirrors the
+// lambda/findings auth/secrets seam. A normal Fn-URL lambda (deploy-lambda.yml gives it a Function URL + CORS).
+// Roster = Clerk list ∩ householdScope(caller) (0A.6: it once returned EVERY Clerk user, email included, to
+// ANY authenticated caller). Email is dropped from the response; displayName() still uses it server-side as
+// a label fallback. householdScope is fail-closed: GARDEN_HOUSEHOLD_IDS unset -> [caller]. Both deploy
+// workflows read-merge that env onto garden-members so the deployed roster does not collapse to the caller.
 import { createClerkClient } from '@clerk/backend';
 import { householdScope } from './household.js';
 import { requestContext } from './request-context.js';
 
 const SCHEMA_VERSION = 1;
 
-// Service/bot accounts — excluded from the caretaker roster so they can't be re-picked via the UI.
-// Service/bot accounts excluded from the caretaker roster. Identify by STABLE markers (system email +
-// optional env sub list) — NOT a hardcoded sub literal. The old literal here (user_3E2x…) is actually a
-// real caretaker (Jen) in the LIVE Clerk instance, which wrongly hid her from the picker; the real System
-// account is user_3D7u…. DRG-ASSIGN-FIX (2026-06-18).
+// Service/bot accounts, excluded from the caretaker roster so they can't be re-picked via the UI. Identify by
+// STABLE markers (system email + optional env sub list), NOT a hardcoded sub literal: the old literal was
+// actually a real caretaker (Jen) in the LIVE Clerk instance and wrongly hid her (DRG-ASSIGN-FIX).
 const SYSTEM_EMAILS = new Set(
   (process.env.SYSTEM_CLERK_EMAILS || 'islanddave+clerk+system@gmail.com')
     .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean));

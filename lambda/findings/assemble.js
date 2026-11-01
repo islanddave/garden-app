@@ -1,11 +1,11 @@
-// Findings assembly (slice 6) — PURE, DB-free. Maps DB rows (flagged-issue events joined to their
-// planting + canonical entity) into raw findings the engine composes. Kept separate from index.js so
-// it is unit-testable without resolving @neondatabase/serverless (same pattern as events/validators.js).
+// Findings assembly (slice 6): PURE, DB-free. Maps DB rows (flagged-issue events joined to their planting +
+// canonical entity) into raw findings the engine composes. Separate from index.js so it is unit-testable
+// without resolving @neondatabase/serverless (same pattern as events/validators.js).
 //
-// V1 read-model scope (honest cold-start): the ONLY structured first-party care signal in the V1 Neon
-// DB is event_log.flagged_as_issue (crop care-knowledge lives in plant-knowledge.json, not the DB until
-// V1.1 DRG-GUIDE-001). So V1 surfaces Knowledge-room findings derived from flagged issues. Garden room
-// emits 0 (C2); Critters room deferred. Each issue becomes ONE finding, run through the full engine.
+// V1 scope (honest cold-start): the ONLY structured first-party care signal in the V1 Neon DB is
+// event_log.flagged_as_issue (crop care-knowledge lives in plant-knowledge.json, not the DB until V1.1
+// DRG-GUIDE-001). So V1 surfaces Knowledge-room findings from flagged issues, one finding per issue, run
+// through the full engine. Garden room emits 0 (C2); Critters room deferred.
 
 const SEVERITY_MAP = { low: 'low', medium: 'moderate', moderate: 'moderate', high: 'high' };
 // event_log.severity is a smallint in {1,2,3} (validator: lambda/events/validators.js) — 1=low, 2=moderate,
@@ -53,8 +53,8 @@ export function assembleIssueFindings(rows) {
     }
     out.push({
       finding_id: `issue:${row.event_id}`,
-      plant_id: row.plant_id ?? null,   // DRG-BACKBONE-001 P1 §9 materialize seam (FLAG-1): garden_node_id source; additive, ignored by composeFinding
-      project_id: row.project_id ?? null,   // V4-TREATLOG-001: additive passthrough for the DrG 'Treated…' deep-link (ignored by composeFinding)
+      plant_id: row.plant_id ?? null,   // §9 materialize seam (garden_node_id source); additive, ignored by composeFinding
+      project_id: row.project_id ?? null,   // additive passthrough for the DrG 'Treated…' deep-link (ignored by composeFinding)
       entity_id: row.entity_id,
       source_room: 'Knowledge',
       finding_type: mapFindingType(row.event_type),

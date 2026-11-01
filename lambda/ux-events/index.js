@@ -1,16 +1,15 @@
-// garden-ux-events — Post-V2 UX Overhaul Increment 0 success-metric sink.
-// Spec: success-metric-instrumentation-spec-V001-20260522.1620.md.
+// garden-ux-events: success-metric sink (Post-V2 UX Overhaul Increment 0;
+// spec success-metric-instrumentation-spec-V001-20260522.1620.md).
 //
-// Surfaces:
-//   POST /api/ux-events            — authed (any signed-in user). Append one telemetry row
-//                                     (M1 tap-count steps + completion). flow_id is server-allowlisted.
-//                                     Fire-and-forget from the client; failures must never affect UX.
-//   GET  /api/ux-events?admin=1    — ADMIN_CLERK_SUBS-gated (fail-closed). Returns the three
-//                                     "Garden Activity" measures: M1 tap-count (from ux_events),
-//                                     M2 capture-events/week (derived from existing tables — no new
-//                                     write path), M3 agent accept-rate (placeholder until Inc-3 tasks).
-//   GET  /api/ux-events            — non-admin GET is 403: this is an admin-only diagnostic surface
-//                                     (Jen-invisible per Reward UX V100 §8).
+//   POST /api/ux-events            authed (any signed-in user). Append one telemetry row (M1 tap-count
+//                                  steps + completion). flow_id is server-allowlisted. Fire-and-forget from
+//                                  the client; failures must never affect UX.
+//   GET  /api/ux-events?admin=1    ADMIN_CLERK_SUBS-gated (fail-closed). Returns the three "Garden Activity"
+//                                  measures: M1 tap-count (from ux_events), M2 capture-events/week (derived
+//                                  from existing tables, no new write path), M3 agent accept-rate
+//                                  (placeholder until Inc-3 tasks).
+//   GET  /api/ux-events            non-admin GET is 403: an admin-only diagnostic surface (Jen-invisible per
+//                                  Reward UX V100 §8).
 //
 // clerk_sub is taken from the verified JWT, NEVER from the request body.
 // CORS is owned by the Lambda Function URL config (handler keeps CORS={}), per L-097.
@@ -22,31 +21,20 @@ const CORS = {}; // Lambda URL config is sole CORS source — handler must not d
 
 // Server-side allowlist of the M1 flows. A client cannot invent flow_ids.
 //
-// THIS SET SILENTLY DROPS ANYTHING NOT IN IT, and that has already cost 2.5 months of data.
-// `open_planting` shipped in the CLIENT on 2026-06-03 (V3-NAV-001, PlantingDetail.jsx:115) and was
-// never added here, so every one of its events was rejected with a 200-shaped no-op. Measured on
-// live prod 2026-08-22: ux_events holds reach_planting 244, log_watering 215, create_project 53,
-// and open_planting ZERO. uxEvents.js predicted this exact outcome in a comment — "if the Lambda
-// allowlist hasn't added 'open_planting' yet, sendUxEvent is a silent no-op" — and called the
-// resulting gap a deliberate temporary double-signal during the nav cutover. It was never double:
-// PlantingDetail REPLACED ProjectDetail as the way in, so as the old surface fell out of use the
-// funnel fell to zero rather than handing over. reach_planting's last row is 2026-08-10.
-//
-// The drop is now pinned by ux-events.flowLockstep.test.js, which fails if any client FLOWS value
-// is missing here. That guard is the actual fix; adding two strings is just today's instance.
+// THIS SET SILENTLY DROPS ANYTHING NOT IN IT: a flow shipped in the client but missing here was rejected
+// as a 200-shaped no-op, and `open_planting` lost 2.5 months of data that way.
+// ux-events.flowLockstep.test.js fails if any client FLOWS value is missing here; that guard is the actual fix.
 export const ALLOWED_FLOWS = new Set([
   'log_watering',
   'reach_planting',
   'create_project',
-  // Dropped for 2.5 months — see above.
+  // Was missing for 2.5 months (see above).
   'open_planting',
-  // V4-PHOTOUPLOADINSTR-001: one event per photo upload carrying which downscale branch ran and how
-  // long each phase took. BUG-PHOTOUPLOADSLOW-001 could be measured but not DIAGNOSED, because the
-  // branch that decides a 680 kB upload from an 8.8 MB one is a console.warn nobody collects.
+  // One event per photo upload carrying which downscale branch ran and how long each phase took
+  // (V4-PHOTOUPLOADINSTR-001); that branch was otherwise a console.warn nobody collects.
   'photo_upload',
-  // BUG-VOICEDUPE-003: the SHAPE of a recognition session (indices, finality, lengths, equality
-  // relations) — never the words. Two index-keyed fixes have already shipped and missed; this
-  // carries the discriminator that says whether the duplicate arrives at a NEW index.
+  // The SHAPE of a recognition session (indices, finality, lengths, equality relations), never the words
+  // (BUG-VOICEDUPE-003): says whether a duplicate arrives at a NEW index.
   'voice_input',
 ]);
 
@@ -129,21 +117,15 @@ export const handler = async (event) => {
         ORDER BY flow_id
       `;
 
-      // M2 — capture-events/week, derived from EXISTING tables (no new write path).
-      // Union created_at across the three garden-data tables, bucket by ISO week, last 8 weeks.
+      // M2: capture-events/week, derived from EXISTING tables (no new write path). Union created_at across
+      // the three garden-data tables, bucket by ISO week, last 8 weeks.
       //
-      // V4-ARCHIVEHIDE-001 (L7): the two garden_node/container arms counted ARCHIVED rows. AXIS is
-      // archived_at, not deleted_at. Prod 2026-08-13: 3 archived plantings + 1 archived project fall
-      // inside the 8-week window, so this lowers recent weekly capture counts by up to 4.
-      //
-      // THIS IS THE WEAKEST OF THE SIX AND THE FIRST TO REVERT IF DAVE DISAGREES. Two honest
-      // arguments against it: (1) the route is admin-only (403 above), so it is not a "default view"
-      // in the user-facing sense the ticket is written about; (2) M2 measures CAPTURE ACTIVITY, and
-      // archiving in week 9 does not un-capture what was captured in week 1 — filtering makes a past
-      // week's number change retroactively. Note also that these arms do not filter deleted_at
-      // either, so the two lifecycle axes are now asymmetric here on purpose rather than by
-      // oversight: closing archived alone was the scoped ask, and widening it to deleted_at would be
-      // an unbriefed behaviour change to a shipped metric.
+      // V4-ARCHIVEHIDE-001 (L7): the garden_node/container arms exclude ARCHIVED rows (axis is archived_at,
+      // not deleted_at). This is the weakest of the six carve-outs and the first to revert if Dave disagrees:
+      // the route is admin-only, and M2 measures CAPTURE ACTIVITY, so archiving in week 9 does not un-capture
+      // week 1, and filtering makes a past week's number change retroactively. These arms do not filter
+      // deleted_at, so the two lifecycle axes are asymmetric here on purpose; widening it would be an
+      // unbriefed behaviour change to a shipped metric.
       const m2 = await sql`
         SELECT to_char(date_trunc('week', created_at), 'IYYY-"W"IW') AS iso_week,
                COUNT(*)::int AS captures
@@ -157,12 +139,10 @@ export const handler = async (event) => {
         ORDER BY 1
       `;
 
-      // M3 — agent-proposal accept-rate. Lives on the Inc-3 `tasks` table. The table may
-      // not exist yet, OR a differently-shaped `tasks` table may already exist (pre-Inc-3)
-      // WITHOUT the agent_proposed/accepted_at columns. Either case must degrade to
-      // "not available" — never 500 the whole admin panel. Wrapped in try/catch so column
-      // shape drift on `tasks` is tolerated. (Caught on staging: a pre-Inc-3 tasks table
-      // exists, so to_regclass is non-null but the column query errored.)
+      // M3: agent-proposal accept-rate, from the Inc-3 `tasks` table. The table may not exist yet, or a
+      // pre-Inc-3 `tasks` table may exist WITHOUT the agent_proposed/accepted_at columns (to_regclass is
+      // non-null but the column query errors). Either case must degrade to "not available", never 500 the
+      // whole admin panel.
       let m3 = { available: false, reason: 'tasks table not yet created (Increment 3)', accept_rate: null, canary_threshold: 0.40 };
       try {
         const taskTbl = await sql`SELECT to_regclass('public.tasks') AS t`;

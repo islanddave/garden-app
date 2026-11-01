@@ -1,15 +1,14 @@
-// DRG-BACKBONE-001 P1 (§9 hybrid serving) — findings MATERIALIZE-ON-WRITE writer.
+// DRG-BACKBONE-001 P1 (§9 hybrid serving): findings MATERIALIZE-ON-WRITE writer.
 //
-// Builds + executes the idempotent UPSERT that persists a computed finding into the `findings` table, and
-// the soft-delete that retires a resolved finding. CLIENT-INJECTED by design: this module imports NO
-// Pool/ws/neon — the caller passes an already-connected, transaction-capable client (Pool+ws). Rationale
-// (regression review): keeping the new connection mode OUT of this module means it can be fully unit-tested
-// + COW-dry-run-exercised with zero bundle/connection-leak risk, and it carries no L-089 module-load-502
-// hazard while UNWIRED. The Pool+ws lifecycle + the event-write transaction that calls these live in the
-// DEFERRED gated wiring slice, NOT here.
+// Builds the idempotent UPSERT that persists a computed finding into the `findings` table, and the soft-delete
+// that retires a resolved finding. CLIENT-INJECTED by design: this module imports NO Pool/ws/neon, the caller
+// passes an already-connected, transaction-capable client. That keeps the new connection mode out of this
+// module, so it is fully unit-testable with no bundle/connection-leak risk and no L-089 module-load-502
+// hazard while UNWIRED. The Pool+ws lifecycle and the event-write transaction that calls these live in the
+// DEFERRED gated wiring slice.
 //
-// The multi-row write (event row + this finding UPSERT) MUST run inside ONE transaction on the injected
-// client (§9). This module provides the finding half; the caller owns BEGIN/COMMIT/ROLLBACK + client.release.
+// The multi-row write (event row + this finding UPSERT) MUST run inside ONE transaction on the injected client
+// (§9). This module is the finding half; the caller owns BEGIN/COMMIT/ROLLBACK + client.release.
 import { toPersistRow } from './engine/persist.js';
 
 // Column order for the INSERT (matches the $1..$23 value order below).

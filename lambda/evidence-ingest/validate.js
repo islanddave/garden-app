@@ -1,16 +1,15 @@
 // Pure validator for the evidence-ingest write path (DRG-ENGINE-003 -> CARE-ENGINE-P0 V2 dual-write, G-EVID).
-// No DB/Clerk/AWS imports -> jsdom-testable. Legacy enums MIRROR findings/engine/config.js TIERS
-// (per-dir Lambda zip cannot import ../findings/engine — config.js is source of truth; keep in sync).
+// No DB/Clerk/AWS imports -> jsdom-testable. Legacy enums MIRROR findings/engine/config.js TIERS (a per-dir
+// Lambda zip cannot import ../findings/engine; config.js is the source of truth, keep in sync).
 //
-// V2 ADDITIVE (CARE-ENGINE-P0): every write now ALSO populates the V2 evidence cols, DERIVED from the
-// legacy `tier` so OLD bodies (no V2 fields) still validate AND dual-write correctly. New fields are
-// optional with derived defaults. The request API contract is UNCHANGED (still schema_version=1); the
-// STORED row is schema_version=2 (it carries the full V2 field set). The CONTRACT phase (later migration)
-// flips EXPECTED_SCHEMA_VERSION=2 and drops the legacy tier/axis/polarity cols.
+// Every write also populates the V2 evidence cols, DERIVED from the legacy `tier`, so OLD bodies (no V2
+// fields) still validate and dual-write. New fields are optional with derived defaults. The request API
+// contract is UNCHANGED (schema_version=1); the STORED row is schema_version=2. The CONTRACT phase (later
+// migration) flips EXPECTED_SCHEMA_VERSION=2 and drops the legacy tier/axis/polarity cols.
 //
-// Reconciliation (locked): trust_rank + strength_weight MUST match the seeded `evidence_source_tier`
-// lookup table (1..5 ordinal) so writer-derived values == backfilled values. evidence_class defaults to
-// 'observation' (G-EVID, backfill-consistent). entity_type + claim are REQUIRED (0c SET NOT NULL).
+// trust_rank + strength_weight MUST match the seeded `evidence_source_tier` lookup table (1..5 ordinal) so
+// writer-derived values == backfilled values. evidence_class defaults to 'observation' (backfill-consistent).
+// entity_type + claim are REQUIRED (0c SET NOT NULL).
 export const EXPECTED_SCHEMA_VERSION = 1; // request-API version gate (unchanged). Stored rows are 2.
 export const STORED_SCHEMA_VERSION = 2;   // every V2 dual-write row is stored as schema_version=2.
 export const TIERS = ['dave_confirmed', 'first_party_log', 'corroborated_general', 'claude_distilled', 'transferable_prior'];
