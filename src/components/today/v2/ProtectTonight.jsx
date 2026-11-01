@@ -13,37 +13,39 @@ import { tinted } from './SpotRow.jsx'
 import { outlineBtn, PlantRow } from './PlantCareRow.jsx'
 import { removeLogged, readLogged, claimedKeys, runEnd, runTake, runsEnded } from './needsCareStore.js'
 
-// ProtectTonight — the body of the redesigned Today's Protect tonight (V5-TODAYREDESIGN-001 S5; plan-v2 §1.1 /
-// §1.2, §2.3, §2.5, §4, §5.5–5.7; §13 SF1; Dave's D6: Protect keeps its existing Skip, no "Leave it out").
+// The body of the redesigned Today's Protect tonight. Dave's rule: Protect keeps its existing Skip,
+// no "Leave it out".
 //
-//   · on a frost or hard-freeze night, first: "Pick what's ripe first — log a harvest ›" → /log/harvest, the
-//     harvest door TopChrome opens (§1.1; a chill night has none, §1.2). Finish plan §3.3 (D15): the engine's cue
-//     folds in here — a pick cue ("Cold night (42°F) — pick coloring peppers & tomatoes") becomes the link's words,
-//     "Pick coloring peppers & tomatoes first — log a harvest ›", on any night it fires (lib/todayV2/alerts.js);
-//   · a TENDER planting (a `protect` card) is its own row card in the one per-plant anatomy (finish plan §3.6, D18):
-//     picture box and name (→ its planting page) over "{spot}", then Skip · 8 px · [Covered] · 8 px · [Brought in]
-//     — the 8 px between Covered and Brought in are dead space (SF1), so a thumb aimed at one cannot land on the
-//     other; the tender threshold they share is the band summary's, said once;
-//   · the nightshade mass of a cold night (`bring_in` / `optional` cards) is one COVER ROW per spot — "Bag Area 68",
-//     "Cover or bring in tonight", [Cover all 68] — which opens to its plants.
-// Write paths (§2.3), through useCareActions' V2 run (no toast, §11.1 C2): Covered and Cover all post `cover`
-// (valid, batch-allowed, and it checks the cold card off for the day — daily-plan-read doneEvents.js); Brought in
-// posts `brought_inside`, which the engine latches until `brought_outside`, so its done line says so (SF1): "Brought
-// in · off the frost list until it goes back out". Skip goes into the one shared skip set, like every other Skip
-// on Today. Every result is a done line with Undo in place, held for the visit (the visit record, record.protect),
-// and speaks through the page's one status region; a failed write stays on its row as "Not logged" with Retry.
+//   · on a frost or hard-freeze night, first: "Pick what's ripe first — log a harvest ›" → /log/harvest,
+//     the harvest door TopChrome opens (a chill night has none). The engine's cue folds in here: a
+//     pick cue ("Cold night (42°F) — pick coloring peppers & tomatoes") becomes the link's words,
+//     "Pick coloring peppers & tomatoes first — log a harvest ›", on any night it fires
+//     (lib/todayV2/alerts.js);
+//   · a TENDER planting (a `protect` card) is its own row card in the one per-plant anatomy: picture
+//     box and name (→ its planting page) over "{spot}", then Skip · 8 px · [Covered] · 8 px
+//     · [Brought in]. The 8 px between Covered and Brought in are dead space, so a thumb aimed at one
+//     cannot land on the other; the tender threshold they share is the band summary's, said once;
+//   · the nightshade mass of a cold night (`bring_in` / `optional` cards) is one COVER ROW per spot
+//     ("Bag Area 68", "Cover or bring in tonight", [Cover all 68]), which opens to its plants.
+// Write paths, through useCareActions' V2 run (no toast): Covered and Cover all post `cover` (valid,
+// batch-allowed, and it checks the cold card off for the day: daily-plan-read doneEvents.js);
+// Brought in posts `brought_inside`, which the engine latches until `brought_outside`, so its done
+// line says so: "Brought in · off the frost list until it goes back out". Skip goes into the one
+// shared skip set, like every other Skip on Today. Every result is a done line with Undo in place,
+// held for the visit (the visit record, record.protect), and speaks through the page's one status
+// region; a failed write stays on its row as "Not logged" with Retry.
 const RUN = { concurrency: 4, excludeInFlight: true }
 const ONE = { concurrency: 1, excludeInFlight: true }
 const COVER = 'cover'
 const DONE = { covered: 'covered', brought: 'brought in · off the frost list until it goes back out', skipped: 'skipped' }
 
 const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
-// A household member's row carries their name wherever the row is named (orchestrator, 2026-09-29): "(Jen)".
+// A household member's row carries their name wherever the row is named: "(Jen)".
 export const rowLabel = (row) => (row.owner ? `${row.name} (${row.owner})` : row.name)
 
-// Whose plants a Cover all marks (Dave 10-11, "say it in the label"; finish plan D-4): null when they are all the
-// viewer's, else "yours and Jen's" / "Jen's" / "yours, Jen's and Sam's". One cloth covers the spot, so the run
-// stays one run; the button only says whose plants it logs.
+// Whose plants a Cover all marks: null when they are all the viewer's, else "yours and Jen's" /
+// "Jen's" / "yours, Jen's and Sam's". One cloth covers the spot, so the run stays one run; the
+// button only says whose plants it logs.
 export function coverWhose(rows) {
   const mine = rows.some((r) => r && !r.owner)
   const others = [...new Set(rows.filter((r) => r && r.owner).map((r) => r.owner))].map((o) => `${o}’s`)
@@ -52,9 +54,9 @@ export function coverWhose(rows) {
   return names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
 }
 
-// The cue carried by the pick link records its impression as the cue line would (WeatherCueLine.jsx: on the render
-// that paints it, once per render key; the server owns the per-day grain) — the instrument (OPS-CUEINSTRUMENT-001)
-// must not read a cue on screen as a cue that never fired.
+// The cue carried by the pick link records its impression as the cue line would (WeatherCueLine.jsx:
+// on the render that paints it, once per render key; the server owns the per-day grain), so the
+// instrument must not read a cue on screen as a cue that never fired.
 function useFoldedCueImpression(line, generatedAt, planDate) {
   const { fetch: apiFetch } = useApiFetch()
   const sentRef = useRef(null)
@@ -87,7 +89,7 @@ export default function ProtectTonight({ protect, record, update, announce, writ
 
   const byKey = useMemo(() => new Map(protect.allEnriched.map((r) => [r.key, r])), [protect.allEnriched])
   const active = useMemo(() => new Set(protect.rows.map((r) => r.key)), [protect.rows])
-  // The visit's held order (§2.2); a row that appears mid-visit (an afternoon refetch) is appended.
+  // The visit's held order; a row that appears mid-visit (an afternoon refetch) is appended.
   const held = slice?.order || []
   const keys = [...held, ...protect.rows.map((r) => r.key).filter((k) => !held.includes(k))]
   const plantKeys = keys.filter((k) => byKey.has(k) && !COVER_LEVELS.has(byKey.get(k).level))
@@ -103,14 +105,15 @@ export default function ProtectTonight({ protect, record, update, announce, writ
     }
   }
 
-  // ── writes ───────────────────────────────────────────────────────────────────────────────────────────────
-  // Review 4160.2 IMPORTANT-2: while the page holds its writes (a seeded Back remount still revalidating, TodayV2
-  // writesHeld), Covered, Brought in, Cover all, Retry and Skip post and skip nothing, and their controls are inert.
-  // Review 4162.1 IMPORTANT-A (Cover all's twin): every write claims its keys before it posts, and each is logged or
-  // released as its own POST answers (protect.claim, useTodayLogged), so a run still going when V2 unmounts (keepalive)
-  // is left out of the Back remount instead of offered again, and a cover that then fails comes back on the list that
-  // is on screen. Undo un-writes, as before. No batch goes on the record at the start: the remount builds no cover row
-  // for a spot whose keys are all claimed, so there is no line to draw it on.
+  // Writes.
+  // While the page holds its writes (a seeded Back remount still revalidating, TodayV2 writesHeld),
+  // Covered, Brought in, Cover all, Retry and Skip post and skip nothing, and their controls are
+  // inert. Every write claims its keys before it posts, and each is logged or released as its own
+  // POST answers (protect.claim, useTodayLogged), so a run still going when V2 unmounts (keepalive)
+  // is left out of the Back remount instead of offered again, and a cover that then fails comes back
+  // on the list that is on screen. Undo un-writes. No batch goes on the record at the start: the
+  // remount builds no cover row for a spot whose keys are all claimed, so there is no line to draw
+  // it on.
   const claim = protect.claim
   // `cue` = { callout, generatedAt, planDate }: the page's cue, folded here when it is a pick cue.
   const pickText = useMemo(() => pickLinkText(cue?.callout), [cue?.callout])
@@ -124,10 +127,11 @@ export default function ProtectTonight({ protect, record, update, announce, writ
     batches: { ...(s.batches || {}), [newId()]: { spot: r.spot, name: r.name, kind: 'covered', created: r.created } },
     failed: { ...(s.failed || {}), ...Object.fromEntries(r.failed.map((k) => [k, 'covered'])) },
   }))
-  // One that ended with this body gone (the section closed, or the page left mid-run and come Back to) parked its
-  // result (coverSpot, below); the body then on screen lands it — a failure not logged or taken again since — and
-  // says it through this page's status region when the run's own page is gone. (The page's hook is subscribed to the
-  // store, so a run's end redraws this body; before paint, so the spot never shows without its result.)
+  // One that ended with this body gone (the section closed, or the page left mid-run and come Back
+  // to) parked its result (coverSpot, below); the body then on screen lands it (a failure not logged
+  // or taken again since) and says it through this page's status region when the run's own page is
+  // gone. The page's hook is subscribed to the store, so a run's end redraws this body; before
+  // paint, so the spot never shows without its result.
   useLayoutEffect(() => {
     for (const [id] of runsEnded(protect.logKey)) {
       const r = runTake(id)
@@ -220,10 +224,11 @@ export default function ProtectTonight({ protect, record, update, announce, writ
     return { ...s, open: [...open] }
   })
 
-  // ── render ───────────────────────────────────────────────────────────────────────────────────────────────
-  // The tender threshold every tender row shares, when they do (§3.6: said once, in the band summary, not per row) —
-  // read off the SAME rows the open summary reads, the ones still to do (review M1: a handled row with its own
-  // threshold kept the shared one printing on every row as well as in the summary).
+  // Render.
+  // The tender threshold every tender row shares, when they do (said once, in the band summary, not
+  // per row), read off the SAME rows the open summary reads, the ones still to do: a handled row
+  // with its own threshold would otherwise keep the shared one printing on every row as well as in
+  // the summary.
   const thresholds = tenderThresholds(protect.rows)
   const sharedThreshold = thresholds.length === 1 ? thresholds[0] : null
   const plantRow = (k, inCard) => {
@@ -269,7 +274,7 @@ export default function ProtectTonight({ protect, record, update, announce, writ
   return (
     <div ref={rootRef} data-testid="protect-body" style={{ display: 'flex', flexDirection: 'column', gap: T.space.xs }}>
       {(protect.pick || pickText) && (
-        // BUG-LINKICONBLUE-001: an explicit ink on a <Link> holding an <Icon>.
+        // An explicit ink on a <Link> holding an <Icon> (see CultivationLead.jsx).
         <Link to="/log/harvest" data-testid="protect-pick" style={pickLink}>
           <Icon name="lifecycle.fruit" size={18} decorative style={{ flexShrink: 0 }} />
           <span>{pickText || PICK_DEFAULT}</span>
@@ -283,11 +288,12 @@ export default function ProtectTonight({ protect, record, update, announce, writ
   )
 }
 
-// A tender planting's row: THE per-plant row anatomy (PlantCareRow.jsx PlantRow; finish plan §3.6, Dave's D18) as
-// its own row card — picture box, name, then Skip · 8 px · [Covered] · 8 px · [Brought in]. SF1: the 8 px between
-// Covered and Brought in is dead space (the flex gap), never a control. The meta holds only what differs from its
-// group (§3.6): the spot — not inside a spot's cover panel, which IS the spot — and the tender threshold only where
-// it is not the one every tender row shares (that one is said once, in the band's summary: "tender below 50°").
+// A tender planting's row: THE per-plant row anatomy (PlantCareRow.jsx PlantRow) as its own row
+// card: picture box, name, then Skip · 8 px · [Covered] · 8 px · [Brought in]. The 8 px between
+// Covered and Brought in is dead space (the flex gap), never a control. The meta holds only what
+// differs from its group: the spot (not inside a spot's cover panel, which IS the spot) and the
+// tender threshold only where it is not the one every tender row shares (said once, in the band's
+// summary: "tender below 50°").
 function ProtectRow({ row, inCard, failed, pending, onSkip, onCover, onBring, held, sharedThreshold = null }) {
   const who = rowLabel(row)
   const href = row.plantingId ? '/plantings/' + row.plantingId : '/garden'
@@ -318,8 +324,8 @@ function ProtectDoneLine({ row, done, inCard, onUndo, undoBusy }) {
   )
 }
 
-// A spot's cover row (§4 "Protect spot cover row"): the same row anatomy as Needs care's spot rows — the
-// disclosure is a heading's button, the action its sibling behind 8 px of dead space — one level under the band.
+// A spot's cover row: the same row anatomy as Needs care's spot rows (the disclosure is a heading's
+// button, the action its sibling behind 8 px of dead space), one level under the band.
 function CoverSpotRow({ spot, n, whose = null, open, onToggle, onCover, busy, retry, partial, undo, held, children }) {
   const panelId = useId()
   const cover = (n === 1 ? 'Cover 1' : `Cover all ${n}`) + (whose ? ` · ${whose}` : '')
@@ -360,10 +366,9 @@ function CoverSpotRow({ spot, n, whose = null, open, onToggle, onCover, busy, re
   )
 }
 
-// ── styles (plan-v2 §4; tokens P / T — every size on the T ramp, the visual census reads them) ─────────────────
-// A tender row is PlantRow's anatomy in a row card. S5 held it to 48 px border included; finish plan L5 (D18) gives it
-// the 40px picture box and the main action's 48px tap height, so a one-line row is 50 (48 inside the 1px border) —
-// the width-and-height cost Dave was shown and accepted for the picture box (≈35 px lower on a frost night).
+// Styles (tokens P / T; every size on the T ramp, the visual census reads them).
+// A tender row is PlantRow's anatomy in a row card: a 40px picture box and the main action's 48px
+// tap height, so a one-line row is 50 (48 inside the 1px border).
 const list = { listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: T.space.xs }
 const panelList = { listStyle: 'none', margin: 0, padding: 0 }
 const cardRow = { listStyle: 'none', background: P.white, border: '1px solid ' + P.border, borderRadius: T.radiusCard, overflow: 'clip', display: 'flex', alignItems: 'stretch', minHeight: 48, boxSizing: 'border-box' }
