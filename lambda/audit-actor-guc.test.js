@@ -476,12 +476,14 @@ describe('BUG-EVENTAUDITACTOR-001 — actor GUC shares a transaction with every 
   // Closes the blend.js exemptions above: every call to insertBlend / reviveBlend anywhere in lambda/ is an element
   // of a withActor builder array, so the GUC leads the batch that sends it.
   it('OPS-AUDITGUCTABLES-001: insertBlend and reviveBlend are only ever elements of a withActor batch', () => {
-    const inBatch = new Set(WITH_ACTOR.flatMap((g) => g.members.map((m) => `${g.file}@${m.start}`)))
+    // No backtick from here to the end of the file: src/__tests__/sqlTemplateComments.test.js reads the sql-tag
+    // in the repoint regex above as a template and pairs it with the next backtick it finds.
+    const inBatch = new Set(WITH_ACTOR.flatMap((g) => g.members.map((m) => g.file + '@' + m.start)))
     const calls = FILES.flatMap((rel) => {
       const out = []
       walkAst(parseFile(rel), (n) => {
         if (n.type === 'CallExpression' && n.callee.type === 'Identifier' && ['insertBlend', 'reviveBlend'].includes(n.callee.name)) {
-          out.push({ key: `${rel}@${n.start}`, at: `${rel}:${n.loc.start.line} ${n.callee.name}` })
+          out.push({ key: rel + '@' + n.start, at: rel + ':' + n.loc.start.line + ' ' + n.callee.name })
         }
       })
       return out
