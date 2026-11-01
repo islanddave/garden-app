@@ -1,14 +1,11 @@
-// helperPrompt.js — Rung-1 advisory Garden Helper Prompt template.
+// helperPrompt.js: Rung-1 advisory Garden Helper Prompt template.
 //
-// Bite 1 of Post-V2 UX overhaul Increment 2 (Field quick-capture + Rung-1 helper-prompt).
-// Bite 6 extension: assembleFromEntry() entry point for field-path handoff (audio-derived
-// transcript or text-fallback). Same C4 untrusted-data-fence pattern reused byte-for-byte;
-// no fence redesign in Increment 2. Transcript-in vs typed-in collapse into the same
-// prompt format from the fence inward.
+// assembleFromEntry() is the field-path handoff entry point (audio-derived transcript or text fallback).
+// The C4 untrusted-data-fence pattern is reused byte-for-byte; transcript-in and typed-in collapse into the
+// same prompt format from the fence inward.
 //
-// NON-RECORDING SCAFFOLD: this module is pure client-side string assembly. No DB
-// writes, no Lambda calls, no network IO. Documented as advisory only per Dave-call
-// #5 (Rung-1 gates on having Claude).
+// NON-RECORDING SCAFFOLD: pure client-side string assembly. No DB writes, no Lambda calls, no network IO.
+// Advisory only (Rung-1 gates on having Claude).
 
 export const HELPER_PROMPT_TEMPLATE_VERSION = '1.0'
 
@@ -40,18 +37,15 @@ export function assembleHelperPrompt(userText) {
 }
 
 /**
- * Bite 6: assemble a Helper Prompt from a captureQueue entry (audio with transcript,
- * or text). Returns the assembled prompt string ready for navigator.share / clipboard.
+ * Assemble a Helper Prompt from a captureQueue entry (audio with transcript, or text). Returns the
+ * assembled prompt string ready for navigator.share / clipboard, or null if there is no usable content
+ * (caller should treat as "nothing to send").
  *
- * Field-path UX: voice captures arrive with `transcript` set (manual or web-speech);
- * text captures arrive with `text` set. We pick whichever is present, in that priority:
- *   1. entry.transcript (canonical Bite 5 field, populated for both audio + text after Save)
- *   2. entry.text       (Bite 4 fallback for text-kind entries that haven't been "Saved"
- *                        through TranscriptReview yet, AND the back-compat mirror set by
- *                        Bite 5 setTranscript() for any saved-transcript record)
- *   3. ''               (defensive — caller should disable the CTA when no content)
- *
- * Returns null if no usable content present (caller should treat as "nothing to send").
+ * Voice captures arrive with `transcript` set (manual or web-speech); text captures arrive with `text`
+ * set. Priority:
+ *   1. entry.transcript (canonical field, populated for both audio + text after Save)
+ *   2. entry.text       (text-kind entries not yet saved through TranscriptReview, AND the back-compat
+ *                        mirror setTranscript() sets for any saved-transcript record)
  */
 export function assembleFromEntry(entry) {
   if (!entry || typeof entry !== 'object') return null
