@@ -439,21 +439,20 @@ export function parseCountInput(raw, toStage) {
   const n = Number(typed)
   if (!Number.isFinite(n)) return { value: null, error: 'That is not a number.' }
   if (n < 0) return { value: null, error: 'A count cannot be negative.' }
-  // V5-SEEDQTY-001 — WHOLE SEEDS, refused here rather than by the API. `seed_count` is an `integer`
+  // WHOLE SEEDS, refused here rather than by the API. `seed_count` is an `integer`
   // column and the /seed-measure route answers a non-integer with
   // `400 seed_count must be a whole number of seeds, or null`. That 400 arrives AFTER the stage POST
   // has landed, so a typed "20.5" would move the lot and drop the count, reporting it as a toast on
   // a sheet that has already closed. The field is `step="1"` and `inputMode="numeric"`, but a decimal
   // point is one tap away on an Android numeric keypad, so the guard is real and not belt-and-braces.
   //
-  // This REPLACES the "takes a fraction as given" rule, which was correct while the count lived in
-  // `quantity_on_hand numeric(10,3)` — half a packet is a coherent quantity. Half a seed is not.
-  // Same guard, same wording, on SaveSeedSheet's capture field, so the two doors agree.
+  // A count is a whole number of seeds, not a fraction of a packet. Same guard, same wording, on
+  // SaveSeedSheet's capture field, so the two doors agree.
   if (!Number.isInteger(n)) return { value: null, error: 'A seed count is a whole number of seeds.' }
   return { value: n, error: null }
 }
 
-// V5-SEEDSTAB-001 — the Saved seeds view of the Seeds page.
+// The Saved seeds view of the Seeds page.
 //
 // `embedded` drops what the Seeds shell now supplies: the H1, the subtitle, the "Sow now →" link (the
 // view switch replaces it), the full-width "+ Save seed" button (it moved into the shell's action
@@ -479,17 +478,17 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
   const loadErr = store ? (store.items === null ? store.error : null) : ownErr
   const [advancing, setAdvancing] = useState(null)   // the lot whose advance sheet is open
   const [starting, setStarting]   = useState(false)  // the "track a lot" picker sheet
-  // BUG-SEEDPROCFORCED-001 — the packet picked in step 1, waiting on its process in step 2. Held
+  // The packet picked in step 1, waiting on its process in step 2. Held
   // rather than passed straight to openStageSheet because the entry stage is not known until the
   // process is chosen, and the advance sheet is titled by that stage.
   const [startItem, setStartItem] = useState(null)
-  // BUG-SEEDCANDIDATEAMBIG-001 — the picker's filter box. Cleared whenever the sheet closes or the
+  // The picker's filter box. Cleared whenever the sheet closes or the
   // user steps back to it, so re-opening never lands on a stale query hiding the packet they came for.
   const [candidateQuery, setCandidateQuery] = useState('')
-  // V5-SEEDSAVEDFILTER-001 — the crop facet's selection. A Set, because FilterChipRow is multi-select
-  // OR and pepper+tomato together are 51% of the collection; single-select would make the two most
+  // The crop facet's selection. A Set, because FilterChipRow is multi-select
+  // OR and pepper+tomato together are about half the collection; single-select would make the two most
   // common answers mutually exclusive. Component-local and cleared with the query on every close,
-  // for the reason the line above gives about a stale query — and MORE so for a chip than for text,
+  // for the reason the line above gives about a stale query, and MORE so for a chip than for text,
   // because typed text is visibly sitting in the box while a selected chip is easy to scroll past.
   // FilterChipRow's own contract already declares its selection session-ephemeral (FROZEN.md).
   const [cropSel, setCropSel] = useState(() => new Set())
@@ -498,32 +497,32 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
   // types, re-anchoring the list under a moving thumb; gating on `untracked` alone would still
   // re-evaluate mid-session if a row changed underneath. Snapshot at open, hold for the sheet's life.
   const [cropFacetOn, setCropFacetOn] = useState(false)
-  // The PAGE-level crop filter's selection (V5-SEEDSAVEDFILTER-001 second pass). Separate state from
+  // The PAGE-level crop filter's selection. Separate state from
   // `cropSel` above, deliberately: that one narrows the packets you might START tracking, this one
   // narrows the lots you ARE tracking. Sharing one Set would make choosing a crop in the sheet
   // silently reorder the page behind it — two different questions wearing the same control.
   const [trackedCropSel, setTrackedCropSel] = useState(() => new Set())
   const [busy, setBusy]       = useState(false)
   const [when, setWhen]       = useState(todayLocalISO())
-  // V5-SEEDSTAGEONEPLACE-001 — the refusal shown when a correction is submitted with no date. Its
+  // The refusal shown when a correction is submitted with no date. Its
   // own state rather than a reuse of qtyErr: two fields, two refusals, and one shared slot would
   // paint the count's message under the date box.
   const [dateErr, setDateErr] = useState(null)
   const [note, setNote]       = useState('')
-  // BUG-SEEDZEROSOWABLE-001 — the count, now asked on EVERY move (see COUNT_ASK). '' still writes
+  // The count, asked on EVERY move (see COUNT_ASK). '' still writes
   // nothing, which keeps "I don't know yet" a real answer on the two in-flight stages; at `stored`
   // an empty value is refused before the request goes out, so the ambiguous 0 can no longer be
   // reached by omission. Prefilled from the lot on open so the field reads as UPDATE rather than
-  // re-enter — the count is a running number now, not a one-time capture.
+  // re-enter — the count is a running number, not a one-time capture.
   const [qtyInput, setQtyInput] = useState('')
   const [qtyErr, setQtyErr]     = useState(null)
-  // V5-SEEDESTTOGGLE-001 — whether the count in that field was counted out or estimated. Seeded from
+  // Whether the count in that field was counted out or estimated. Seeded from
   // the lot on open (see openStageSheet) and sent with every count this sheet writes, because
   // seed_count and seed_count_estimated are one fact in two columns and the route refuses a half of
   // it. Its own state rather than a field on `advancing`: that object is the sheet's IDENTITY (which
   // lot, which stage, which door) and the answers the user types are held beside it, not inside it.
   const [qtyEstimated, setQtyEstimated] = useState(false)
-  // V4-SEEDLINK-001 — the parent plant chosen inside the advance sheet, for a lot that has none.
+  // The parent plant chosen inside the advance sheet, for a lot that has none.
   // '' is "not chosen"; the field is optional and a lot can always be linked later from
   // /inventory/:id, which is the canonical editor for this column.
   const [stagePlant, setStagePlant] = useState('')
@@ -532,7 +531,7 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
   const [intakeOpen, setIntakeOpen] = useState(false)
   const ownLoad = useCallback(() => {
     setOwnErr(null)
-    // ?category=seeds is a server-side filter (V4-TREATLOG-001), so the 260-row seed set arrives
+    // ?category=seeds is a server-side filter, so the 260-row seed set arrives
     // without the rest of inventory. seed_stage / seed_process ride along on `i.*`.
     fetch('/api/inventory-items?category=seeds')
       .then((rows) => setOwnItems(Array.isArray(rows) ? rows : []))
@@ -544,17 +543,17 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
   useEffect(() => { if (!hasStore) ownLoad() }, [hasStore, ownLoad])
   const load = store ? store.reload : ownLoad
   // A stage move asks for its outline only after the reload lands; if the user has left this view by
-  // then, the outline belongs to nobody — delivered late, it made My seeds clear a search the user had
-  // just typed (pre-promote regression pass #2, finding C).
+  // then, the outline belongs to nobody (delivered late, it would make My seeds clear a search the
+  // user had just typed).
   const aliveRef = useRef(true)
   // Set true in the body, not only at init: StrictMode's mount → unmount → mount would otherwise leave it false.
   useEffect(() => { aliveRef.current = true; return () => { aliveRef.current = false } }, [])
 
-  // Best-effort Back restore for the embedded view (V5-SEEDSTAB-001). Also answers whether this mount
+  // Best-effort Back restore for the embedded view. Also answers whether this mount
   // is a RETURN to a position the user had: a lot anchor must not yank a restored scroll elsewhere.
   const { restoredState, saveState } = useScrollRestore({ id: 'seeds-saved', ready: items != null })
   useEffect(() => { saveState({ v: 1 }) }, [saveState])
-  // BUG-DETAILPAGESCARRYSCROLL-001 — a return the app-level page-scroll manager restores (a POP arrival the
+  // A return the app-level page-scroll manager restores (a POP arrival the
   // hook had no offset for) is a return too.
   const poppedIn = usePageScrollReturnAtMount()
 
@@ -564,18 +563,18 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
     () => (items ?? []).filter((i) => STAGES.includes(i.seed_stage)),
     [items],
   )
-  // Candidates for tracking: no stage yet, AND still active. The status filter is new
-  // (BUG-SEEDCANDIDATEAMBIG-001) and matches how the server already decides a packet is live —
-  // v_sow_candidates' predicate is a strict `i.status = 'active'`, so a retired or used-up packet is
-  // not offered here either. Strict equality for the same reason: `status` is NOT NULL on every real
-  // row, and a `?? 'active'` fallback would quietly re-admit exactly the rows this excludes.
+  // Candidates for tracking: no stage yet, AND still active. The status filter matches how the
+  // server already decides a packet is live: v_sow_candidates' predicate is a strict
+  // `i.status = 'active'`, so a retired or used-up packet is not offered here either. Strict equality
+  // for the same reason: `status` is NOT NULL on every real row, and a `?? 'active'` fallback would
+  // quietly re-admit exactly the rows this excludes.
   const untracked = useMemo(
     () => (items ?? []).filter((i) => !STAGES.includes(i.seed_stage) && i.status === 'active'),
     [items],
   )
-  // V5-SEEDSTAB-001 slice 2 — "Not started": seed you SAVED (off one of your plants, or out of produce)
-  // that has not entered a stage. Before this group such a lot had no card here at all, so a save made
-  // with "Not yet" confirmed with a toast and nothing else (design V102 §16), and the lot could only be
+  // "Not started": seed you SAVED (off one of your plants, or out of produce)
+  // that has not entered a stage. Without this group such a lot would have no card here at all, so a
+  // save made with "Not yet" would confirm with a toast and nothing else, and the lot could only be
   // found again inside the track picker, among the bought packets. The ORIGIN decides membership
   // (seedLots.isNotStartedLot), so a bought packet never appears. ACTIVE only, the same strict equality
   // the picker's candidates use: a lot retired or used up is not waiting to be started, and "Start" on
@@ -597,19 +596,19 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
   // Every lot this page files, in page order. The crop filter and a lot the shell asks to outline both
   // range over all of it, not only the staged lots.
   const pageLots = useMemo(() => [...unstarted, ...tracked], [unstarted, tracked])
-  // ── V5-SEEDSAVEDFILTER-001 — the crop facet ─────────────────────────────────────────────────────
+  // The crop facet.
   // Options come from the ROWS, not from the crop-type vocabulary: a chip that matches nothing is a
-  // control that can only disappoint, and 62 of the app's crop types have no packet here at all.
-  // Ordered by packet count DESCENDING, deliberately, not alphabetically. Measured on prod: pepper 95
-  // and tomato 40 are 51% of 263 rows, and 30 slugs hold exactly one. Alphabetical would bury
-  // `tomato` two-thirds down the tray behind beet, broccoli, carrot and columbine — frequency order
-  // puts the reachable answers where the thumb already is. FilterChipRow's pinned-first re-sort is
-  // stable, so this order survives into the tray (FilterChipRow.jsx:55-63).
+  // control that can only disappoint, and most of the app's crop types have no packet here at all.
+  // Ordered by packet count DESCENDING, deliberately, not alphabetically: a couple of crops dominate
+  // the collection and many slugs hold exactly one, so alphabetical would bury `tomato` two-thirds down
+  // the tray behind beet, broccoli, carrot and columbine. Frequency order puts the reachable answers
+  // where the thumb already is. FilterChipRow's pinned-first re-sort is stable, so this order
+  // survives into the tray.
   //
   // Labels come from the app's controlled crop vocabulary, never a slug prettifier written here.
   //
-  // V5-SEEDSTAB-001 — through useCropFacetOptions, the shared derivation, instead of the two private
-  // copies this page held (this one and the page filter below). My seeds renders its crop chips from
+  // Through useCropFacetOptions, the shared derivation, rather than private
+  // copies on this page (this one and the page filter below). My seeds renders its crop chips from
   // the same hook one tap away, and two copies of "count-descending, top two pinned" are how the two
   // views would start disagreeing about a chip's label or order. The picker's instance waits for the
   // sheet (`enabled: starting`), so the page still issues one vocabulary GET on mount, not two.
@@ -618,7 +617,7 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
   const cropLabelBySlug = pickerFacet.labelBySlug
   // DERIVED, never a literal pair: whichever two crops dominate the packets ARE the two worth pinning.
   const cropPinned = pickerFacet.pinned
-  // V5-SEEDSTAB-001 — the vendor behind each packet, for the picker's facts line. `source` holds order
+  // The vendor behind each packet, for the picker's facts line. `source` holds order
   // references, not the shop; `source_id` names the registry row. Fetched only while the sheet is open.
   const { sources } = useSources({ enabled: starting })
   const vendorOf = useMemo(() => {
@@ -631,12 +630,12 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
   // instead of the list simply ending.
   //
   // The two predicates are ANDed and they match DIFFERENT OBJECTS, which is worth stating because it
-  // will look like a bug the first time they disagree: the text box matches row TEXT — variety_name,
-  // name, and the free-text `source`, which on prod holds whole intake sentences carrying order
-  // numbers and receipt dates — while a chip matches the joined `crop_type_slug`. So typing "pepper"
-  // and tapping Pepper are not the same query and will not return the same set. Measured on prod:
-  // 232 of 263 rows contain their own crop word somewhere in that text, so the chip's real work is
-  // the remaining ~31 — including 12 tomato packets whose names never say "tomato".
+  // will look like a bug the first time they disagree: the text box matches row TEXT (variety_name,
+  // name, and the free-text `source`, which holds whole intake sentences carrying order
+  // numbers and receipt dates) while a chip matches the joined `crop_type_slug`. So typing "pepper"
+  // and tapping Pepper are not the same query and will not return the same set. Most rows contain
+  // their own crop word somewhere in that text, so the chip's real work is the remainder, including
+  // packets whose names never say their crop.
   const matchedCandidates = useMemo(() => {
     const q = candidateQuery.trim()
     const byCrop = cropSel.size
@@ -652,9 +651,9 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
     [matchedCandidates, vendorOf],
   )
   const hiddenCandidates = matchedCandidates.length - visibleCandidates.length
-  // V4-SEEDLINK-001 — parent-plant NAMES for the cards. The list endpoint returns source_plant_id
+  // Parent-plant NAMES for the cards. The list endpoint returns source_plant_id
   // (a uuid) and nothing else about the parent, so the name is resolved from the picker projection.
-  // GATED on a lot actually carrying a link: with none — which is every lot today — the hook sits
+  // GATED on a lot actually carrying a link: with none the hook sits
   // in its IDLE mode and no request goes out at all. When one does exist the entry is the same one
   // the sheet's picker uses, so the second reader is free.
   const anyLinked = useMemo(() => (items ?? []).some((i) => i.source_plant_id), [items])
@@ -664,18 +663,12 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
     return new Map(rows.map((p) => [String(p.id), p.name || p.variety_ref?.name || '']))
   }, [plantCache.data])
 
-  // ── V5-SEEDSAVEDFILTER-001 (second pass) — the crop filter on the PAGE, not behind a tap ────────
-  // The first pass put this only inside the "Track a saved-seed lot" sheet, and Dave went looking for
-  // it twice on the page itself and did not find it. His rule, verbatim: "there is no point in having
-  // to click to get to a search/sort/filter." A control you have to open something to reach is not a
-  // filter, it is a preference buried in a menu — so it renders inline, above the stage sections.
-  //
-  // I argued against this originally on the grounds that the list held three rows. That reasoning was
-  // measured and still wrong in the way that matters: the same release added the door that makes the
-  // list grow, and a filter that only appears once the list is already unmanageable is a filter that
-  // arrives late. It renders whenever it can actually DO something (more than one crop among the
-  // lots) and is otherwise absent — which is a statement about capability, not about a tap budget.
-  // V5-SEEDSTAB-001 slice 2 — over every lot on the page, Not started included: a chip for a crop
+  // The crop filter on the PAGE, not behind a tap. A control you have to open something to reach is
+  // not a filter, it is a preference buried in a menu — so it renders inline, above the stage
+  // sections. It renders whenever it can actually DO something (more than one crop among the lots)
+  // and is otherwise absent: a statement about capability, not about a tap budget. A filter that
+  // only appeared once the list was already unmanageable would arrive late.
+  // Over every lot on the page, Not started included: a chip for a crop
   // whose only lots are not started yet would otherwise be missing, and choosing any other crop would
   // hide them with no chip to bring them back.
   const trackedFacet = useCropFacetOptions(pageLots, cropSlugOf)
@@ -683,11 +676,11 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
   const trackedCropPinned = trackedFacet.pinned
 
   // THE ONE ROW A FILTER MAY NEVER HIDE. `fermentUrgency` is the only overdue-ferment warning in the
-  // app — past day 5 the seed sprouts in the jar and the lot is finished — and it is computed per
-  // rendered row, so a row filtered out takes its own alarm with it. Silently. The filter would be
+  // app (past day 5 the seed sprouts in the jar and the lot is finished) and it is computed per
+  // rendered row, so a row filtered out takes its own alarm with it, silently. The filter would be
   // doing exactly what the user asked, and the cost would be a dead lot rather than a missed row.
   // So an alarming lot survives its own exclusion and is COUNTED, so the page can say why it is
-  // there. This is the R-9 rule from the regression review, implemented rather than noted.
+  // there.
   const visibleTracked = useMemo(() => {
     if (!trackedCropSel.size) return tracked
     return tracked.filter((i) => trackedCropSel.has(i.crop_slug) || fermentUrgency(i))
@@ -706,9 +699,9 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
     const m = Object.fromEntries(STAGES.map((s) => [s, []]))
     for (const i of visibleTracked) m[i.seed_stage].push(i)
     // Oldest first inside a stage: the lot that has sat longest is the one to check. Keyed on
-    // stage_entered_at for the same reason the card is (BUG-SEEDELAPSEDUPDATED-001) — sorting by
-    // updated_at ordered the list by "last edited", so touching a lot moved it to the bottom of a
-    // list whose entire job is to surface the one that has sat longest.
+    // stage_entered_at for the same reason the card is: sorting by updated_at would order the list
+    // by "last edited", so touching a lot would move it to the bottom of a list whose entire job is
+    // to surface the one that has sat longest.
     // A lot with no stage entry sorts LAST rather than first: its duration is unknown, and unknown
     // must not outrank a measured one at the top of a "check this" list.
     for (const s of STAGES) {
@@ -723,49 +716,41 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
     return m
   }, [visibleTracked])
 
-  // ── V5-SEEDSTAGEONEPLACE-001 — one sheet, two doors ─────────────────────────────────────────────
-  // The stage control on /inventory/:id is gone, so this page is now the ONLY place a lot's stage
-  // changes and every change writes a seed_lot_stage_log row. That means it has to be able to go
-  // BACKWARDS as well as forwards: seed_lot_stage_log has no DELETE route, so if the only movement
-  // available here were `nextStage()` — one step right, `stored` terminal — a mis-tapped stage would
-  // be permanently unfixable, and a `stored` lot would have no control at all.
+  // One sheet, two doors. This page is the ONLY place a lot's stage changes and every change writes
+  // a seed_lot_stage_log row. That means it has to be able to go BACKWARDS as well as forwards:
+  // seed_lot_stage_log has no DELETE route, so if the only movement available here were
+  // `nextStage()` (one step right, `stored` terminal) a mis-tapped stage would be permanently
+  // unfixable, and a `stored` lot would have no control at all.
   //
   // `correction` is what separates the two doors, and the ONE thing it changes that matters is the
   // DATE DEFAULT. An advance happens now, so `when` seeds to today and the field is a convenience. A
-  // correction is a statement about the PAST — the lot entered this stage some day you already know
-  // — so seeding today would write `stage_entered_at = the moment you noticed the mistake`, which is
-  // precisely the number this page orders its whole queue by (BUG-SEEDELAPSEDUPDATED-001) and
-  // precisely the defect the old off-log repair path existed to avoid. Blank and required instead:
-  // the answer is asked for rather than assumed.
+  // correction is a statement about the PAST (the lot entered this stage some day you already know),
+  // so seeding today would write `stage_entered_at = the moment you noticed the mistake`, which is
+  // precisely the number this page orders its whole queue by. Blank and required instead: the
+  // answer is asked for rather than assumed.
   const openStageSheet = (item, toStage, { process = null, correction = false } = {}) => {
     setAdvancing({ item, toStage, process, correction })
     setWhen(correction ? '' : todayLocalISO())
     setNote('')
     setStagePlant('')
     setStagePlantFailed(false)
-    // BUG-SEEDZEROSOWABLE-001 — seed the field with what the lot already holds so the gardener is
+    // Seed the field with what the lot already holds so the gardener is
     // amending a running count rather than being asked the same question from scratch at every step.
     //
-    // FROM `seed_count`, NOT `quantity_on_hand` (V5-SEEDQTY-001). This read is why the repoint cannot
-    // wait for a second pass: the backfill puts `quantity_on_hand` back to 1 (one packet), so a
-    // prefill still pointed at that column would offer "1" to a gardener amending a lot of 185, and
+    // FROM `seed_count`, NOT `quantity_on_hand`: `quantity_on_hand` is the containers column (one
+    // packet), so a prefill pointed at it would offer "1" to a gardener amending a lot of 185, and
     // the retyped 185 would go straight back into the containers column on the next stage advance.
     //
-    // AND THE `> 0` GUARD DIES WITH IT, deliberately. It existed because `quantity_on_hand` is NOT
-    // NULL for a consumable (consumable_requires_quantity_on_hand), so 0 was the only way that column
-    // could say "nobody has counted this" — and rendering that 0 as an answer would have let a
-    // `stored` move satisfy its own required field with a number no human typed. `seed_count` is
-    // NULLABLE, so it says the same thing with `null` and 0 goes back to meaning what it says: a lot
-    // that was counted and yielded nothing. Blanking a measured 0 here would re-create exactly the
-    // conflation the new column exists to end, one layer up.
+    // No `> 0` guard: `seed_count` is NULLABLE, so "nobody has counted this" is `null`, and 0 means
+    // what it says: a lot that was counted and yielded nothing. Blanking a measured 0 here would
+    // conflate the two.
     const held = item?.seed_count
     const n = Number(held)
     setQtyInput(held != null && held !== '' && Number.isFinite(n) ? String(n) : '')
-    // V5-SEEDESTTOGGLE-001 — the basis is seeded from the lot for the SAME reason the count is, and
+    // The basis is seeded from the lot for the SAME reason the count is, and
     // it is the more dangerous of the two to get wrong. Every submit that carries a count carries a
     // basis with it (the pairing rule), so a switch that opened `false` on an estimated lot would
-    // silently re-assert "hand-counted" about a number Dave had already said was a vendor's — the
-    // exact fabrication this column was added to prevent, arriving through the door meant to fix it.
+    // silently re-assert "hand-counted" about a number already given as a vendor's estimate.
     // `=== true` rather than a truthy read: NULL is "never recorded", which reads as not-estimated
     // here and is what the historical rows hold.
     setQtyEstimated(item?.seed_count_estimated === true)
@@ -775,7 +760,7 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
 
   const readCount = () => parseCountInput(qtyInput, advancing?.toStage)
 
-  // BUG-SEEDSTAGEDOUBLETAP-001 — a synchronous re-entry guard. `busy` disables Save, but only once
+  // A synchronous re-entry guard. `busy` disables Save, but only once
   // React has rendered it, and a second call in the same frame still reads the old closure. The
   // stage POST is append-only (no DELETE route), so a second call while one is out returns at once.
   // The route also refuses a repeat of the newest entry; this keeps the second request from leaving.
@@ -787,7 +772,7 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
     // route — so a submit that would land the stage and then reject something else is the one
     // ordering that cannot be backed out.
     //
-    // V5-SEEDSTAGEONEPLACE-001 — the date is REQUIRED on the correction door and only there. The
+    // The date is REQUIRED on the correction door and only there. The
     // field opens blank precisely so it cannot be satisfied by a default, and an empty `when` would
     // otherwise send `T12:00:00`, which Date.parse reads as NaN and the handler 400s on with an
     // opaque message. Refused here by name instead.
@@ -808,18 +793,18 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
           stage: advancing.toStage,
           // A calendar DAY, not an instant. The zoneless noon literal is a day marker the route
           // resolves in Eastern (lambda/inventory-items/seed-stage-date.js): today becomes the
-          // moment of this request, any other day noon ET. Cast zoneless it read in the DB's GMT
-          // session and filed every day at 08:00 Eastern (BUG-SEEDSTAGETZSHIFT-001).
+          // moment of this request, any other day noon ET. Cast zoneless it would be read in the DB's
+          // GMT session and file every day at 08:00 Eastern.
           entered_at: `${when}T12:00:00`,
           note: note.trim() || undefined,
-          // BUG-SEEDPROCFORCED-001 — set ONLY when this is the lot's first stage, where the process
+          // Set ONLY when this is the lot's first stage, where the process
           // was just chosen. The key is omitted entirely on a plain advance, and the handler's
           // presence guard leaves an existing process alone rather than clearing it; sending
           // `null` here would wipe it on every subsequent move.
           ...(advancing.process ? { seed_process: advancing.process } : {}),
         }),
       })
-      // V4-SEEDLINK-001 — provenance rides along, but as its OWN request with its OWN failure.
+      // Provenance rides along, but as its OWN request with its OWN failure.
       // These are independent facts: a lot that moved to drying moved whether or not we also
       // learned which plant it came from. Folding the link failure into the stage failure would
       // report a write that succeeded as failed, and both halves are re-doable from /inventory/:id.
@@ -832,7 +817,7 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
             body: JSON.stringify({ source_plant_id: stagePlant }),
           })
         } catch (e) {
-          // V5-SEEDMULTIPARENT-001 release 2b — this sheet still writes ONE parent through the legacy
+          // This sheet still writes ONE parent through the legacy
           // route, which refuses a jar that already has several (409 multi_parent_lot). That refusal
           // gets the client's own sentence, naming where the set is edited; every other failure gets
           // the fallback, never the server's string.
@@ -841,32 +826,28 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
             : (e?.status === 409 && e?.body?.code === 'multi_parent_lot') ? STAGE_PARENT_MULTI : STAGE_PARENT_FAILED
         }
       }
-      // V4-SEEDSTOREDQTY-001 — the count, on the same terms as the link above: its OWN request with
+      // The count, on the same terms as the link above: its OWN request with
       // its OWN failure, because a lot that reached `stored` reached it whether or not we also
-      // learned how much came out. Blank is not a skipped field, it is the answer "still don't know"
-      // — and the only honest thing to do with it is write nothing, leaving the lot at whatever it
+      // learned how much came out. Blank is not a skipped field, it is the answer "still don't know",
+      // and the only honest thing to do with it is write nothing, leaving the lot at whatever it
       // already held.
       //
-      // V5-SEEDQTY-001 — THROUGH THE NARROW ROUTE, and this is the fix rather than a refactor of it.
-      // The count used to ride the WIDE PUT into `quantity_on_hand`, which is how prod ended up
-      // holding `185.000 packet`: one number in the containers column wearing the containers noun.
+      // THROUGH THE NARROW ROUTE. The count must not ride the WIDE PUT into `quantity_on_hand`
+      // (the containers column, which is how a saved lot once read `185.000 packet`).
       // /seed-measure reads its three keys by presence and touches nothing else, so no stale value
       // from a list row read at mount can ride along with them.
       //
-      // `seed_count_estimated` USED TO BE A HARDCODED `false` here, reasoning that the field is
-      // "answered by the person holding the seed, on the step where they are holding it". True of
-      // the lot he threshed himself; false of the bought packet the V4-SEEDINTAKEAGNOSTIC-001 arm
-      // lets onto this page, whose count is a vendor's "approx. 25 seeds" printed on the back.
-      // V5-SEEDESTTOGGLE-001 sends the answer the switch actually holds — see qtyEstimated, seeded
-      // from the lot so re-saving never re-asserts a basis nobody restated.
+      // `seed_count_estimated` is the answer the switch actually holds (see qtyEstimated, seeded
+      // from the lot so re-saving never re-asserts a basis nobody restated), not a hardcoded
+      // `false`: a bought packet's count is a vendor's "approx. 25 seeds" printed on the back.
       //
       // THE PAIR TRAVELS TOGETHER, and both keys are inside the `count.value != null` branch for
       // that reason: chk_inventory_seed_count_basis_pairing requires
       // `(seed_count IS NULL) = (seed_count_estimated IS NULL)` and the route 400s on a half-pair
       // rather than completing it with a `false` nobody said.
       //
-      // V5-SEEDLOTADDITION-001 — COMPARE-AND-SET. This is an ABSOLUTE count written from the row the
-      // sheet opened on, and seed can now be added to that lot from a planting while the sheet is
+      // COMPARE-AND-SET. This is an ABSOLUTE count written from the row the
+      // sheet opened on, and seed can be added to that lot from a planting while the sheet is
       // open. So the body also says what that row held (count, basis, weight as a number; null for
       // "the row had none"), and the route answers 409 lot_changed, writing nothing, when the lot no
       // longer holds it. The stage move has landed and stands; only the count did not, and the
@@ -893,8 +874,8 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
             : (e?.message || 'Stage saved, but the count did not.')
         }
       }
-      // V5-SEEDYEARHARVESTED-001 — the ONE key on this page with no narrow route, so it is the only
-      // thing left that opens the wide PUT. Its own request now that the count has moved off it, and
+      // The ONE key on this page with no narrow route, so it is the only
+      // thing left that opens the wide PUT. Its own request, and
       // its own failure for the same reason the two above have theirs. Gated on the patch being
       // non-empty rather than on the count, so the wide PUT is never opened with nothing to say: it
       // contributes only on a move to `stored` on a lot with no year already recorded.
@@ -911,14 +892,14 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
         }
       }
       // "Started in", not "Moved to", when this is the lot's first stage — `process` is set only on
-      // the start path (BUG-SEEDPROCFORCED-001). A dry lot's first entry IS drying, and calling that
-      // a move implies a fermenting step it never had. And "Corrected to" on the correction door
-      // (V5-SEEDSTAGEONEPLACE-001), where "Moved to fermenting" would report a repair of a wrong
-      // record as a thing that happened to the seed.
+      // the start path. A dry lot's first entry IS drying, and calling that
+      // a move implies a fermenting step it never had. And "Corrected to" on the correction door,
+      // where "Moved to fermenting" would report a repair of a wrong record as a thing that happened
+      // to the seed.
       const verb = advancing.process ? 'Started in' : advancing.correction ? 'Corrected to' : 'Moved to'
       show({ message: linkErr ?? qtyWriteErr ?? yearWriteErr ?? `✓ ${verb} ${STAGE_META[advancing.toStage].label.toLowerCase()}` })
       setAdvancing(null)
-      // V5-SEEDSTAB-001 — the card moves section on a stage change; the outline says where it went.
+      // The card moves section on a stage change; the outline says where it went.
       // AFTER the reload: the card is already on the page in its OLD section, so an outline asked for
       // now would scroll there and then watch the card jump away.
       const movedId = advancing.item.id
