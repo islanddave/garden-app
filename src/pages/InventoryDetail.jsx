@@ -27,11 +27,11 @@ import { isSowedPreviously } from '../components/seed/mySeedsModel.js'
 // The count's counted/estimated switch and the weight parser, shared with the Save-seed sheet and the
 // Saved seeds advance sheet, the other two writers of the same three columns.
 import { SeedCountBasis, parseSeedWeight } from '../components/planting/SaveSeedSheet.jsx'
-// V4-SEEDORIGIN-001 — the SAME eight values preservation_log uses, deliberately. This registry is
-// one of the four synchronised homes of that vocabulary (the others: lambda/preservation/
-// provenance.js, the per-Lambda copy in lambda/inventory-items/source-kinds.js, and the DB CHECK
-// chk_inventory_source_kind). preservationProvenance.test.js pins this list against the JS
-// canonical; the migration's post_vocabulary_exact gate pins the DB against it.
+// The SAME values preservation_log uses, deliberately. This registry is one of the four synchronised homes of
+// that vocabulary (the others: lambda/preservation/provenance.js, the per-Lambda copy in
+// lambda/inventory-items/source-kinds.js, and the DB CHECK chk_inventory_source_kind).
+// preservationProvenance.test.js pins this list against the JS canonical; the migration's
+// post_vocabulary_exact gate pins the DB against it.
 import { PUTUP_SOURCE_OPTIONS } from '../lib/dropdownRegistry.js'
 import { formatQtyExact, formatDate } from '../lib/format.js'
 import { seedsHref, seedsReturnReader, lotSectionFromHistory, LOT_SECTION_SOURCE_PLANT } from '../lib/seedsRoutes.js'
@@ -42,20 +42,19 @@ import { isInProcess } from '../lib/sowEngine.js'
 import { SCROLL_MANAGER_ENABLED, SEED_MULTI_PARENT } from '../lib/featureFlags.js'
 import { usePageScrollReturn } from '../hooks/usePageScrollManager.js'
 
-// V5-SEEDSTAB-001 — seed left the Inventory list, so a seed row's exits go to Seeds › My seeds.
+// A seed row's exits go to Seeds › My seeds.
 const SEEDS_MINE = seedsHref('mine')
 
-// V5-SEEDSTAB-001 slice 2a — this page's Sow sheet stash. Its OWN key, never Sow now's 'sow-now': a
-// shared key would let a sow interrupted here reopen itself on Seeds › Sow now, and the other way round.
-// One key for every packet page, holding the packet's id; a page restores only its own packet's sheet.
+// This page's Sow sheet stash. Its OWN key, never Sow now's 'sow-now': a shared key would let a sow interrupted
+// here reopen itself on Seeds › Sow now, and the other way round. One key for every packet page, holding the
+// packet's id; a page restores only its own packet's sheet.
 const SOW_DRAFT_KEY = 'sow-packet'
 
-// BUG-SEEDLOTOPENSATFORM-001 — the history entries this page has already been opened on, by
-// react-router's per-entry key (window.history.state.key, read directly as seedsReturnFromHistory
-// does, because this page's suites stub the router). A key seen before is a Back/Forward onto this
-// page, which is how every edit round trip returns here (the variety editor leaves with
-// navigate(-1)); the browser has already put the page where it was. A new key is a fresh door (push
-// or replace): open at the top.
+// The history entries this page has already been opened on, by react-router's per-entry key
+// (window.history.state.key, read directly as seedsReturnFromHistory does, because this page's suites stub
+// the router). A key seen before is a Back/Forward onto this page, which is how every edit round trip returns
+// here (the variety editor leaves with navigate(-1)); the browser has already put the page where it was. A
+// new key is a fresh door (push or replace): open at the top.
 const openedEntries = new Set()
 const historyEntryKey = () => { try { return window.history?.state?.key ?? null } catch { return null } }
 // Does the current history entry show `path`? Its own URL, or, under an overlay, the page beneath it, which
@@ -67,33 +66,29 @@ const historyEntryShows = (path) => {
   } catch { return false }
 }
 
-// V5-SEEDMULTIPARENT-001 release 2b — the 409 codes that mean "this jar is not what the page shows".
+// The 409 codes that mean "this jar is not what the page shows".
 const STALE_JAR_CODES = new Set(['multi_parent_lot', 'lot_changed', 'parents_changed'])
 
-// Inventory enums centralized in src/lib/inventoryEnums.js (live prod CHECK sets);
-// the former local duplicates here were removed (Lane D dedup).
+// Inventory enums live in src/lib/inventoryEnums.js (live prod CHECK sets).
 
-// ── BUG-LOTPAGEREUSEDACROSSLOTS-001 — one page instance per lot ────────────────────────────────
-// The route /inventory/:id matches every lot, so react-router re-used ONE instance across a lot → lot
-// navigation (header Search's seed results link straight here) and everything the page keeps for a
-// visit rode along to the next lot: the read-once answer below, so a lot opened from Search over a lot
-// that Seeds had opened took Cancel and Remove BACK onto Search; the "sown" note; a refusal; and a Save
-// still in flight, which landed its form as the next lot's baseline. Keyed on the id, the next lot mounts
-// fresh and the last one's late writes fall on an unmounted page. Here and not in App.jsx's route table,
-// so every mount of the page (the gate harnesses, the suites) is the keyed one. Only the id: a query,
-// a hash or an overlay over the same lot never remounts it.
+// One page instance per lot. The route /inventory/:id matches every lot, so react-router would re-use ONE
+// instance across a lot -> lot navigation (header Search's seed results link straight here) and everything
+// the page keeps for a visit would ride along to the next lot: the read-once answer below (a lot opened from
+// Search over a lot that Seeds had opened would take Cancel and Remove BACK onto Search), the "sown" note, a
+// refusal, and a Save still in flight, which would land its form as the next lot's baseline. Keyed on the id,
+// the next lot mounts fresh and the last one's late writes fall on an unmounted page. Here and not in
+// App.jsx's route table, so every mount of the page (the gate harnesses, the suites) is the keyed one. Only
+// the id: a query, a hash or an overlay over the same lot never remounts it.
 export default function InventoryDetail() {
   const { id } = useParams()
   return <InventoryDetailPage key={id} />
 }
 
-// ── Main page ─────────────────────────────────────────────────────────────────
 function InventoryDetailPage() {
   const { id }       = useParams()
   const navigate     = useNavigate()
-  // V5-SEEDSTAB-001 — answers with the Seeds view that pushed this page, when one did; Cancel then goes
-  // BACK to that view (same filters, same scroll) instead of pushing a fresh copy of it. Asked when the
-  // page leaves (seedsReturnReader, BUG-SEEDSRETURNUNDEROVERLAY-001).
+  // Answers with the Seeds view that pushed this page, when one did; Cancel then goes BACK to that view (same
+  // filters, same scroll) instead of pushing a fresh copy of it. Asked when the page leaves (seedsReturnReader).
   const [pushedFromSeeds] = useState(seedsReturnReader)
   const { updateItem, deleteItem } = useInventory()
   const { fetch } = useApiFetch()
@@ -114,23 +109,21 @@ function InventoryDetailPage() {
   // False once this page is gone; handleDelete reads it when its answer lands.
   const aliveRef = useRef(true)
   useEffect(() => { aliveRef.current = true; return () => { aliveRef.current = false } }, [])
-  // BUG-INVDELETEERROROFFSCREEN-001 — why the last delete failed, shown INSIDE the "Remove item?" dialog.
+  // Why the last delete failed, shown INSIDE the "Remove item?" dialog.
   const [deleteErr,    setDeleteErr]    = useState(null)
-  // V4-DIRTYGUARDSWEEP-001 — the last form snapshot that is known to be ON THE SERVER. Kept
-  // separately from `item` because handleSave deliberately does NOT re-set `item` (the breadcrumb
-  // and heading keep showing the loaded name until a reload), so diffing against `item` would leave
-  // this page reporting dirty forever after a SUCCESSFUL save — the same post-save pin EventNew
-  // hit. Re-baselining here is additive. V5-SEEDCARDS-001: the packet card is its one reader — it
-  // shows the supplier and packet link AS SAVED, which is exactly what this holds and `item` does not.
+  // The last form snapshot that is known to be ON THE SERVER. Kept separately from `item` because handleSave
+  // deliberately does NOT re-set `item` (the breadcrumb and heading keep showing the loaded name until a
+  // reload), so diffing against `item` would leave this page reporting dirty forever after a SUCCESSFUL save.
+  // Re-baselining here is additive. The packet card is its one reader: it shows the supplier and packet link
+  // AS SAVED, which is what this holds and `item` does not.
   const [baseline,     setBaseline]     = useState(null)
   // The lot's name as the server last confirmed it: at load, after a Save, after a re-file and after a
   // re-read in place. `item.name` misses this page's own Save and the baseline misses a name changed
   // elsewhere that the field did not adopt; the Saved-from card quotes this one in a permanent note.
   const [savedName,    setSavedName]    = useState(null)
 
-  // ── V4-SEEDLINK-001 — seed-lot provenance ("Saved from") ───────────────────
-  // Its OWN state and its OWN write, deliberately outside form/baseline/buildChanges, for two
-  // independent reasons:
+  // Seed-lot provenance ("Saved from"): its OWN state and its OWN write, deliberately outside
+  // form/baseline/buildChanges, for two independent reasons:
   //   1. It saves the instant it is chosen, so it is never unsaved input. Folding it into `form`
   //      would make the dirty guard hold a service-worker update for a value already on the server.
   //   2. The wide PUT assigns every column it names unconditionally (`= ${body.x ?? null}`), so a
@@ -139,9 +132,8 @@ function InventoryDetailPage() {
   const [sourcePlantId,   setSourcePlantId]   = useState('')
   const [sourcePlantBusy, setSourcePlantBusy] = useState(false)
   const [sourcePlantErr,  setSourcePlantErr]  = useState(null)
-  // BUG-PLANTFETCHSILENT-001 contract: the picker self-fetches, and a failed load must read as a
-  // failure rather than as "you have no plantings" — an unfillable field that looks legitimately
-  // empty. The host owns the copy; PutUp's PlantingField is the precedent.
+  // Contract: the picker self-fetches, and a failed load must read as a failure rather than as "you have no
+  // plantings", an unfillable field that looks legitimately empty. The host owns the copy.
   const [sourcePlantLoadFailed, setSourcePlantLoadFailed] = useState(false)
   // The parent's NAME, when this page happens to know it. PlantingSelect hands the chosen row to
   // onChange(id, planting) but exposes nothing for a value it merely resolved on load, so this is
@@ -150,41 +142,38 @@ function InventoryDetailPage() {
   // prop note in SeedStageHistory.
   const [sourcePlantName, setSourcePlantName] = useState(null)
 
-  // ── V4-SEEDORIGIN-001 — where this lot came from when it came from no planting of ours ────
-  // Own state and own write, for the same reason "Saved from" has them: this writes on selection
-  // through a dedicated sub-route, so it has no business in a form whose Save button implies
-  // unsaved state, and it must never travel through the wide PUT.
+  // Where this lot came from when it came from no planting of ours. Own state and own write, for the same
+  // reason "Saved from" has them: this writes on selection through a dedicated sub-route, so it has no business
+  // in a form whose Save button implies unsaved state, and it must never travel through the wide PUT.
   const [sourceKind,     setSourceKind]     = useState('')
   const [sourceKindBusy, setSourceKindBusy] = useState(false)
   const [sourceKindErr,  setSourceKindErr]  = useState(null)
 
-  // ── V5-SEEDSTAB-001 slice 2a — "Sow this" opens THE Sow sheet on this packet ───────────────────
-  // The packet the sheet is open on (null = closed), and — once a sow from this page lands — the
-  // planting it made, so the page can say so and offer the way to it for the rest of the visit.
+  // "Sow this" opens THE Sow sheet on this packet. The packet the sheet is open on (null = closed), and, once a
+  // sow from this page lands, the planting it made, so the page can say so and offer the way to it for the
+  // rest of the visit.
   const [sowPacket, setSowPacket] = useState(null)
   const [sown,      setSown]      = useState(null)
 
-  // ── V5-SEEDCARDS-001 — the packet card's supplier, by name ─────────────────────────────────
-  // The registry is what turns `source_id` into a name (and the name into the supplier's colours).
-  // Enabled only once the item has loaded AS A SEED: that is the same commit the form's SourcePicker
-  // mounts in, so this joins its request inside useSources' dedupe window instead of issuing a
-  // second GET — and a tool or an amendment never asks at all.
+  // The packet card's supplier, by name. The registry is what turns `source_id` into a name (and the name
+  // into the supplier's colours). Enabled only once the item has loaded AS A SEED: that is the same commit the
+  // form's SourcePicker mounts in, so this joins its request inside useSources' dedupe window instead of
+  // issuing a second GET, and a tool or an amendment never asks at all.
   const { sources } = useSources({ enabled: item?.category === 'seeds' })
 
-  // ── BUG-SEEDLOTOPENSATFORM-001 — where the page opens ──────────────────────────────────────────
-  // At the top, unless this is a return to an entry already opened. BrowserRouter never resets scroll
-  // on a push (PlantingDetail says so too), and the loading shell is one screen tall, so the previous
-  // page's offset rode through the spinner and Chrome's scroll anchoring re-applied it once the lot
-  // landed, clamped to the bottom of this page: the edit form. Keyed on id, as PlantingDetail's reset
-  // is. An EDIT door names the part it opened the page to edit (lotSectionFromHistory): the page still
-  // holds the top through the spinner, then lands on that part once the lot has rendered.
+  // Where the page opens: at the top, unless this is a return to an entry already opened. BrowserRouter never
+  // resets scroll on a push, and the loading shell is one screen tall, so the previous page's offset would
+  // ride through the spinner and Chrome's scroll anchoring would re-apply it once the lot landed, clamped to
+  // the bottom of this page: the edit form. Keyed on id, as PlantingDetail's reset is. An EDIT door names the
+  // part it opened the page to edit (lotSectionFromHistory): the page holds the top through the spinner, then
+  // lands on that part once the lot has rendered.
   //
-  // BUG-DETAILPAGESCARRYSCROLL-001 — with the app-level page-scroll manager on, the TOP is the manager's
-  // (a different page by push or replace) and so is the return (a POP restores the offset filed for that
-  // entry), so this page no longer scrolls to the top itself; the manager-off bundle keeps the reset, as
-  // today. The edit door's arrival hint stays here, and is taken only when the arrival was not a POP: the
-  // `openedEntries` set is module state, so after a reload or a tab restore a Back into a lot reads as a
-  // first open, and the hint's scrollIntoView would fight the offset the manager is restoring.
+  // With the app-level page-scroll manager on, the TOP is the manager's (a different page by push or replace)
+  // and so is the return (a POP restores the offset filed for that entry), so this page no longer scrolls to
+  // the top itself; the manager-off bundle keeps the reset. The edit door's arrival hint stays here, and is
+  // taken only when the arrival was not a POP: the `openedEntries` set is module state, so after a reload or
+  // a tab restore a Back into a lot reads as a first open, and the hint's scrollIntoView would fight the
+  // offset the manager is restoring.
   const arrivalSectionRef = useRef(null)
   const sourcePlantCardRef = useRef(null)
   const poppedRef = useRef(false)
@@ -220,7 +209,6 @@ function InventoryDetailPage() {
     if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'center' })
   }, [item])
 
-  // ── Load item ──────────────────────────────────────────────────────────────
   useEffect(() => {
     let mounted = true
     setLoading(true)
@@ -247,14 +235,12 @@ function InventoryDetailPage() {
     return () => { mounted = false }
   }, [id, fetch])
 
-  // ── Helpers ────────────────────────────────────────────────────────────────
-  // BUG-INVQTYROUNDTRIP-001 — every quantity below is formatQtyExact, NEVER formatQty. These five are
-  // not renders: buildChanges() reads each one back through parseNum (parseFloat) and PUTs it, so a
-  // rounding formatter here makes merely OPENING an item and saving any other field rewrite the
-  // stored value. quantity_on_hand / reorder_threshold / reorder_quantity / quantity_purchased are
-  // numeric(10,3) on prod and five live rows were fractional when this was found; `quantity` is
-  // integer, and it is switched with them anyway because "which of these is safe to round" is not a
-  // fact a future edit should have to re-derive per field.
+  // Every quantity below is formatQtyExact, NEVER formatQty. These are not renders: buildChanges() reads each
+  // one back through parseNum (parseFloat) and PUTs it, so a rounding formatter here makes merely OPENING an
+  // item and saving any other field rewrite the stored value. quantity_on_hand / reorder_threshold /
+  // reorder_quantity / quantity_purchased are numeric(10,3) on prod; `quantity` is integer, and it is switched
+  // with them anyway because "which of these is safe to round" is not a fact a future edit should have to
+  // re-derive per field.
   function itemToForm(i) {
     return {
       name:               i.name              ?? '',
@@ -272,23 +258,22 @@ function InventoryDetailPage() {
       purchase_date:      i.purchase_date     ?? '',
       source:             i.source            ?? '',
       source_url:         i.source_url        ?? '',
-      // V4-SOURCEREG-001 — GET /:id is `SELECT i.*`, so both FK columns arrive on the row. '' not
-      // null, so the picker's empty contract and the baseline diff both read them as plain blanks.
+      // GET /:id is `SELECT i.*`, so both FK columns arrive on the row. '' not null, so the picker's empty
+      // contract and the baseline diff both read them as plain blanks.
       source_id:              i.source_id              ?? '',
       acquired_from_source_id:i.acquired_from_source_id?? '',
       brand:              i.brand             ?? '',
       model:              i.model             ?? '',
       location_text:      i.location_text     ?? '',
       notes:              i.notes             ?? '',
-      // BUG-SEEDYEARNOOP-001 — GET /:id is `SELECT i.*`, so the column arrives on the row and has
-      // done all along; nothing has ever rendered it. '' not null, for the same reason the two
+      // GET /:id is `SELECT i.*`, so the column arrives on the row. '' not null, for the same reason the two
       // source FKs above use '': the baseline diff reads it as a plain blank.
       year_harvested:     i.year_harvested != null ? String(i.year_harvested) : '',
-      // A saved lot's seed measure (V5-SEEDQTY-001), edited below and written ONLY through PUT
-      // /seed-measure — buildChanges() never names these three, and handleSave diffs them against
-      // the baseline to decide whether that second request goes at all. Exact, like the quantities
-      // above: seed_weight_g is numeric(10,3) and arrives as a string ('3.200' -> '3.2').
-      // `=== true`: NULL is "never recorded", which the switch shows as counted, as SavedSeeds does.
+      // A saved lot's seed measure, edited below and written ONLY through PUT /seed-measure: buildChanges()
+      // never names these three, and handleSave diffs them against the baseline to decide whether that second
+      // request goes at all. Exact, like the quantities above: seed_weight_g is numeric(10,3) and arrives as a
+      // string ('3.200' -> '3.2'). `=== true`: NULL is "never recorded", which the switch shows as counted, as
+      // SavedSeeds does.
       seed_count:           i.seed_count != null ? String(i.seed_count) : '',
       seed_count_estimated: i.seed_count_estimated === true,
       seed_weight_g:        formatQtyExact(i.seed_weight_g),
@@ -307,10 +292,9 @@ function InventoryDetailPage() {
     return { ...item, source_plant_id: sourcePlantId || null, source_kind: sourceKind || null }
   }
 
-  // Dave, 2026-09-25: a saved seed's page "never surfaces the count" and "seems to default to showing
-  // 1 packet which is not correct ever". A saved lot's form edits its SEED — count, how it was counted,
-  // weight — in place of the container pair (V5-SEEDQTY-001: quantity_on_hand is the jar, always 1
-  // until used up). Consumable only: chk_inventory_seed_count_seeds_only refuses a count on any other.
+  // A saved lot's form edits its SEED (count, how it was counted, weight) in place of the container pair
+  // (quantity_on_hand is the jar, always 1 until used up), so the page surfaces the count. Consumable only:
+  // chk_inventory_seed_count_seeds_only refuses a count on any other.
   function showsSeedMeasure() {
     return form.category === 'seeds' && form.type === 'consumable' && isSavedLot(liveLot())
   }
@@ -323,15 +307,14 @@ function InventoryDetailPage() {
       e.quantity_on_hand = 'Enter a quantity (0 is fine).'
     if (form.type === 'durable' && form.quantity === '')
       e.quantity = 'Enter quantity.'
-    // CHECK chk_inventory_source_distinct — a row may not name the same source twice. The Lambda
-    // rejects it too (inventory-items/index.js:193), but its message names the two columns; caught
-    // here it costs no round trip and reads like the form.
+    // CHECK chk_inventory_source_distinct: a row may not name the same source twice. The Lambda rejects it
+    // too, but its message names the two columns; caught here it costs no round trip and reads like the form.
     if (form.source_id && form.source_id === form.acquired_from_source_id)
       e.acquired_from_source_id = `Same as the ${form.category === 'seeds' ? 'supplier' : 'origin'} — leave this blank when they match.`
-    // BUG-SEEDYEARNOOP-001 — reject an unparseable year rather than letting it become a silent
-    // clear. parseNum returns null for both '' and NaN, so without this a typo ("19 86") would read
-    // as "the user emptied the field" and NULL a curated value on save, with a 200 and no message.
-    // Blank stays a legitimate clear; only non-blank-and-not-a-year is an error.
+    // Reject an unparseable year rather than letting it become a silent clear. parseNum returns null for both
+    // '' and NaN, so without this a typo ("19 86") would read as "the user emptied the field" and NULL a
+    // curated value on save, with a 200 and no message. Blank stays a legitimate clear; only
+    // non-blank-and-not-a-year is an error.
     if (form.year_harvested.trim() !== '' && !/^\d{4}$/.test(form.year_harvested.trim()))
       e.year_harvested = 'Enter a four-digit year, or leave it blank.'
     // The seed measure, refused before ANY request rather than by /seed-measure after the main save
@@ -348,38 +331,34 @@ function InventoryDetailPage() {
   function buildChanges() {
     const base = {
       name:          form.name.trim(),
-      // BUG-INVSEEDPUT400-001. `type` is NOT NULL on prod, but that is the smaller half: the wide
-      // PUT reads body.type into isConsumable/isDurable and those two gate SIX further SET-list
-      // expressions (unit, quantity_on_hand, reorder_threshold, reorder_quantity, quantity,
-      // condition). Omitting it does not merely fail the NOT NULL — it NULLS all six, which then
-      // trips consumable_requires_unit / consumable_requires_quantity_on_hand. The handler is
-      // body-only by design (validateUpdate's own comment says so), so the complete payload is the
-      // client's contract to keep. Masked in practice by updateItem's {...listRow, ...changes}
-      // merge, which is why this survived to ship: it only bites when the list has not loaded.
+      // `type` is NOT NULL on prod, but that is the smaller half: the wide PUT reads body.type into
+      // isConsumable/isDurable and those two gate SIX further SET-list expressions (unit, quantity_on_hand,
+      // reorder_threshold, reorder_quantity, quantity, condition). Omitting it does not merely fail the NOT
+      // NULL, it NULLS all six, which then trips consumable_requires_unit / consumable_requires_quantity_on_hand.
+      // The handler is body-only by design, so the complete payload is the client's contract to keep. Masked
+      // in practice by updateItem's {...listRow, ...changes} merge; it only bites when the list has not loaded.
       type:          form.type,
       category:      form.category,
       status:        form.status,
       notes:         form.notes.trim()         || null,
       source:        form.source.trim()        || null,
       source_url:    form.source_url.trim()    || null,
-      // V4-SOURCEREG-001. Both keys are sent ALWAYS, and that is the contract rather than a habit:
-      // the wide PUT reads these two by hasOwnProperty into a `CASE WHEN <present> … ELSE <col> END`
-      // (inventory-items/index.js:943-952), so PRESENCE means "use this value" and an omitted key
-      // means "leave the column alone". This form renders both controls, so it owns both values and
-      // an explicit null is a real clear.
+      // Both keys are sent ALWAYS, and that is the contract rather than a habit: the wide PUT reads these two
+      // by hasOwnProperty into a `CASE WHEN <present> … ELSE <col> END`, so PRESENCE means "use this value"
+      // and an omitted key means "leave the column alone". This form renders both controls, so it owns both
+      // values and an explicit null is a real clear.
       source_id:               form.source_id               || null,
       acquired_from_source_id: form.acquired_from_source_id || null,
       purchase_date: form.purchase_date        || null,
       unit_cost:     parseNum(form.unit_cost),
       location_text: form.location_text.trim() || null,
       quantity_purchased: parseNum(form.quantity_purchased),
-      // BUG-SEEDYEARNOOP-001 — sent ONLY for seeds, and for seeds sent ALWAYS. Same presence
-      // contract as the two source FKs above: the wide PUT reads this key by hasOwnProperty into a
-      // CASE WHEN <present> … ELSE <col> END, so an omitted key leaves the column alone and a
-      // present one is authoritative. Omitting it for non-seed rows is therefore not a shortcut —
-      // it is what stops a hammer's edit form from having an opinion about a harvest year.
-      // For seeds, sending it unconditionally also seals the deep-link hole from the client side:
-      // the column can no longer be absent from a body this form produces.
+      // Sent ONLY for seeds, and for seeds sent ALWAYS. Same presence contract as the two source FKs above:
+      // the wide PUT reads this key by hasOwnProperty into a CASE WHEN <present> … ELSE <col> END, so an
+      // omitted key leaves the column alone and a present one is authoritative. Omitting it for non-seed
+      // rows is what stops a hammer's edit form from having an opinion about a harvest year. For seeds,
+      // sending it unconditionally also seals the deep-link hole from the client side: the column can no
+      // longer be absent from a body this form produces.
       ...(form.category === 'seeds'
         ? { year_harvested: form.year_harvested.trim() === '' ? null : Number(form.year_harvested) }
         : {}),
@@ -398,7 +377,6 @@ function InventoryDetailPage() {
         model:     null,
       }
     }
-    // durable
     return {
       ...base,
       quantity:  parseInt(form.quantity) || 1,
@@ -419,7 +397,6 @@ function InventoryDetailPage() {
     return isNaN(n) ? null : n
   }
 
-  // ── Save ───────────────────────────────────────────────────────────────────
   async function handleSave(e) {
     e.preventDefault()
     const errs = validate()
@@ -433,7 +410,7 @@ function InventoryDetailPage() {
     // Null — no second request at all — for every other row and for a save that did not touch it.
     // Sent only while its fields are ON SCREEN. A live change can hide them after a count was typed (a
     // provenance change that un-saves the lot, a category change); that count is then neither sent
-    // nor baselined — see the setBaseline below (review MINOR-2).
+    // nor baselined — see the setBaseline below.
     const measureShown = showsSeedMeasure()
     const measure = measureShown ? seedMeasureChanges(baseline, sent) : null
     setSaving(true)
@@ -449,13 +426,12 @@ function InventoryDetailPage() {
     // (the baseline keeps the old measure), so the guard holds and the next Save sends it again.
     // On success the card reads the stored measure at once: the route answers the three columns.
     //
-    // V5-SEEDLOTADDITION-001 — COMPARE-AND-SET. The form writes an ABSOLUTE count from a lot loaded a
-    // while ago, and seed can now be added to that lot from a planting in the meantime. So the body
-    // also says what this page loaded (the three `expected_` keys, see seedMeasureChanges), and the
-    // route refuses with 409 lot_changed when the lot no longer holds that, answering with what it
-    // holds now. Nothing was written: the card shows the answer's values, the fields keep what was
-    // typed, and the answer becomes the baseline, so the next Save is compared with the latest and
-    // goes through if he still means it.
+    // COMPARE-AND-SET. The form writes an ABSOLUTE count from a lot loaded a while ago, and seed can
+    // be added to that lot from a planting in the meantime. So the body also says what this page loaded
+    // (the three `expected_` keys, see seedMeasureChanges), and the route refuses with 409 lot_changed
+    // when the lot no longer holds that, answering with what it holds now. Nothing was written: the card
+    // shows the answer's values, the fields keep what was typed, and the answer becomes the baseline,
+    // so the next Save is compared with the latest and goes through if the user still means it.
     let missed = null
     let changed = null
     if (measure) {
@@ -476,7 +452,7 @@ function InventoryDetailPage() {
             seed_count_estimated: now.seed_count_estimated === true,
             seed_weight_g: formatQtyExact(now.seed_weight_g),
           }
-          // A field he did NOT change follows the lot: left showing the old value it would be read
+          // A field the user did NOT change follows the lot: left showing the old value it would be read
           // as a change on the next Save and written back over the latest. The count and its basis
           // are one fact, so they are kept or moved together.
           const follow = {}
@@ -506,15 +482,13 @@ function InventoryDetailPage() {
     show(missed ? { message: `Saved — couldn't record the ${missed}`, tone: 'error' } : { message: '✓ Saved' })
   }
 
-  // ── Save the parent plant (V4-SEEDLINK-001) ────────────────────────────────
-  // Writes on selection rather than behind the page's Save button: this is one field with one
-  // meaning, and a picker that looks chosen while the value sits unsent is the silent-failure shape
-  // BUG-SILENTFAILSWEEP-001 catalogued. Optimistic, then reverted on failure — showing a parent the
-  // server does not have is worse than showing none.
-  // V4-SEEDORIGIN-001. Same optimistic-with-revert shape as saveSourcePlant below, and the same
-  // explicit-null contract: the route reads `source_kind` by PRESENCE, so omitting the key is a 400
-  // and sending null is the clear. "Not recorded" is the honest state of every packet that predates
-  // this column, and it has to stay reachable rather than being a value you can never get back to.
+  // Writes on selection rather than behind the page's Save button: this is one field with one meaning, and a
+  // picker that looks chosen while the value sits unsent is a silent-failure shape. Optimistic, then
+  // reverted on failure: showing a parent the server does not have is worse than showing none.
+  // saveSourceKind has the same optimistic-with-revert shape as saveSourcePlant below, and the same
+  // explicit-null contract: the route reads `source_kind` by PRESENCE, so omitting the key is a 400 and
+  // sending null is the clear. "Not recorded" is the honest state of every packet that predates this
+  // column, and it has to stay reachable rather than being a value you can never get back to.
   async function saveSourceKind(next) {
     const prev = sourceKind
     if (next === prev) return
@@ -540,9 +514,9 @@ function InventoryDetailPage() {
     const prevName = sourcePlantName
     if (nextId === prev) return
     setSourcePlantId(nextId)
-    // V4-SEEDHISTORY-001 — the picker hands the whole row along with the id, so the chain below can
-    // name the parent without a second request. Reverted with the id below, not left behind: an id
-    // that rolled back while its label did not is a chain that names the wrong plant.
+    // The picker hands the whole row along with the id, so the chain below can name the parent without a
+    // second request. Reverted with the id below, not left behind: an id that rolled back while its label
+    // did not is a chain that names the wrong plant.
     setSourcePlantName(planting?.name ?? planting?.variety_ref?.name ?? null)
     setSourcePlantBusy(true)
     setSourcePlantErr(null)
