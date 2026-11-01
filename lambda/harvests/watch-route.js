@@ -1,21 +1,16 @@
-// watch-route.js — V4-HARVSURFACE-001 slice 1 request handlers for the Today watch list.
+// Request handlers for the Today watch list (V4-HARVSURFACE-001): GET /api/harvests/watch, POST
+// /api/harvests/watch/dismiss, POST /api/harvests/watch/dismissals, DELETE /api/harvests/watch/dismissals/:id.
 //
-// Lives beside index.js rather than inside it so the SQL and the request/response contract are
-// testable with an injected `sql` (see watch-route.test.js — a recording tagged-template stub that
-// runs THIS code, not a regex over it). index.js keeps its role as the auth/secrets/CORS seam.
+// Lives beside index.js so the SQL and the request/response contract are testable with an injected
+// `sql` (watch-route.test.js runs THIS code with a recording tagged-template stub). index.js keeps the
+// auth/secrets/CORS seam.
 //
-// ROUTING. These paths ride the EXISTING /api/harvests prefix in src/lib/api.js, which is a
-// first-match PREFIX table — so /api/harvests/watch resolves to VITE_API_HARVESTS and this Lambda
-// with ZERO infra change: no new Function URL, no new repo variable, no deploy-lambda.yml matrix
-// entry, no api.js edit. That is the whole reason this route landed here rather than in a new
-// Lambda or in lambda/events (whose harvest-ready route is correctly evidence-only; see watch.js).
+// These paths ride the EXISTING /api/harvests prefix in src/lib/api.js (a first-match PREFIX table), so
+// they need no new Function URL, repo variable or deploy matrix entry.
 //
-// THIS LAMBDA WAS READ-ONLY BEFORE THIS SLICE and index.js rejects anything that is not
-// GET /api/harvests. The dismissal write is the first mutation it has ever performed, so it is
-// deliberately narrow: one INSERT into one new standalone table, one UPDATE that sets undone_at on
-// a row the caller owns. It touches no existing relation. (V4-WATCHIMPRESSION-001 later added one
-// more narrow write: the GET path's NON-FATAL batch insert into public.watch_impression — see the
-// impression-log section below; it too touches no existing relation and cannot fail the request.)
+// This Lambda is otherwise read-only, so every write here is deliberately narrow: one INSERT into
+// harvest_watch_dismissal, one UPDATE setting undone_at on a row the caller owns, and the GET path's
+// NON-FATAL batch inserts into watch_impression and watch_exclusion. None touches an existing relation.
 
 import {
   WATCH_MODEL_VERSION, NURSERY_OFFSET_DAYS_FALLBACK, DERIVED_ANCHOR_ENABLED,
@@ -23,25 +18,15 @@ import {
   buildWatchList, buildDismissalSnapshot, toYmd,
 } from './watch.js';
 
-// V4-ANCHORFLIP-001 condition 1 — the seam that makes a ROUTE-LEVEL flag-on test possible.
+// The seam that makes a ROUTE-LEVEL flag-on test possible: reading the flag through one function lets
+// watch-route.test.js drive the whole handler flag-on against real-shaped rows, which is where a
+// mis-aliased column would surface. `ctx` is a closed object literal built in index.js (no request field
+// reaches it), so in every deployed environment this resolves to DERIVED_ANCHOR_ENABLED. The override is
+// for tests, like `siblingHabits` in watch.js.
 //
-// The consult's objection to the flip was that the flag-on path had never been exercised through
-// the ROUTE, only through fixtures handed straight to the pure module — so the join, the column
-// aliases and the resolver were each tested in isolation and their COMPOSITION was tested nowhere.
-// Reading the flag through one function lets watch-route.test.js drive the whole handler flag-on
-// against real-shaped rows, which is the only place a mis-aliased column would surface.
-//
-// THIS IS NOT THE FLIP AND DOES NOT WEAKEN IT. `ctx` is a closed object literal built in
-// index.js — no request field, header or query parameter reaches it — so in every deployed
-// environment this resolves to DERIVED_ANCHOR_ENABLED. The override exists for tests exactly as
-// `siblingHabits` does in watch.js, and for the same reason: a measured effect nobody can reproduce
-// is an unverified one. (The constant FLIPPED TRUE 2026-08-14, condition 9; this paragraph used to
-// say it was false and stayed false until then.)
-//
-// WHAT THIS FLAG DOES NOT CONTROL (OPS-DERIVEDCTEDEP-001): the JOIN. It governs whether a derived
-// anchor may open a watch row — the tier — while the `derived` CTE below runs on every request
-// either way, so setting this false is a tier kill switch and NOT a way to stand the
-// plant_anchor_derivation dependency down. See that CTE's header for why it stays that way.
+// This flag does NOT control the JOIN (OPS-DERIVEDCTEDEP-001): it governs whether a derived anchor may
+// open a watch row (the tier), while the `derived` CTE below runs on every request either way. Setting
+// it false is a tier kill switch, NOT a way to stand the plant_anchor_derivation dependency down.
 export function resolveDerivedEnabled(ctx) {
   return typeof ctx?.derivedEnabled === 'boolean' ? ctx.derivedEnabled : DERIVED_ANCHOR_ENABLED;
 }
@@ -53,18 +38,14 @@ export const DISMISSALS_PATH = '/api/harvests/watch/dismissals';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export function isUuid(v) { return typeof v === 'string' && UUID_RE.test(v); }
 
-// The reasons the CHECK constraint permits. Only 'not_yet' is calibration-bearing — the other two
-// are data corrections and MUST be excluded when fitting, which is why they are distinguishable
-// rather than collapsed. A row dismissed as 'wrong_target' is not evidence a crop was unripe.
+// The reasons the CHECK constraint permits. Only 'not_yet' is calibration-bearing; the other two are
+// data corrections and MUST be excluded when fitting, so they stay distinguishable.
 export const DISMISSAL_REASONS = new Set(['not_yet', 'not_mine', 'wrong_target']);
 export const CALIBRATION_REASON = 'not_yet';
 
-// Default visible cap (design §3.5: "Cap the visible group at 5 — a nine-row declarative group is an
-// inventory again"). Enforced SERVER-side as the default so a client that forgets cannot regress the
-// surface into the shape Dave rejected, and overridable because the client owns an expandable tail.
-// MAX_LIMIT raised 50 -> 200 for the tail contract (panel Q4): the band fetches the whole queue in
-// one request so the in-place expand needs no second round trip; total_watching stays the honest
-// depth if the queue ever exceeds even this.
+// Default visible cap of 5, enforced SERVER-side so a client that forgets cannot regress the surface
+// into a long inventory, and overridable because the client owns an expandable tail. MAX_LIMIT lets the
+// band fetch the whole queue in one request; total_watching stays the honest depth past even this.
 export const DEFAULT_LIMIT = 5;
 export const MAX_LIMIT = 200;
 
@@ -78,44 +59,31 @@ export function parseLimit(raw) {
 // ── The candidate query ──────────────────────────────────────────────────────────────────────────
 //
 // Returns raw rows for the PURE classifier in watch.js. SQL narrows and gathers anchors; it decides
-// nothing — same split the shipped harvest-ready route uses, and the reason the eligibility rules
-// are unit-testable at all.
+// nothing, which keeps the eligibility rules unit-testable.
 //
-// SHAPE NOTES, all verified against live prod 2026-08-12 (read-only, garden_ro):
-//   * View vocabulary: garden_node = plants, cultivar = plant_varieties. garden_node's FK to the
-//     project is `container_id`, NOT `project_id` (the base table's name). Getting that wrong is a
-//     hard error, not a silent one.
-//   * Household scope anchors on plant_projects.created_by, matching the rest of this Lambda —
-//     the project IS the ownership root wherever a planting has one. AMENDED 2026-08-14
-//     (BUG-ANCHORNOPROJ-001): the original form of this note said scope does NOT anchor on the
-//     planting, and the CTE enforced that with an INNER JOIN. That reasoning has no answer for a
-//     planting with NO project (container_id IS NULL — prod has 4 live), which has no root to
-//     anchor on and was therefore dropped from the query entirely rather than scoped by anything.
-//     Scope now uses the two-arm predicate lambda/plants/index.js already applies at seven sites:
-//     the project when there is one, the planting's own created_by when there is not. Both arms
-//     bind the same householdIds, so this widens VISIBILITY, never ownership.
-//   * Live planting = deleted_at/archived_at NULL and status NOT IN (failed, ended, dormant), the
-//     same definition lambda/events/index.js:893 settled on after a dormant wineberry ranked #1.
-//   * The harvest-evidence CTE keeps the LEFT JOIN + first_harvest escape from the shipped route:
-//     `first_harvest` is a MILESTONE that carries no quantity by design and therefore NEVER has a
-//     harvest_log row (5/5 orphaned on prod). An INNER JOIN here would tell the watch list that a
-//     planting Dave has already picked still needs watching — the exact inverse of the bug being
-//     fixed.
-//   * The pick date is event_log.event_date, never harvest_log.created_at (~30% backdated).
+// SHAPE NOTES
+//   * View vocabulary: garden_node = plants, cultivar = plant_varieties. garden_node's FK to the project
+//     is `container_id`, NOT `project_id` (the base table's name); getting that wrong is a hard error.
+//   * Household scope anchors on plant_projects.created_by (the project is the ownership root) with a
+//     second arm for a planting with NO project (container_id IS NULL): the planting's own created_by.
+//     This is the two-arm predicate lambda/plants/index.js applies. Both arms bind the same householdIds,
+//     so it widens VISIBILITY, never ownership. An INNER JOIN here would drop project-less plantings.
+//   * Live planting = deleted_at/archived_at NULL and status NOT IN (failed, ended, dormant), the same
+//     definition lambda/events/index.js uses.
+//   * The harvest-evidence CTE keeps the LEFT JOIN + first_harvest escape: `first_harvest` is a MILESTONE
+//     with no quantity and therefore NEVER has a harvest_log row. An INNER JOIN would tell the watch list
+//     that an already-picked planting still needs watching.
+//   * The pick date is event_log.event_date, never harvest_log.created_at (often backdated).
 //
-// SIBLING ANCHOR (design §3.4 rank 2, "the strongest anchor available in the data and it is
-// currently unused"). Same project AND same crop_type_slug — the design's justification is "same
-// genetics, same site, same weather", and same-project alone does not establish the first of those
-// for a mixed project. MIN(first pick) across siblings, because the design admits a planting to the
-// queue when its EARLIEST defensible anchor fires: if the bed has been picking for 30 days, this
-// planting has been worth checking for 30 days, and dating it from the most recent sibling would
-// understate that.
+// SIBLING ANCHOR: same project AND same crop_type_slug (same-project alone does not establish "same
+// genetics, same site, same weather" for a mixed project). MIN(first pick) across siblings, because a
+// planting is admitted when its EARLIEST defensible anchor fires; dating from the most recent sibling
+// would understate how long it has been worth checking.
 //
-// NURSERY OFFSET is computed PER HOUSEHOLD from that household's own plantings rather than baked in
-// — the correction for a from-sow DTM read off a transplant date should reflect how this gardener
-// actually starts seeds. Dave's median is 31 days over 39 dual-dated plantings (n is reported on the
-// wire so a thin sample is visible rather than silently trusted); below 5 samples it falls back to
-// the documented constant.
+// NURSERY OFFSET is computed PER HOUSEHOLD from its own dual-dated plantings rather than baked in, since
+// the correction for a from-sow DTM read off a transplant date depends on how this gardener starts
+// seeds. n is reported on the wire so a thin sample is visible; below 5 samples it falls back to the
+// documented constant.
 export async function queryWatchRows(sql, householdIds, userId, tz) {
   return sql`
     WITH bounds AS (
@@ -431,8 +399,8 @@ export async function queryWatchRows(sql, householdIds, userId, tz) {
   `;
 }
 
-// Below this many dual-dated plantings the household's own median is too thin to trust; fall back
-// to the documented constant rather than let one atypical pair set the offset for every crop.
+// Below this many dual-dated plantings the household's own median is too thin to trust; fall back to
+// the documented constant.
 export const NURSERY_MIN_SAMPLE = 5;
 
 export function resolveNurseryOffset(rows) {
@@ -445,14 +413,10 @@ export function resolveNurseryOffset(rows) {
   return { days: NURSERY_OFFSET_DAYS_FALLBACK, source: 'fallback_constant', sample_n: n };
 }
 
-// V4-FRUITINGTIER-001. Same shape and same threshold as resolveNurseryOffset — deliberately, so
-// there is one household-calibration pattern in this file rather than a dialect per tier.
-//
-// `days > 0` rather than `>= 0`: a zero-day median would mean Dave logs `fruiting` and picks on the
-// same day, which makes the status a RECORD of the harvest rather than a predictor of it. That is a
-// real possibility for a gardener who backfills, and an anchor with a zero interval would open every
-// such row immediately and permanently. Falling back to the constant is the safe reading; prod's
-// median is 18, so this guard is dormant today and exists for the household that isn't Dave.
+// Same shape and threshold as resolveNurseryOffset, so there is one household-calibration pattern in
+// this file. `days > 0` rather than `>= 0`: a zero-day median means the user logs `fruiting` and picks on
+// the same day (a backfiller), which makes the status a RECORD of the harvest, and a zero interval would
+// open every such row immediately and permanently. Falling back to the constant is the safe reading.
 export const FRUITING_MIN_SAMPLE = 5;
 
 export function resolveFruitingInterval(rows) {
@@ -467,35 +431,27 @@ export function resolveFruitingInterval(rows) {
 
 // ── Impression log (V4-WATCHIMPRESSION-001) ──────────────────────────────────────────────────────
 //
-// Panel Q3 named this "the highest-value missing piece in the whole design": the dismissal table
-// records every "not yet" tap, but nothing records which rows were SHOWN — so every rate in the
-// dismissal-calibration refit has an unrecoverable denominator, and a row that was
-// correct-but-not-tapped is indistinguishable from a row never seen. The GET path writes one row
-// per SERVED planting per region per ET day into public.watch_impression
-// (migrations/v4-watchimpression-001), stamped with the SAME WATCH_MODEL_VERSION the dismissal
-// rows carry, so numerator and denominator join within one model generation.
+// The dismissal table records every "not yet" tap but nothing records which rows were SHOWN, so every
+// rate in the dismissal-calibration refit would have an unrecoverable denominator. The GET path writes
+// one row per SERVED planting per region per ET day into public.watch_impression, stamped with the same
+// WATCH_MODEL_VERSION as the dismissal rows, so numerator and denominator join within one model generation.
 //
-// REGION HONESTY (the column that keeps the analysis truthful): the server knows what it SERVED,
-// not what a human looked at. 'top5' rows render without user action (served ~= seen is fair
-// there); 'tail' means IN-THE-RESPONSE-BUT-COLLAPSED — the client expands on tap and there is NO
-// client beacon in v1 to say whether it ever did; 'snoozed' rows sit inside the tail's collapsed
-// Snoozed subgroup. Rates over 'tail'/'snoozed' impressions are rates over opportunities, not
-// views, and the region column is what lets the refit say so instead of silently conflating them.
+// REGION HONESTY: the server knows what it SERVED, not what a human looked at. 'top5' rows render without
+// user action; 'tail' means IN-THE-RESPONSE-BUT-COLLAPSED (the client expands on tap and no beacon says
+// whether it did); 'snoozed' rows sit in the tail's collapsed Snoozed subgroup. Rates over tail/snoozed
+// are rates over opportunities, not views, and the region column lets the refit say so.
 //
-// THE SPLIT MIRRORS THE CLIENT. src/lib/harvestWatch.js selectWatchDisplay allocates the 5 visible
-// slots (MAX_WATCH_ROWS=5, per-project cap WATCH_PROJECT_SLOT_CAP=2 — panel Q2) CLIENT-side over
-// the served ranked list. That walk is deterministic, so the server reproduces it here to label
-// regions; the lambda cannot import src/lib (separate module graphs), so the constants are
-// mirrored: DEFAULT_LIMIT already IS the §3.5 visible cap of 5, and the project cap is restated
-// below. If either side's constants drift, the region labels lie — change them in lockstep.
+// THE SPLIT MIRRORS THE CLIENT. src/lib/harvestWatch.js selectWatchDisplay allocates the 5 visible slots
+// (per-project cap 2) CLIENT-side over the served ranked list, and the server reproduces that walk to
+// label regions. The lambda cannot import src/lib, so the constants are mirrored (DEFAULT_LIMIT is the
+// visible cap of 5; the project cap is restated below). If either side drifts, the region labels lie:
+// change them in lockstep.
 export const IMPRESSION_PROJECT_SLOT_CAP = 2; // mirrors src/lib/harvestWatch.js WATCH_PROJECT_SLOT_CAP
 
-// Region/slot assignment over the SERVED slice (post-limit) plus the snoozed payload. Slices, not
-// the full queue, on purpose: an unserved row was never on any screen and gets NO impression —
-// "never seen" must stay distinguishable from "shown", which is the whole point of the table.
-// slot is the 1-based position WITHIN the region (top5 1..5; tail in rank order — tail position
-// governs how many reveal-taps stand between the row and a human); NULL for snoozed, whose order
-// is a return date, not a rank.
+// Region/slot assignment over the SERVED slice (post-limit) plus the snoozed payload. An unserved row
+// was never on any screen and gets NO impression, so "never seen" stays distinguishable from "shown".
+// slot is the 1-based position WITHIN the region (tail in rank order); NULL for snoozed, whose order is a
+// return date, not a rank.
 export function splitImpressionRegions(served, snoozed) {
   const rows = [];
   const byProject = new Map();
@@ -511,8 +467,7 @@ export function splitImpressionRegions(served, snoozed) {
       plant_id: c.plant_id,
       slot: isVisible ? visible : tail,
       region: isVisible ? 'top5' : 'tail',
-      // Frozen as served, same leakage/drift rationale as the dismissal snapshot. Snoozed rows
-      // carry neither — their frozen anchor already lives on their dismissal row.
+      // Frozen as served. Snoozed rows carry neither; their frozen anchor lives on their dismissal row.
       anchor_kind: c.anchor?.kind ?? null,
       check_from: toYmd(c.check_from),
     });
@@ -524,26 +479,23 @@ export function splitImpressionRegions(served, snoozed) {
   return rows;
 }
 
-// NON-FATAL BY CONSTRUCTION — same fail-open posture as weather_daily's writer (daily-plan
-// handler.js writeWeatherDaily): this is substrate accumulation, and losing one request's
-// impressions is a rounding error against failing the GET that renders Today. Never throws, never
-// returns a rejected promise; a failure (including "relation does not exist" while the migration
-// has not landed yet) logs a warning and the response goes out unchanged.
+// NON-FATAL BY CONSTRUCTION (same fail-open posture as the weather_daily writer in daily-plan
+// handler.js): losing one request's impressions is a rounding error against failing the GET that renders
+// Today. Never throws; a failure (including "relation does not exist" before the migration lands) logs a
+// warning and the response goes out unchanged.
 //
-// One statement per request: the batch rides a single INSERT..SELECT over unnest'd arrays, with an
-// explicit ::cast on EVERY bind — scalar binds in a SELECT list and nullable array elements are
-// both untypeable for Neon's driver ("could not determine data type of parameter"), which inside
-// this try/catch would present as the impression log silently never populating.
+// One statement per request: an INSERT..SELECT over unnest'd arrays with an explicit ::cast on EVERY
+// bind. Scalar binds in a SELECT list and nullable array elements are untypeable for Neon's driver
+// ("could not determine data type of parameter"), which inside this try/catch would present as the log
+// silently never populating.
 //
-// ON CONFLICT (user_id, plant_id, shown_on, region) DO NOTHING against uq_watch_impression_day:
-// N Today opens in one day collapse to one row per region — the DAY is the exposure grain (the
-// queue only re-ranks at midnight ET), and without the guard "impressions per day" would measure
-// phone-checking frequency, not exposure. region is in the key because a mid-day dismissal
-// legitimately moves a row between regions within one day; both facts get recorded.
+// ON CONFLICT (user_id, plant_id, shown_on, region) DO NOTHING against uq_watch_impression_day: the DAY
+// is the exposure grain (the queue re-ranks at midnight ET); without the guard, "impressions per day"
+// would measure phone-checking frequency. region is in the key because a mid-day dismissal legitimately
+// moves a row between regions.
 export async function recordWatchImpressions(sql, { userId, shownOn, served, snoozed }) {
   try {
-    // No ET day to stamp -> write nothing. Guessing a civil day would corrupt the dedupe grain,
-    // and binding NULL into a NOT NULL column would fail the whole batch anyway.
+    // No ET day to stamp -> write nothing: a guessed day would corrupt the dedupe grain, and NULL fails a NOT NULL column.
     if (!shownOn) return 0;
     const rows = splitImpressionRegions(served, snoozed);
     if (rows.length === 0) return 0;
@@ -561,8 +513,7 @@ export async function recordWatchImpressions(sql, { userId, shownOn, served, sno
              ) AS u(plant_id, slot, region, anchor_kind, check_from)
       ON CONFLICT (user_id, plant_id, shown_on, region) DO NOTHING
     `;
-    // Named observability, matching the weather writer: a log that quietly writes nothing (empty
-    // splits, all-conflict days) stays visible in CloudWatch before the refit ever reads it.
+    // Named observability so a log that quietly writes nothing stays visible in CloudWatch.
     console.log(JSON.stringify({
       metric: 'watch_impressions', model_version: WATCH_MODEL_VERSION, shown_on: shownOn,
       top5: rows.filter((r) => r.region === 'top5').length,
@@ -578,29 +529,21 @@ export async function recordWatchImpressions(sql, { userId, shownOn, served, sno
   }
 }
 
-// V4-WATCHEXCLUDEDLOG-001 — the NOT-SHOWN set, persisted at row grain.
+// The NOT-SHOWN set, persisted at row grain (V4-WATCHEXCLUDEDLOG-001). Restricting the sibling anchor
+// moved the crops with the most data out of the watch list as `no_anchor` exclusions; without a row-level
+// record the model's false-negative region (plantings it declined that were picked anyway) is
+// unrecoverable.
 //
-// Panel Q2:65 marks this a MANDATORY rider on the sibling-anchor restriction, and the reason is not
-// completeness for its own sake: restricting the anchor moved tomato and pepper — the only two crops
-// that have ever reached n>=20 first-picked plantings — out of the watch list as `no_anchor`
-// exclusions. Without a row-level record, the model's own false-negative region (plantings it
-// declined that were picked anyway) is unrecoverable, and a resolver that quietly stops watching a
-// crop is indistinguishable from a crop nobody grew.
+// The {metric:'watch_excluded'} console line is NOT this: it is an aggregate census with no plant_id, so
+// it cannot be joined to event_log or read in SQL beside the impression and dismissal tables, and it
+// lives under a log-retention policy. It stays as the per-request heartbeat.
 //
-// The {metric:'watch_excluded'} console line below is NOT this. It is an aggregate census with no
-// plant_id: it cannot be joined to event_log, cannot be read in SQL beside the impression and
-// dismissal tables, and lives under a log-retention policy. It stays as the per-request heartbeat.
-//
-// SAME POSTURE AS recordWatchImpressions, deliberately — non-fatal by construction, one statement,
-// explicit ::casts on every bind (scalar binds in a SELECT list and nullable array elements are both
-// untypeable for Neon's driver, and inside this try/catch that would present as the table silently
-// never populating), ON CONFLICT DO NOTHING against uq_watch_exclusion_day so N Today opens in one
-// day collapse to one row per reason. `reason` is in the conflict key because a verdict legitimately
-// changes within a day (a candidate at breakfast is `dismissed` by noon) and both were true.
+// SAME POSTURE AS recordWatchImpressions: non-fatal, one statement, explicit ::casts on every bind, ON
+// CONFLICT DO NOTHING against uq_watch_exclusion_day. `reason` is in the conflict key because a verdict
+// legitimately changes within a day (a candidate at breakfast is `dismissed` by noon).
 export async function recordWatchExclusions(sql, { userId, evaluatedOn, excludedRows }) {
   try {
-    // No ET day to stamp -> write nothing. Guessing a civil day would corrupt the dedupe grain, and
-    // binding NULL into a NOT NULL column would fail the whole batch anyway.
+    // No ET day to stamp -> write nothing (same reason as recordWatchImpressions).
     if (!evaluatedOn) return 0;
     const rows = (excludedRows ?? []).filter((r) => r?.plant_id != null && r?.reason != null);
     if (rows.length === 0) return 0;
@@ -643,25 +586,23 @@ export async function handleWatchGet(ctx) {
     fruitingIntervalDays: fruiting.days,
   });
 
-  // The per-request heartbeat: one structured line per invocation, aggregate grain. It is NOT the
-  // panel Q2 rider — recordWatchExclusions below is (see its header). This line stays because it
-  // costs nothing and reads the census at a glance in CloudWatch without a query.
+  // The per-request heartbeat: one aggregate line per invocation, readable in CloudWatch without a
+  // query. The row-level record is recordWatchExclusions.
   console.log(JSON.stringify({
     metric: 'watch_excluded', model_version: WATCH_MODEL_VERSION, et_today: etToday,
     total_watching: candidates.length, snoozed: snoozed.length, excluded,
   }));
 
-  // What actually goes on the wire — and therefore what the impression log records. An unserved
-  // row (a limit below the queue depth) was never on any screen and gets NO impression row.
+  // What actually goes on the wire, and therefore what the impression log records. An unserved row was
+  // never on any screen and gets NO impression row.
   const served = candidates.slice(0, limit);
 
-  // V4-WATCHIMPRESSION-001 (panel Q3's "highest-value missing piece"): record what was served,
-  // BEFORE the response goes out but never in its way — the writer is non-fatal by construction
-  // and a failure (including the migration not having landed yet) cannot affect this GET.
+  // Record what was served BEFORE the response goes out but never in its way: the writer is non-fatal
+  // and a failure (including a migration not yet landed) cannot affect this GET.
   await recordWatchImpressions(sql, { userId, shownOn: etToday, served, snoozed });
 
-  // V4-WATCHEXCLUDEDLOG-001 — the declined half of the same census. Sequenced AFTER the impression
-  // write and equally non-fatal: neither writer can fail the GET, and neither can fail the other.
+  // The declined half of the same census. After the impression write and equally non-fatal; neither
+  // writer can fail the GET or the other.
   await recordWatchExclusions(sql, { userId, evaluatedOn: etToday, excludedRows });
 
   return {
@@ -671,21 +612,17 @@ export async function handleWatchGet(ctx) {
       et_today: etToday,
       season_start: toYmd(rows?.[0]?.season_start),
       model_version: WATCH_MODEL_VERSION,
-      // The offset that shaped every calendar anchor in this payload, with its provenance and
-      // sample size — a client (or a later audit) can see whether the correction rested on this
-      // household's own data or on the documented constant.
+      // The offset that shaped every calendar anchor in this payload, with its provenance and sample
+      // size, so a client or audit can see whether it rested on household data or the constant.
       nursery_offset: nursery,
       limit,
-      // total_watching is the TRUE queue depth, so a client can render an honest tail count. The
-      // shipped band's "Showing 3 of 28 ready" line was arithmetically false for exactly the reason
-      // this field exists: it counted a different population than it showed.
+      // total_watching is the TRUE queue depth, so a client can render an honest tail count.
       total_watching: candidates.length,
       candidates: served,
-      // Why every non-candidate is absent. A zero-length list is then explainable instead of being
-      // the unreadable silence HarvestReadyBand's `return null` produces for three different states.
+      // Why every non-candidate is absent, so a zero-length list is explainable.
       excluded,
-      // The suppressed rows themselves (panel Q3/Q4): the tail's "Snoozed" subgroup prints each one
-      // with its return date. NOT subject to `limit` — snoozing more things must never hide them.
+      // The suppressed rows themselves; the tail's "Snoozed" subgroup prints each with its return date.
+      // NOT subject to `limit`: snoozing more things must never hide them.
       snoozed,
     },
   };
@@ -693,10 +630,9 @@ export async function handleWatchGet(ctx) {
 
 // POST /api/harvests/watch/dismissals  { plant_id, reason?, observed_on?, note? }
 //
-// The snapshot is built SERVER-SIDE from the server's own candidate row. The client sends WHICH
-// planting and (optionally) WHEN it was observed — never the model fields. A client that could post
-// its own snapshot could poison the calibration set, and a stale PWA bundle would post an old
-// model's numbers stamped with the current version string.
+// The snapshot is built SERVER-SIDE from the server's own candidate row. The client sends WHICH planting
+// and (optionally) WHEN it was observed, never the model fields: a client-posted snapshot could poison
+// the calibration set, and a stale PWA bundle would post an old model's numbers under the current version.
 export async function handleDismissalPost(ctx) {
   const { sql, householdIds, userId, tz, body = {} } = ctx;
 
@@ -715,22 +651,18 @@ export async function handleDismissalPost(ctx) {
   const nursery = resolveNurseryOffset(rows);
   const fruiting = resolveFruitingInterval(rows);
 
-  // observed_on defaults to today and may be BACKDATED, following this codebase's event_date
-  // convention (Dave reads the list, walks out, comes back, then logs). Future dates are refused —
-  // an observation cannot have happened tomorrow, and one would silently corrupt every calibration
-  // interval derived from it.
+  // observed_on defaults to today and may be BACKDATED, like event_date elsewhere. Future dates are
+  // refused: they would silently corrupt every calibration interval derived from them.
   const observedOn = toYmd(body.observed_on) ?? etToday;
   if (observedOn == null) return { statusCode: 400, body: { error: 'observed_on must be YYYY-MM-DD' } };
   if (etToday != null && observedOn > etToday) {
     return { statusCode: 400, body: { error: 'observed_on cannot be in the future' } };
   }
 
-  // Household membership is proven by the candidate query itself: it is already scoped to
-  // plant_projects.created_by = ANY(household), so a planting outside the household is simply not
-  // in `rows`. Same generic answer for absent / foreign / soft-deleted — no existence oracle.
-  // Same resolver settings as the GET, and that is a correctness requirement rather than tidiness:
-  // if the two disagreed, a row the GET served could not be dismissed (404 "no active candidate")
-  // — the dismissal path must see exactly the queue the user was looking at.
+  // Household membership is proven by the candidate query itself (scoped to the household), so a
+  // planting outside it is simply not in `rows`: the same generic answer for absent / foreign /
+  // soft-deleted, with no existence oracle. The resolver settings must match the GET's, or a row the GET
+  // served could not be dismissed (404): the dismissal path must see exactly the queue the user saw.
   const { candidates } = buildWatchList(rows, etToday, {
     nurseryOffsetDays: nursery.days, derivedEnabled: resolveDerivedEnabled(ctx),
     fruitingIntervalDays: fruiting.days,
@@ -742,12 +674,10 @@ export async function handleDismissalPost(ctx) {
 
   const snap = buildDismissalSnapshot(candidate, observedOn);
 
-  // ON CONFLICT DO NOTHING against the partial day-grain unique index: a double-tap is a 200 with
-  // the existing row rather than a 409 the UI would have to explain, and it does not mint a second
-  // sample for the same observation. A genuine re-check on a LATER day is a new row by design.
-  // suppressed_until (panel Q3, bounded suppression): observed_on + WATCH_SUPPRESS_DAYS, computed
-  // in the snapshot and bound with an explicit ::date cast. The read path already honoured the
-  // column; this write is the one bind that had been missing.
+  // ON CONFLICT DO NOTHING against the partial day-grain unique index: a double-tap is a 200 with the
+  // existing row rather than a 409, and mints no second sample for the same observation. A re-check on a
+  // LATER day is a new row by design. suppressed_until (observed_on + WATCH_SUPPRESS_DAYS) is computed in
+  // the snapshot and bound with an explicit ::date cast.
   const inserted = await sql`
     INSERT INTO public.harvest_watch_dismissal (
       user_id, plant_id, project_id, observed_on, suppressed_until, reason, note, model_version,
@@ -784,21 +714,12 @@ export async function handleDismissalPost(ctx) {
 
 // POST /api/harvests/watch/dismiss  { plant_id, project_id?, dismissed: true|false }
 //
-// The BOOLEAN form the UI lane committed against, and the primary dismissal surface. It exists
-// because the named v1 risk in Dave's decision is a reflexive tap teaching the model noise, and a
-// dismissal with no recovery is exactly how that risk lands.
-//
-// THE BOOLEAN DOES NOT CORRUPT THE CALIBRATION SIGNAL — but only because `dismissed: false` is a
-// RETRACTION, never a delete. It sets undone_at on the active row; the row, its frozen model
-// snapshot and its observed_on all survive. That is strictly BETTER for calibration than a design
-// with no undo:
-//   * a retracted observation is itself labelled data (the user looked again, or mis-tapped), and
-//     the fitting query can include or exclude it explicitly via undone_at;
-//   * without an undo path, every reflexive mis-tap would be a permanent, unmarked FALSE negative
-//     silently poisoning the set, with no way to tell it from a real one.
-// So the boolean is accepted as specified. The one invariant it must never acquire is a hard
-// DELETE — that would destroy samples and bias the set toward observations someone stayed confident
-// about. See handleDismissalUndo.
+// The BOOLEAN form the UI commits against, and the primary dismissal surface. `dismissed: false` is a
+// RETRACTION, never a delete: it sets undone_at on the active row, and the row, its frozen model snapshot
+// and its observed_on all survive. A retracted observation is itself labelled data, and without an undo
+// every reflexive mis-tap would be a permanent, unmarked false negative poisoning the set. The invariant
+// this must never acquire is a hard DELETE, which would destroy samples and bias the set toward
+// observations someone stayed confident about. See handleDismissalUndo.
 export async function handleDismissToggle(ctx) {
   const { sql, userId, body = {} } = ctx;
 
@@ -817,18 +738,12 @@ export async function handleDismissToggle(ctx) {
     };
   }
 
-  // Retract: soft-undo ONLY the single most recent active dismissal on the planting.
-  //
-  // PANEL Q3, BLOCKING PREREQUISITE (harvest-panel-decisions-20260812.md) — this REVERSES the
-  // earlier plural retraction. Under season-long suppression only one active row ever existed, so
-  // clearing "all" was harmless. Under bounded 10-day suppression rows ACCUMULATE (one per
-  // observation day across the season), and a single "Undo" tap that clears them all retracts every
-  // accumulated calibration sample for the planting — corrupting the dataset the table exists to
-  // build. Undo now means "take back the tap I just made": one row, the newest. Older samples are
-  // independent observations made on other days and stand on their own; a user who truly wants them
-  // gone peels them one Undo at a time (or via DELETE /watch/dismissals/:id, the preferred by-id
-  // path the client uses when it holds the id). Suppression concerns don't arise: only the newest
-  // row's suppressed_until can still be in the future, so undoing it always un-suppresses.
+  // Retract: soft-undo ONLY the single most recent active dismissal on the planting. Under bounded
+  // suppression rows ACCUMULATE (one per observation day), and a single "Undo" that cleared them all
+  // would retract every accumulated calibration sample for the planting. Undo means "take back the tap I
+  // just made": one row, the newest. Older samples stand on their own, and DELETE
+  // /watch/dismissals/:id is the by-id path. Only the newest row's suppressed_until can still be in the
+  // future, so undoing it always un-suppresses.
   const rows = await sql`
     UPDATE public.harvest_watch_dismissal
        SET undone_at = now()
@@ -848,18 +763,14 @@ export async function handleDismissToggle(ctx) {
   };
 }
 
-// DELETE /api/harvests/watch/dismissals/:id — soft undo of ONE specific dismissal by id. As of the
-// panel Q3 retraction fix this is the PREFERRED undo path: the band holds the id from the dismissal
-// response and retracts exactly the row it created, with zero ambiguity about which sample is being
-// taken back. NEVER a hard delete: an undo is itself signal (the user changed their mind about what
-// they saw), and deleting samples biases the calibration set toward the observations someone stayed
-// confident about.
+// DELETE /api/harvests/watch/dismissals/:id: soft undo of ONE dismissal by id, the PREFERRED undo path
+// (the band holds the id from the dismissal response and retracts exactly the row it created). NEVER a
+// hard delete: an undo is itself signal, and deleting samples biases the calibration set.
 export async function handleDismissalUndo(ctx, dismissalId) {
   const { sql, userId } = ctx;
   if (!isUuid(dismissalId)) return { statusCode: 400, body: { error: 'id must be a uuid' } };
 
-  // Scoped to user_id, so one user cannot undo another's observation. Already-undone rows are
-  // idempotent no-ops rather than errors.
+  // Scoped to user_id, so one user cannot undo another's observation. Already-undone rows are idempotent no-ops.
   const rows = await sql`
     UPDATE public.harvest_watch_dismissal
        SET undone_at = now()
@@ -870,16 +781,14 @@ export async function handleDismissalUndo(ctx, dismissalId) {
   return { statusCode: 200, body: { undone: true, dismissal: rows[0] } };
 }
 
-// The by-id undo route, as an executable PATTERN rather than a startsWith: the client now calls
-// this path directly (undo-by-id), and clientRouteLambdaContract.test.js proves client paths against
-// the Lambda's own declared regexes — a startsWith is invisible to that guard.
+// The by-id undo route as an executable PATTERN rather than a startsWith:
+// clientRouteLambdaContract.test.js proves client paths against the Lambda's own declared regexes, and a
+// startsWith is invisible to that guard.
 const DISMISSAL_BY_ID_RE = /^\/api\/harvests\/watch\/dismissals\/([^/]+)$/;
 
 // Path router. Returns null when the request is not a watch route, so index.js falls through to its
-// existing /api/harvests handling unchanged.
-// DISMISS_PATH is matched BEFORE DISMISSALS_PATH's prefix rules. Both start with
-// '/api/harvests/watch/dismiss', so order is load-bearing here exactly as it is in api.js's
-// first-match prefix table.
+// existing /api/harvests handling. DISMISS_PATH is matched BEFORE DISMISSALS_PATH's prefix rules: both
+// start with '/api/harvests/watch/dismiss', so order is load-bearing, as in api.js's first-match table.
 export function matchWatchRoute(method, rawPath) {
   if (rawPath === WATCH_PATH && method === 'GET') return { kind: 'watch_get' };
   if (rawPath === DISMISS_PATH && method === 'POST') return { kind: 'dismiss_toggle' };
@@ -888,8 +797,7 @@ export function matchWatchRoute(method, rawPath) {
   if (byId) {
     return { kind: 'dismissal_undo', id: byId[1] };
   }
-  // A watch path with the wrong verb is a 405, NOT a fall-through: falling through would hand it to
-  // the /api/harvests read model, which answers a 405 with a message about the wrong route.
+  // A watch path with the wrong verb is a 405, NOT a fall-through: the /api/harvests read model would answer about the wrong route.
   if (rawPath === WATCH_PATH || rawPath === DISMISS_PATH || rawPath.startsWith(DISMISSALS_PATH)) {
     return { kind: 'method_not_allowed' };
   }

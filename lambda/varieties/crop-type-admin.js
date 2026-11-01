@@ -1,31 +1,26 @@
-// V4-CROPTYPERETIRE-001 — retire and restore a crop type, for the admin page at /admin/crop-types.
+// Retire and restore a crop type, for the admin page at /admin/crop-types (V4-CROPTYPERETIRE-001).
 //
 // Three routes hang off this module, all dispatched from ./index.js:
 //   GET  /api/varieties/crop-types/admin   every type, retired ones included, with what still uses it
 //   POST /api/varieties/crop-types/retire  { slug }          soft-delete (deleted_at = now())
 //   POST /api/varieties/crop-types         { restore_slug }  the existing restore arm, entered by slug
 //
-// The SQL lives here rather than in index.js so that no statement in that file changes position.
-//
-// WHAT RETIRE MAY NOT DO. A retired type leaves GET /api/varieties/crop-types, and every picker with
-// it, so a type that any row still names must stay. ANY row: a deleted variety, put-up, pantry item,
-// batch ingredient or source counts too, because each of them can be un-deleted (variety restore,
-// reviveBlend, the batch-input un-delete) and would come back naming a retired type. The guard
-// therefore covers EVERY table with a foreign key to crop_types(slug) — CROP_TYPE_DEPENDENTS below —
-// with no deleted_at filter on any of them, and crop-type-admin.test.js derives that list from
-// migrations/ and fails when a table appears there that is not listed here. The food
-// classes (category non_plant_food: bread, cheese, ...) are refused by category: Put Up reads them and
-// migrations/v4-putupfood-001/gates.yml requires each to stay live.
+// WHAT RETIRE MAY NOT DO. A retired type leaves GET /api/varieties/crop-types and every picker, so a
+// type that any row still names must stay. ANY row: a deleted variety, put-up, pantry item, batch
+// ingredient or source counts too, because each can be un-deleted and would come back naming a retired
+// type. The guard therefore covers EVERY table with a foreign key to crop_types(slug)
+// (CROP_TYPE_DEPENDENTS below) with no deleted_at filter on any of them, and crop-type-admin.test.js
+// derives that list from migrations/ and fails when a table appears there that is not listed here.
+// Food classes (category non_plant_food: bread, cheese, ...) are refused by category: Put Up reads them
+// and migrations/v4-putupfood-001/gates.yml requires each to stay live.
 //
 // THE GARDEN'S OWN CHECKS. migrations/**/gates.yml hold standing gates that the weekly invariants job
-// re-runs against prod and staging, and some of them require a named type to be LIVE (the thirteen
-// fruit types, the winter greens, aloe, dogwood, garlic, every type whose alias or display name a gate
-// counts, ...). Retiring one would turn that job red until the type came back, so those slugs are
-// refused: GATE_REQUIRED_SLUGS below, which crop-type-admin.test.js recomputes from the gates files
-// and fails on any difference. A new gate that names a type reds that test until the list follows.
+// re-runs against prod and staging, and some require a named type to be LIVE. Retiring one would turn
+// that job red, so those slugs are refused: GATE_REQUIRED_SLUGS below, which crop-type-admin.test.js
+// recomputes from the gates files and fails on any difference.
 //
-// NO event_log ROW. event_log_has_anchor requires a planting or a project and a crop type has
-// neither, so each retire and restore is recorded as one structured log line instead (auditLine).
+// NO event_log ROW. event_log_has_anchor requires a planting or a project and a crop type has neither,
+// so each retire and restore is recorded as one structured log line instead (auditLine).
 
 export const NON_PLANT_FOOD_CATEGORY = 'non_plant_food';
 
@@ -177,10 +172,9 @@ export async function retireCropType(sql, body, userId, env) {
     return { status: 409, body: { error: type.why_not, code, type } };
   }
 
-  // The guard is repeated inside the write, so a row that started naming the type between the read
-  // above and this statement still stops the retire, and so the food-class and gate-required
-  // refusals hold even if the pre-check above is ever changed. updated_at is set by hand: crop_types has no
-  // trigger that would.
+  // The guard is repeated inside the write, so a row that started naming the type since the read above
+  // still stops the retire, and the food-class and gate-required refusals hold even if the pre-check
+  // changes. updated_at is set by hand: crop_types has no trigger that would.
   const [retired] = await sql`
     UPDATE public.crop_types ct
        SET deleted_at = now(), updated_at = now()

@@ -1,32 +1,29 @@
-// blend.js — V5-VARIETYBLEND-001: the named mix. POST /api/varieties/blend finds, or creates, the
-// ONE variety row that stands for "seed saved from these varieties together".
+// The named mix (V5-VARIETYBLEND-001). POST /api/varieties/blend finds, or creates, the ONE variety row
+// that stands for "seed saved from these varieties together".
 //
-// WHY THIS IS ITS OWN MODULE AND NOT MORE SQL IN index.js. select-columns.test.js pins index.js to
-// exactly one INSERT INTO public.cultivar (binding fourteen body.* columns a mix does not have) and
-// exactly four full-row SELECTs; cultivar-care-profile.test.js pins it to exactly one care_profile
-// INSERT. A mix writes the same two tables with a different column set, so its statements live here
-// behind their own pins (blend-route.test.js, variety-blend-component-columns.test.js).
+// WHY ITS OWN MODULE. select-columns.test.js pins index.js to exactly one INSERT INTO public.cultivar
+// (binding fourteen body.* columns a mix does not have) and exactly four full-row SELECTs, and
+// cultivar-care-profile.test.js pins it to exactly one care_profile INSERT. A mix writes the same two
+// tables with a different column set, so its statements live here behind their own pins
+// (blend-route.test.js, variety-blend-component-columns.test.js).
 //
-// NO RUNTIME DEPENDENCY, like lambda/inventory-items/seed-lot-parents.js: the driver, the
-// rate-limit spend and the id mint are handed in, so the unit suite can import this file and run
-// every helper. The one import is ./audit-actor.js (pure), for withActor: this file writes the audited
-// table, and lambda/audit-actor-empty.test.js requires every such writer to check the actor where it
-// binds it, not to trust a caller to have done it.
+// NO RUNTIME DEPENDENCY, like lambda/inventory-items/seed-lot-parents.js: the driver, the rate-limit
+// spend and the id mint are handed in, so the unit suite can run every helper. The one import is
+// ./audit-actor.js (pure), for withActor: this file writes the audited table, and
+// lambda/audit-actor-empty.test.js requires every such writer to check the actor where it binds it.
 //
-// THE KEY (contract section 1). blend_key = the LEAF variety ids, lower-case, in uuid order, joined
-// by ','. A leaf is a variety whose own blend_key IS NULL. Components are FLAT: a mix named as a
-// component is replaced by its own leaves (blend_key.split(',')), so {mix of A and B, C} and
-// {A, B, C} are one row. Lower-case hex in the fixed 8-4-4-4-12 layout sorts by code unit exactly as
-// Postgres orders the uuid type (bytewise), so the key built here equals
-//   (SELECT string_agg(u::text, ',' ORDER BY u) FROM unnest($1::uuid[]) u)
-// which is the fragment the other Lambdas use.
+// THE KEY. blend_key = the LEAF variety ids, lower-case, in uuid order, joined by ','. A leaf is a
+// variety whose own blend_key IS NULL. Components are FLAT: a mix named as a component is replaced by
+// its own leaves, so {mix of A and B, C} and {A, B, C} are one row. Lower-case hex in the fixed
+// 8-4-4-4-12 layout sorts by code unit exactly as Postgres orders the uuid type, so the key built here
+// equals (SELECT string_agg(u::text, ',' ORDER BY u) FROM unnest($1::uuid[]) u), the fragment other
+// Lambdas use.
 //
 // WHO OWNS UNIQUENESS. The database keeps one live row per (created_by, blend_key)
-// (uq_plant_varieties_creator_blend_key_live). "One per HOUSEHOLD" is kept HERE: the find below runs
-// before every write and reads the whole household, and a true race between two members lands on
-// uq_plant_varieties_name_species (same leaves -> same automatic name and species), which the
-// 23505 arm answers by finding again. The household is an environment variable, not a column, so no
-// index could say it.
+// (uq_plant_varieties_creator_blend_key_live). "One per HOUSEHOLD" is kept HERE, because the household is
+// an environment variable, not a column: the find runs before every write and reads the whole household,
+// and a true race between two members lands on uq_plant_varieties_name_species (same leaves -> same
+// automatic name), which the 23505 arm answers by finding again.
 
 import { withActor } from './audit-actor.js';
 
@@ -36,10 +33,9 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 export const MIN_BLEND_LEAVES = 2;
 export const MAX_BLEND_LEAVES = 12;   // chk_plant_varieties_blend_key_format admits 2-12 ids
 
-// The Function URL is callable directly, so the request array needs a bound of its own. It is on the
-// ids NAMED, before flattening, and is deliberately far above the leaf bound: twelve plantings can
-// name at most twelve varieties, but a mix plus its own components legitimately names more ids than
-// it has leaves. Past this the body is refused as malformed rather than read.
+// The Function URL is callable directly, so the request array needs a bound of its own. It is on the ids
+// NAMED, before flattening, and far above the leaf bound: a mix plus its own components legitimately names
+// more ids than it has leaves. Past this the body is refused as malformed rather than read.
 export const MAX_COMPONENT_IDS = 48;
 
 // " (2)" .. " (9)" — tried in order when the automatic name is already taken by a row that is not
@@ -65,22 +61,20 @@ export const RESTORE_CONFLICT_MESSAGES = {
 export const RESTORE_CONFLICT_DEFAULT = 'This variety clashes with one that already exists, so it was not restored.';
 export const restoreConflictMessage = (err) => RESTORE_CONFLICT_MESSAGES[err?.constraint] ?? RESTORE_CONFLICT_DEFAULT;
 
-// ── The mix's cadence profile row (contract section 2, the OPEN item) ───────────────────────────────
+// ── The mix's cadence profile row ──────────────────────────────────────────────────────────────────
 //
-// The ordinary create writes NEW_CULTIVAR_PROFILE, _basis 'unresearched'. A mix must NOT carry that
+// The ordinary create writes NEW_CULTIVAR_PROFILE with _basis 'unresearched'. A mix must NOT carry that
 // label: v4-cadencerefill-001's standing gate post_no_live_planting_rests_on_an_unresearched_placeholder
-// counts every live planting whose cultivar row says _basis = 'unresearched' while v_resolved_care
-// supplies no cadence, so the first planting sown under a mix would red it — and nobody can ever
-// clear it the way that gate intends, because there is nothing to research about a mix that is not
-// already research about its components. The gate's own note names the exit: "_basis is relabelled
-// for a deliberate watering-free decision". This row is that: it exists (so the sibling gate
-// post_no_live_planting_lacks_a_cadence_profile is satisfied), it says what it is, and it carries no
-// watering key, no key engine.js reads past the adopt gate, and no crop/genus string — for the
-// reasons index.js gives above NEW_CULTIVAR_PROFILE, all of which hold here unchanged. A planting
-// under a mix therefore waters on the bundled fallback exactly as a new cultivar's does.
+// counts every live planting whose cultivar says _basis = 'unresearched' while v_resolved_care supplies
+// no cadence, so the first planting under a mix would red it, and nobody could clear it because there
+// is nothing to research about a mix beyond its components. The gate's own note names the exit
+// ("_basis is relabelled for a deliberate watering-free decision"). This row is that: it exists (so
+// post_no_live_planting_lacks_a_cadence_profile is satisfied), says what it is, and carries no watering
+// key, no key engine.js reads past the adopt gate, and no crop/genus string (reasons in index.js above
+// NEW_CULTIVAR_PROFILE). A planting under a mix waters on the bundled fallback.
 //
-// v5-rekeystrand-001's guard excuses this row too (Dave, 2026-10-06): a stranded profile is not counted
-// while _basis is 'blend' and it carries no key beyond these three. Add a key here and
+// v5-rekeystrand-001's guard excuses this row too: a stranded profile is not counted while _basis is
+// 'blend' and it carries no key beyond these three. Add a key here and
 // migrations/v5-rekeystrand-001/placeholder-vocabulary.test.js reds until the gate's list agrees.
 export const BLEND_PROFILE = {
   _source: 'blend-create',
@@ -93,11 +87,11 @@ export const BLEND_PROFILE = {
 
 // ── Pure helpers ────────────────────────────────────────────────────────────────────────────────────
 
-// Request body -> { ids, create } or { error }. REFUSED, never repaired (the seed-lot-parents rule):
-// one element that is not a uuid is a 400 for the whole body, and a non-uuid never reaches Postgres
-// (22P02 is unmapped and would fall through as an opaque 500). Lower-cased before deduping because
-// Postgres reads a uuid case-insensitively. `create` must be a real boolean: a creating route must
-// not be reachable by a truthy accident, and the preview must not be reachable by a missing key.
+// Request body -> { ids, create } or { error }. REFUSED, never repaired (the seed-lot-parents rule): one
+// element that is not a uuid is a 400 for the whole body, so a non-uuid never reaches Postgres (22P02 is
+// unmapped and would be an opaque 500). Lower-cased before deduping because Postgres reads a uuid
+// case-insensitively. `create` must be a real boolean: a creating route must not be reachable by a
+// truthy accident, nor the preview by a missing key.
 export function parseBlendBody(body) {
   if (body == null || typeof body !== 'object' || Array.isArray(body)) {
     return { error: 'Request body must be an object with component_variety_ids and create' };
@@ -119,8 +113,8 @@ export function parseBlendBody(body) {
   return { ids, create: body.create };
 }
 
-// FLATTEN. Each named id becomes itself, or — when its row carries a blend_key — that key's ids.
-// No table read: a keyed row's leaves are its key. `byId` must hold a row for every id in `ids`.
+// FLATTEN. Each named id becomes itself or, when its row carries a blend_key, that key's ids. No table
+// read. `byId` must hold a row for every id in `ids`.
 export function flattenLeafIds(ids, byId) {
   const leaves = [];
   for (const id of ids) {
@@ -134,7 +128,7 @@ export function flattenLeafIds(ids, byId) {
 
 export const blendKey = (leafIds) => [...new Set(leafIds.map((id) => String(id).toLowerCase()))].sort().join(',');
 
-// Leaves in NAME order: lower(name), then id. Plain code-unit comparison, never localeCompare — the
+// Leaves in NAME order: lower(name), then id. Plain code-unit comparison, never localeCompare: the
 // automatic name is built from this order and must not depend on the runtime's ICU data.
 export function sortLeaves(leaves) {
   const k = (l) => String(l.name ?? '').toLowerCase();
@@ -143,9 +137,9 @@ export function sortLeaves(leaves) {
 
 const SAYS_MIX = /\b(?:mix|blend)\b/i;
 
-// The automatic name. Two or three leaves: every name, joined with " + ", then " mix" — unless every
-// leaf name already says "mix" or "blend" as a whole word ("Alaska Mix + Jewel Mix Nasturtium").
-// Four or more: the first two and a count. No year, no crop word. `leaves` in sortLeaves order.
+// The automatic name. Two or three leaves: every name joined with " + ", then " mix", unless every leaf
+// name already says "mix" or "blend" as a whole word. Four or more: the first two and a count. No year,
+// no crop word. `leaves` in sortLeaves order.
 export function automaticBlendName(leaves) {
   const names = leaves.map((l) => String(l.name ?? '').trim());
   if (names.length >= 4) return `${names[0]} + ${names[1]} + ${names.length - 2} more`;
@@ -153,15 +147,15 @@ export function automaticBlendName(leaves) {
   return names.every((n) => SAYS_MIX.test(n)) ? joined : `${joined} mix`;
 }
 
-// Distinct crops among the leaves. NULL is a value of its own: two leaves with no crop are one
-// crop, a leaf with none beside a tomato is two.
+// Distinct crops among the leaves. NULL is a value of its own: two leaves with no crop are one crop, a
+// leaf with none beside a tomato is two.
 export const distinctCrops = (leaves) => [...new Set(leaves.map((l) => l.crop_type_slug ?? null))];
 
-// WHAT THE MIX ROW CARRIES AT BIRTH (contract section 2; geneticist Q3). The shared crop; species,
-// genus and lifecycle only when EVERY leaf records the same value; a heat ENVELOPE (lowest minimum,
-// highest maximum) only when every leaf has a whole range, labelled 'inference'. Nothing else is
-// derived: maturity, origin, photo, source URL, care text, habit and every sowing column stay NULL,
-// because copying one parent's fact onto a population of several would be a claim nobody made.
+// WHAT THE MIX ROW CARRIES AT BIRTH: the shared crop; species, genus and lifecycle only when EVERY leaf
+// records the same value; a heat ENVELOPE (lowest minimum, highest maximum) only when every leaf has a
+// whole range, labelled 'inference'. Nothing else is derived (maturity, origin, photo, source URL, care
+// text, habit, sowing columns stay NULL): copying one parent's fact onto a population of several would
+// be a claim nobody made.
 export function birthFacts(leaves) {
   const agree = (k) => {
     const v = leaves[0]?.[k] ?? null;
@@ -179,8 +173,8 @@ export function birthFacts(leaves) {
   };
 }
 
-// One reply element per LEAF, never filtered by the leaf's state: a soft-deleted variety can still
-// be a planting's variety, so it can still be a component, and the client is told so.
+// One reply element per LEAF, never filtered by state: a soft-deleted variety can still be a planting's
+// variety, so it can still be a component, and the client is told so.
 export const componentOf = (leaf) => ({
   id: leaf.id,
   name: leaf.name,
@@ -190,9 +184,8 @@ export const componentOf = (leaf) => ({
 
 // ── Statement builders. None awaits: the caller awaits one, or places it in sql.transaction([...]). ──
 
-// The rows behind a set of ids — the ids a request named, or the leaves a named mix brought with it.
-// NO owner predicate and NO deleted_at filter, both on purpose: the varieties list is global (any
-// signed-in user may put any variety on a planting), and a soft-deleted variety still counts as a
+// The rows behind a set of ids. NO owner predicate and NO deleted_at filter, both on purpose: the
+// varieties list is global, and a soft-deleted variety still counts as a planting's variety.
 // planting's variety, so it must still resolve here.
 export function readVarieties(sql, ids) {
   return sql`
@@ -204,9 +197,8 @@ export function readVarieties(sql, ids) {
 }
 
 // THE FIND. This household's row for the key: live first, else soft-deleted; oldest, then id, so two
-// rows (two members racing, or a hand-made duplicate) always resolve to the same one. Projects what
-// the ordinary POST returns plus variety_rank and blend_key, and is the ONLY full-row projection in
-// this file: every write below reads its result back through it.
+// rows (members racing, or a hand-made duplicate) always resolve to the same one. It is the ONLY
+// full-row projection in this file: every write below reads its result back through it.
 export function findBlend(sql, key, household) {
   return sql`
     SELECT id, display_name AS name, species, genus, days_to_maturity_min, days_to_maturity_max,
@@ -226,9 +218,8 @@ export function findBlend(sql, key, household) {
   `;
 }
 
-// The mix row. Plain VALUES through the view, the shape the ordinary POST has proven; the column list
-// IS the birth rule — a column not named here is NULL (or its default) on a new mix, and
-// blend-route.test.js pins the list. breeding_system / breeding_source / breeding_confidence are
+// The mix row. Plain VALUES through the view. The column list IS the birth rule: a column not named
+// here is NULL (or its default) on a new mix, and blend-route.test.js pins the list. breeding_* are
 // absent on purpose: a mix has no breeding system, and chk_plant_varieties_op_requires_cultivar then
 // keeps a rank-'blend' row from ever being marked open-pollinated.
 export function insertBlend(sql, { id, name, userId, key, facts }) {
@@ -246,8 +237,8 @@ export function insertBlend(sql, { id, name, userId, key, facts }) {
   `;
 }
 
-// One live row per leaf, mirroring the key. They exist for foreign-key integrity (a component cannot
-// be hard-deleted from under a mix) and readable ancestry; nothing here reads them back.
+// One live row per leaf, mirroring the key, for foreign-key integrity (a component cannot be
+// hard-deleted from under a mix) and readable ancestry. Nothing here reads them back.
 export function insertBlendComponents(sql, { id, leafIds, userId }) {
   return sql`
     INSERT INTO public.variety_blend_component (blend_variety_id, component_variety_id, created_by)
@@ -256,8 +247,8 @@ export function insertBlendComponents(sql, { id, leafIds, userId }) {
   `;
 }
 
-// The cadence profile row, in the same transaction as the row it describes — index.js's statement
-// with BLEND_PROFILE in place of NEW_CULTIVAR_PROFILE. DO NOTHING, never DO UPDATE.
+// The cadence profile row, in the same transaction as the row it describes: index.js's statement with
+// BLEND_PROFILE in place of NEW_CULTIVAR_PROFILE. DO NOTHING, never DO UPDATE.
 export function insertBlendProfile(sql, id) {
   return sql`
     INSERT INTO public.care_profile (scope, scope_id, profile, model_version)
@@ -267,8 +258,7 @@ export function insertBlendProfile(sql, id) {
 }
 
 // REVIVE a soft-deleted mix: clear deleted_at, as the restore arm does. `name` is NULL except on the
-// retry after the stored name was taken while the mix was deleted (COALESCE keeps the stored one).
-// A rename never changes the key.
+// retry after the stored name was taken while the mix was deleted. A rename never changes the key.
 export function reviveBlend(sql, { id, household, name = null }) {
   return sql`
     UPDATE public.cultivar
@@ -284,14 +274,14 @@ export function reviveBlend(sql, { id, household, name = null }) {
 // ── The route ───────────────────────────────────────────────────────────────────────────────────────
 //
 // ctx: { body, userId, household, spendCreate, newId }
-//   spendCreate  async () => boolean — one draw on the plant_varieties.create bucket
-//   newId        () => uuid — minted here, not by the column default, so the component and profile
+//   spendCreate  async () => boolean: one draw on the plant_varieties.create bucket
+//   newId        () => uuid, minted here rather than by the column default so the component and profile
 //                rows can bind it inside the same transaction (index.js, BUG-CULTIVARNOPROFILE-001)
-// Returns { status, body, derive? } — `derive` is the id of a row CREATED by this request, for the
+// Returns { status, body, derive? }; `derive` is the id of a row CREATED by this request, for the
 // caller's post-commit tag derive.
 //
-// create:false NEVER writes: it issues at most three SELECTs and returns before the first statement
-// that could change anything, the rate-limit draw included.
+// create:false NEVER writes: at most three SELECTs, returning before the first statement that could
+// change anything, the rate-limit draw included.
 export async function blendRoute(sql, { body, userId, household, spendCreate, newId }) {
   const refuse = (code) => ({ status: 400, body: { error: BLEND_ERRORS[code], code } });
 
@@ -352,16 +342,16 @@ export async function blendRoute(sql, { body, userId, household, spendCreate, ne
     };
   }
 
-  // On 23505 from either write below: find again. A live household row means someone got there
-  // first, and that row is the answer. None means the NAME was the collision — try the next suffix.
+  // On 23505 from either write below: find again. A live household row means someone got there first
+  // and that row is the answer. None means the NAME collided: try the next suffix.
   const settle = async (err) => {
     if (err?.code !== '23505') throw err;
     return live(await findBlend(sql, key, household));
   };
 
   if (found) {
-    // Soft-deleted: revive it rather than mint a second row for the same key, which would leave the
-    // first unrestorable (R2-15). No rate-limit draw — nothing is created.
+    // Soft-deleted: revive it rather than mint a second row for the same key, which would leave the first
+    // unrestorable. No rate-limit draw: nothing is created.
     for (const suffix of ['', ...NAME_SUFFIXES]) {
       try {
         const [, , back] = await withActor(sql, userId, () => [
