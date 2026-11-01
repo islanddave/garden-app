@@ -99,37 +99,53 @@ def test_membership_pattern_has_a_negative_control_for_requester_text_in_the_pho
 
 
 _REFUSING_MANIFEST = 'def url_functions():\n    raise RuntimeError("manifest declares 24 URL functions")\n'
-_AWS_SHADOW = (
-    "exec 3>&2\n"
-    "aws() { case \"$*\" in\n"
-    "  'sts get-caller-identity'*) echo 769788341849 ;;\n"
-    "  *'--metric-name HouseholdMembershipDenied'*) printf '/aws/lambda/garden-photos\\t/aws/lambda/garden-events\\n' ;;\n"
-    "  *) echo \"aws $*\" >&3 ;;\n"
-    "esac; }\n"
-)
+# Logs every call; answers the identity check and the account-wide membership-filter listing.
+_FAKE_AWS = """#!/usr/bin/env bash
+echo "aws $*" >> "$AWS_LOG"
+case "$*" in
+  'sts get-caller-identity'*) echo 769788341849 ;;
+  *'--metric-name HouseholdMembershipDenied'*) printf '/aws/lambda/garden-photos\\t/aws/lambda/garden-events\\n' ;;
+esac
+"""
+
+
+def _run_script(script, cmd, tmp_path):
+    """Runs the whole script (dispatch included) with a fake `aws` first on PATH. Returns (run, aws calls)."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    (bin_dir / "aws").write_text(_FAKE_AWS)
+    (bin_dir / "aws").chmod(0o755)
+    log = tmp_path / "aws.log"
+    log.unlink(missing_ok=True)
+    env = dict(os.environ, PATH="%s:%s" % (bin_dir, os.environ["PATH"]), AWS_LOG=str(log), AWS_REGION="us-east-1")
+    run = subprocess.run(["bash", str(script), cmd], capture_output=True, text=True, env=env)
+    return run, (log.read_text() if log.exists() else "")
 
 
 def test_status_and_teardown_survive_a_refused_manifest_while_provision_and_alarm_refuse_it(tmp_path):
     """OPS-CODEREVIEW-001 reg 6: only provision and alarm need the manifest's URL functions. status and teardown
     read or remove what exists, so a manifest url_functions refuses must not stop them: they use the log
     groups that hold a membership filter now."""
-    (tmp_path / "post-promote-check.py").write_text(_REFUSING_MANIFEST)
-    bad = 'HERE="%s"\n' % tmp_path + _AWS_SHADOW
+    bad = tmp_path / "bad"
+    bad.mkdir()
+    (bad / "household-observability.sh").write_text(SCRIPT)
+    (bad / "post-promote-check.py").write_text(_REFUSING_MANIFEST)
+    script = bad / "household-observability.sh"
     for cmd in ("provision", "alarm"):
-        run = _run_defs(bad + cmd, check=False)
+        run, calls = _run_script(script, cmd, tmp_path)
         assert run.returncode == 1, cmd
         assert "refusing: cannot read the URL functions" in run.stderr, cmd
-        assert not re.search(r"^aws (logs put-metric-filter|cloudwatch put-metric-alarm|logs test-metric-filter)",
-                             run.stderr, re.M), cmd
-    run = _run_defs(bad + 'verify_filter() { echo "$1|$2"; }\nstatus')
-    assert {r.split("|")[1] for r in run.stdout.split() if r.startswith("household-membership-denied|")} == {
+        assert not re.search(r"put-metric-filter|put-metric-alarm|test-metric-filter", calls), cmd
+    memb = re.compile(r"garden-(\S+)/household-membership-denied")
+    run, calls = _run_script(script, "status", tmp_path)
+    assert run.returncode == 0, run.stderr
+    assert set(memb.findall(run.stdout)) == {"photos", "events"}
+    assert "cloudwatch describe-alarms" in calls
+    run, calls = _run_script(script, "teardown", tmp_path)
+    assert run.returncode == 0, run.stderr
+    assert set(re.findall(r"garden-(\S+) --filter-name household-membership-denied$", calls, re.M)) == {
         "photos", "events"}
-    assert "aws cloudwatch describe-alarms" in run.stderr
-    run = _run_defs(bad + "teardown")
-    removed = set(re.findall(r"^aws logs delete-metric-filter .*garden-(\S+) --filter-name household-membership-denied$",
-                             run.stderr, re.M))
-    assert removed == {"photos", "events"}
-    assert "aws cloudwatch delete-alarms" in run.stderr
-    run = _run_defs(_AWS_SHADOW + 'verify_filter() { echo "$1|$2"; }\nstatus')
-    assert {r.split("|")[1] for r in run.stdout.split() if r.startswith("household-membership-denied|")} == \
-        _gated_functions()
+    assert "cloudwatch delete-alarms" in calls
+    run, calls = _run_script(os.path.join(HERE, "household-observability.sh"), "status", tmp_path)
+    assert set(memb.findall(run.stdout)) == _gated_functions()
+    assert "--metric-name HouseholdMembershipDenied" not in calls
