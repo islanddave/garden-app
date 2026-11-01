@@ -543,21 +543,17 @@ const REDERIVE_CTE = `
       ) tier
   )`;
 
-// The stored row's tier, as a number, for comparison against computed.tier_rank. An unrecognised
-// source yields NULL, which makes every comparison below NULL and drops the row — fail-closed on a
-// value this model does not own.
+// The stored row's tier, as a number, for comparison against computed.tier_rank. An unrecognised source yields NULL, which makes every comparison below
+// NULL and drops the row — fail-closed on a value this model does not own.
 const STORED_TIER_RANK = `CASE stale.source
                             WHEN 'sow_event'           THEN 1
                             WHEN 'transplant_event'    THEN 2
                             WHEN 'nursery_proxy_event' THEN 3
                             WHEN 'add_date_baseline'   THEN 4 END`;
 
-// Aliased stale, NOT d. anchor-supersede-parity.test.js slices the OBSERVED-ANCHOR retire out
-// of each site by searching for "UPDATE [public.]plant_anchor_derivation d", then asserts that block
-// gates on all three observed columns and records superseded_by = 'observed_anchor'. This statement
-// implements a DIFFERENT rule — it fires precisely when NONE of those columns is set — so matching
-// that guard would mean lying to it. The alias keeps the two rules distinguishable by shape rather
-// than by which one happens to appear first in the file.
+// Aliased stale, NOT d: anchor-supersede-parity.test.js slices the OBSERVED-ANCHOR retire out of each site by searching for "UPDATE [public.]plant_anchor_derivation d",
+// then asserts that block gates on all three observed columns and records superseded_by = 'observed_anchor'. This statement implements a DIFFERENT rule (it
+// fires precisely when NONE of those columns is set), so matching that guard would mean lying to it. The alias keeps the two rules distinguishable by shape.
 const REDERIVE_RETIRE_SQL = `
 WITH ${REDERIVE_CTE}
 UPDATE public.plant_anchor_derivation stale
@@ -579,13 +575,10 @@ RETURNING stale.plant_id,
           to_char(c.anchor_date, 'YYYY-MM-DD')     AS now_anchor_date,
           c.plausibility                           AS now_plausibility`;
 
-// 0b's INSERT, unchanged in intent: one fresh derivation for every live anchorless planting that
-// holds none. The NOT EXISTS is both the re-run guard and — because it matches a planting whose row
-// was retired a moment ago — the whole of the recovery path described in the header.
-//
-// Deliberately NOT gated on `clamped`: unlike the retire, a first derivation for a planting added
-// today SHOULD be written clamped, because that is byte-for-byte what the create path writes and
-// withholding it would leave a brand-new planting with no anchor for a week.
+// 0b's INSERT, unchanged in intent: one fresh derivation for every live anchorless planting that holds none. The NOT EXISTS is both the re-run guard and,
+// because it matches a planting whose row was retired a moment ago, the whole of the recovery path described in the header.
+// Deliberately NOT gated on `clamped`: unlike the retire, a first derivation for a planting added today SHOULD be written clamped, because that is
+// byte-for-byte what the create path writes, and withholding it would leave a brand-new planting with no anchor for a week.
 const REDERIVE_INSERT_SQL = `
 WITH ${REDERIVE_CTE}
 INSERT INTO public.plant_anchor_derivation
@@ -603,13 +596,9 @@ SELECT c.user_id, c.plant_id, c.anchor_date, c.anchor_field, c.source, c.confide
 RETURNING plant_id, source, to_char(anchor_date, 'YYYY-MM-DD') AS anchor_date,
           clamped_to_today, plausibility`;
 
-// Re-derive, then fill. Never throws; returns what it did so run() and the tests read a real result
-// shape rather than a stub that happens to be truthy.
-//
-// The two steps carry SEPARATE guards on purpose. A failed retire must not suppress the insert: the
-// insert is safe to issue in that state (every row the retire would have touched still holds a live
-// derivation, so NOT EXISTS excludes it) and it is the half that heals plantings holding no
-// derivation at all, which is the older and more visible defect of the two.
+// Re-derive, then fill. Never throws; returns what it did so run() and the tests read a real result shape.
+// The two steps carry SEPARATE guards on purpose: a failed retire must not suppress the insert, which is safe in that state (every row the retire would have
+// touched still holds a live derivation, so NOT EXISTS excludes it) and is the half that heals plantings holding no derivation at all.
 async function sweepRederiveAnchors(pg) {
   let retired = [];
   let inserted = [];
@@ -627,10 +616,9 @@ async function sweepRederiveAnchors(pg) {
   } catch (e) {
     console.warn(JSON.stringify({ msg: 'anchor-rederive insert failed — plan unaffected', error: e?.message }));
   }
-  // One structured line per run, emitted even when nothing moved: a sweep that has silently stopped
-  // matching anything looks identical to a healthy steady state unless the zero is stated. `changed`
-  // names the plantings and both endpoints, because "which ones moved, and from what to what" is the
-  // question an operator has and a count cannot answer.
+  // One structured line per run, emitted even when nothing moved: a sweep that has silently stopped matching anything looks identical to a healthy steady
+  // state unless the zero is stated. `changed` names the plantings and both endpoints, because "which ones moved, and from what to what" is what an operator
+  // asks and a count cannot answer.
   console.log(JSON.stringify({
     msg: 'anchor-rederive-sweep',
     retired: retired.length,
@@ -641,9 +629,8 @@ async function sweepRederiveAnchors(pg) {
       from: `${r.was_source} ${r.was_anchor_date}`,
       to: `${r.now_source} ${r.now_anchor_date}`,
     })),
-    // The only user-visible effects, split out so neither hides in a total. A plausibility stamp
-    // REMOVES a planting from the watch band (watch-route.js's derived CTE requires it NULL), so a
-    // sweep that started suppressing rows must be legible without reading the table.
+    // The only user-visible effects, split out so neither hides in a total. A plausibility stamp REMOVES a planting from the watch band (watch-route.js's derived
+    // CTE requires it NULL), so a sweep that started suppressing rows must be legible without reading the table.
     healed: inserted.filter((r) => !r.plausibility).length,
     suppressed: inserted.filter((r) => r.plausibility).length
       + retired.filter((r) => r.now_plausibility).length,
@@ -652,29 +639,22 @@ async function sweepRederiveAnchors(pg) {
   return { retired: retired.length, inserted: inserted.length };
 }
 
-// How far back the ledger fold looks. Design Part 2 anchors on the latest watering/rain event within
-// 30 days, so the weather window must cover the same span or the earliest days of the fold would
-// accrue demand 1.0 against real events.
+// How far back the ledger fold looks. The fold anchors on the latest watering/rain event within 30 days, so the weather window must cover the same span or the
+// earliest days of the fold would accrue demand 1.0 against real events.
 const WEATHER_DAILY_WINDOW_DAYS = 30;
 
-// ── V4-WATERMATH-001 F2 — the engine INPUT-CONTRACT change (canon Part 5: "the largest single F2
-// code change"). The planting query above still fetches one MAX(event_date) DATE per planting (the
-// legacy dW input, untouched for flag-OFF byte-parity); the fold additionally needs each planting's
-// 30-day event window WITH TIMESTAMPS and metadata.water_depth. ONE windowed query across all
-// plantings (~3.7k rows/30d live), grouped in JS — not a per-planting lateral, so the cost is one
-// round trip regardless of planting count.
+// ── The ledger event window: the engine INPUT-CONTRACT change ──
+// The planting query still fetches one MAX(event_date) DATE per planting (the legacy dW input, untouched for flag-OFF byte-parity); the fold additionally needs
+// each planting's 30-day event window WITH TIMESTAMPS and metadata.water_depth. ONE windowed query across all plantings, grouped in JS — not a per-planting
+// lateral, so the cost is one round trip regardless of planting count.
 //
-// FLAG-GATED at the call site exactly like readWeatherDaily: flag OFF issues ZERO of these
-// statements (same executing-test pin; BUG-SEEDEDGATE-001 class). FAIL-CLOSED TO NULL, not to {}:
-// an empty object means "the query ran and found no events" (a legitimate fold input), while null
-// means "the read failed" — and a fold run against a falsely-empty window would declare every
-// planting ~30 demand-days overdue, so the handler degrades the WHOLE RUN to flag-OFF instead
-// (canon: every data gap falls back to today's model, never to a wrong model).
+// FLAG-GATED at the call site exactly like readWeatherDaily: flag OFF issues ZERO of these statements (same executing-test pin). FAIL-CLOSED TO NULL, not to {}:
+// an empty object means "the query ran and found no events" (a legitimate fold input), while null means "the read failed" — and a fold run against a falsely-empty
+// window would declare every planting ~30 demand-days overdue, so the handler degrades the WHOLE RUN to flag-OFF instead (every data gap falls back to today's
+// model, never to a wrong model).
 //
-// The +-1-day margins absorb the date->timestamptz cast landing on the session's (UTC) midnight
-// rather than ET midnight; the fold clips precisely to [window start 00:00 ET, effNow] itself.
-// Every parameter carries an explicit cast (Neon cannot type a bare bind — same rule as the
-// weather_daily writer above).
+// The +-1-day margins absorb the date->timestamptz cast landing on the session's (UTC) midnight rather than ET midnight; the fold clips precisely to
+// [window start 00:00 ET, effNow] itself. Every parameter carries an explicit cast (Neon cannot type a bare bind).
 async function readLedgerEvents(pg, fromDate, toDate) {
   try {
     const { rows } = await pg.query(
@@ -716,15 +696,13 @@ function weatherWindowStart(today, days = WEATHER_DAILY_WINDOW_DAYS) {
   return d.toISOString().slice(0, 10);
 }
 
-// ── V4-FROST-001 F3 — alert dedup store (§3-5) ────────────────────────────────────────────────────
-// Cheapest durable home per §3-5: an additive `alerts_sent` key on the daily-plan items payload that is
-// already written per run. No DDL, no PLAN_SCHEMA_VERSION bump (every reader selects named keys), and the
-// key is written ONLY when FROST_ALERT_ENABLED is on — so the flag-OFF plan stays byte-identical.
+// ── Alert dedup store ──
+// Cheapest durable home: an additive `alerts_sent` key on the daily-plan items payload that is already written per run. No DDL, no PLAN_SCHEMA_VERSION bump (every
+// reader selects named keys), and the key is written ONLY when FROST_ALERT_ENABLED is on — so the flag-OFF plan stays byte-identical.
 const ALERTS_SENT_MAX = 12;   // one night can legitimately produce advisory + protect + a hard-freeze escalation
 
-// Fail-open, exactly like readPriorRuns: an unreadable dedup store must never block plan generation. The
-// failure direction is deliberate — on a read error we return [] and may RE-SEND an alert. A duplicate
-// frost SMS is a nuisance; a suppressed one is the failure this feature exists to prevent (§3-7).
+// Fail-open, exactly like readPriorRuns: an unreadable dedup store must never block plan generation. On a read error we return [] and may RE-SEND an alert: a
+// duplicate frost SMS is a nuisance; a suppressed one is the failure this feature exists to prevent.
 async function readAlertsSent(pg, userId, planDate) {
   try {
     const { rows } = await pg.query(
@@ -738,13 +716,10 @@ async function readAlertsSent(pg, userId, planDate) {
   }
 }
 
-// BUG-FROSTDUPTWOUSERS-001 — the store above is per ROW and a row is per USER, while a frost email is per SPACE.
-// With one Space holding plantings for two users (prod, 2026-09-18) the send was recorded only on the row of
-// the user whose loop published it, so the next evaluating run read the other user's empty row and sent the same
-// email again (real run(): 14 ET AND 15 ET). This reads the Space's sends off EVERY row for the date.
-// daily_plan has no space column; the Space is the dedup key's own first field (frostEval.dedupKey:
-// space|event_date|tier|level[|crops]), which also keeps the row of a user who has since left the Space in
-// scope. Same fail-open posture as readAlertsSent: [] may re-send, never suppress.
+// The store above is per ROW and a row is per USER, while a frost email is per SPACE. With one Space holding plantings for two users the send was recorded only on
+// the row of the user whose loop published it, so the next evaluating run read the other user's empty row and sent the same email again. This reads the Space's
+// sends off EVERY row for the date. daily_plan has no space column; the Space is the dedup key's own first field (frostEval.dedupKey: space|event_date|tier|level[|crops]),
+// which also keeps the row of a user who has since left the Space in scope. Same fail-open posture as readAlertsSent: [] may re-send, never suppress.
 async function readSpaceAlertsSent(pg, spaceId, planDate) {
   try {
     const { rows } = await pg.query(
@@ -781,15 +756,13 @@ function mergeAlertsSent(...lists) {
   return out;
 }
 
-// V5-SPACEISOLATION-001 (multi-space 6a) — daily_plan is one row per (user_id, plan_date) and names no Space, so a
-// user with plantings in TWO Spaces gets one plan per Space in run(), and the later Space's upsert (on conflict ...
-// do update) would replace the earlier one's whole row with no trace. Not live (Phase 0 read 8: no user is in more
-// than one Space); this keeps it from going silent when one is. The FIRST group (lowest Space id) to write the pair keeps the row's
-// items. A later group in the SAME invocation writes those items back with the two alerts_sent lists unioned (a frost
-// send for either Space stays recorded, so neither re-sends) and `multi_space_collision: true`, a conditional key:
-// absent on every single-group row, so those stay byte-identical. No DDL, no PLAN_SCHEMA_VERSION bump (readers select
-// named keys). `written` is per invocation (run() declares it beside frostPublished): at module scope it would survive
-// a warm Lambda, and every later hourly run would find its pairs taken and freeze the day at the first run's plan.
+// daily_plan is one row per (user_id, plan_date) and names no Space, so a user with plantings in TWO Spaces gets one plan per Space in run(), and the later Space's
+// upsert (on conflict ... do update) would replace the earlier one's whole row with no trace. Not live (no user is in more than one Space); this keeps it from
+// going silent when one is. The FIRST group (lowest Space id) to write the pair keeps the row's items. A later group in the SAME invocation writes those items back
+// with the two alerts_sent lists unioned (a frost send for either Space stays recorded, so neither re-sends) and `multi_space_collision: true`, a conditional key:
+// absent on every single-group row, so those stay byte-identical. No DDL, no PLAN_SCHEMA_VERSION bump (readers select named keys).
+// `written` is per invocation (run() declares it beside frostPublished): at module scope it would survive a warm Lambda, and every later hourly run would find its
+// pairs taken and freeze the day at the first run's plan.
 function firstGroupItems(written, { userId, planDate, spaceId }, items) {
   const pair = JSON.stringify([userId, planDate]);
   const first = written.get(pair);
@@ -809,36 +782,24 @@ function firstGroupItems(written, { userId, planDate, spaceId }, items) {
   return { items: merged, collision: true };
 }
 
-// BUG-FROSTALERTNOAPP-001 — the WHEN and HOW COLD, persisted so a client can word the alert.
+// The WHEN and HOW COLD of a frost alert, persisted so a client can word it. An alerts_sent entry otherwise carries key/tier/level/at only, all about the NOTIFICATION
+// and none about the weather, so the app could say "an advisory was sent at 11:27pm" but not why.
 //
-// Until now an alerts_sent entry carried key/tier/level/at only. Every one of those is about the
-// NOTIFICATION; none is about the weather, so the app could at best have said "an advisory was sent
-// at 11:27pm" — which raises the question it cannot answer. frostEval already computes both facts
-// and they were being discarded one line later.
+// NOT REDUNDANT with the weather cue on Today, which also renders a freeze line: the cue keys on `weather.tonightLow` (NWS) and speaks ONLY about tonight, while an
+// advisory is the coldest civil day in the D1..D3 window (frostEval evalAdvisory, Open-Meteo). The lead time IS the advisory's whole value and it had no surface at all.
 //
-// WHY THIS IS NOT REDUNDANT WITH THE WEATHER CUE ON TODAY, which does render a freeze line: the cue
-// keys on `weather.tonightLow` (NWS) and speaks ONLY about tonight, while an advisory is the coldest
-// civil day in the D1..D3 window (frostEval evalAdvisory, Open-Meteo). The lead time IS the advisory's
-// whole value and it had no surface at all. (The 2026-09-07 row once cited here as "a <= 40F night the
-// cue missed" was the F5 rehearsal: CloudWatch shows run "forced" with ADVISORY_LOW_F raised to 58.)
-//
-// `dayOffset` is 0 for an imminent (tonight) alert and 1..3 for an advisory: the CIVIL DAY of the minimum.
-// BUG-FROSTADVISORYNIGHTWORDING-001 — `nightOffset` is the NIGHT advisoryMessage named (0 = tonight, which
-// an advisory can be: D1's minimum usually falls before dawn, at the end of tonight). The client words the
-// Today line from nightOffset so the SNS text and the in-app line name the same night; an entry written
-// before this field falls back to the base rate (dayOffset - 1) on both sides.
+// `dayOffset` is 0 for an imminent (tonight) alert and 1..3 for an advisory: the CIVIL DAY of the minimum. `nightOffset` is the NIGHT advisoryMessage named (0 =
+// tonight, which an advisory can be: D1's minimum usually falls before dawn, at the end of tonight). The client words the Today line from nightOffset so the SNS text
+// and the in-app line name the same night; an entry written before this field falls back to the base rate (dayOffset - 1) on both sides.
 function frostWeatherFacts(d) {
   if (!d) return {};
   if (d.tier === 'imminent') {
     const lowF = d.imminentGlobal ? d.imminentGlobal.lowF : null;
-    // V5-RADIATIVEFROST-001 — the trip BASIS is the column the 2027 learned-offset corpus is for. The
-    // rich observability block goes only to a CloudWatch console.log, which is subject to retention;
-    // THIS is the durable store, and without the basis a radiative WATCH and a threshold PROTECT are
-    // indistinguishable in the history the fitting will read.
-    // V5-TODAYFROSTLINEGAPS-001 — `colder`: the colder advisory this email carried in its body ("Colder on a second
-    // forecast: 35°F tonight" / "Colder ahead: 34°F Monday night"), as frostEval recorded it: { lowF, dayOffset?, date?,
-    // nightOffset? }, the advisory entry's own facts. The advisory entry is not written when this tier wins, so without
-    // it Today could not show the figure the email printed. Absent when the email carried no such clause. No gate reads it.
+    // The trip BASIS is the column the learned-offset corpus is for. The rich observability block goes only to a CloudWatch console.log, which is subject to retention;
+    // THIS is the durable store, and without the basis a radiative WATCH and a threshold PROTECT are indistinguishable in the history the fitting will read.
+    // `colder`: the colder advisory this email carried in its body ("Colder on a second forecast: 35°F tonight" / "Colder ahead: 34°F Monday night"), as frostEval
+    // recorded it: { lowF, dayOffset?, date?, nightOffset? }, the advisory entry's own facts. The advisory entry is not written when this tier wins, so without it
+    // Today could not show the figure the email printed. Absent when the email carried no such clause. No gate reads it.
     return lowF == null ? {}
       : { lowF, dayOffset: 0, ...(d.imminent && d.imminent.radiativeOnly ? { trip: 'radiative' } : {}),
         ...(d.colder ? { colder: { ...d.colder } } : {}) };
