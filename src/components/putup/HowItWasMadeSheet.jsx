@@ -1,5 +1,5 @@
 // src/components/putup/HowItWasMadeSheet.jsx
-// B′ release 3 — "How it was made →" (V4 §2.2): from a jar row, the Start-a-batch sheet in retrospective
+// "How it was made →" (V4 §2.2): from a jar row, the Start-a-batch sheet in retrospective
 // posture. The pure rules live in howItWasMade.js; the write is POST /api/kitchen-batches/from-jars.
 //
 // WHAT IT ASKS (required at open: the name, prefilled with the jar's):
@@ -18,25 +18,25 @@
 //   · Next time… — optional; the jars' own "Next time…" lines are copied in by the server as well, and
 //     shown here as they read everywhere else (nextTimeWords).
 // Saving is ONE write (all or nothing); the key is minted when the sheet opens and reused on every retry.
-// A REPLAYED SAVE (BUG-PUTUPREPLAYDROPSEDIT-001; kitchen/idempotencyKey.js): a Save whose answer was lost, a
-// change, and Save again is answered with the batch the FIRST one made. A changed name or kind goes onto it
-// through the batch's own PUT and the sheet closes as saved — when the batch is this sitting's (made minutes
-// ago, untouched since). Anything else (the start, what went in, the jars, how many, next time) has no one
-// route that can carry it, and a batch that is not this sitting's is not written onto: nothing is written,
-// the sheet stays open and says the batch is already saved and this Save changed nothing
-// (REPLAY_NOT_ON_IT), and the page behind is told. A PUT that fails is said as that (REPLAY_CHANGE_UNSAVED;
-// REPLAY_CHANGE_MAYBE when no answer came back at all or the server answered with an error of its own, a
-// 5xx), and the page is told then too. The key is the sheet's one
-// key throughout: a refused Save is refused again, never a second batch. A batch that already has the name
-// and kind on screen (and no other part differs) is a save, with nothing written. Each of the three lines is
-// brought into view above the pinned Save.
+// A REPLAYED SAVE (kitchen/idempotencyKey.js): a Save whose answer was lost, then a change, then Save
+// again is answered with the batch the FIRST one made. A changed name or kind goes onto it through the
+// batch's own PUT and the sheet closes as saved — when the batch is this sitting's (made minutes ago,
+// untouched since). Anything else (the start, what went in, the jars, how many, next time) has no one
+// route that can carry it, and a batch that is not this sitting's is not written onto: nothing is
+// written, the sheet stays open and says the batch is already saved and this Save changed nothing
+// (REPLAY_NOT_ON_IT), and the page behind is told. A PUT that fails is said as that
+// (REPLAY_CHANGE_UNSAVED; REPLAY_CHANGE_MAYBE when no answer came back at all or the server answered
+// with a 5xx), and the page is told then too. The key is the sheet's one key throughout: a refused
+// Save is refused again, never a second batch. A batch that already has the name and kind on screen
+// (and no other part differs) is a save, with nothing written. Each of the three lines is brought into
+// view above the pinned Save.
 // THE PRINT's start is what he CHOSE: "the jars' own" until he changes it (the date that came to moves when
 // the jar list loads), then the chip he picked (Today is the instant, a new one at every tap).
-// THE UNADDED LINE (Put-Up UX pass R1, D2). A name typed into the adder and not added was dropped by Save
-// without a word. Now Save stops, puts the cursor back in the adder and says, there:
-// "Add “garlic” first — or clear it." Either act lets the next Save through. The line sits directly ABOVE
-// the adder, not under it: with the keyboard up the sheet shows about 400px, the adder is nearly 300px
-// tall, and a line beneath it would be said off screen. The stop then brings the line and the field into
+// THE UNADDED LINE. A name typed into the adder and not added would be dropped by Save without a
+// word. So Save stops, puts the cursor back in the adder and says, there: "Add “garlic” first — or
+// clear it." Either act lets the next Save through. The line sits directly ABOVE the adder, not under
+// it: with the keyboard up the sheet shows about 400px, the adder is nearly 300px tall, and a line
+// beneath it would be said off screen. The stop then brings the line and the field into
 // view together, the field clear of the pinned Save (sheetScroll.js, as the other sheets keep theirs).
 //
 // THE SEAM FOR OTHER SURFACES: `useHowItWasMade({ onSaved })` returns `{ open(jar), sheet }`. The Pantry

@@ -1,5 +1,5 @@
 // src/components/putup/JarPicker.jsx
-// V5-KBCLOSE-001 — picking which jars came out of a batch.
+// Picking which jars came out of a batch.
 //
 // ⚠ use_by_status AND use_by_target ARE SUPPRESSED ON THIS SURFACE, DELIBERATELY.
 // The shipped put-up row renders a warn-coloured "Use soon" / "Past use-by" chip plus "· use by
@@ -16,8 +16,8 @@
 // is not.
 //
 // SELECTION IS A `Set` OWNED BY THE CALLER, and every affordance below is derived from the RESOLVED
-// rows rather than from the Set's `.size` — BUG-PHOTOSELSTALE-001, where a bar read `selected.size`
-// while the button posted the resolved array and the two disagreed.
+// rows rather than from the Set's `.size`: a bar that reads `selected.size` while the button posts the
+// resolved array shows one number and does another thing.
 import React, { useCallback, useEffect, useState } from 'react'
 import { P, T } from '../../lib/tokens.js'
 import { jarIsLinkable, jarBlockReason } from './batchClose.js'
@@ -42,7 +42,7 @@ export function preservedOn(v) {
 // enumerates those four by path, so a fifth copy here would drift unguarded.
 // WHAT IT IS is the jar's own name when it has one (1b; "Megatron plain"), else its crop group's label.
 // A jar named but not attributed to a crop sits in the "Unattributed" group, and read by the group
-// label it said "Unattributed · …" beside a name the cook wrote on the lid (release F review M6).
+// label it said "Unattributed · …" beside a name the cook wrote on the lid.
 export function jarIdentity(row) {
   const parts = []
   const what = typeof row.label === 'string' && row.label.trim() ? row.label.trim() : row.crop_label

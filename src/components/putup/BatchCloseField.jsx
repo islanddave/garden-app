@@ -1,5 +1,5 @@
 // src/components/putup/BatchCloseField.jsx
-// V5-KBCLOSE-001 — "what happened to it?", the one terminal act in the kitchen-batch feature.
+// "What happened to it?", the one terminal act in the kitchen-batch feature.
 //
 // ⚠ THE LINE THIS COMPONENT HOLDS (FOODSAFETY-RULING-V101, preservation seat):
 // The app RECORDS what happened. It never scores, colours, gates, compares, or asserts that the
@@ -15,8 +15,7 @@
 // declining leaves it as it was" — and the six-outcome picker plus a cue field plus a jar list does
 // not fit one 390x500 keyboard-open viewport, which is why the flow is STAGED and not merely tall.
 // Sheet registers with DismissRegistry on our behalf, so no DIALOG_SURFACES entry is owed; it does
-// owe a SHEET_SITES entry in modalSurfaceFreeze.static.test.js (that file belongs to another lane —
-// see the lane report for the exact entry).
+// owe a SHEET_SITES entry in modalSurfaceFreeze.static.test.js.
 //
 // `busy={saving}` IS MANDATORY, not decorative: close is NOT idempotent (a second POST is a 409) and
 // a stray backdrop tap or an Escape mid-write would otherwise discard the surface over the top of an
@@ -24,10 +23,8 @@
 //
 // ONE REQUEST. `cue_observed` rides on the close body and the SERVER writes the `finished` stage row
 // from it, in the same statement as the close and gated on the `closed` CTE — so the close and its
-// row cannot land apart, and there is nothing for a client-side second write to add. An earlier draft
-// posted that row from here (at the base commit, validateClose whitelisted three keys and dropped the
-// rest behind a 200, so a cue on the close body would have looked saved and would not have been);
-// keeping both would now write TWO `finished` rows for one act.
+// row cannot land apart, and there is nothing for a client-side second write to add: posting that row
+// from the client as well would write TWO `finished` rows for one act.
 import React, { useCallback, useEffect, useState } from 'react'
 import { P, T } from '../../lib/tokens.js'
 import Sheet from '../forms/Sheet.jsx'
@@ -66,7 +63,7 @@ export default function BatchCloseField({ batch, onChanged }) {
   const [selected, setSelected] = useState(() => new Set())
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState(null)
-  // B′ release 3 ("A make with nothing kept", V4 Appendix A): the close sheet's When dates the finished
+  // "A make with nothing kept" (V4 Appendix A): the close sheet's When dates the finished
   // row. Today (the default) sends nothing — the server keeps the shipped now().
   const [whenChip, setWhenChip] = useState('today')
   const [whenEarlier, setWhenEarlier] = useState(null)

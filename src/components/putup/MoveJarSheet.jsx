@@ -1,7 +1,6 @@
 // src/components/putup/MoveJarSheet.jsx
-// Put-Up release 1b (V4 §2.5 "Move it", §3.4, §5.1; contract-F §2.6) — the one door that changes where a
-// jar lives. From 1b the list row stops echoing its place through the legacy PUT (a differing place
-// there is a 409 client_stale), so a move is its own write: POST /api/preservation/:id/move
+// The one door that changes where a jar lives. The list row does not echo its place through the legacy
+// PUT (a differing place there is a 409 client_stale), so a move is its own write: POST /api/preservation/:id/move
 // {place, when}. The server applies the move rule and stamps storage_moved_at; this panel says what that
 // rule will do to THIS jar's date before Save and decides nothing.
 //
@@ -9,14 +8,14 @@
 // A failed write keeps the choice and says why in the server's words (describeRefusal). No draft: two
 // taps is the whole of it.
 //
-// B′ release 2 (the Pantry row sheet): a bought item moves too, by a PATCH of its storage_location_id
-// that has no When. `onSubmit({place, when})` replaces the jar's move POST when a host passes it (the
-// same chips, the same refusal handling), and `whenless` leaves the When rows out.
+// A bought item moves too, by a PATCH of its storage_location_id that has no When. `onSubmit({place,
+// when})` replaces the jar's move POST when a host passes it (the same chips, the same refusal
+// handling), and `whenless` leaves the When rows out.
 //
-// Put-Up UX pass R1: A PANEL INSIDE THE ROW SHEET, like Edit and Gave it away — not a sheet of its own.
-// A second sheet swapped in over the row sheet took the row sheet's Back entry with it, so the Back after
-// a cancelled move left the page. As a panel it rides the row sheet's one entry: Back here returns to the
-// row's action list (PantryRowSheet's backIntercept). The file keeps its path and its default export.
+// A PANEL INSIDE THE ROW SHEET, like Edit and Gave it away — not a sheet of its own. A second sheet
+// swapped in over the row sheet would take the row sheet's Back entry with it, so the Back after a
+// cancelled move would leave the page. As a panel it rides the row sheet's one entry: Back here returns
+// to the row's action list (PantryRowSheet's backIntercept).
 // `onBusyChange(saving)` tells the host sheet a write is in flight, so Back and the backdrop wait for it.
 // `onMoved({ saved, place })` hands back what the write answered and the place that was tapped.
 //

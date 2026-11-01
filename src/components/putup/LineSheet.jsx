@@ -1,16 +1,15 @@
 // src/components/putup/LineSheet.jsx
-// Put-Up release F (06 §4 item 3, §3.7, §3.11; contract-F §2.2) — tap a line in What went in and edit it,
-// or take it out. Every stage and every line is editable, including after the batch is finished (Dave
-// 15:55, 06 §3.13).
+// Tap a line in What went in and edit it, or take it out. Every stage and every line is editable,
+// including after the batch is finished.
 //
 // WHAT CAN CHANGE is the line PATCH's allowlist: the name, the amount (as a pair), the form, the listed
 // heat, the brand, where from, the note, and — on a typed line only — whether it is the water. What
 // the line IS (a pick, a draw from a jar, a planting) never changes here: take it out and add it again.
 // A weighed draw keeps its amount in a mass unit (the server moves the bag's grams by the difference).
 // Save sends ONLY what changed; the host shows "Saved · Undo" in place, and Undo sends back the values
-// this sheet held (06 UX-I6). No timer anywhere.
+// this sheet held. No timer anywhere.
 //
-// Required at open: 0 (the census). <Sheet armsBack>; the draft survives Back; busy while writing.
+// Nothing is required at open. <Sheet armsBack>; the draft survives Back; busy while writing.
 import React, { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { P } from '../../lib/constants.js'
 import { T } from '../../lib/tokens.js'

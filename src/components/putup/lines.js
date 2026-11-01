@@ -1,17 +1,16 @@
 // src/components/putup/lines.js
-// Put-Up release F — a batch LINE, as the surface says it and as a write sends it (06 §4 item 3,
-// contract-F §2.2). The rules for each line kind live here once so What went in, the line sheet, the
-// salt helper and Put it up's additions cannot build two different bodies for one answer.
+// A batch LINE, as the surface says it and as a write sends it (contract-F §2.2). The rules for each
+// line kind live here once so What went in, the line sheet, the salt helper and Put it up's additions
+// cannot build two different bodies for one answer.
 //
-// THE FOUR WAYS A LINE COMES IN (Dave 15:55: "lets not lose the linking to existing plantings … and
-// from existing putups"):
+// THE FOUR WAYS A LINE COMES IN (linking to existing plantings and to existing put-ups is kept):
 //   · a planting, no pick needed          → input_kind 'garden'  (plant_id)
 //   · a pick from that planting           → input_kind 'harvest' (harvest_log_id; the planting is
 //                                           copied server-side)
 //   · a draw from something put up        → input_kind 'put_up'  (preservation_log_id; a counted jar
 //                                           takes count_drawn, a weighed bag takes grams)
 //   · a typed name                        → input_kind 'other'   (the name kept as typed)
-// B′ release 3 adds two (V4 §2.5a's whole corpus):
+// Two more (V4 §2.5a's whole corpus):
 //   · a bought item in the Pantry         → input_kind 'pantry'  (pantry_item_id)
 //   · a crop or a variety                 → input_kind 'other'   (its name, and its crop_type_slug)
 // and a typed name carries the search's resolved crop when there is one (an exact variety name).
@@ -25,7 +24,7 @@ import {
 
 export const LINE_SEARCH_PATH = '/api/kitchen-batches/line-search'
 export const lineSearchUrl = (q) => `${LINE_SEARCH_PATH}?q=${encodeURIComponent(String(q ?? '').trim())}`
-// The unit chips the add row offers (06 §4 item 3). Every one is in KITCHEN_UNITS.
+// The unit chips the add row offers. Every one is in KITCHEN_UNITS.
 export const QUICK_UNITS = Object.freeze(['g', 'oz', 'lb', 'ml', 'count'])
 export const FROM_GARDEN_WORDS = 'from the garden'
 
@@ -74,13 +73,13 @@ export function lineWords(line) {
   return parts.join(' · ')
 }
 
-// "counted 7–10× as dried" — shown beside a dried line's typed rating so the rule is visible (06 §6 Q1).
+// "counted 7–10× as dried" — shown beside a dried line's typed rating so the rule is visible.
 export const DRIED_NOTE = `counted ${DRIED_FACTOR.low}–${DRIED_FACTOR.high}× as dried`
 
 // ── line-search hits ────────────────────────────────────────────────────────────────────────────────
 export function hitKey(hit) {
   if (!hit) return null
-  // B′ release 3: a ranked hit carries its own key (planting:/jar:/pantry:/crop:/variety:) — a pantry
+  // A ranked hit carries its own key (planting:/jar:/pantry:/crop:/variety:) — a pantry
   // item from a planting has a plant_id too, so the key must come first.
   if (hit.key) return hit.key
   if (hit.plant_id) return `planting:${hit.plant_id}`
@@ -108,7 +107,7 @@ export function plantingHitWords(hit) {
   return [String(hit.label ?? '').trim() || 'A planting', n ? `${n} recent ${n === 1 ? 'pick' : 'picks'}` : 'planting'].join(' · ')
 }
 
-// B′ release 3 — the words for the other ranked hits.
+// The words for the other ranked hits.
 export function pantryHitWords(hit) {
   if (!hit) return ''
   return [String(hit.label ?? '').trim() || 'Something bought', hit.place_label].filter(Boolean).join(' · ')
@@ -242,7 +241,7 @@ export function addedWords(body) {
 }
 
 // Listed heat is offered when a form is set or the line has no variety rating to fall back on
-// (06 §4 item 3). A typed line never has a variety; a planting or a jar might.
+// (a typed line never has a variety; a planting or a jar might).
 export function offerListedHeat(draft) {
   if (!draft) return false
   if (draft.role) return false

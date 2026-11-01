@@ -1,8 +1,8 @@
 // src/components/putup/putItUp.js
-// Put-Up release 1b (V4 §2.4, §3.1–§3.6, §5.1, Appendix B) — the pure half of "Put it up": the chips it
-// offers, how a When answer becomes a stored date and precision, what each row may ask, the preview
-// of each row's discard-by, the ONE request body, and the words of the completion stub and label hint.
-// The sheet (PutItUpSheet.jsx) paints these; it decides nothing a test cannot pin here.
+// The pure half of "Put it up": the chips it offers, how a When answer becomes a stored date and
+// precision, what each row may ask, the preview of each row's discard-by, the ONE request body, and
+// the words of the completion stub and label hint. The sheet (PutItUpSheet.jsx) paints these; it
+// decides nothing a test cannot pin here.
 //
 // THE WRITE (V4 §5.1): POST /api/kitchen-batches/:id/put-up, ONE statement server-side, keyed by a
 // client-minted idempotency_key held in the sheet's draft and reused on every retry (§5.2, §6.5).
@@ -67,9 +67,8 @@ export function estimateChips(now = new Date()) {
   return chips
 }
 
-// When starts on Today, on every batch (Put-Up UX pass R1, D12; before it, only a batch started or last
-// checked today did). The chips stay on screen, so any other answer is one tap; an untouched sheet stores
-// today as the put-up day.
+// When starts on Today, on every batch. The chips stay on screen, so any other answer is one tap; an
+// untouched sheet stores today as the put-up day.
 export function preselectWhen() {
   return 'today'
 }
@@ -208,8 +207,8 @@ export function placeChips(places = []) {
 // Rows 2..N INHERIT container and place from the row above (§2.4) — live, not copied once: changing
 // row 1's place moves every inheriting row with it, until that row's own "Change" is tapped, which
 // takes the values it was showing as its own.
-// Release F adds `cooked` ("Cooked after blending?", a record only) and `heat` (a typed heat estimate
-// for the row's jars, basis typed) — both optional, absent from the body when unanswered.
+// `cooked` ("Cooked after blending?", a record only) and `heat` (a typed heat estimate for the row's
+// jars, basis typed) are optional, absent from the body when unanswered.
 export function newRow(prev = null) {
   return {
     count: '1', inherit: !!prev, container: null, place: null,
@@ -242,14 +241,12 @@ export function rowCount(row) {
   return Number.isInteger(n) && n >= 1 ? n : 1
 }
 
-// ── The discard-by preview (§3.1 and the V4 engine) ──────────────────────────────────────────────
-// typed > (recipe: none in 1b) > the engine > none. The engine cell for a jar comes from shelfLife.js's
-// resolveJarShelfLife — the SAME function the 1b Put it up route resolves each jar with, so the
-// preview cannot drift from what is stored. Until the 1b Lambda lane's engine lands on this branch the
-// function is absent and jarCell applies the same four jar rules over the shipped resolveShelfLife, in
-// the V4 engine's order: an unknown put-up date → no date; cured or cellared produce with an
-// estimated date → no date; Raw or In oil anywhere but a freezer → no date; dried and Bends or Still
-// soft → no date. (Once both are merged the fallback is dead and can go.)
+// typed > (recipe: the sheet's recipePreview) > the engine > none. The engine cell for a jar comes from
+// shelfLife.js's resolveJarShelfLife — the SAME function the Put it up route resolves each jar with, so
+// the preview cannot drift from what is stored. jarCell keeps a fallback over resolveShelfLife for an
+// engine without that function (dead while shelfLife.js exports it), applying the same four jar rules in
+// the engine's order: an unknown put-up date → no date; cured or cellared produce with an estimated date
+// → no date; Raw or In oil anywhere but a freezer → no date; dried and Bends or Still soft → no date.
 const FREEZER_KINDS = new Set(['deep_freezer', 'fridge_freezer'])
 const UNDRIED_TEXTURES = new Set(['bends', 'still_soft'])
 const NO_DATE_WHEN_ESTIMATED = new Set(['cure_store', 'cold_store'])
@@ -298,10 +295,10 @@ export function groupPreviews(previews) {
 }
 
 // ── The one body (§5.1) ──────────────────────────────────────────────────────────────────────────
-// contract-F §2.2: every line carries its own idempotency_key, minted when the line was added and kept
-// in the draft, so a replayed put-up names the same lines. Release F's additions are whole line bodies
-// already (LineAdder → lines.js lineBody: a planting, a pick, a draw, or a typed name, with form, brand,
-// note and listed heat), passed through as built; the 1b shape ({key, label, qty, unit}) is still read.
+// Every line carries its own idempotency_key, minted when the line was added and kept in the draft, so
+// a replayed put-up names the same lines. Additions are whole line bodies already (LineAdder → lines.js
+// lineBody: a planting, a pick, a draw, or a typed name, with form, brand, note and listed heat),
+// passed through as built; the older shape ({key, label, qty, unit}) is still read.
 function lineBody(l) {
   if (l && typeof l.input_kind === 'string') {
     const { ordinal: _o, ...body } = l
@@ -383,8 +380,8 @@ export function putUpBody({ key, when, method, rows, sittingLines = [], madeG = 
   if (sl.length) body.sitting_lines = sl
   const made = String(madeG ?? '').trim()
   if (made !== '' && Number.isFinite(Number(made)) && Number(made) > 0) body.made_g = made
-  // "Mash in ___ g" beside Made (Ferment; 06 §4 item 7): the drained solids at blend — it also prorates
-  // the heat across sittings.
+  // "Mash in ___ g" beside Made (Ferment): the drained solids at blend; it also prorates the heat across
+  // sittings.
   const mash = String(mashG ?? '').trim()
   if (mash !== '' && Number.isFinite(Number(mash)) && Number(mash) > 0) body.mash_in_g = mash
   const drawn = drawnJarIds(rows, sittingLines)
@@ -430,10 +427,10 @@ export function completionStub({ batch, rows, jars, now = new Date() }) {
   return [`${label || 'This batch'} — put up`, ...parts, hint].filter(Boolean).join(' · ')
 }
 
-// A sitting's jars AS THE ROWS THEY WERE, for the stub of a REPLAYED put-up (BUG-PUTUPREPLAYREST-001): the
-// sitting an earlier tap made is said as the server answered it — never as the form reads now. Put it up
-// writes one jar per row (lambda putUp.js): its label is the row's name or the batch's, with its container,
-// how many, and where it went (`storage_label`, the route's own join).
+// A sitting's jars AS THE ROWS THEY WERE, for the stub of a REPLAYED put-up: the sitting an earlier tap
+// made is said as the server answered it — never as the form reads now. Put it up writes one jar per row
+// (lambda putUp.js): its label is the row's name or the batch's, with its container, how many, and where
+// it went (`storage_label`, the route's own join).
 export function sittingRows(jars) {
   return (Array.isArray(jars) ? jars : []).map(j => ({
     name: String(j?.label ?? ''), count: String(j?.package_count ?? 1), inherit: false,

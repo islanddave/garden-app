@@ -1,12 +1,12 @@
 // src/components/putup/LikeBatchPicker.jsx
-// B′ release 3 — "Like <batch>, except…" (V4 §2.2): a quiet door that lists past batches and, on a tap,
-// reads that batch and hands its lines and kind to the host as a draft (likeBatch.js likeDraft). Used by
-// Start a batch and by How it was made →. Plain markup; no new visual design.
+// "Like <batch>, except…" (V4 §2.2): a quiet door that lists past batches and, on a tap, reads that
+// batch and hands its lines and kind to the host as a draft (likeBatch.js likeDraft). Used by Start a
+// batch and by How it was made →. Plain markup.
 //
 // Props: onPick({ kind, lines, from }) · picked (the current { from, lines } or null) · onClear ·
 // exceptId (never offer this batch) · disabled · idPrefix.
 //
-// Put-Up UX pass R1 (PLAN-V3 D10, "Start from · a past batch") adds two OPTIONAL props, for a host that
+// "Start from · a past batch": two OPTIONAL props, for a host that
 // owns the door itself: `open` (a boolean) and `onOpenChange(next)`. With `open` given the picker is
 // CONTROLLED: it draws no toggle of its own, lists the batches while `open`, reads them the first time it
 // opens, and after a pick calls `onPick` and then `onOpenChange(false)`. What was picked still shows, with
@@ -19,7 +19,7 @@ import SelectChip from '../forms/SelectChip.jsx'
 import { mintKey } from '../kitchen/idempotencyKey.js'
 import { likeDraft, likeChoices, likeWords } from './likeBatch.js'
 
-// 48px tall (Put-Up UX pass R1, F16: height only — the size and weight are as they were).
+// 48px tall.
 const link = {
   display: 'inline-flex', alignItems: 'center', minHeight: T.buttonMinHeight, background: 'none', border: 'none',
   padding: '2px 8px 2px 0', cursor: 'pointer', fontFamily: 'inherit', color: P.green, fontSize: T.type.sm, fontWeight: 600,

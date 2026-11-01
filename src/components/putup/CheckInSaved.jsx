@@ -1,6 +1,5 @@
 // src/components/putup/CheckInSaved.jsx
-// Put-Up release 1b (V4 §2.3: "from 1b every check-in shows 'Saved · Undo' in place (Undo writes a void
-// row)"). One quiet line on the card after a check-in lands, until the next visit — no timer. Undo is
+// Every check-in shows 'Saved · Undo' in place (V4 §2.3; Undo writes a void row). One quiet line on the card after a check-in lands, until the next visit — no timer. Undo is
 // POST /:id/stages {stage_kind: 'void', voids_id} (contract-F §2.3); a second void of the same row is a
 // replay on the server (the UNIQUE on voids_id), and a synchronous ref refuses it here first. A
 // duplicate check-in is one visible row with its own Undo (V4 §5.2): check-ins are not keyed.

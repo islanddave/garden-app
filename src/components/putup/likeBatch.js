@@ -1,5 +1,5 @@
 // src/components/putup/likeBatch.js
-// B′ release 3 — "Like <batch>, except…" (V4 §2.2, Appendix C step 6), the PURE half.
+// "Like <batch>, except…" (V4 §2.2, Appendix C step 6), the PURE half.
 //
 // THE MECHANISM (the plainest one consistent with F's line routes): read the chosen past batch through
 // the shipped GET /api/kitchen-batches/:id, and copy its What-went-in lines — and its kind — into the new
@@ -42,7 +42,7 @@ export function likeLine(line, mint) {
   if (out.qty != null) out.qty = String(out.qty)
   if (out.role) { delete out.form; delete out.shu_rating_low; delete out.shu_rating_high }
   if (out.role === 'salt') for (const k of SALT_KEYS) if (line[k] != null) out[k] = typeof line[k] === 'number' ? String(line[k]) : line[k]
-  // A 1b-era 'peppers' base is not a word the F client writes (06 §3.1): the facts go, the grams stay.
+  // An older 'peppers' base is not a word the client writes now (06 §3.1): the facts go, the grams stay.
   if (out.salt_base === 'peppers') for (const k of SALT_KEYS) delete out[k]
   if (line.ordinal != null) out.ordinal = Number(line.ordinal)
   return out

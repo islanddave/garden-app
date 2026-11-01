@@ -1,5 +1,5 @@
 // src/components/putup/ClosedBatchesView.jsx
-// V5-BATCHCLOSE-001 item C — the closed half of /put-up: the archive of kitchen_batch rows that
+// The closed half of /put-up: the archive of kitchen_batch rows that
 // have been closed out, from GET /api/kitchen-batches?state=closed, and the one door back out of a
 // terminal act (per-row Reopen).
 //
@@ -41,11 +41,9 @@ export const reopenBatchPath = (id) => `/api/kitchen-batches/${id}/reopen`
 // The six outcomes, in the final wording — do not re-word. Matches chk_kitchen_batch_outcome and
 // the server's KITCHEN_OUTCOMES.
 //
-// COLLAPSED AT INTEGRATION (20260904). This lane branched before L3's batchClose.js existed and
-// carried its own literal statement of these six labels, flagged in-source as drift waiting to
-// happen. Both lanes have now landed, so the labels are DERIVED from the single source rather than
-// restated: CLOSE_OUTCOMES is the one table, the close sheet and this archive read the same strings
-// by construction, and a re-wording cannot reach one surface without the other.
+// The labels are DERIVED from batchClose.js's CLOSE_OUTCOMES rather than restated: it is the one
+// table, the close sheet and this archive read the same strings by construction, and a re-wording
+// cannot reach one surface without the other.
 //
 // Derived rather than re-exported so this module keeps its own map shape (value -> label) for
 // outcomeLabel()'s lookup, without a second literal anyone could edit in isolation.
@@ -64,9 +62,9 @@ export function outcomeLabel(value) {
   return CLOSED_OUTCOME_LABELS[value] ?? UNKNOWN_OUTCOME_LABEL
 }
 
-// "Sep 3". Same shape and same reasoning as GoingNowView.jsx:39-43 — month and day only, because
-// the year is carried by the group heading above the row. Copied rather than imported: that module
-// exports one default component and nothing else, and this lane may not widen its export surface.
+// "Sep 3". Same shape and reasoning as GoingNowView's — month and day only, because the year is carried
+// by the group heading above the row. Copied rather than imported: that module exports one default
+// component and nothing else.
 function shortDate(iso) {
   if (!iso) return null
   const d = new Date(iso)
@@ -149,7 +147,7 @@ function outputText(row) {
   return n === 1 ? '1 put-up' : `${n} put-ups`
 }
 
-// THE ENDING, said ONE way (Put-Up UX pass R1, D3): on this list's row and on the batch that row opens
+// THE ENDING, said ONE way: on this list's row and on the batch that row opens
 // (BatchDetailView's outcome line calls this too, so the two cannot drift).
 //   "closed Aug 28 · 2 put-ups"                     put up, and a count follows: the count says it
 //   "closed Aug 28 · Put it up"                     put up, nothing counted: the label stands
@@ -202,7 +200,7 @@ function ClosedBatchRow({ batch, busy, onReopen, onOpen }) {
       ) : (
         <div style={{ minWidth: 0, flex: '1 1 60%' }}>{words}</div>
       )}
-      {/* The reversal, following the shipped Restore idiom (RecentlyDeleted.jsx:80-87): the safe
+      {/* The reversal, following the shipped Restore idiom (RecentlyDeleted.jsx): the safe
           action is allowed to be the easy one, it carries the row's name in its aria-label so a
           screen-reader user hears WHICH batch it acts on, and it wraps to its own line rather than
           shrinking below the tap floor. Never the danger variant — reopening destroys nothing.
@@ -235,7 +233,7 @@ export default function ClosedBatchesView({ batches, loading, error, onReload, n
   const open = typeof onOpenBatch === 'function' ? (batch) => onOpenBatch(batch.id, { ...CLOSED_ORIGIN }) : null
 
   // One reopen at a time, and a second tap while one is in flight is a no-op rather than a second
-  // POST — the shipped restore guard (RecentlyDeleted.jsx:176). On success the PAGE refetches:
+  // POST — the shipped restore guard (RecentlyDeleted.jsx). On success the PAGE refetches:
   // `batches` is a prop, so there is no local optimistic mutation to get wrong, which is the same
   // contract every write on the going-now card already follows.
   const reopen = useCallback(async (batch) => {

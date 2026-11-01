@@ -1,5 +1,5 @@
 // src/components/putup/origin.js
-// Put-Up UX pass R1 (prep) — WHERE A PUT-UP MODE WAS OPENED FROM, the pure half.
+// WHERE A PUT-UP MODE WAS OPENED FROM, the pure half.
 //
 // A surface that opens batch detail, recipe detail or the closed list names itself on the pushed entry's
 // router state as `from`, so the mode's in-page Back can say "← Pantry" and go back there. The page
@@ -48,8 +48,8 @@ export function readFrom(state) {
 //     (and sets the validated copy) — so a push that names no origin cannot carry the last entry's
 //   · removes the page-entry stamp (pageEntry.js CONTINUES_ENTRY_KEY): it names the entry being LEFT, and
 //     a pushed entry that kept it would answer to the list's scroll identity instead of its own
-//   · removes `prefill`: the key the retired "Log a put-up" form was opened with (Put-Up R2b). Nothing
-//     reads it now, and an entry stored before the form left can still hold one — no write carries it on
+//   · removes `prefill`: the key the retired "Log a put-up" form was opened with. Nothing reads it now,
+//     and an entry stored before the form left can still hold one — no write carries it on
 //   · keeps every other key as it is, same references: an overlay's `background` (with its
 //     historyEntry), and any key this file has never heard of
 //   · returns null, not {}, when nothing is left

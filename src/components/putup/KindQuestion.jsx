@@ -1,20 +1,19 @@
 // src/components/putup/KindQuestion.jsx
 // "What kind of batch? →" — one inline question on a batch whose kind is NULL, answered in one tap and
-// never asked again. Asked on the Going-now card (Put-Up 1a) and, from release F, on batch detail too —
-// open or closed (06 §3.10): the Ferment fields appear there with no navigation once it is answered.
-// `idPrefix` keeps the two hosts' testids apart; the card's are 'going-kind-*' as they always were.
+// never asked again. Asked on the Going-now card and on batch detail too, open or closed: the Ferment
+// fields appear there with no navigation once it is answered. `idPrefix` keeps the two hosts' testids
+// apart; the card's are 'going-kind-*'.
 import React, { useCallback, useRef, useState } from 'react'
 import { P } from '../../lib/constants.js'
 import { T } from '../../lib/tokens.js'
 import KindChips, { kindBody } from '../kitchen/KindChips.jsx'
 import { KIND_QUESTION } from './goingNow.js'
 
-// Put-Up 1a (V4 §2.3). The same inline-expand shape as the start-date editor (now on the batch's
-// own surface, BatchDetailView.jsx) and for the same reason: an inline reveal is not a dismissable
-// layer. One tap on a chip IS the answer — it PUTs {kind} through
-// the shipped merge PUT (an absent key is left alone, so nothing else on the row moves) and the
-// question is never asked again. "Other" is the one two-step answer: it offers its short name before
-// Save — optional from release 1b, where the CHECK no longer needs it (kindBody sends kind alone).
+// The same inline-expand shape as the start-date editor (on the batch's own surface,
+// BatchDetailView.jsx) and for the same reason: an inline reveal is not a dismissable layer. One tap on
+// a chip IS the answer — it PUTs {kind} through the merge PUT (an absent key is left alone, so nothing
+// else on the row moves) and the question is never asked again. "Other" is the one two-step answer: it
+// offers its short name before Save, optional (kindBody sends kind alone).
 //
 // The question hides itself the moment the write lands, rather than waiting for the list re-read to
 // carry the new kind back: a question that re-appears for the length of a round trip after it was

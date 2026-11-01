@@ -1,5 +1,5 @@
 // src/components/putup/batchClose.js
-// V5-KBCLOSE-001 — the pure half of "what happened to this batch?".
+// The pure half of "what happened to this batch?".
 //
 // Same seam as goingNow.js: anything that DECIDES lives here, anything that PAINTS lives in the
 // sibling .jsx. Every function below is a pure function of a `v_kitchen_batch_current` row, a
@@ -20,12 +20,12 @@
 // value therefore reaches the DOM through `outcomeLabel` (TOTAL, and its fallback is not the raw
 // value) and every testid through `OUTCOME_SLUGS` (also total, and slug-checked in the tests).
 
-// Client restatement of KITCHEN_UUID_RE (lambda/preservation/kitchenBatch.js:108). Restated rather
+// Client restatement of KITCHEN_UUID_RE (lambda/preservation/kitchenBatch.js). Restated rather
 // than imported for the same reason startPatchViolatesPairing restates chk_kitchen_batch_start_pairing:
 // a body that could never commit is caught here instead of arriving as an opaque 400.
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-// normalizeText, client side (kitchenBatch.js:113-117): trimmed, and '' means "nothing recorded".
+// normalizeText, client side (kitchenBatch.js): trimmed, and '' means "nothing recorded".
 function trimToNull(v) {
   if (v == null) return null
   const t = String(v).trim()
@@ -124,9 +124,8 @@ export function outcomeKeepsSomething(value) {
 // the same statement as the close, gated on the `closed` CTE — so the close and the row it produces
 // cannot land apart, and no client-side second write is needed or wanted. It is written on every
 // close, cue or no cue: a NULL cue records that nobody said how they knew, rather than inventing
-// that they did. (An earlier draft of this file posted the stage row from here, because at that base
-// validateClose whitelisted three keys and silently dropped the rest behind a 200. It no longer
-// does; leaving both writes in would have put TWO `finished` rows on one act.)
+// that they did. The stage row is written by the server's close, not from here: a second write would
+// put TWO `finished` rows on one act.
 export function closePatch({ outcome, note, cue, outputIds } = {}) {
   if (!OUTCOME_LABELS[outcome]) return null
   // A non-string cue is a caller bug, not a user input — refuse the whole close rather than commit
@@ -145,7 +144,7 @@ export function closePatch({ outcome, note, cue, outputIds } = {}) {
     if (!Array.isArray(outputIds)) return null
     const ids = [...new Set(outputIds)]
     if (ids.some(id => !UUID_RE.test(String(id)))) return null
-    // Absent and [] both mean "link nothing" (kitchenBatch.js:456,464), so the empty case sends no
+    // Absent and [] both mean "link nothing" (kitchenBatch.js), so the empty case sends no
     // key at all — the batch PUT next door is a MERGE and this family sends only what it means.
     if (ids.length > 0) body.output_preservation_log_ids = ids
   }
@@ -158,9 +157,8 @@ export function closePatch({ outcome, note, cue, outputIds } = {}) {
 // one is sent — so the picker refuses it rather than letting the cook discover it as a 400 that also
 // silently did not close the batch.
 //
-// batch_id is the second gate and it depends on BUG-JARSTEAL-001's projectRow fix landing (L1): the
-// column is not on the read surface today, so `row.batch_id` reads `undefined` and this degrades to
-// "linkable", which is the shipped behaviour. It does not degrade to a wrong REFUSAL.
+// batch_id is the second gate and depends on the read surface carrying the column: where `row.batch_id`
+// reads `undefined` this degrades to "linkable", never to a wrong REFUSAL.
 export function jarIsLinkable(row) {
   if (!row) return false
   return row.harvest_log_id == null && row.batch_id == null

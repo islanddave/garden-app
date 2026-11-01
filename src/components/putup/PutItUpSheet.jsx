@@ -1,11 +1,11 @@
 // src/components/putup/PutItUpSheet.jsx
-// Put-Up release 1b (V4 §2.4 "Put it up", §6.3–§6.7) — the missing link between a batch and its jars.
-// One sheet, one atomic keyed write, repeatable ("More to put up later") or final ("Put it up and
-// finish", the default and the primary).
+// Put it up (V4 §2.4, §6.3–§6.7) — the link between a batch and its jars. One sheet, one atomic keyed
+// write, repeatable ("More to put up later") or final ("Put it up and finish", the default and the
+// primary).
 //
-// WHAT IT ASKS (the Jen rule, V4 §6.3 — required at open: 2, what it is now and row 1's place):
-//   · When — Today · Yesterday · Earlier… · Not sure. Today is chosen at open on every batch (Put-Up UX
-//     pass R1, D12) and any other answer is one tap. The resolved date is shown in words before Save.
+// WHAT IT ASKS (V4 §6.3 — required at open: 2, what it is now and row 1's place):
+//   · When — Today · Yesterday · Earlier… · Not sure. Today is chosen at open on every batch and any
+//     other answer is one tap. The resolved date is shown in words before Save.
 //   · What it is now — one method tap from the kind's chips (Appendix B) + More….
 //   · Rows — "2 × 8 oz woozy · Fridge": count (48 px − / +), container, place. Row 1's place is the
 //     other required answer; rows 2..N copy container and place from the row above, shown in words.
@@ -18,24 +18,26 @@
 // minted the first time the sheet is dirty, kept in the draft, and reused on every retry and reload
 // (V4 §5.2, §6.5) — a retried Save after a dropped answer is a replay, never a second sitting.
 //
-// A REPLAYED SITTING (BUG-PUTUPREPLAYREST-001; kitchen/idempotencyKey.js). The key does not change with what
-// is on the sheet, and a sitting has NO update route (its rows are jars; the only whole-sitting write is
-// Undo). So once another body has gone out under the key — a count changed, a row added, the OTHER footer
-// button: `finish` is part of the body, and both buttons share the key — a tap answered `replayed: true`
-// writes nothing and is REFUSED in words (PUT_UP_REPLAY_NOT_ON_IT): the sheet stays open, the host is not
-// told a put-up, and the batch behind re-reads (`onChanged`). Which tap landed is not known here, and the
-// answer does not carry everything a sitting holds (the mash weight, Next time…), so the sheet cannot tell
-// "already holds this" and the sentence says only what is certain. That refusal ends the STORED draft — the
-// first tap landed — so the sheet opened next is a clean one with a new key (the rest can still be put up
-// later), while this one keeps its key and is refused again. One body only is the retry it always was.
-// What has gone out rides in the draft as `sent`; its print is of what was CHOSEN (the When chip, not the day
-// it came to). THE STUB of a replayed sitting is built from the server's jars, never from the form.
+// A REPLAYED SITTING (kitchen/idempotencyKey.js). The key does not change with what is on the sheet,
+// and a sitting has NO update route (its rows are jars; the only whole-sitting write is Undo). So once
+// another body has gone out under the key — a count changed, a row added, the OTHER footer button
+// (`finish` is part of the body, and both buttons share the key) — a tap answered `replayed: true`
+// writes nothing and is REFUSED in words (PUT_UP_REPLAY_NOT_ON_IT): the sheet stays open, the host is
+// not told a put-up, and the batch behind re-reads (`onChanged`). Which tap landed is not known here,
+// and the answer does not carry everything a sitting holds (the mash weight, Next time…), so the
+// sheet cannot tell "already holds this" and the sentence says only what is certain. That refusal ends
+// the STORED draft — the first tap landed — so the sheet opened next is a clean one with a new key
+// (the rest can still be put up later), while this one keeps its key and is refused again. One body
+// only is the retry it always was. What has gone out rides in the draft as `sent`; its print is of
+// what was CHOSEN (the When chip, not the day it came to). THE STUB of a replayed sitting is built
+// from the server's jars, never from the form.
 //
-// A REPLAYED SITTING WITH NO JARS IS GONE (QA I-4). The route finds a sitting by its key and answers with its
-// LIVE jars; it does not look for an Undo. A sitting is never written with fewer than one jar, so `replayed`
-// with none is certain — that put-up was undone, or its jars were removed — whatever went out under the key.
-// It is not a put-up: nothing is written, the host is not told one, the sheet says so (PUT_UP_REPLAY_GONE),
-// the batch behind re-reads, and the stored draft ends so the sheet opened next can enter it again.
+// A REPLAYED SITTING WITH NO JARS IS GONE. The route finds a sitting by its key and answers with its
+// LIVE jars; it does not look for an Undo. A sitting is never written with fewer than one jar, so
+// `replayed` with none is certain — that put-up was undone, or its jars were removed — whatever went
+// out under the key. It is not a put-up: nothing is written, the host is not told one, the sheet says
+// so (PUT_UP_REPLAY_GONE), the batch behind re-reads, and the stored draft ends so the sheet opened
+// next can enter it again.
 //
 // <Sheet armsBack>, size full, busy while writing; the draft (kitchen/sheetDraft.js, sheet 'putup',
 // keyed per person per batch) survives Back; confirmOnDirty off; the reload gate is held while dirty or
@@ -54,8 +56,8 @@ import SelectChip from '../forms/SelectChip.jsx'
 import { labelChrome, optionalMarkChrome, requiredMarkChrome, inputChrome, textareaChrome } from '../forms/formStyles.js'
 import PhReadingField from './PhReadingField.jsx'
 import { readSheetDraft, writeSheetDraft, clearSheetDraft } from '../kitchen/sheetDraft.js'
-// Put-Up release 4: a batch made from a recipe puts up into the recipe's final container by default, and its
-// discard-by preview takes the recipe rung (typed > recipe on its storage kind > the engine).
+// A batch made from a recipe puts up into the recipe's final container by default, and its discard-by
+// preview takes the recipe rung (typed > recipe on its storage kind > the engine).
 import { recipeFirstRow, recipePreview } from '../recipes/recipes.js'
 import { useSheetDraftKey } from '../kitchen/useSheetDraftKey.js'
 import { useFieldsClearOfFooter, scrollClearOfFooter } from '../kitchen/sheetScroll.js'
@@ -80,12 +82,12 @@ const EMPTY_SITTING = { lines: [], madeG: '', mashG: '', nextTime: '' }
 export const PUT_UP_REPLAY_NOT_ON_IT = 'This is already put up — an earlier tap went through. This tap changed nothing on it. Close this and open the batch to see what was put up.'
 // Said when the sitting an earlier tap made has no jar left: undone, or its jars removed — which is not known.
 // The way on names the batch, not its Put it up: after a FINISHED sitting's jars were removed one by one the
-// batch is still closed, and Put it up is behind Reopen (re-review M-F).
+// batch is still closed, and Put it up is behind Reopen.
 export const PUT_UP_REPLAY_GONE = 'That put-up is not in the Pantry anymore — it was undone or removed since. This tap changed nothing. To put it up again, close this and open the batch.'
 
-// What the preview says when Raw or In oil is what took the date away (Put-Up R2a, amendment D7; ruling
-// Df-3 = F-3). THE ONE COPY on this surface: the door (pantry/) holds its own and a test binds the two, so
-// nothing here imports across the putup → pantry line. The stored row keeps jarWords' own sentence.
+// What the preview says when Raw or In oil is what took the date away. THE ONE COPY on this surface: the
+// door (pantry/) holds its own and a test binds the two, so nothing here imports across the putup →
+// pantry line. The stored row keeps jarWords' own sentence.
 export const RAW_OIL_NO_DATE_WORDS = 'no date — no general figure for raw or in-oil food. Set your own under Discard by.'
 
 // "Raw or In oil removed the date": the row's worked-out preview has no date, the row is marked Raw or In
@@ -106,7 +108,7 @@ const SITTING_ADDER = 'putup-sitting-added'
 function isPlace(p) {
   return p === null || (!!p && typeof p === 'object' && typeof p.label === 'string' && typeof p.key === 'string')
 }
-// A line in a draft: a release-F line body (it carries its own key), or the 1b typed shape.
+// A line in a draft: a whole line body (it carries its own key), or the older typed shape.
 function isLine(l) {
   return !!l && typeof l === 'object'
     && ((typeof l.input_kind === 'string' && typeof l.idempotency_key === 'string') || (typeof l.label === 'string' && typeof l.key === 'string'))
@@ -133,7 +135,7 @@ export function isPutItUpDraft(d) {
     && (d.sent == null || Array.isArray(d.sent))
 }
 
-// The sheet's quiet actions are 48 px tall (Put-Up UX pass R1, F16): height only.
+// The sheet's quiet actions are 48 px tall: height only.
 const quietLink = {
   display: 'inline-flex', alignItems: 'center', minHeight: T.buttonMinHeight, background: 'none', border: 'none',
   padding: '2px 8px 2px 0', cursor: 'pointer', fontFamily: 'inherit', color: P.green, fontSize: T.type.sm, fontWeight: 600,
@@ -178,23 +180,22 @@ function ToggleChips({ label, options, value, onChange, disabled, idPrefix, hint
   )
 }
 
-// Lines added at the end (to one row's jars, or to every jar of the sitting) — release F: through the
-// same line search as What went in (06 §3.6, HS-I3: a pick, a planting, a draw such as "8 g from the
-// frozen reaper bag", or typed), taking form (fresh or cooked, per Dave), brand, note and listed heat.
-// Each is a whole keyed line body; the sheet sends them with the sitting in its one write.
+// Lines added at the end (to one row's jars, or to every jar of the sitting) go through the same line
+// search as What went in: a pick, a planting, a draw such as "8 g from the frozen reaper bag", or typed,
+// taking form (fresh or cooked), brand, note and listed heat. Each is a whole keyed line body; the
+// sheet sends them with the sitting in its one write.
 //
-// `guard` (Put-Up UX pass R1, D2 — the unadded-line guard): { pending, stop, onPending, footerRef }. A name
-// typed into the adder and not added is not a line, and neither commit would send it. The adder reports
-// that name (`onPending`); a commit that stopped for it bumps `stop`, which puts the cursor back in the
-// adder's name field under one line saying why.
-// THE NAME OUTLIVES THE ADDER (Put-Up R2a, ruling h): this block unmounts with its disclosure ("Less about
-// this row", the sitting's "Less"), and the name typed and not added stays in the sheet's state (`pending`).
-// Mounted again over a held name, the adder is open at once with that name in its field — hidden while the
+// `guard` is the unadded-line guard: { pending, stop, onPending, footerRef }. A name typed into the
+// adder and not added is not a line, and neither commit would send it. The adder reports that name
+// (`onPending`); a commit that stopped for it bumps `stop`, which puts the cursor back in the adder's
+// name field under one line saying why.
+// THE NAME OUTLIVES THE ADDER: this block unmounts with its disclosure ("Less about this row", the
+// sitting's "Less"), and the name typed and not added stays in the sheet's state (`pending`). Mounted
+// again over a held name, the adder is open at once with that name in its field — hidden while the
 // disclosure was closed, never dropped. Nothing is kept mounted and hidden: a closed disclosure adds no
 // control, no required input and no testid.
-// Room kept above the guard's line when it is scrolled into view: an open row has a sticky one-line header
-// at the top of the sheet's scroller, and a line brought to the very top sat under it (seen on the 426 px
-// render at both heights: the one sentence saying why nothing saved was covered).
+// Room kept above the guard's line when it is scrolled into view: an open row has a sticky one-line
+// header at the top of the sheet's scroller, and a line brought to the very top would sit under it.
 const STOP_LINE_CLEAR_PX = 40
 function AddedLines({ lines, onChange, disabled, idPrefix, label, batchLines, excludeJarIds, guard }) {
   const { pending = null, stop = 0, onPending, footerRef } = guard ?? {}
@@ -365,7 +366,7 @@ function RowEditorBlock({ row, shown, index, rows, method, batch, places, contai
             style={{ ...inputChrome(false), marginBottom: T.space.sm, scrollMarginBottom: FOOTER_PX }} />
           <AddedLines label="Added at the end" lines={row.lines} disabled={disabled} idPrefix={`putup-row-${index}-added`}
             batchLines={batchLines} excludeJarIds={excludeJarIds} guard={guard} onChange={lines => set({ lines })} />
-          {/* Release F (06 §3.6): cooked after blending is a RECORD — no date reads it. */}
+          {/* Cooked after blending is a RECORD — no date reads it. */}
           <div role="group" aria-label="Cooked after blending" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: T.space.sm }}>
             <SelectChip touch active={row.cooked === true} disabled={disabled} data-testid={`putup-row-${index}-cooked`}
               onClick={() => set({ cooked: row.cooked !== true })}>Cooked after blending</SelectChip>
@@ -405,10 +406,10 @@ function RowEditorBlock({ row, shown, index, rows, method, batch, places, contai
             <div style={{ marginTop: 4, color: P.light, fontSize: '0.74rem' }}>Or work it out from the put-up once it is saved.</div>
           </div>
           {/* The chips' words are the one set every surface that asks this uses (putItUp DISCARD_LABELS).
-              THREE chips, as the door and the Walk show (Put-Up R2a, I3): "Work it out" is the answer an
-              untouched row already gives, so it is on screen and pressed at open instead of being the
-              absence of the other two. A pressed chip tapped again lets go, back to "Work it out". The body
-              is unchanged: `auto` sends no date key. */}
+              THREE chips, as the door and the Walk show: "Work it out" is the answer an untouched row
+              already gives, so it is on screen and pressed at open instead of being the absence of the
+              other two. A pressed chip tapped again lets go, back to "Work it out". The body is
+              unchanged: `auto` sends no date key. */}
           <ToggleChips label="Discard by" disabled={disabled} idPrefix={`putup-row-${index}-discard`}
             options={['auto', 'date', 'none'].map(mode => ({ value: mode, label: DISCARD_LABELS[mode] }))}
             value={row.discard.mode}
@@ -437,7 +438,7 @@ function RowEditorBlock({ row, shown, index, rows, method, batch, places, contai
   )
 }
 
-// `lines` (release F): the batch's live lines, for the additions' unit preselect. Optional — the card's
+// `lines`: the batch's live lines, for the additions' unit preselect. Optional — the card's
 // door has no lines in hand and the additions then preselect g.
 export default function PutItUpSheet({ open, batch, lines = [], onClose, onDone, onChanged, now }) {
   if (!open || !batch) return null
@@ -477,11 +478,11 @@ function PutItUpOpen({ batch, lines: batchLines, onClose, onDone, onChanged, now
   const [pastContainers, setPastContainers] = useState([])
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState(null)
-  // contract-F §2: a new sitting on a finished batch is refused with the server's words and a door
-  // (`reopen: true`), never a bare 409. The door reopens through the shipped route; the draft and its
-  // key are untouched, so the next Save is the same sitting.
+  // A new sitting on a finished batch is refused with the server's words and a door (`reopen: true`),
+  // never a bare 409. The door reopens through the shipped route; the draft and its key are untouched,
+  // so the next Save is the same sitting.
   const [reopenDoor, setReopenDoor] = useState(false)
-  // The unadded-line guard (D2). `pendings`: the name each embedded adder holds and has not added, by adder
+  // The unadded-line guard. `pendings`: the name each embedded adder holds and has not added, by adder
   // (`putup-row-N-added`, `putup-sitting-added`). `stop`: the adder a commit last stopped for, and how many
   // times (a count, so a second tap puts the cursor back there again).
   const [pendings, setPendings] = useState({})
@@ -697,11 +698,11 @@ function PutItUpOpen({ batch, lines: batchLines, onClose, onDone, onChanged, now
 
   return (
     <Sheet open onClose={onClose} title={PUT_IT_UP_TITLE} size="full" busy={saving} armsBack>
-      {/* overflowAnchor none, here and on the footer: opening a row's "+ Name, added at the end…" jumped
-          the sheet ~676px at 426×492 (the ferment walks) — Chrome's scroll anchoring compensating for the
-          panel it had just opened, which put the row's first fields above the top edge and the pH field
-          under the row's sticky header. Nothing on this sheet loads in above the reader, so anchoring
-          has nothing to keep still here. */}
+      {/* overflowAnchor none, here and on the footer: opening a row's "+ Name, added at the end…" would
+          * otherwise jump the sheet — Chrome's scroll anchoring compensating for the panel it had just
+          * opened, which put the row's first fields above the top edge and the pH field under the row's
+          * sticky header. Nothing on this sheet loads in above the reader, so anchoring has nothing to
+          * keep still here. */}
       <div data-testid="putup-sheet" data-batch-id={batch.id} onFocus={keepClear}
         style={{ padding: '0 18px', scrollPaddingTop: 32, scrollPaddingBottom: FOOTER_PX, overflowAnchor: 'none' }}>
         <p data-testid="putup-batch" style={{ margin: '0 0 10px', color: P.mid, fontSize: '0.86rem', fontWeight: 600 }}>{batch.label}</p>
@@ -808,10 +809,10 @@ function PutItUpOpen({ batch, lines: batchLines, onClose, onDone, onChanged, now
         )}
       </div>
 
-      {/* Pinned, ONE row (Put-Up UX pass R1, D12): the filled primary, then the quieter "More to put up
-          later" beside it, 12 px apart; it wraps underneath only when the two do not fit. Both are commits
-          (the second saves the rows and leaves the batch going), so both stay in the pinned footer — side
-          by side, never at equal weight (V4 §6.6). */}
+      {/* Pinned, ONE row: the filled primary, then the quieter "More to put up later" beside it, 12 px
+          * apart; it wraps underneath only when the two do not fit. Both are commits (the second saves the
+          * rows and leaves the batch going), so both stay in the pinned footer — side by side, never at
+          * equal weight (V4 §6.6). */}
       <div ref={footerRef} data-testid="putup-footer" style={{ position: 'sticky', bottom: 0, background: P.white,
         padding: `${T.space.sm}px 18px`, borderTop: `1px solid ${P.border}`, overflowAnchor: 'none',
         display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center', gap: 12 }}>

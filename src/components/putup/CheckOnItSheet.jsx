@@ -1,16 +1,15 @@
 // src/components/putup/CheckOnItSheet.jsx
-// Put-Up 1a item 3 (V4 §2.3 "Check on it", §6.2–§6.6) — looking at a batch, and writing down what you
-// saw. Every kind: Moved it (the household's places) and a note. Ferment: also the ruled brine
+// Looking at a batch, and writing down what you saw. Every kind: Moved it (the household's places) and a note. Ferment: also the ruled brine
 // question (All under · Something poking out) and the pH field. Dry (not Candy): also "In jars to
 // condition" · "Condensation → back in the dryer".
 //
 // ONE SAVE, ONE ROW (goingNow.js checkInBody): a `tended` row, or a `moved` row when a place was
 // picked, through the shipped POST /:id/stages. It is the same row kind the card's questions are
-// answered by, so the shipped brine/pH/stall clocks clear exactly as they always have, and the card's
-// "last touched" line moves. The sheet saves on its Save button — never on a chip tap — and there is
-// no Undo in 1a (V4 §2.3: "Saved · Undo" arrives with void rows in 1b). A check-in carries no
-// idempotency key in 1a (V4 §5.2); the synchronous `writingRef` plus Sheet `busy` refuse a second
-// Save while the first is in flight, and `busy` also refuses Back and the backdrop mid-write.
+// answered by, so the brine/pH/stall clocks clear and the card's "last touched" line moves. The sheet
+// saves on its Save button — never on a chip tap — and the host then shows "Saved · Undo"
+// (CheckInSaved). A check-in carries no idempotency key (V4 §5.2); the synchronous `writingRef` plus
+// Sheet `busy` refuse a second Save while the first is in flight, and `busy` also refuses Back and
+// the backdrop mid-write.
 //
 // ⚠ THE LINE, inherited from PhReadingField and binding here: record, prompt, link — never derive,
 // score, colour, gate or compare a reading. The answers are stored as the words the cook tapped, in
@@ -54,19 +53,18 @@ export function isCheckInDraft(d) {
     && (d.submersion === null || SUBMERSION_ANSWERS.some(a => a.value === d.submersion))
     && (d.conditioning === null || CONDITIONING_ANSWERS.some(a => a.value === d.conditioning))
     && (d.placeId === null || typeof d.placeId === 'string')
-    // Release F's three keys are optional on READ: a 1a draft has none of them and restores as "nothing
+    // The three act keys are optional on READ: an older draft has none of them and restores as "nothing
     // done yet", never as a dropped draft.
     && (d.acts === undefined || (Array.isArray(d.acts) && d.acts.every(a => CHECK_IN_ACTS.some(x => x.value === a))))
     && (d.topUp === undefined || typeof d.topUp === 'string')
     && (d.topUpUnit === undefined || TOP_UP_UNITS.includes(d.topUpUnit))
 }
 
-// "What you did" (release F, Dave 16:30). A MULTI-select — role="group" + aria-pressed, 48px chips — whose
-// pressed state is drawn differently from the single-select answer chips above it (an outline on the
+// "What you did". A MULTI-select — role="group" + aria-pressed, 48px chips — whose pressed state is drawn differently from the single-select answer chips above it (an outline on the
 // pale green, not the filled green), so a done-it chip never reads as an answer to the brine question.
 // The top-up amount opens DIRECTLY BENEATH this row when Topped up brine is pressed, so nothing above
 // the finger moves. The row itself is ALWAYS here, in the same place, whatever the brine answer is
-// (06 §3.5; FS minor, V101 §5.3): it is never revealed, highlighted or reordered by that answer.
+// (V101 §5.3): it is never revealed, highlighted or reordered by that answer.
 function ActChips({ value, onChange, topUp, onTopUp, topUpUnit, onTopUpUnit, disabled, topUpError, inputStyle }) {
   const toggle = (v) => onChange(value.includes(v) ? value.filter(x => x !== v) : [...value, v])
   const toppedUp = value.includes('topped_up')
@@ -158,7 +156,7 @@ function CheckOnItOpen({ batch, onClose, onSaved, now }) {
   const [err, setErr] = useState(null)
   const [phErr, setPhErr] = useState(null)
   // Synchronous exclusion. `saving` disables Save only after React commits; two taps inside one frame
-  // would both read it false, and a check-in is not keyed in 1a, so both would land as two rows.
+  // would both read it false, and a check-in is not keyed, so both would land as two rows.
   const writingRef = useRef(false)
   // The focused field is kept clear of the pinned Save (gate:putup at 426×492 found the note under it).
   const footerRef = useRef(null)
@@ -241,7 +239,7 @@ function CheckOnItOpen({ batch, onClose, onSaved, now }) {
     clearSheetDraft(draftKey)
     writingRef.current = false
     setSaving(false)
-    // The server's answer rides along (release 1b): its `stage.id` is what "Saved · Undo" voids.
+    // The server's answer rides along: its `stage.id` is what "Saved · Undo" voids.
     onSaved?.(res.body, first)
   }, [acts, batch, conditioning, draftKey, fetch, note, now, onSaved, ph, placeId, places, submersion, topUp, topUpUnit])
 

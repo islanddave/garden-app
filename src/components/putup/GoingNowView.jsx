@@ -1,26 +1,24 @@
 // src/components/putup/GoingNowView.jsx
-// V5-INFLIGHTBATCH-001 — "Going now": the third segment on /put-up, listing open kitchen_batch rows
-// from GET /api/kitchen-batches?state=going.
+// "Going now": the first segment on /put-up, listing open kitchen_batch rows from
+// GET /api/kitchen-batches?state=going.
 //
-// WHY A SEGMENT AND NOT A TAB OR A BAND. PutUp.jsx:44-46 records the house pattern for "a thing you
-// are in the middle of" verbatim — a MODE FLAG on an existing page, never a new destination — and
-// BottomNav.jsx:41-48 records that six slots was already a stretch with nothing displaceable. A
-// standing "3 batches going" band on Today is separately forbidden by precedent: four signalling
-// surfaces have already been retired for noise (CRITTERS_QUIET, TODAY_BAND_HIDDEN, HarvestReadyBand,
-// PreserveOffer), and StorageDeadlineAlert's rule is that Today may carry only threshold-CROSSED
-// rows. The browsable list of everything going lives here. Two questions, two surfaces.
+// WHY A SEGMENT AND NOT A TAB OR A BAND. PutUp.jsx records the house pattern for "a thing you are in
+// the middle of" — a MODE FLAG on an existing page, never a new destination — and the bottom nav is
+// already at six slots with nothing displaceable. A standing "3 batches going" band on Today is
+// separately forbidden by precedent: four signalling surfaces have already been retired for noise
+// (CRITTERS_QUIET, TODAY_BAND_HIDDEN, HarvestReadyBand, PreserveOffer), and StorageDeadlineAlert's
+// rule is that Today may carry only threshold-CROSSED rows. The browsable list of everything going
+// lives here. Two questions, two surfaces.
 //
 // WHAT THIS SURFACE DOES NOT DO, and each absence is a ruling rather than an omission — the reasons
 // live at the top of ./goingNow.js: no readiness affordance, no countdown, no urgency tone, and no
 // warning colour on a missing start.
 //
-// ⚠ THE ORIGINAL FORM OF THAT LIST ENDED "and nothing at all about pH, acidification or shelf
-// stability." V5-PHRECORD-001 reversed the first of those three and only the first. This card now
-// asks whether you have measured, records what you measured, and links to how — and it still says
-// NOTHING about acidification, shelf stability, or whether any reading is good. A recorded value is
-// rendered exactly as it was typed, beside the date it was taken, in the card's ordinary ink. It is
+// ⚠ pH: this card asks whether you have measured, records what you measured, and links to how — and it
+// says NOTHING about acidification, shelf stability, or whether any reading is good. A recorded value
+// is rendered exactly as it was typed, beside the date it was taken, in the card's ordinary ink. It is
 // never scored, never coloured, never compared to anything, never counted, and never gates anything.
-// The reasoning, and the reversal's audit trail, are at the top of ./goingNow.js and ./PhReadingField.jsx.
+// The reasoning is at the top of ./goingNow.js and ./PhReadingField.jsx.
 import React, { useState, useMemo, useCallback } from 'react'
 import { useLocation, useSearchParams } from 'react-router-dom'
 import { useApiFetch } from '../../lib/api.js'
@@ -41,9 +39,9 @@ import KindQuestion from './KindQuestion.jsx'
 import { withFrom, modeSearch } from './origin.js'
 
 // A question on the card is ONE TARGET that opens Check on it (V4 §2.3: "the ruled pH prompt's link
-// opens Check on it", the IA seat's F14 — the question is the door, not a second control beside it).
-// It keeps the question's own ordinary ink; only the arrow wears the link colour.
-// 48px tall, like every quiet action on this view (Put-Up UX pass R1, F16: height only).
+// opens Check on it" — the question is the door, not a second control beside it). It keeps the
+// question's own ordinary ink; only the arrow wears the link colour. 48px tall, like every quiet
+// action on this view: height only.
 const questionLink = {
   display: 'inline-flex', alignItems: 'center', gap: 4, minHeight: T.buttonMinHeight, padding: '2px 0',
   background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left',
@@ -58,9 +56,8 @@ function shortDate(iso) {
   return Number.isNaN(d.getTime()) ? null : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
-// ── "What kind of batch? →" ──────────────────────────────────────────────────────────────────────
-// Moved to ./KindQuestion.jsx in release F so batch detail asks the same question the same way (06
-// §3.10); the card's testids and behaviour are unchanged.
+// ── "What kind of batch? →" lives in ./KindQuestion.jsx, so batch detail asks the same question the
+// same way.
 // ── one batch ────────────────────────────────────────────────────────────────────────────────────
 // Leads with WHAT IS KNOWN, never with the gap. The meta line is one joined string on purpose: it is
 // the thing a test can assert as a full literal with both bounds and every separator, which is the
@@ -105,10 +102,10 @@ function BatchCard({ batch, nowMs, fetch, onChanged, onOpen, onCheck, onPutUp, s
           {shortDate(batch.suspended_at) ? `Paused since ${shortDate(batch.suspended_at)}` : 'Paused'}
         </div>
       )}
-      {/* THE ONE INLINE QUESTION (V4 §2.3), in one slot, chosen by cardQuestion. */}
-      {/* The kind question, on a NULL kind only and never again once answered. It is the one door to
-          the three ferment questions below: all are gated on kind = 'ferment', so a batch nobody has
-          classified can never be asked about its brine or its pH. */}
+      {/* THE ONE INLINE QUESTION, in one slot, chosen by cardQuestion. The kind question shows on a
+          * NULL kind only and never again once answered. It is the one door to the three ferment
+          * questions below: all are gated on kind = 'ferment', so a batch nobody has
+          * classified can never be asked about its brine or its pH. */}
       {question?.kind === 'kind' && <KindQuestion batch={batch} fetch={fetch} onChanged={onChanged} idPrefix="going-kind" />}
       {/* The submersion prompt. A QUESTION, in the card's ordinary ink, with no verdict beside it
           and no list of failure signs under it — a checklist of what going wrong looks like invites
@@ -176,17 +173,16 @@ function BatchCard({ batch, nowMs, fetch, onChanged, onOpen, onCheck, onPutUp, s
       )}
       {Number(batch.input_count) > 0 && (
         <div data-testid="going-batch-inputs" style={{ marginTop: 3, color: P.light, fontSize: '0.78rem' }}>
-          {/* Release F (06 §2.8): input_count counts every live line — salt, water and sitting lines
-              included — so it is "things", not "picks". */}
+          {/* input_count counts every live line — salt, water and sitting lines included — so it is
+              "things", not "picks". */}
           {Number(batch.input_count) === 1 ? '1 thing in' : `${Number(batch.input_count)} things in`}
         </div>
       )}
       {savedStageId && <CheckInSaved key={savedStageId} batchId={batch.id} stageId={savedStageId} onUndone={onChanged} />}
       {stub && <PutUpStub stub={stub} onOpen={onOpen} onUndone={onChanged} />}
-      {/* THE ACTION SLOT (V4 §2.3): at most three quiet actions — Check on it · Open (release 1b adds
-          Put it up between them and moves nothing). Pause and "Set a start date" moved to the batch's
-          own surface in Put-Up 1a, both being desk decisions about the batch rather than check-ins,
-          and the inline pH recorder moved INTO Check on it — the pH button moves into Check on it. */}
+      {/* THE ACTION SLOT: at most three quiet actions — Check on it · Put it up · Open. Pause and "Set a
+          * start date" live on the batch's own surface, both being desk decisions about the batch rather
+          * than check-ins, and the pH recorder lives INSIDE Check on it. */}
       <div style={{ display: 'flex', flexWrap: 'wrap', columnGap: T.space.md }}>
         <button type="button" data-testid="going-check" onClick={() => onCheck?.(batch.id)}
           style={{ display: 'inline-flex', alignItems: 'center', minHeight: T.buttonMinHeight,
@@ -194,8 +190,7 @@ function BatchCard({ batch, nowMs, fetch, onChanged, onOpen, onCheck, onPutUp, s
             fontFamily: 'inherit', color: P.green, fontSize: '0.78rem' }}>
           {CHECK_ON_IT_CTA} →
         </button>
-        {/* Put-Up release 1b: Put it up sits between Check on it and Open, and moves nothing else. */}
-        <button type="button" data-testid="going-put-up" onClick={() => onPutUp?.(batch.id)}
+                <button type="button" data-testid="going-put-up" onClick={() => onPutUp?.(batch.id)}
           style={{ display: 'inline-flex', alignItems: 'center', minHeight: T.buttonMinHeight,
             background: 'none', border: 'none', padding: '2px 8px 2px 0', cursor: 'pointer',
             fontFamily: 'inherit', color: P.green, fontSize: '0.78rem' }}>
@@ -222,15 +217,13 @@ function BatchCard({ batch, nowMs, fetch, onChanged, onOpen, onCheck, onPutUp, s
 
 // `now` is an injectable prop, not a hidden Date.now() call. ONE instant for the whole render, so
 // two cards can never disagree about what time it is mid-paint — and a test can pin an age to a
-// fixed literal instead of to the wall clock. The wall-clock version of this passed under
-// America/New_York and failed under UTC by four hours, which is precisely the class the blocking TZ
-// re-run exists to catch and which millisecond-offset fixtures are structurally unable to expose.
-// `onStartBatch` (Put-Up 1a, the seam with the page lane): the page mounts the shared StartBatchSheet
-// and hands this view the callback that opens it. From Put-Up UX pass R1 the Start door is the page
-// header's filled button, and this view carries one only inside its empty card. Absent — a host that has
-// not wired the seam — the empty card offers no Start control at all: the /capture fallback this used to
-// take is retired, because a second, differently-routed "Start a batch" beside the header's is exactly the
-// control nobody could explain. Nothing here navigates.
+// fixed literal instead of to the wall clock. A wall-clock version passes under America/New_York and
+// fails under UTC by four hours, a class millisecond-offset fixtures are structurally unable to expose.
+// `onStartBatch`: the page mounts the shared StartBatchSheet and hands this view the callback that
+// opens it. The Start door is the page header's filled button, and this view carries one only inside
+// its empty card. Absent — a host that has not wired the seam — the empty card offers no Start control
+// at all: a second, differently-routed "Start a batch" beside the header's is exactly the control
+// nobody could explain. Nothing here navigates.
 export default function GoingNowView({ batches, loading, error, onReload, now, onStartBatch, onOpenBatch, onOpenClosed }) {
   const { fetch } = useApiFetch()
   const nowMs = now ?? Date.now()
@@ -246,13 +239,13 @@ export default function GoingNowView({ batches, loading, error, onReload, now, o
   // survives, and Back pops the param. The other keys are preserved rather than replaced so ?session=
   // and anything a future door adds ride through untouched.
   //
-  // Put-Up UX pass R1: the PAGE does the push. `onOpenBatch(id)` and `onOpenClosed()` are its one opener
-  // (PutUp.jsx openMode), which every other door into a mode also uses. A host that passes neither still
-  // gets a working door — the same one-mode-key URL (origin.js modeSearch), and the entry's router state
-  // carried along (withFrom): these two used to push with no state at all, which dropped an overlay's
-  // background and turned a flyover into a page. The card names no origin; the page names the segment on
-  // screen for it (goingNow.js segmentOrigin), so a batch opened from here is left by a pop back onto this
-  // segment when an app entry is under it, and by the page's own push when none is.
+  // The PAGE does the push. `onOpenBatch(id)` and `onOpenClosed()` are its one opener (PutUp.jsx
+  // openMode), which every other door into a mode also uses. A host that passes neither still gets a
+  // working door — the same one-mode-key URL (origin.js modeSearch), with the entry's router state
+  // carried along (withFrom): pushing with no state would drop an overlay's background and turn a
+  // flyover into a page. The card names no origin; the page names the segment on screen for it
+  // (goingNow.js segmentOrigin), so a batch opened from here is left by a pop back onto this segment
+  // when an app entry is under it, and by the page's own push when none is.
   const [searchParams, setSearchParams] = useSearchParams()
   const location = useLocation()
   const openBatch = useCallback((id) => {
@@ -275,7 +268,7 @@ export default function GoingNowView({ batches, loading, error, onReload, now, o
   const closeCheck = useCallback(() => setCheckingId(null), [])
   // The write landed: close, then re-read the list — the honest recovery, never a local mutation
   // (the card's clocks and "last touched" come back from the view the server computes).
-  // "Saved · Undo" in place (V4 §2.3, from 1b): the saved row's id, per batch, until the next visit.
+  // "Saved · Undo" in place: the saved row's id, per batch, until the next visit.
   const [saved, setSaved] = useState({})
   const checkSaved = useCallback((body, answer) => {
     const batchId = checkingId
@@ -284,7 +277,7 @@ export default function GoingNowView({ batches, loading, error, onReload, now, o
     setCheckingId(null); onReload?.()
   }, [checkingId, onReload])
 
-  // PUT IT UP (release 1b) — one sheet for the view, like Check on it. A landed sitting leaves a STUB in
+  // PUT IT UP — one sheet for the view, like Check on it. A landed sitting leaves a STUB in
   // the card's slot (V4 §2.4 "Completion"): inside the card when the batch is still going, in the card's
   // old place when "Put it up and finish" closed it. Held in this view's state, so it lasts until the
   // next visit and no longer — there is no timer.
@@ -314,16 +307,14 @@ export default function GoingNowView({ batches, loading, error, onReload, now, o
   // list when it is not. Exactly one instance either way.
   //
   // Placement is the whole finding: the state in which a user hunts a six-week-old batch is the state
-  // that currently hides the door — a doorway behind a segment whose own empty state reads "Nothing
-  // going right now." has INVERTED scent, and the bare-open promote does not even select this segment
-  // when the going list is empty. (It used to sit "above Start a batch" only because that button was
-  // pinned as the literal last child; Start a batch moved to the top in Put-Up 1a, so this is now
-  // simply the end of the list.)
+  // that would hide the door — a doorway behind a segment whose own empty state reads "Nothing going
+  // right now." has INVERTED scent, and the bare-open promote does not even select this segment when
+  // the going list is empty.
   //
   // Labelled with its object, not as the bare adjective "Closed" — that predicts nothing about its
-  // destination. NOT "Finished batches", which the seat proposed: `finished` is a live, re-enterable
-  // stage_kind on this very card (a tended row legitimately follows a finished one), so a list of
-  // CLOSED batches under that word would exclude batches the user would read as finished.
+  // destination. NOT "Finished batches": `finished` is a live, re-enterable stage_kind on this very
+  // card (a tended row legitimately follows a finished one), so a list of CLOSED batches under that
+  // word would exclude batches the user would read as finished.
   const closedDoor = (
     <button type="button" data-testid="going-closed-door" onClick={openClosed}
       style={{ display: 'inline-flex', alignItems: 'center', minHeight: T.buttonMinHeight,
@@ -333,19 +324,17 @@ export default function GoingNowView({ batches, loading, error, onReload, now, o
     </button>
   )
 
-  // START A BATCH. Put-Up 1a put a quiet text door at the TOP of this view (the adhd seat's "the door
-  // moves" finding: at the bottom it fell below the fold as the list grew). Put-Up UX pass R1 (PLAN-V3 D10)
-  // moves it OUT of the view: on Going now the page header's one filled button IS "Start a batch", in a
-  // place that does not move at all, so the quiet link here went away. What stays is the empty card's own
-  // door — the moment someone lands on "Nothing going right now." is the moment the page should offer to
-  // start one where they are reading. SECONDARY, never filled: the header's button is on the same screen,
-  // and a screen carries one filled button. It opens the same sheet through the same seam (onStartBatch).
+  // START A BATCH. The page header's one filled button IS "Start a batch", in a place that does not
+  // move, so this view carries no quiet link of its own. What stays is the empty card's own door — the
+  // moment someone lands on "Nothing going right now." is the moment the page should offer to start one
+  // where they are reading. SECONDARY, never filled: the header's button is on the same screen, and a
+  // screen carries one filled button. It opens the same sheet through the same seam (onStartBatch).
 
   return (
     <div data-testid="going-now-view">
       {loading && <div style={{ padding: 24, textAlign: 'center', color: P.light }}>Loading&hellip;</div>}
-      {/* R1 (F25): the load error offers the reload itself. The banner used to say "try again" with nothing
-          to press, on a segment whose only reload was leaving the page and coming back. */}
+      {/* The load error offers the reload itself: a banner saying "try again" with nothing to press, on
+          * a segment whose only reload was leaving the page, is a dead end. */}
       {error && (
         <ErrorBanner data-testid="going-error">
           Couldn&rsquo;t load what&rsquo;s going right now.{' '}

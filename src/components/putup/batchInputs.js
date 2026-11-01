@@ -1,20 +1,20 @@
 // src/components/putup/batchInputs.js
-// V5-INFLIGHTBATCH-001 item A — the pure half of "what went into this batch".
+// The pure half of "what went into this batch".
 //
 // Seam rule (BUILD-CONTRACT §3): anything that DECIDES lives here, anything that PAINTS lives in
 // BatchInputsField.jsx. Every function below is a pure function of its arguments plus an explicit
-// `nowMs` — there is no clock, no fetch and no DOM in this file, which is what lets the window
-// arithmetic be asserted against fixed zoneless date literals instead of against whenever CI ran.
+// `nowMs` — no clock, no fetch and no DOM — so the window arithmetic can be asserted against fixed
+// zoneless date literals instead of against whenever CI ran.
 //
 // THE RULINGS THIS FILE ENFORCES. Read the absences as hard as the presences:
 //
 //   1. THE WINDOW IS THE CHIP VOCABULARY, NOT A RANGE PICKER. `chipToWindow` maps
 //      HarvestTimeframeChips' six values to the civil-ET {from,to} the server's predicate takes.
-//      There is no two-ended range control in this app and none is minted here:
-//      `src/lib/harvestExport.js:19-21` carries the standing ruling — "arbitrary from/to needs a
-//      Lambda parseTimeframe change and is deliberately deferred — do not 'helpfully' add it here."
-//      Each arm below is the client-side twin of the SQL arm in `lambda/harvests/index.js:266-273`,
-//      so a chip means the same window here that it means on the Harvests page.
+//      There is no two-ended range control in this app and none is minted here: src/lib/harvestExport.js
+//      carries the standing ruling — "arbitrary from/to needs a Lambda parseTimeframe change and is
+//      deliberately deferred — do not 'helpfully' add it here." Each arm below is the client-side twin
+//      of the SQL arm in lambda/harvests/index.js, so a chip means the same window here that it means on
+//      the Harvests page.
 //
 //   2. "All time" HAS NO WINDOW, AND THAT IS THE POINT. `chipToWindow('')` returns null rather than
 //      a wide-open span. `{from:'2000-01-01', to:'2099-12-31'}` is a legal predicate that inserts
@@ -27,17 +27,16 @@
 //      and int8 as text); only `linked_output_count` is a number. Every read here goes through
 //      Number() before it is compared or summed.
 //
-//   4. ROLL-UPS SUM `weight_grams`, NEVER `quantity`. Measured on prod 2026-09-04: all 152 pepper
-//      rows in a five-week window carry unit='count', so summing quantity yields a pepper tally, not
-//      an amount. 31% of all harvest weights carry weight_basis != 'measured' (cultivar_sample or
-//      cultivar), so a total is partly an estimate and `describeRollUp` says so out loud.
+//   4. ROLL-UPS SUM `weight_grams`, NEVER `quantity`. Pepper rows carry unit='count', so summing
+//      quantity yields a pepper tally, not an amount. A sizeable share of harvest weights carry
+//      weight_basis != 'measured' (cultivar_sample or cultivar), so a total is partly an estimate and
+//      `describeRollUp` says so out loud.
 //
 //   5. A BULK ADD CLAIMS WHOLE PICKS. Predicate-created rows land with qty NULL, and the DDL's own
-//      idiom (v5-inflightbatch-001/0a-additive-ddl.sql:241-242) is "a NULL pair means 'unrecorded,
-//      assume THE WHOLE THING'". So a 152-row add asserts the entirety of every one of those picks
-//      went into the batch, which for peppers is routinely false. WHOLE_PICK_NOTICE states that,
-//      because nothing else in the system will, and `weightInputRow` is how the number the cook is
-//      actually holding gets recorded beside it.
+//      idiom is "a NULL pair means 'unrecorded, assume THE WHOLE THING'". So a 152-row add asserts the
+//      entirety of every one of those picks went into the batch, which for peppers is routinely false.
+//      WHOLE_PICK_NOTICE states that, because nothing else in the system will, and `weightInputRow` is
+//      how the number the cook is actually holding gets recorded beside it.
 //
 //   6. A RETRY AFTER A DROPPED RESPONSE LIES. `ON CONFLICT DO NOTHING` makes a re-run safe but
 //      SILENT: `inserted: 0` reads as "nothing was added" when the rows are in fact present.
@@ -46,14 +45,14 @@
 //
 //   7. NO RAW MACHINE VALUE REACHES THE DOM. INPUT_KIND_LABELS is total over KITCHEN_INPUT_KINDS and
 //      its fallback is prose, not the slug. Same discipline the outcome labels are held to.
+//      its fallback is prose, not the slug. Same discipline the outcome labels are held to.
 import { etDay, addDays } from '../../lib/harvestSummary.js'
 import { growYearSpan } from '../../lib/growYear.js'
 
 // ── vocabularies mirrored from the Lambda ────────────────────────────────────────────────────────
-// These are CLIENT MIRRORS of lambda/preservation/kitchenBatch.js:46 and :52-54. A mirror is only
-// safe if it is pinned, so batchInputs.test.js text-reads both arrays out of the Lambda source AND
-// out of the migration's own CHECK, and asserts set equality against both (model:
-// startChipParity.test.js). Note the space in 'fl oz'.
+// These are CLIENT MIRRORS of the arrays in lambda/preservation/kitchenBatch.js. A mirror is only safe
+// if it is pinned, so batchInputs.test.js text-reads both arrays out of the Lambda source AND out of
+// the migration's own CHECK, and asserts set equality against both. Note the space in 'fl oz'.
 export const KITCHEN_INPUT_KINDS = ['harvest', 'purchased', 'pantry', 'other']
 export const KITCHEN_QTY_UNITS = [
   'g', 'kg', 'oz', 'lb', 'count', 'cup', 'tbsp', 'tsp', 'fl oz', 'qt', 'gal', 'ml', 'l', 'other',
@@ -104,9 +103,9 @@ export const PREDICATE_ERRORS = {
   window: 'Pick a window first.',
 }
 
-// Mirrored word-for-word from the Lambda's own messages (kitchenBatch.js:358, :366-399) so a refusal
-// the client makes reads identically to one the server would have made. Divergent phrasings for the
-// same rule teach the user that the two halves disagree.
+// Mirrored word-for-word from the Lambda's own messages (kitchenBatch.js) so a refusal the client
+// makes reads identically to one the server would have made. Divergent phrasings for the same rule
+// teach the user that the two halves disagree.
 export const EXPLICIT_ERRORS = {
   empty: 'inputs must be a non-empty array',
   kind: `input_kind must be one of: ${KITCHEN_INPUT_KINDS.join(', ')}`,
@@ -137,8 +136,8 @@ export const spanError = (span) =>
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-// The Lambda's normalizeText (kitchenBatch.js:113-117), mirrored: trimmed, and '' collapses to null.
-// A whitespace-only label is NOT a label.
+// The Lambda's normalizeText, mirrored: trimmed, and '' collapses to null. A whitespace-only label
+// is NOT a label.
 function normalizeText(v) {
   if (v == null) return null
   const t = String(v).trim()
@@ -152,8 +151,7 @@ function normalizeText(v) {
 // a range check cannot ('2026-02-30' becomes Mar 2 and no longer matches its own input).
 // ONE guard, not two: a leading `mo < 1 || mo > 12 || d < 1 || d > 31` range check would be fully
 // subsumed by the round trip below (month 99 rolls the year, day 32 rolls the month, both fail the
-// identity), and a redundant guard is a place a mutation survives while the surviving half quietly
-// does the work. Left as a single testable line.
+// identity), and a redundant guard is a place a mutation survives while the other half does the work.
 export function isRealDate(v) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(v ?? ''))
   if (!m) return false
@@ -179,7 +177,7 @@ export function spanDays(from, to) {
 // 'month' | `season:${year}`. Returns {from,to} as civil ET day keys, or null when the chip names no
 // bounded window ('' = All time) or is not a chip at all.
 //
-// Each arm mirrors the SQL it will be resolved against (lambda/harvests/index.js:266-273):
+// Each arm mirrors the SQL it will be resolved against (lambda/harvests/index.js):
 //   today      ::date =  today
 //   yesterday  ::date =  today - 1
 //   7d         ::date >= today - INTERVAL '6 days'      → seven days INCLUSIVE of today
@@ -252,10 +250,10 @@ export function predicateBody({ cropSlug, plantingId, from, to, preview = false 
 
 // { error, body } for the explicit form. Every rule here restates one the Lambda enforces, in the
 // Lambda's own words, so a refusal made without a round trip is indistinguishable from one made
-// with it. The de-dupe mirrors normalizeInputRows (kitchenBatch.js:419-440) so the count this client
-// reports is the count the server will call `requested` — the server drops duplicate
-// harvest_log_ids silently and reports the POST-dedupe length, and a client that reported the
-// pre-dedupe length would be off by exactly the rows it dropped.
+// with it. The de-dupe mirrors normalizeInputRows (kitchenBatch.js) so the count this client reports
+// is the count the server will call `requested` — the server drops duplicate harvest_log_ids silently
+// and reports the POST-dedupe length, and a client that reported the pre-dedupe length would be off by
+// exactly the rows it dropped.
 export function explicitInputsBody(rows) {
   if (!Array.isArray(rows) || rows.length === 0) return { error: EXPLICIT_ERRORS.empty, body: null }
   const out = []
@@ -286,9 +284,9 @@ export function explicitInputsBody(rows) {
     const label = normalizeText(r.label)
     if (kind !== 'harvest' && label == null) return { error: labelNeededError(kind), body: null }
 
-    // Strict === true, exactly as the server tests and stores it (kitchenBatch.js:386, :435).
-    // 'true', 1 and 'yes' are all stored as false there, so anything but the literal is dropped here
-    // rather than sent and silently discarded. Checked BEFORE qty, as inputRowError does.
+    // Strict === true, exactly as the server tests and stores it. 'true', 1 and 'yes' are all stored as
+    // false there, so anything but the literal is dropped here rather than sent and silently
+    // discarded. Checked BEFORE qty, as inputRowError does.
     const byproduct = r.is_byproduct === true
     if (byproduct && kind !== 'harvest') return { error: EXPLICIT_ERRORS.byproduct, body: null }
 
@@ -353,10 +351,9 @@ export function readPreview(body) {
   return null
 }
 
-// ScopeChecklist's shipped net-count contract (ScopeChecklist.jsx:41-43): "never make the user
-// mentally compute the set difference". Same separators as the shipped line — U+2212 MINUS SIGN and
-// U+2192 RIGHTWARDS ARROW, not a hyphen and not '->'. Rendered aria-live by the caller so a toggle
-// is announced rather than only shown.
+// ScopeChecklist's net-count contract: "never make the user mentally compute the set difference".
+// Same separators as the shipped line — U+2212 MINUS SIGN and U+2192 RIGHTWARDS ARROW, not a hyphen
+// and not '->'. Rendered aria-live by the caller so a toggle is announced rather than only shown.
 export function netCountLine({ matched, skipped } = {}) {
   // null and '' both coerce to 0 through Number(), so they are refused BEFORE the coercion: a
   // missing count must produce no line at all, never a line that reads zero.
@@ -411,9 +408,9 @@ export function describeInputRow(input) {
 // ── roll-ups ─────────────────────────────────────────────────────────────────────────────────────
 
 // `weight_grams` ONLY. `quantity` is not read anywhere in this function and must not become read:
-// every one of the 152 live pepper rows in a five-week window is unit='count', so a quantity sum is
-// a count of peppers wearing a mass label. Returns null for an absent/empty rowset rather than a
-// zero total — "nothing to weigh" and "weighs nothing" are different claims.
+// pepper rows are unit='count', so a quantity sum is a count of peppers wearing a mass label. Returns
+// null for an absent/empty rowset rather than a zero total — "nothing to weigh" and "weighs nothing"
+// are different claims.
 export function rollUpGrams(rows) {
   if (!Array.isArray(rows) || rows.length === 0) return null
   let grams = 0; let weighed = 0; let estimated = 0; let missing = 0
@@ -428,7 +425,7 @@ export function rollUpGrams(rows) {
   return { grams, weighed, estimated, missing, rows: rows.length }
 }
 
-// States the estimate out loud, with both counts, because a total that is 31% inferred from a
+// States the estimate out loud, with both counts, because a total that is partly inferred from a
 // cultivar sample is not a measurement and a bare "4.33 kg" would read as one.
 export function describeRollUp(rollup) {
   if (!rollup || rollup.rows === 0) return null
@@ -448,10 +445,10 @@ export function describeRollUp(rollup) {
 // ── the per-row decision map ─────────────────────────────────────────────────────────────────────
 //
 // A Map<id, boolean> of EXPLICIT choices, plus a baseline for the undecided. It is deliberately NOT
-// an `excluded` Set: ScopeChecklist.jsx:133-152 records that the Set model was a shipped defect
-// because any re-preview destroyed it. The Map persists across re-previews AND deliberately keeps
-// ids that have fallen out of the current match set, so narrowing the window and widening it back
-// returns the user's own decisions rather than silently re-including what they removed.
+// an `excluded` Set: ScopeChecklist's Set model was a shipped defect because any re-preview destroyed
+// it. The Map persists across re-previews AND deliberately keeps ids that have fallen out of the
+// current match set, so narrowing the window and widening it back returns the user's own decisions
+// rather than silently re-including what they removed.
 
 export const DECISION_BASELINE = true
 
@@ -462,10 +459,10 @@ export function toggleDecision(decisions, id, baseline = DECISION_BASELINE) {
   return next
 }
 
-// THE RESOLVED ROWS, and every affordance must derive from these rather than from the Map's .size.
-// BUG-PHOTOSELSTALE-001: a bar that read `selected.size` while the button posted the resolved list
-// showed one number and did another thing. The Map's size counts decisions, including decisions
-// about ids that are no longer on screen; only this answers "what will actually be added".
+// THE RESOLVED ROWS, and every affordance must derive from these rather than from the Map's .size: a
+// bar that read `selected.size` while the button posted the resolved list showed one number and did
+// another thing. The Map's size counts decisions, including decisions about ids that are no longer on
+// screen; only this answers "what will actually be added".
 export function committedIds(matchedIds, decisions, baseline = DECISION_BASELINE) {
   const d = decisions instanceof Map ? decisions : new Map()
   const ids = Array.isArray(matchedIds) ? matchedIds : []

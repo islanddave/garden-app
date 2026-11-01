@@ -1,6 +1,6 @@
 // src/components/putup/PutUpStub.jsx
-// Put-Up release 1b (V4 §2.3 "Undo that put-up", §2.4 "Completion") — what a sitting leaves behind in
-// place: one status line with Undo and Open →, until the next visit. No timer and no toast.
+// What a sitting leaves behind in place: one status line with Undo and Open →, until the next visit.
+// No timer and no toast.
 //
 // The same Undo sits on each sitting in batch detail's What came out, so the write lives here once:
 // useUndoPutUp — POST /api/kitchen-batches/:id/put-up/:stageId/undo (contract-F §2.4). A second tap is
@@ -40,8 +40,7 @@ export function useUndoPutUp({ batchId, stageId, onUndone }) {
   return { undo, busy, err, done }
 }
 
-// The quiet actions are 48 px tall, like the card's other ones (Put-Up UX pass R1, F16), and never narrower
-// than 44 px ("Undo" alone measured 37 on the 426 px render).
+// The quiet actions are 48 px tall, like the card's other ones, and never narrower than 44 px.
 const link = {
   display: 'inline-flex', alignItems: 'center', minHeight: T.buttonMinHeight, minWidth: 44, background: 'none', border: 'none',
   padding: '2px 8px 2px 0', cursor: 'pointer', fontFamily: 'inherit', color: P.green, fontSize: '0.78rem',

@@ -1,8 +1,7 @@
 // src/components/putup/WhatWentIn.jsx
-// Put-Up release F — "What went in", reworked (06 §4 item 3; contract-F §2.2). Replaces the shipped
-// BatchInputsField as the body of batch detail's section. BatchInputsField is still mounted, but only
-// for LEGACY bulk pick rows (the shipped predicate path's "whole pick" rows, ordinal NULL), which keep
-// their count-and-reveal; every line written from release F on is always visible here.
+// "What went in". Replaces BatchInputsField as the body of batch detail's section (contract-F §2.2).
+// BatchInputsField is still mounted, but only for LEGACY bulk pick rows (the predicate path's "whole
+// pick" rows, ordinal NULL), which keep their count-and-reveal; every other line is always visible here.
 //
 // TOP TO BOTTOM:
 //   · "From the garden: Megatron, Serranos" — AMBIENT, a reward surface under gardening.md's Reward UX
@@ -13,18 +12,17 @@
 //     the next write or navigation. A line taken out stays in the list struck through as
 //     "<name> · Taken out · Undo" until navigation (client-held: the server returns only live lines).
 //   · quick chips [Water] [Salt] — Water opens the add row prefilled (role water, ml); Salt hands focus
-//     to the Salt block's % field and NEVER writes a line by itself (UX-I4).
+//     to the Salt block's % field and NEVER writes a line by itself.
 //   · the add row (LineAdder) — or, on a batch that already has something written down, the door to it.
 // The Salt block is the host's (BatchDetailView), rendered between the chips' row and the add row via
 // `saltSlot`, so it stays "inside What went in" and always reachable.
 //
-// THE ADD ROW COLLAPSES, the chips never do (Put-Up UX pass R1, D2). A batch with nothing written down
-// opens with the add row shown; one that has lines opens with "+ Add what went in" where the add row
-// sits. A tap on that door opens it and focuses the name; a tap on [Water] opens it with the Water preset
-// and focuses the amount. WHICH of the two is read ONCE, when this batch's detail first renders here, and
-// REMEMBERED: once the add row is open it stays open across every Add and the re-read that follows it.
-// Deriving it from the lines on each render would shut the add row under the cook after the first line —
-// the ferment walks add several lines in a row and stop at their second (mutation M4).
+// THE ADD ROW COLLAPSES, the chips never do. A batch with nothing written down opens with the add row
+// shown; one that has lines opens with "+ Add what went in" where the add row sits. A tap on that door
+// opens it and focuses the name; a tap on [Water] opens it with the Water preset and focuses the
+// amount. WHICH of the two is read ONCE, when this batch's detail first renders here, and REMEMBERED:
+// once the add row is open it stays open across every Add and the re-read that follows it. Deriving it
+// from the lines on each render would shut the add row under the cook after the first line.
 // `asWrittenSlot` is the host's too: a recipe batch's "Made it as written", shown in the empty block.
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { P } from '../../lib/constants.js'
@@ -86,7 +84,7 @@ export default function WhatWentIn({ batch, lines, gardenNames = [], onChanged, 
   const listRef = useRef(null)
   const adderRef = useRef(null)
 
-  // The new line scrolls into view once the re-read carries it (06 §4 item 3).
+  // The new line scrolls into view once the re-read carries it.
   useEffect(() => {
     if (!newId) return
     const el = listRef.current?.querySelector(`[data-line-id="${newId}"]`)
@@ -131,7 +129,7 @@ export default function WhatWentIn({ batch, lines, gardenNames = [], onChanged, 
 
   // Undo a take-out: a soft-deleted line is restored (its draw re-made in the same statement); a pick
   // line was hard-deleted (uq_kbi_batch_harvest), so it is re-added with every stored field under a
-  // fresh key (06 §3.11).
+  // fresh key.
   const undoTakeOut = useCallback(async (line) => {
     if (writingRef.current) return
     writingRef.current = true
@@ -194,7 +192,7 @@ export default function WhatWentIn({ batch, lines, gardenNames = [], onChanged, 
         ))}
       </ul>
 
-      {/* Legacy bulk pick rows keep the shipped count-and-reveal (06 §4 item 3). */}
+      {/* Legacy bulk pick rows keep the count-and-reveal. */}
       {legacy.length > 0 && (
         <BatchInputsField batchId={batch.id} inputs={legacy} onChanged={onChanged} legacyOnly />
       )}
