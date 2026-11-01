@@ -1,91 +1,69 @@
 // src/lib/voiceCommitDebounce.js
 //
-// V5-HARVESTVOICEFLOW-001 (BD-068) — INVESTIGATION ARTIFACT, STILL UNWIRED. Nothing in src/ imports
-// this but its own test file. Built on Dave's instruction after the on-device probe run of
-// 2026-08-27, whose log is the fixture the tests replay (project-state/voiceflow-feasibility-V100
-// -20260826.md §Device log, gardening-docs).
+// V5-HARVESTVOICEFLOW-001 (BD-068): investigation artifact, still UNWIRED (only its test file imports it).
+// The tests replay the on-device probe log (project-state/voiceflow-feasibility-V100-20260826.md,
+// gardening-docs) as a fixture.
 //
-// WHY THIS EXISTS. The probe answered the question the feature hung on — Chrome Android re-arms the
-// mic in 16-133 ms, gesture-free, with no permission re-prompt — and then surfaced a different
-// problem that no amount of desk reasoning had predicted: THE RESULT STREAM IS NOISY AND
-// NON-MONOTONIC. In 13 seconds of speaking four phrases, Chrome delivered:
-//
+// WHY THIS EXISTS. Chrome Android re-arms the mic in 16-133 ms, but THE RESULT STREAM IS NOISY AND
+// NON-MONOTONIC. In 13 s of speech it delivered:
 //   * 11 finals with an EMPTY transcript;
-//   * finals for a PREFIX of what Dave was still saying, superseded 195 ms and 353 ms later
-//       6385ms FINAL "three"        ->  6580ms FINAL "three counts"
-//      10323ms FINAL "231"          -> 10676ms FINAL "231 G"
-//   * the same final twice — "231 G" at 10676 ms and again at 10950 ms.
+//   * finals for a PREFIX of what was still being said, superseded 195 ms and 353 ms later
+//       6385ms FINAL "three"  ->  6580ms FINAL "three counts"
+//   * the same final twice ("231 G" at 10676 ms and again at 10950 ms).
+// A consumer acting on each final would search for "three" and, the serious case, fire save_and_advance
+// TWICE off one spoken "next", silently skipping a planting. `isFinal` does not mean settled; this layer
+// makes it mean settled.
 //
-// A consumer that acts on each final as it lands therefore searches for "three" and for "231", and —
-// the serious case — fires save_and_advance TWICE off one spoken "next", silently skipping a
-// planting. `isFinal` does not mean settled. This layer is what makes it mean settled.
+// The duplicate is the BUG-VOICEDUPE class: Chrome re-delivers a final at the SAME result index. A
+// consumer that appends turns it into a doubled WORD, one that acts turns it into a doubled ACTION.
+// transcribe.js guards the append case (BUG-VOICEDUPE-003), but `finalsByIndex` is declared INSIDE
+// startLiveTranscription, so it is PER SESSION. In a continuous flow re-arming every 16-133 ms, a
+// duplicate landing in the NEXT session (measured duplicate gap 274 ms) meets a fresh empty slot map and
+// passes. DEFAULT_COMMAND_COOLDOWN_MS closes that gap, and is keyed on wall-clock, not session identity.
 //
-// THE DUPLICATE IS THE VOICEDUPE BUG. Dave, 2026-08-27, on reading the probe log: "I suspect the
-// 'emitted twice' is the same bug we've been chasing in the mic inputs for weeks." He is right, and
-// the repo already proves it — `transcribe.js:183-185` carries an explicit guard whose own comment
-// reads "Byte-identical re-delivery: not new speech, nothing changed, drop it entirely", added for
-// BUG-VOICEDUPE-003 after his 2026-08-24 "bitter bitter melon" report. So Chrome genuinely
-// re-delivers a final at the SAME result index, and a consumer that appends turns that into a
-// doubled WORD ("Chinese Chinese") while a consumer that acts turns it into a doubled ACTION. Same
-// root cause, two symptoms, seen at two layers. The probe reproduced it because it iterates
-// `ev.results` from `ev.resultIndex` exactly as transcribe.js does but WITHOUT the slot guard — an
-// earlier note in this investigation hedged that the duplicate might be a probe artifact; it is not,
-// and that hedge is withdrawn.
+// THE INVARIANT: an utterance commits AT MOST ONCE, and only after nothing has superseded it. "A silent
+// wrong save is worse than a slow form" decides every tie in favour of committing later or not at all.
 //
-// WHAT THE EXISTING FIX CANNOT COVER, and the reason this layer needs its own cross-session defence:
-// `finalsByIndex` is declared INSIDE startLiveTranscription (transcribe.js:134), so it is PER
-// SESSION and resets on every re-arm. For the single-capture flow it was written for — one session
-// per press-and-hold — that is complete. In a continuous flow re-arming every 16-133 ms it is not:
-// a duplicate that lands in the NEXT session meets a fresh, empty slot map at index 0 and passes the
-// guard untouched. The measured duplicate gap was 274 ms and the measured re-arm gap 16-133 ms, so a
-// duplicate crossing a session boundary is not hypothetical — it is well inside the observed range.
-// That gap is exactly what DEFAULT_COMMAND_COOLDOWN_MS below closes, and it is why the cooldown is
-// keyed on wall-clock rather than on session identity.
-//
-// THE ONE INVARIANT WORTH STATING UP FRONT, because every rule below serves it: an utterance commits
-// AT MOST ONCE, and only after nothing has superseded it. Dave's own framing — "a silent wrong save
-// is worse than a slow form" — decides every tie in favour of committing later or not at all.
-//
-// PURE STATE MACHINE, TIME PASSED IN. There is no clock and no timer here: every entry point takes
-// the timestamp as an argument. That is what lets the tests replay the device log literally, at its
-// real inter-event gaps, with no fake timers and no flake — the fixture IS the evidence. A
-// production host would own the timer and call `tick()`; `dueAt()` tells it when. That host is
-// deliberately NOT built (BD-068: "do not ship a half-flow off this row").
+// PURE STATE MACHINE, TIME PASSED IN. There is no clock or timer here: every entry point takes the
+// timestamp as an argument, so the tests replay the device log at its real gaps with no fake timers. A
+// production host would own the timer and call `tick()`; `dueAt()` says when. That host is deliberately
+// NOT built (BD-068: do not ship a half-flow off this row).
 import { classify, normalise, splitTrailingCommand } from './voiceHarvestGrammar.js'
 
-// Settle window. The observed supersede gaps were 195 ms and 353 ms, so 500 ms clears both with
-// margin. It is the single latency/safety dial: shorter feels quicker and risks committing a prefix,
-// longer is safer and adds dead time between "next" and the following chooser.
+// Settle window. The observed supersede gaps were 195 ms and 353 ms, so 500 ms clears both. It is the
+// single latency/safety dial: shorter risks committing a prefix, longer adds dead time before the next
+// chooser.
 export const DEFAULT_SETTLE_MS = 500
 
 // A command that commits cannot commit again for this long. This is the ONLY defence against the
-// duplicate-final case, and it has to be cross-session: the duplicate "231 G" arrived 274 ms after
-// its twin, and at a 16-133 ms re-arm a duplicate can easily land in the NEXT session, where the
+// duplicate-final case, and it must be cross-session: a duplicate can land in the NEXT session, where the
 // pending-supersede logic cannot see it. The cost is that a genuine double "next" inside 1.5 s is
-// swallowed and Dave says it again; the cost of the alternative is two saves and a skipped planting
-// he never sees. Not symmetric, so not a tunable.
+// swallowed and has to be re-said; the alternative is two saves and a skipped planting nobody sees.
+// Not symmetric, so not a tunable.
 export const DEFAULT_COMMAND_COOLDOWN_MS = 1500
 
-/**
- * @param {object}   opts
- * @param {function} opts.onCommit  (result, meta) => void — fires ONCE per settled utterance.
- * @param {function} [opts.onPending] (result|null) => void — the not-yet-committed utterance, for a
- *   live echo. This is the channel a confirmation UI would read (investigation question 4, still
- *   undecided); it is offered because the debounce is what makes such an echo honest — before this,
- *   there was no moment at which "what is about to be saved" was a stable value.
- * @param {number}   [opts.settleMs]
- * @param {number}   [opts.commandCooldownMs]
- */
-// Which verbs MUTATE, grouped by what they mutate. The cooldown is keyed on this class rather than
-// on the command string: `next` and `save` are different strings that both write a harvest row, and
-// keying on the string let one spoken word heard two ways commit twice 300ms apart (measured).
-// A verb absent from this map is non-destructive and is never cooldown-suppressed.
+// Which verbs MUTATE, grouped by what they mutate. The cooldown is keyed on this class, not on the
+// command string: `next` and `save` are different strings that both write a harvest row, and keying on
+// the string let one word heard two ways commit twice. A verb absent here is non-destructive and is
+// never cooldown-suppressed.
 export const WRITE_CLASS = {
   save_and_advance: 'write',
   save: 'write',
   discard: 'destroy',
 }
 
+/**
+ * @param {object}   opts
+ * @param {function} opts.onCommit  (result, meta) => void — fires ONCE per settled utterance.
+ * @param {function} [opts.onPending] (result|null) => void — the not-yet-committed utterance, for a
+ *   live echo. This is the channel a confirmation UI would read (investigation question 4, still
+ *   undecided); the debounce is what makes such an echo honest.
+ * @param {function} [opts.onSuppressed] (result, 'cooldown'|'stale') => void — a command that was swallowed.
+ * @param {function} [opts.onCommitError] (result, err) => void — onCommit threw.
+ * @param {number}   [opts.settleMs]
+ * @param {number}   [opts.commandCooldownMs]
+ * @param {number}   [opts.staleMs] a pending write older than this at tick() is discarded, not committed.
+ */
 export function createCommitDebouncer({
   onCommit,
   onPending = null,
@@ -104,10 +82,8 @@ export function createCommitDebouncer({
   }
 
   const reportPending = () => {
-    // Wrapped for the same reason transcribe.js wraps every consumer callback (:196, :212, :221):
-    // this fires from inside the recogniser's own handlers, and a throwing host must not be able to
-    // kill the session. The layer was asymmetric with the seam it sits beside; measured by the
-    // crucible's qa seat, which showed a throwing handler propagating out of sessionEnd().
+    // Wrapped like every consumer callback in transcribe.js: this fires from inside the recogniser's own
+    // handlers, and a throwing host must not be able to kill the session.
     if (!onPending) return
     try { onPending(pending ? pending.result : null) } catch { /* host's problem, not the mic's */ }
   }
@@ -117,17 +93,14 @@ export function createCommitDebouncer({
     const { result } = pending
     pending = null
 
-    // COOLDOWN KEYS ON THE WRITE CLASS, NOT THE COMMAND STRING. Measured defect: `next` and `save`
-    // are different strings that both WRITE, so "next" at t and "save" at t+300 both committed —
-    // one spoken word heard two ways double-writes. Every verb that mutates shares one slot.
-    // V5-VOICEONEBREATH-002 — A ONE-BREATH UTTERANCE WRITES, SO IT MUST HOLD THE SAME SLOT.
-    // "cucumber three count 231 grams next" classifies as `search`, not `command`, because the
-    // command is not the whole utterance — so on the rule above it took klass=null and got NO
-    // cooldown at all, while performing exactly the write a bare "next" performs. That is the one
-    // defence this file says it has against a duplicate final, and this repo has FIVE recorded
-    // duplicate-final recurrences (BUG-VOICEDUPE-001..005). Unprotected, a repeated final would
-    // write two harvest rows and skip a planting Dave never sees — the precise cost the comment
-    // above weighs and rejects. So the trailing command claims the slot too.
+    // COOLDOWN KEYS ON THE WRITE CLASS, NOT THE COMMAND STRING: "next" at t and "save" at t+300 are
+    // different strings that both WRITE, so one spoken word heard two ways would double-write. Every verb
+    // that mutates shares one slot.
+    // V5-VOICEONEBREATH-002: A ONE-BREATH UTTERANCE WRITES, SO IT HOLDS THE SAME SLOT. "cucumber three count
+    // 231 grams next" classifies as `search` (the command is not the whole utterance), so on the rule above
+    // it would take klass=null and get NO cooldown while performing the write a bare "next" performs. A
+    // repeated final would then write two harvest rows (BUG-VOICEDUPE-001..005 recorded five such
+    // recurrences). So the trailing command claims the slot too.
     const trailing = result.kind === 'command' ? null : splitTrailingCommand(result.transcript)
     const klass = result.kind === 'command'
       ? WRITE_CLASS[result.command]
@@ -145,10 +118,9 @@ export function createCommitDebouncer({
 
     reportPending()
 
-    // ARM THE COOLDOWN ONLY ON A HANDLER THAT RETURNED. Previously `lastCommand` was set BEFORE
-    // onCommit, so a save that FAILED still armed the cooldown and swallowed the user's natural
-    // recovery — saying it again — for 1500ms. Measured. The cooldown now defends against a
-    // transport duplicate without also defending against a human retry.
+    // ARM THE COOLDOWN ONLY ON A HANDLER THAT RETURNED: a save that FAILED must not swallow the user's
+    // natural recovery (saying it again) for the cooldown. It defends against a transport duplicate, not a
+    // human retry.
     try {
       onCommit(result, { atMs })
     } catch (err) {
@@ -167,22 +139,19 @@ export function createCommitDebouncer({
     final(text, tMs) {
       const norm = normalise(text)
 
-      // 1. EMPTY FINALS — 11 of them in a 13-second run. Dropped before anything else, so they can
-      //    neither commit, supersede, nor restart a settle window.
+      // 1. EMPTY FINALS are dropped first, so they can neither commit, supersede, nor restart a settle window.
       if (!norm) { stats.droppedEmpty += 1; return }
 
       const result = classify(text)
 
       if (pending) {
-        // 2. SUPERSEDE. A later final whose text EXTENDS the pending one is the same utterance,
-        //    more completely heard — replace it and restart the window. Identical text is a prefix
-        //    of itself, so this is also the in-session de-duplication: "231 G" twice replaces once
-        //    and commits once.
+        // 2. SUPERSEDE. A later final whose text EXTENDS the pending one is the same utterance, more
+        //    completely heard: replace it and restart the window. Identical text is a prefix of itself, so
+        //    this is also the in-session de-duplication ("231 G" twice replaces once and commits once).
         //
-        //    This is also the rule that makes a premature COMMAND safe, which is the whole point:
-        //    a bare "next" pends rather than saving, and if the utterance was really "next to the
-        //    fence" the extension arrives inside the window and the pending command is replaced by
-        //    a search. Without the window, that save has already happened.
+        //    It is also what makes a premature COMMAND safe: a bare "next" pends rather than saving, and if
+        //    the utterance was really "next to the fence" the extension arrives inside the window and
+        //    replaces the pending command with a search.
         if (norm !== pending.norm && norm.startsWith(pending.norm)) {
           stats.superseded += 1
           pending = { text, norm, result, atMs: tMs }
@@ -197,10 +166,9 @@ export function createCommitDebouncer({
           reportPending()
           return
         }
-        // 3. REGRESSION — the new final is a TRUNCATION of what is pending ("three counts" then
-        //    "three"). DEFENSIVE, NOT OBSERVED: it did not occur in the device log, and it is
-        //    handled by keeping the longer pending text rather than by trusting arrival order,
-        //    because the alternative silently downgrades a fully-heard utterance to a partial one.
+        // 3. REGRESSION: the new final is a TRUNCATION of what is pending ("three counts" then "three").
+        //    DEFENSIVE, NOT OBSERVED. Keep the longer pending text rather than trusting arrival order, which
+        //    would silently downgrade a fully-heard utterance to a partial one.
         if (pending.norm.startsWith(norm)) { stats.regressed += 1; return }
 
         // 4. A genuinely different utterance. The pending one is finished — commit it, then pend
@@ -213,23 +181,15 @@ export function createCommitDebouncer({
     },
 
     /**
-     * The recogniser's session ended. Chrome fires this 1-2 ms after the last final of an utterance
-     * (measured), so it is a genuine utterance boundary.
+     * The recogniser's session ended. Chrome fires this 1-2 ms after the last final of an utterance, so it
+     * is a genuine utterance boundary.
      *
-     * DATA FLUSHES HERE; A WRITE COMMAND DOES NOT. The earlier version flushed everything, and that
-     * was wrong in a way only measurement showed: Chrome ends the session after EVERY utterance, so
-     * `sessionEnd` is the DOMINANT commit path — replaying the device log through a real host timer
-     * produced 4 commits via sessionEnd and ZERO via tick. The 500ms settle window never executed
-     * once in the whole evidence base, which means the design's own "single most valuable
-     * behaviour" — a bare "next" pending rather than saving, so "next to the fence" can supersede it
-     * — was unreachable for the command axis. A session boundary landing between a command-word
-     * prefix and its continuation committed an unrequested SAVE.
-     *
-     * So the asymmetry the rest of this file argues for is now actually paid: data commits
-     * immediately (no cost, nothing destructive), and a write command waits out the full window,
-     * which is the only thing that makes the supersede rule real rather than aspirational. It costs
-     * 500ms on the destructive verb alone, and it converts an assumption about Chrome's
-     * emulated-continuous path into a guarantee.
+     * DATA FLUSHES HERE; A WRITE COMMAND DOES NOT. Chrome ends the session after EVERY utterance, so
+     * `sessionEnd` is the DOMINANT commit path (replaying the device log gave 4 commits via sessionEnd and
+     * ZERO via tick). Flushing everything here meant the settle window never ran, so a bare "next" could not
+     * pend and "next to the fence" could not supersede it: a session boundary between a command-word prefix
+     * and its continuation committed an unrequested SAVE. So data commits immediately (nothing destructive)
+     * and a write command waits out the full window, at a cost of 500ms on the destructive verb alone.
      */
     sessionEnd(tMs) {
       if (pending && pending.result.kind === 'command' && WRITE_CLASS[pending.result.command]) return
@@ -239,13 +199,11 @@ export function createCommitDebouncer({
     /**
      * Drive the settle window. A host calls this from a timer; `dueAt()` says when.
      *
-     * A PENDING WRITE PAST ITS STALENESS BOUND IS DISCARDED, NOT COMMITTED. Measured: before this,
-     * `tick(60000)` on a write pended at t=0 committed a SIXTY-SECOND-OLD save_and_advance, stamped
-     * with the tick's own timestamp. That became reachable only when write commands started waiting
-     * out the window instead of flushing at sessionEnd — a defect introduced by the fix before it.
-     * A commit later than the window is not a settled utterance, it is a resurrected one, and on a
-     * platform that freezes timers on hidden pages it would fire against whatever planting is on
-     * screen when the page wakes.
+     * A PENDING WRITE PAST ITS STALENESS BOUND IS DISCARDED, NOT COMMITTED. Otherwise `tick(60000)` on a
+     * write pended at t=0 commits a sixty-second-old save_and_advance stamped with the tick's own timestamp
+     * (reachable because write commands wait out the window instead of flushing at sessionEnd). A commit
+     * later than the window is a resurrected utterance, and on a platform that freezes timers on hidden
+     * pages it would fire against whatever planting is on screen when the page wakes.
      */
     tick(tMs) {
       if (!pending) return
@@ -271,22 +229,15 @@ export function createCommitDebouncer({
     /**
      * Drop the in-flight utterance.
      *
-     * NO LONGER SAFE ON THE DESTRUCTIVE PATH, and the docstring used to claim it was. Once write
-     * commands began waiting out the settle window instead of flushing at sessionEnd, the window in
-     * which this silently destroys a REQUESTED save went from ~2 ms to >=500 ms — and the four hosts
-     * named below are exactly the ones that fire inside it. A host that calls this while a write is
-     * pending is cancelling a save the user asked for, with no signal. Check `peek()` first, or
-     * commit it. Pinned as characterisation in the test file rather than papered over.
+     * NOT SAFE ON THE DESTRUCTIVE PATH: write commands wait out the settle window (>=500 ms), so a host that
+     * calls this while a write is pending silently cancels a save the user asked for. Check `peek()` first,
+     * or commit it. Pinned as characterisation in the test file.
      *
-     * Safe for every in-flow transition on the DATA path — a chooser re-opening, a route change, the
-     * hook unmounting, the echo clearing.
+     * Safe for every in-flow transition on the DATA path: a chooser re-opening, a route change, the hook
+     * unmounting, the echo clearing.
      *
-     * THIS IS THE ONE THAT HOSTS WILL REACH FOR, so it is the one that must not disarm anything.
-     * The previous single `reset()` cleared the cooldown too, and that was a live footgun on the
-     * destructive path: measured, a reset() between two "next"s 276ms apart let BOTH commit — a
-     * double save — where without it the second was correctly suppressed. Every natural host
-     * implementation (clear the echo, clean up on unmount) calls exactly this, so the safe operation
-     * had to become the obvious one and the dangerous one had to be named.
+     * This is the one hosts reach for, so it must not disarm anything: clearing the cooldown too let two
+     * "next"s 276ms apart BOTH commit (a double save). The dangerous variant is resetSession().
      */
     resetPending() { pending = null; reportPending() },
 
@@ -298,18 +249,16 @@ export function createCommitDebouncer({
     resetSession() { pending = null; lastWrite = null; reportPending() },
 
     /**
-     * Release the cooldown for a write that did NOT take effect — the save-failure path calls this.
-     * `commit` already declines to arm on a throwing handler, but a handler that resolves and THEN
-     * discovers the POST failed (the async case, which is the common one) needs to say so.
-     * Without it the user's natural recovery — say "next" again — is swallowed for 1500ms, which is
-     * inside the human retry interval and turns a recoverable failure into an unrecoverable one.
+     * Release the cooldown for a write that did NOT take effect; the save-failure path calls this. `commit`
+     * already declines to arm on a throwing handler, but a handler that resolves and THEN discovers the POST
+     * failed (the common async case) must say so, or the user's retry ("next" again) is swallowed for the
+     * cooldown, turning a recoverable failure into an unrecoverable one.
      */
     invalidateLastWrite(token) {
-      // TOKEN-SCOPED, and it must be. Measured race in the identity-free version: save A commits,
-      // save B legitimately commits after the cooldown expires, THEN A's async POST fails and the
-      // host calls this — clearing the cooldown B armed, so a transport duplicate of B is admitted.
-      // Three commits where two are correct: a double save of B, caused by A's failure. The token is
-      // the `atMs` the host already receives in onCommit's meta.
+      // TOKEN-SCOPED, and it must be: save A commits, save B commits after the cooldown expires, THEN A's
+      // async POST fails and the host calls this. Without the token it clears the cooldown B armed, so a
+      // transport duplicate of B is admitted (a double save of B, caused by A's failure). The token is the
+      // `atMs` the host already receives in onCommit's meta.
       if (token != null && (!lastWrite || lastWrite.atMs !== token)) return
       lastWrite = null
     },
