@@ -11,31 +11,31 @@ import Section from '../components/FormSection.jsx'
 import { ScopeChecklist, Textarea } from '../components/forms'
 import Spinner from '../components/forms/Spinner.jsx'
 import EventTypePicker, { EVENT_TYPES_UI } from '../components/forms/EventTypePicker.jsx'
-// V4-WATERMATH-001 F0 — batch amount class. ONE batch-level chip applies to every row; a per-row
+// Batch amount class. ONE batch-level chip applies to every row; a per-row
 // override is available but never demanded. Making the class per-row-MANDATORY would put 20-40
 // forced decisions in a single burst, which is precisely the failure the chips exist to avoid.
 import WaterDepthChips, { WaterDepthDrops } from '../components/WaterDepthChips.jsx'
 import {
   WATER_DEPTH_DEFAULT, isWaterDepth, isWaterDepthType, waterDepthMetadata, waterDepthLabel, WATER_DEPTH_CHIPS,
 } from '../lib/waterDepth.js'
-// V5-VOICECARE-001 — the voice path. It never writes into this form's state; a logged voice batch
+// The voice path. It never writes into this form's state; a logged voice batch
 // is handed back through onVoiceLogged and shown on this page's own result card (`via: 'voice'`).
 import LogManyVoice from '../components/LogManyVoice.jsx'
 import { careLocations } from '../lib/voiceCareResolve.js'
 import { undoCareBatch } from '../lib/voiceCareBatch.js'
 import { todayLocalISO } from '../lib/dateLocal.js'
 
-// Bulk "Quick Log" (Unit A). Apply ONE event type to MANY plantings at once —
-// one event per planting — without per-item tapping. Scope: All active / By Project /
+// Bulk "Quick Log". Apply ONE event type to MANY plantings at once,
+// one event per planting, without per-item tapping. Scope: All active / By Project /
 // By Zone. Server resolves the set (POST /api/events/batch); dry_run powers the
-// server-accurate preview. Durable undo via /api/events/batches. V100: ambient, no interrupt.
+// server-accurate preview. Durable undo via /api/events/batches. Ambient, no interrupt.
 //
-// Lane D / Phase D (slice 2): the scope selector + 500-cap exclusion checklist live in
+// The scope selector + 500-cap exclusion checklist live in
 // the shared <ScopeChecklist> component (forms/). This page owns the scope/date/confirm/undo
-// flow; the event-type selector is the SAME shared <EventTypePicker> tile grid Log Event uses
-// (V4-EVENTSEL-003) — one component, visually identical on both surfaces.
+// flow; the event-type selector is the SAME shared <EventTypePicker> tile grid Log Event uses,
+// one component, visually identical on both surfaces.
 
-// V4-EVENTSEL-002: the bulk selector is UNIFIED with Log One — it renders the SAME
+// The bulk selector is UNIFIED with Log One: it renders the SAME
 // first-class order (PRIMARY_EVENT_TYPES from the canonical eventTypes.js), not a separate
 // season-aware set. In bulk: `photo` is hidden (needs a file upload) and harvest/first_harvest
 // are shown as chips but ROUTE to per-plant entry (they need a quantity); the remaining five
@@ -52,7 +52,7 @@ export function bulkSubmittableValues() {
 }
 // Log Many's primary tiles = the shared first-class set minus photo (needs a file upload).
 // Sourced from EVENT_TYPES_UI (not EVENT_TYPE_META) so the tile labels + icons are byte-identical
-// to Log Event's grid. Stable module const → the picker's useMemo doesn't recompute per render.
+// to Log Event's grid. Stable module const, so the picker's useMemo doesn't recompute per render.
 const LOGMANY_PRIMARIES = EVENT_TYPES_UI.filter(t => t.value !== 'photo')
 
 // Secondary event types — revealed via "More event types" expand. Every batch-eligible
@@ -67,13 +67,13 @@ export function secondaryGroupsExcluding(primaryValues) {
 const SCOPE_KEY = 'quicklog.lastScope'
 const EVENT_TYPE_KEY = 'quicklog.lastEventType'
 
-// V3-LOGMANY-001: GET /api/locations returns {locations,...} (object), not a bare array.
+// GET /api/locations returns {locations,...} (object), not a bare array.
 // Unwrap to the array LogMany/ScopeChecklist expect; tolerate either shape.
 export function normalizeLocations(x) {
   return Array.isArray(x) ? x : (x?.locations ?? [])
 }
 
-// V5-VOICECARE-001 / review MINOR-4 — the voice path's view of the same GET: name + full path per
+// The voice path's view of the same GET: name + full path per
 // location (careLocations). DERIVED INSIDE A GUARD because it runs in this page's only load `.then`:
 // careLocations dereferences every row of BOTH halves of the response, and the `locations_with_path`
 // half is read by nothing else on this page, so one row it cannot read would have sent the WHOLE
@@ -92,7 +92,7 @@ function genKey() {
 
 const DRAFT_KEY = 'logmany'
 
-// V4-EVENTSEL-005 — ONE note for the whole batch. MUST equal MAX_NOTES_LEN in
+// ONE note for the whole batch. MUST equal MAX_NOTES_LEN in
 // lambda/events/validators.js; the two are pinned together by a source test
 // (src/__tests__/LogManyNotes.test.jsx) because a client cap looser than the server's turns a
 // server 400 into a mystery, and a client cap tighter than the server's silently truncates.
@@ -101,14 +101,14 @@ export const MAX_BATCH_NOTE_LEN = 2000
 export default function LogMany() {
   const { fetch } = useApiFetch()
   const navigate = useNavigate()
-  const swap = useOverlaySwap()               // in-overlay cross-nav that preserves the background (§4)
-  const dismiss = useOverlayDismiss()          // §4 dismiss — never bare navigate(-1)
+  const swap = useOverlaySwap()               // in-overlay cross-nav that preserves the background
+  const dismiss = useOverlayDismiss()          // never bare navigate(-1)
   const background = useOverlayBackground()     // preserved through the post-batch critterCheck push
   const [params] = useSearchParams()
 
   const [projects, setProjects]   = useState([])
   const [locations, setLocations] = useState([])
-  // V5-VOICECARE-001: the same GET, joined with its locations_with_path half — the spoken area is
+  // The same GET, joined with its locations_with_path half: the spoken area is
   // matched against a location's name AND its full path ("pasture in ground"). null until loaded, and
   // null for good when the response cannot be read for voice (voiceCareLocations): no voice card.
   const [careLocs, setCareLocs] = useState(null)
@@ -122,10 +122,10 @@ export default function LogMany() {
     } catch (e) {}
     return 'watering'
   })
-  // V3-EVENT-008 (V002 §5): bulk back-dating. Frost / bring-in events are often logged
+  // Bulk back-dating. Frost / bring-in events are often logged
   // the morning after. Empty string = "now" (server defaults to today, noon-anchored).
   const [eventDate, setEventDate] = useState('')
-  // V4-EVENTSEL-005: ONE note for the batch. `showNotes` only ever OPENS something empty — the
+  // ONE note for the batch. `showNotes` only ever OPENS something empty: the
   // rendered open state is DERIVED (`showNotes || !!notes`), the same rule Log Event's notes
   // disclosure uses, so collapsing can never hide text the user has already written and a restored
   // draft carrying a note shows it without a tap.
@@ -136,7 +136,7 @@ export default function LogMany() {
   // The latest selection for a callback that must not be re-created on every toggle (onVoiceLogged).
   const selectionRef = useRef(null)
   selectionRef.current = selection
-  // V4-LOGMANYUXREFRESH-001 S0 — the restore seed for ScopeChecklist's decisions map. Held
+  // The restore seed for ScopeChecklist's decisions map. Held
   // SEPARATELY from `selection` above, and set exactly twice (draft restore, logMore), because
   // `selection` is written by the child on every toggle: feeding that straight back down as the
   // child's own seed would be a render loop with extra steps.
@@ -145,33 +145,33 @@ export default function LogMany() {
   const [result, setResult] = useState(null)       // { batch_id, count }
   const [error, setError]   = useState(null)
   const idemRef = useRef(null)
-  // BUG-LOGMANYLATECRITTERREPLACE-001 — a batch that lands AFTER this page is gone (the sheet closed by
+  // A batch that lands AFTER this page is gone (the sheet closed by
   // its X or Escape while the POST was in flight, or a full-page Back) must not navigate. useNavigate
   // outlives the component, so the post-batch replace below would overwrite whatever entry is current
-  // by then: since BUG-OVERLAYDISMISSREKEY-001 that is the page's own entry, which it re-keys, and it
-  // re-opened an EMPTY Log many over it (the result lived in this unmounted instance). The batch is
-  // already in the DB and its draft is cleared either way; only the screen that no longer exists is skipped.
+  // by then: that is the page's own entry, which it re-keys, and it re-opened an EMPTY Log many over
+  // it (the result lived in this unmounted instance). The batch is already in the DB and its draft is
+  // cleared either way; only the screen that no longer exists is skipped.
   const mountedRef = useRef(true)
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false } }, [])
 
-  // V4-WATERMATH-001 F0: batch-level amount class + sparse per-row overrides ({plant_id: depth}).
+  // Batch-level amount class + sparse per-row overrides ({plant_id: depth}).
   // `batchDepthTouched` drives water_depth_source for every row the batch chip covers, exactly as
-  // on the single-event path — an untouched batch writes 'default' on all N rows, so the
+  // on the single-event path: an untouched batch writes 'default' on all N rows, so the
   // annotation-rate signal cannot be inflated by the high-volume path.
   const [batchDepth, setBatchDepth] = useState(WATER_DEPTH_DEFAULT)
   const [batchDepthTouched, setBatchDepthTouched] = useState(false)
   const [rowDepth, setRowDepth] = useState({})
   const depthApplies = isWaterDepthType(eventType)
-  // V4-LOGMANYDEPTHSTASH-001: one-shot handoff from the draft restore to the apply effect below.
-  // Not applied inline in the loader — the new-batch reset effect would wipe it in the same pass.
+  // One-shot handoff from the draft restore to the apply effect below.
+  // Not applied inline in the loader: the new-batch reset effect would wipe it in the same pass.
   const [restoredDepth, setRestoredDepth] = useState(null)
 
-  // V4-EVENTSEL-003: Log Many renders the SAME <EventTypePicker> tile grid as Log Event (below),
+  // Log Many renders the SAME <EventTypePicker> tile grid as Log Event (below),
   // so the two selectors are visually identical. harvest/first_harvest tiles route to per-plant
   // entry (need a quantity); photo is hidden in bulk (absent from LOGMANY_PRIMARIES); everything
   // else selects for the batch apply.
   function goPerPlant(type) {
-    // Cross-nav to Log One INSIDE the overlay — swap keeps the underlying page as background so
+    // Cross-nav to Log One INSIDE the overlay: swap keeps the underlying page as background so
     // dismiss still returns to it (using useOverlayNavigate here would wrongly set bg to /log/many).
     swap(`/log?event_type=${encodeURIComponent(type)}`)
   }
@@ -186,10 +186,10 @@ export default function LogMany() {
     Promise.all([fetch('/api/projects'), fetch('/api/locations')])
       .then(([proj, locs]) => {
         if (!on) return
-        // V5-VOICECARE-001: from the RAW response (normalizeLocations below keeps only its
-        // `locations` half), and guarded so it can never take this load down — voiceCareLocations.
+        // From the RAW response (normalizeLocations below keeps only its
+        // `locations` half), and guarded so it can never take this load down: voiceCareLocations.
         setCareLocs(voiceCareLocations(locs))
-        // V3-ARCHIVE-001: archived projects must not appear in the Log Many scope picker.
+        // Archived projects must not appear in the Log Many scope picker.
         proj = (proj ?? []).filter(pr => !pr.archived_at); locs = normalizeLocations(locs)
         setProjects(proj); setLocations(locs)
         const seedProject = params.get('project_id')
@@ -197,21 +197,20 @@ export default function LogMany() {
         if (seedProject && proj.some(p => p.id === seedProject)) setScope({ type: 'project', project_id: seedProject })
         else if (seedLocation && locs.some(l => l.id === seedLocation)) setScope({ type: 'space', location_id: seedLocation })
         else {
-          // §4 draft stash: a dismissed-while-dirty form resumes here (validated against live data).
-          // Takes priority over the localStorage lastScope memory; only with no seed deep-link (a
-          // bare "Log many" tap), so a deep-link intent still wins.
-          // V4-DRAFTFULLPAGE-001 (c): BOTH surfaces, not overlay-only. Full-page /log/many is reached
-          // by deep link, bookmark and notification; there the stash was inert, so an exit lost the
-          // event type, date, scope AND the persisted idemKey that makes a retry idempotent. Mirrors
-          // the (a) change already shipped for EventNew — same rationale: no router blocker is
-          // possible (useBlocker needs a data router, App uses declarative BrowserRouter), and
-          // persistence beats blocking on mobile.
+          // A dismissed-while-dirty form resumes here from the draft stash (validated against live
+          // data). Takes priority over the localStorage lastScope memory; only with no seed deep-link
+          // (a bare "Log many" tap), so a deep-link intent still wins.
+          // BOTH surfaces, not overlay-only. Full-page /log/many is reached by deep link, bookmark and
+          // notification; there an inert stash would lose the event type, date, scope AND the
+          // persisted idemKey that makes a retry idempotent. EventNew does the same: no router
+          // blocker is possible (useBlocker needs a data router, App uses declarative
+          // BrowserRouter), and persistence beats blocking on mobile.
           const draft = readDraft(DRAFT_KEY)
           if (draft) {
             if (draft.eventType && BATCH_EVENT_TYPES.includes(draft.eventType)) setEventType(draft.eventType)
             if (typeof draft.eventDate === 'string') setEventDate(draft.eventDate)
-            // V4-EVENTSEL-005: a typed note is the most expensive thing on this form to lose to a
-            // dismiss — it is the only free text here. Restored, and the derived-open rule above
+            // A typed note is the most expensive thing on this form to lose to a
+            // dismiss, as it is the only free text here. Restored, and the derived-open rule above
             // makes it VISIBLE on restore rather than hidden behind a collapsed disclosure.
             if (typeof draft.notes === 'string') setNotes(draft.notes)
             const ds = draft.scope
@@ -219,7 +218,7 @@ export default function LogMany() {
               || (ds.type === 'project' && proj.some(p => p.id === ds.project_id))
               || (ds.type === 'space' && locs.some(l => l.id === ds.location_id)))) setScope(ds)
             if (typeof draft.idemKey === 'string') idemRef.current = draft.idemKey   // idempotent retry across dismiss
-            // V4-LOGMANYUXREFRESH-001 S0 — the selection rides in the stash now. Restored BEFORE
+            // The selection rides in the stash. Restored BEFORE
             // setReady(true) below, which is what makes the "seed once, in the initializer" contract
             // on ScopeChecklist's side safe: the child does not mount until ready.
             // Shape-checked rather than trusted: sessionStorage is user-writable and a malformed
@@ -232,26 +231,26 @@ export default function LogMany() {
                 ),
                 baseline: draft.selection.baseline !== false,
                 touched: !!draft.selection.touched,
-                // S3: the selection MODE rides back with the selection. Restoring a 3-planting pick
-                // into the bulk review list would show it as 236 exclusions — the same set, in the
-                // shape the user left behind. Narrowed to the two known values rather than passed
+                // The selection MODE rides back with the selection. Restoring a 3-planting pick
+                // into the bulk review list would show it as 236 exclusions, the same set in the
+                // wrong shape. Narrowed to the two known values rather than passed
                 // through, for the same reason the rest of this block is shape-checked.
                 mode: draft.selection.mode === 'pick' ? 'pick' : 'bulk',
               })
             }
-            // V4-LOGMANYDEPTHSTASH-001: the amount class rides in the batch POST but was in neither
-            // the snapshot nor either predicate, so a dismissed watering batch came back as
-            // Normal/default — silently re-answering a question the user had already answered, on
-            // every row in the batch. Restored ONLY for a water-depth type: the chips are not
-            // rendered for anything else, so a class carried onto (say) a pruning draft would be
-            // invisible state feeding a guard predicate with no control on screen to explain it.
+            // The amount class rides in the batch POST, so it is stashed and restored too:
+            // otherwise a dismissed watering batch comes back as Normal/default, silently
+            // re-answering a question the user had already answered, on every row in the batch.
+            // Restored ONLY for a water-depth type: the chips are not rendered for anything else,
+            // so a class carried onto (say) a pruning draft would be invisible state feeding a
+            // guard predicate with no control on screen to explain it.
             if (isWaterDepthType(draft.eventType)) {
               setRestoredDepth({
                 batchDepth: isWaterDepth(draft.batchDepth) ? draft.batchDepth : WATER_DEPTH_DEFAULT,
                 // The honesty flag rides WITH the value. Restoring a chosen 'deep' as
                 // source='default' would report a deliberate pick as the preselected default and
                 // deflate exactly the annotation-rate signal the instrumentation gate reads
-                // (waterDepth.js header) — and restoring an untouched default as 'user' would
+                // (waterDepth.js header), and restoring an untouched default as 'user' would
                 // inflate it.
                 batchDepthTouched: !!draft.batchDepthTouched,
                 rowDepth: draft.rowDepth && typeof draft.rowDepth === 'object'
@@ -274,22 +273,22 @@ export default function LogMany() {
     return () => { on = false }
   }, [fetch, params])
 
-  // TWO predicates, on purpose — the same split EventNew runs (its stash predicate vs
+  // TWO predicates, on purpose: the same split EventNew runs (its stash predicate vs
   // `hasUnsavedInput`), and for the same reason.
   //
   // `dirty` is the STASH predicate: broad, because a stash is free. Anything worth restoring after a
   // dismiss counts, including the picks — re-picking a type and a scope is cheap but not free.
-  // V4-LOGMANYDEPTHSTASH-001 adds the amount class. Both terms are pristine-safe: batchDepthTouched
-  // starts false and flips only on a chip tap, and rowDepth is empty until a row override is set —
+  // It includes the amount class. Both terms are pristine-safe: batchDepthTouched
+  // starts false and flips only on a chip tap, and rowDepth is empty until a row override is set;
   // neither has a sticky/localStorage seed, so neither can trip this on a bare mount.
   const rowDepthCount = Object.keys(rowDepth).length
-  // V4-LOGMANYUXREFRESH-001 S0 — the child's own pristine flag, not a count of exclusions. A
+  // The child's own pristine flag, not a count of exclusions. A
   // count would be armed on a bare mount for anyone whose stored default is "start with nothing
-  // selected" (Jen), because that state has every planting excluded and zero user taps behind it.
+  // selected", because that state has every planting excluded and zero user taps behind it.
   // `touched` flips only on a deliberate row/Select-none tap, so it passes the same test
   // `eventDate` passes and `eventType`/`scope` fail.
   const selectionTouched = !!selection?.selectionState?.touched
-  // V4-LOGMANYUXREFRESH-001 S3 — transient UI position reported by the child, NOT part of the
+  // Transient UI position reported by the child, NOT part of the
   // selection: while the full-screen pick frame is up it renders the primary action itself, so the
   // page must not render a second copy behind it.
   const pickFrameOpen = !!selection?.frameOpen
@@ -297,14 +296,14 @@ export default function LogMany() {
   const dirty = eventType !== 'watering' || !!eventDate || scope.type !== 'all' || !!notes ||
     batchDepthTouched || rowDepthCount > 0 || selectionTouched
 
-  // §4 draft stash: persist the in-progress form while dirty (BOTH surfaces, V4-DRAFTFULLPAGE-001 (c)),
+  // Draft stash: persist the in-progress form while dirty (BOTH surfaces),
   // so a dismiss OR a full-page exit preserves it; cleared on a successful confirm/undo below.
-  // Never persists the pristine default or the
-  // post-result screen (result set = already written to DB, not a resumable draft).
+  // Never persists the pristine default or the post-result screen (result set = already written to
+  // DB, not a resumable draft).
   // Gate on `!ready`: the persist effect runs synchronously on mount, BEFORE the async load's
   // readDraft (which resolves in a later microtask inside the fetch .then). Without the gate, a user
   // whose remembered eventType is non-watering trips `dirty` on mount and writes a pristine draft
-  // that the load then reads back — shadowing the localStorage `lastScope` restore (silent reset to
+  // that the load then reads back, shadowing the localStorage `lastScope` restore (silent reset to
   // "All plantings"). Deferring until ready (load resolved) makes readDraft see null and honors the
   // lastScope memory; from then on it persists real edits normally.
   useEffect(() => {
@@ -329,42 +328,41 @@ export default function LogMany() {
   // and the screen is the confirmation + Undo. There is nothing left for a reload to destroy, and a
   // backdrop tap must dismiss rather than no-op. Without this term the counted fields survive the
   // save (only `logMore` clears the note) and the guards stayed armed on the success screen.
-  // V4-LOGMANYDEPTHSTASH-001 adds the amount class, on the same test the excluded picks fail and
+  // The amount class counts too, on the same test the excluded picks fail and
   // `eventDate` passes: is it possible on a mount with no user input? It is not. Both terms are
   // false on a pristine mount and move only on a deliberate tap (the chip's own onChange sets
   // batchDepthTouched; a row override is a second tap inside the Review list), and neither is
-  // seeded from localStorage, a deep link or a save. A restored draft can arm them — same as
+  // seeded from localStorage, a deep link or a save. A restored draft can arm them, same as
   // `eventDate`, and for the same reason: that IS this user's unsaved pick, just from an earlier
   // dismiss. Gated on `depthApplies` so the terms can only count while the chips are actually on
-  // screen — a class left over from a type the user has since changed away from is not content a
+  // screen; a class left over from a type the user has since changed away from is not content a
   // dismissal would destroy, and the reset effect below has already cleared it anyway.
-  // V4-LOGMANYUXREFRESH-001 S0 adds `selectionTouched`, on the same test the excluded picks fail:
+  // `selectionTouched` counts on the same test the excluded picks fail:
   // a hand-built selection over a 239-planting scope is the single most expensive thing on this form
-  // to lose, and it was in NEITHER channel — a stray backdrop tap dismissed the sheet and a deploy's
-  // reload was not held, both destroying it silently. It is not seeded from localStorage, a deep
+  // to lose, so a stray backdrop tap must not dismiss the sheet and a deploy's reload must be held.
+  // It is not seeded from localStorage, a deep
   // link or a save; the stored "start with everything selected" preference moves `baseline`, not
   // `touched`. Ungated by `depthApplies` (unlike the depth terms) because the selection is on screen
   // for every event type.
-  // V5-VOICECARE-001: a VOICE result does not release the guards. It wrote only what was said, never
+  // A VOICE result does not release the guards. It wrote only what was said, never
   // this form, so the form's date / note / amount / picks are still unsaved underneath the result card.
   const formWritten = !!result && result.via !== 'voice'
   const hasUnsavedInput = !formWritten && !!(eventDate || notes || selectionTouched || (depthApplies && (batchDepthTouched || rowDepthCount > 0)))
 
-  // §4 (b): report in-progress content to the hosting Sheet — a stray backdrop tap no-ops while
+  // Report in-progress content to the hosting Sheet: a stray backdrop tap no-ops while
   // there is unsaved input. No-op on the full page (no provider); the draft stash above covers
   // persistence there, on the broader predicate.
   useReportOverlayDirty(hasUnsavedInput)
 
-  // V4-RELOADGATEWIRE-001 — the producer half of OPS-SWRELOADGUARD-001 for Log Many. reloadGate.js
+  // The producer half of the SW reload guard for Log Many. reloadGate.js
   // and registerSW's deferral ship inert until something calls setReloadBlocked; this is that call
-  // for the bulk-log form. Runs on BOTH surfaces (unlike useReportOverlayDirty above) — a deploy
+  // for the bulk-log form. Runs on BOTH surfaces (unlike useReportOverlayDirty above): a deploy
   // reload hits the full-page /log/many route exactly as hard as the overlay, and reloadGate.js
   // names LogMany explicitly as an intended consumer.
   //
   // Key is per-instance: reloadGate holds a Set, and a shared literal key would let one instance's
-  // unmount release a different instance's hold. The cleanup release is required, not defensive — a
-  // dismissed/navigated-away dirty form that kept its hold would wedge every future update
-  // (BUG-STALECLIENT-001).
+  // unmount release a different instance's hold. The cleanup release is required, not defensive: a
+  // dismissed/navigated-away dirty form that kept its hold would wedge every future update.
   //
   // Fed the NARROW `hasUnsavedInput`, not the stash `dirty` — same value the backdrop guard gets, so
   // the two channels cannot drift. A release NOTIFIES (registerSW reloads on it), which is safe only
@@ -376,20 +374,20 @@ export default function LogMany() {
     return () => setReloadBlocked(reloadGateKey, false)
   }, [reloadGateKey, hasUnsavedInput])
 
-  // V4-WATERMATH-001 F0: a new event type or a new scope is a new batch. Per-row overrides are
+  // A new event type or a new scope is a new batch. Per-row overrides are
   // keyed by plant_id against a preview that has just been re-fetched, so keeping them would
   // silently apply a class the user chose for one set of plantings to a different set. The
-  // batch-level chip resets with them — same reason the single-event path resets on type change.
+  // batch-level chip resets with them, for the same reason the single-event path resets on type change.
   useEffect(() => {
     setBatchDepth(WATER_DEPTH_DEFAULT); setBatchDepthTouched(false); setRowDepth({})
   }, [eventType, scope])
 
-  // V4-LOGMANYDEPTHSTASH-001 — apply a restored amount class here, AFTER the reset effect above,
+  // Apply a restored amount class here, AFTER the reset effect above,
   // rather than inline in the loader. Declaration order is the whole mechanism: the restore sets
   // eventType and scope in one batch, so the reset effect's deps change and it fires in that same
   // passive-effect pass and clears the depth it just restored. React runs both effects in
-  // declaration order within that pass, so this one's writes land last and survive. (Same
-  // declaration-order reasoning PutUp's two stash effects already rely on.)
+  // declaration order within that pass, so this one's writes land last and survive. (PutUp's two
+  // stash effects rely on the same declaration-order reasoning.)
   //
   // A boolean skip-ref on the reset effect was the obvious alternative and is wrong: when a draft
   // restores neither the type nor the scope (a depth-only draft on the default watering/all form),
@@ -416,32 +414,32 @@ export default function LogMany() {
 
   const onSelectionChange = useCallback((sel) => setSelection(sel), [])
 
-  // V4-ICON-001: no `emoji` — `value` is the glyph key, resolved by <Icon name={`event.${value}`} />
-  // on the result card below. Nothing ever read the emoji off this object.
+  // No `emoji`: `value` is the glyph key, resolved by <Icon name={`event.${value}`} />
+  // on the result card below.
   const evMeta = {
     value: eventType,
     label: EVENT_TYPE_META[eventType]?.label ?? eventType,
   }
   const verbLabel = evMeta.label.toLowerCase()
-  // V4-EVENTSEL-005: DERIVED, not plain state — see the useState comment above.
+  // DERIVED, not plain state: see the useState comment above.
   const notesOpen = showNotes || !!notes
   const committedCount = selection?.committedCount ?? 0
-  // BUG-LOGMANYSTALECONFIRM-001 — THE CONFIRM HOLD. `selection` is whatever the
+  // THE CONFIRM HOLD. `selection` is whatever the
   // checklist last lifted, and it lifts one dry-run AFTER this page has already moved to a new
   // scope, type or date. In between, the count and the exclusions are the PREVIOUS scope's: the
-  // review card read "Counting…" while this button stayed live on the old number, and a tap posted
-  // the new scope with the old exclude_plant_ids. For a "start with nothing selected" user that was
-  // an over-write — one planting picked in the Trough, then "All active", logged a second planting
-  // that was never picked and never shown. `previewFor` is what the lifted numbers were resolved
-  // for, so "not what is on screen" is a plain compare against this page's own state and needs no
-  // effect to catch up: the hold begins in the same render as the change, and ends only when the
-  // checklist lifts an answer (a preview, or a failure) for exactly these three values.
+  // review card would read "Counting…" while this button stayed live on the old number, and a tap
+  // would post the new scope with the old exclude_plant_ids. For a "start with nothing
+  // selected" user that is an over-write: one planting picked in the Trough, then "All active",
+  // logs a second planting that was never picked and never shown. `previewFor` is what the lifted
+  // numbers were resolved for, so "not what is on screen" is a plain compare against this page's own
+  // state and needs no effect to catch up: the hold begins in the same render as the change, and ends
+  // only when the checklist lifts an answer (a preview, or a failure) for exactly these three values.
   // A lift with no tag is not held: nothing has answered yet on this mount, its count is zero, and
-  // zero already disables the button — first load still reads "on 0", as it did.
+  // zero already disables the button, so first load still reads "on 0".
   const previewFor = selection?.previewFor
   const counting = !!previewFor
     && !(previewFor.scope === scope && previewFor.eventType === eventType && previewFor.eventDate === eventDate)
-  // S4 — a PICK batch is committed as `{type:'ids'}`, so "in all active plantings" on the result
+  // A PICK batch is committed as `{type:'ids'}`, so "in all active plantings" on the result
   // card would name the pool the picks were drawn FROM, not what was logged. The page's `scope`
   // state is still the pool (it drives the dry-run), so the label has to branch on the mode.
   const scopeLabel = pickMode ? 'the plantings you picked'
@@ -454,20 +452,20 @@ export default function LogMany() {
     // body is built, and a body may not pair `scope` with a selection resolved for a different one.
     if (committedCount === 0 || saving || counting) return
     if (!idemRef.current) idemRef.current = genKey()
-    // §4: persist the idempotency key immediately (a ref change won't re-run the persist effect). If
+    // Persist the idempotency key immediately (a ref change won't re-run the persist effect). If
     // the POST fails and the user dismisses OR exits, re-opening restores THIS key so the retry is
-    // idempotent. V4-DRAFTFULLPAGE-001 (c): both surfaces — this is the byte whose loss on the
-    // full page turned a failed batch into a non-idempotent retry.
-    // Same payload shape as the persist effect above — a failed POST that the user dismisses must
+    // idempotent, on both surfaces: losing it on the full page would turn a failed batch into a
+    // non-idempotent retry.
+    // Same payload shape as the persist effect above: a failed POST that the user dismisses must
     // come back with the amount class intact, not just the idemKey.
     writeDraft(DRAFT_KEY, { eventType, eventDate, scope, notes, idemKey: idemRef.current, batchDepth, batchDepthTouched, rowDepth, selection: selection?.selectionState })
     setSaving(true); setError(null)
     try {
-      // V4-WATERMATH-001 F0 — batch metadata contract with the events Lambda (W-F0-LAMBDA):
+      // Batch metadata contract with the events Lambda:
       //   metadata            applied to EVERY row in the batch
       //   plant_metadata      { [plant_id]: {...} } merged OVER metadata for that row only
       // The server merges these on top of its own hardcoded {batch_id, batch_v} rather than
-      // replacing it — batch_id is what the durable undo (DELETE /api/events/batch/:id) resolves
+      // replacing it: batch_id is what the durable undo (DELETE /api/events/batch/:id) resolves
       // against, so an override that clobbered it would strand the batch.
       // Overrides are filtered to the COMMITTED set: a class chosen for a planting that was then
       // excluded must not ride along and land on nothing.
@@ -475,25 +473,25 @@ export default function LogMany() {
       const overrideEntries = depthApplies
         ? Object.entries(rowDepth).filter(([plantId]) => !excludedIds.includes(plantId))
         : []
-      // V4-LOGMANYUXREFRESH-001 S4 — "pick, don't un-pick", completed on the wire. In PICK mode the
+      // "Pick, don't un-pick", completed on the wire. In PICK mode the
       // commit states the plantings the user chose instead of the 236 they did not:
       // `{type:'ids', plant_ids:[…]}` rather than the shipped scope plus its complement.
       //
       // THIS IS NOT A SIZE OPTIMISATION. The complement is only equal to the pick as long as the
-      // server resolves the same 239 rows it resolved for the preview — and it may not, because
+      // server resolves the same 239 rows it resolved for the preview, and it may not, because
       // the other household member can archive, end or reassign a planting in between. With the
       // exclusion form the difference is unobservable: whatever the server now resolves minus the
       // 236 named ids is simply logged, and the count comes back looking right. Naming the picks
-      // makes that same drift a 409 (SCOPE_IDS_UNRESOLVED, lambda/events/index.js), which is what
-      // BD-073 means by "surfacing a visible warning rather than under-writing in silence".
+      // makes that same drift a 409 (SCOPE_IDS_UNRESOLVED, lambda/events/index.js), a visible
+      // warning rather than under-writing in silence.
       //
       // BULK is untouched and stays on the exclusion contract: there the user really did mean "this
-      // whole scope, minus these", so a resolution that has since moved is a feature — a planting
+      // whole scope, minus these", so a resolution that has since moved is a feature: a planting
       // added to the Bag Area this morning belongs in this evening's watering.
       const pickedIds = selection?.includedIds ?? []
       const usePickScope = pickMode && pickedIds.length > 0
       const postScope = usePickScope ? { type: 'ids', plant_ids: pickedIds } : scope
-      // V4-EVENTSEL-005 — ONE note, applied to every row server-side (the batch INSERT binds it
+      // ONE note, applied to every row server-side (the batch INSERT binds it
       // once). Trimmed and omitted when blank so a whitespace-only field never becomes 500 rows of
       // empty-string notes; the server re-does both (normalizeNotes) because this is a public
       // endpoint and the client is not the guard.
@@ -515,17 +513,17 @@ export default function LogMany() {
       }) })
       try { localStorage.setItem(SCOPE_KEY, JSON.stringify(scope)) } catch (e) {}
       try { localStorage.setItem(EVENT_TYPE_KEY, eventType) } catch (e) {}
-      // MVP-Critter — critters are awarded SERVER-SIDE by the events Lambda batch handler
-      // (Phase B++ refactor 2026-05-30). V3-CRITTER-002: wake CritterArrivalController so the
+      // Critters are awarded SERVER-SIDE by the events Lambda batch handler.
+      // Wake CritterArrivalController so the
       // Stage-1 flash fires on this page without a route change. The controller's effect dep
-      // includes location.state — pushing a new state object (same pathname, replace:true)
+      // includes location.state, so pushing a new state object (same pathname, replace:true)
       // triggers a re-poll. Critter is in DB before this resolves (Lambda awards inline).
       clearDraft(DRAFT_KEY)   // batch is in the DB — no longer a resumable draft
       if (!mountedRef.current) return
       setResult(r)
-      // §4 FIX: spread the existing state so the carried `background` survives this same-path push.
-      // The bug: replacing state wholesale destroyed `background` → the overlay unmounted → `result`
-      // was lost → the success screen + Undo became permanently unreachable for a batch already
+      // Spread the existing state so the carried `background` survives this same-path push.
+      // Replacing state wholesale would destroy `background`, unmount the overlay, lose `result`,
+      // and make the success screen + Undo permanently unreachable for a batch already
       // written to the DB. Preserving `background` keeps the overlay mounted on the result screen.
       navigate('.', { state: { ...(background ? { background } : {}), critterCheck: Date.now() }, replace: true })
     } catch (err) { setError(err.message) }
@@ -535,7 +533,7 @@ export default function LogMany() {
   async function undo() {
     if (!result) return
     const id = result.batch_id
-    // V5-VOICECARE-001 — a voice batch undoes through the voice client, and touches nothing of the
+    // A voice batch undoes through the voice client, and touches nothing of the
     // form's: its draft, key and selection were never the voice batch's to clear. A 404 there means
     // already undone (undoCareBatch says so), which is not a failure to report.
     if (result.via === 'voice') {
@@ -548,7 +546,7 @@ export default function LogMany() {
       await fetch('/api/events/batch/' + id, { method: 'DELETE' })
       idemRef.current = null
       clearDraft(DRAFT_KEY)
-      // V4-LOGMANYUXREFRESH-001 S0 — Undo means "that batch was wrong, let me redo it", so the
+      // Undo means "that batch was wrong, let me redo it", so the
       // selection is carried back into the remounted ScopeChecklist. Same asymmetry the note
       // already has (Undo keeps it, "Log more" clears it): re-picking N of 239 by hand is the most
       // expensive thing on this form, and an undo is exactly when the user still wants that set.
@@ -557,23 +555,23 @@ export default function LogMany() {
     } catch (err) { setError('Undo failed: ' + err.message) }
   }
 
-  // V4-EVENTSEL-005 — "Log more" clears the note; "Undo" keeps it.
+  // "Log more" clears the note; "Undo" keeps it.
   // Deliberate asymmetry: "Log more" starts a DIFFERENT batch (event type and scope carry only
   // because they are cheap re-picks), and silently re-attaching last batch's prose to a new set of
   // plantings is the exact data-quality defect the "applies to all" label exists to prevent. Undo
   // means "that batch was wrong, let me redo it", so the text the user just typed must survive.
-  // S0: the selection is cleared here for the same reason the note is — "Log more" starts a
+  // The selection is cleared here for the same reason the note is: "Log more" starts a
   // DIFFERENT batch, and silently re-applying last batch's hand-picked set to a new one is the same
   // data-quality defect. `null` is what makes the remounted ScopeChecklist seed from the stored
   // preference again.
   function logMore() {
-    // V5-VOICECARE-001: after a VOICE batch the form was never written, so "Log more" goes back to it
-    // exactly as it was — clearing its note or draft here would destroy unsaved input.
+    // After a VOICE batch the form was never written, so "Log more" goes back to it
+    // exactly as it was: clearing its note or draft here would destroy unsaved input.
     if (result?.via === 'voice') { setResult(null); setError(null); return }
     idemRef.current = null; clearDraft(DRAFT_KEY); setResult(null); setError(null); setNotes(''); setShowNotes(false); setRestoredSelection(null)
   }
 
-  // V5-VOICECARE-001 — a voice batch landed. The page's own result card shows it (count from the
+  // A voice batch landed. The page's own result card shows it (count from the
   // server, Undo, Log more, Done) and the critter check wakes exactly as after a manual batch. The
   // form's selection is carried back through the same seed Undo uses, because the result card
   // unmounts the checklist and a hand-made selection is the most expensive thing on this form.
@@ -596,9 +594,8 @@ export default function LogMany() {
   if (!ready) return <Shell><Spinner block /></Shell>
   if (loadErr) return <Shell><ErrMsg msg={loadErr} /></Shell>
 
-  // ── Result (ambient confirmation + durable undo) ──
   if (result) {
-    // V5-VOICECARE-001 — a VOICE batch names its own type and area; the form's type, scope, amount
+    // A VOICE batch names its own type and area; the form's type, scope, amount
     // and note are not what was written, so none of them may be read back on this card.
     const byVoice = result.via === 'voice'
     const resultType = byVoice ? result.eventType : evMeta.value
@@ -617,15 +614,12 @@ export default function LogMany() {
               Logged by voice, for today.
             </p>
           )}
-          {/* V4-LOGMANYUXREFRESH-001 S4 / BD-073 — THE SECOND HALF OF THE COUNT ASSERTION, MADE
-              VISIBLE. The events Lambda has re-read event_log after every batch since
-              BUG-LOGMANYPROJECTLESS-001 and returned `warning` + `skipped_plant_ids` whenever the
-              rows written disagreed with the plantings resolved — and its own comment says
-              "LogMany surfacing `warning` is a src/ change and belongs to whoever owns that lane."
-              Until now nothing read it, so the assertion could fire into a green tick: the count
-              above is TRUE (it is insertedEvents.length), but a user who selected 20 and got 18
-              saw "✓ 18 plantings watered" and no reason to think 20 had ever been asked for. That
-              is the silent under-write BD-073 was filed about, one layer up.
+          {/* THE SECOND HALF OF THE COUNT ASSERTION, MADE VISIBLE. The events Lambda re-reads
+              event_log after every batch and returns `warning` + `skipped_plant_ids` whenever the
+              rows written disagree with the plantings resolved. The count above is TRUE (it is
+              insertedEvents.length), but a user who selected 20 and got 18 would otherwise see
+              "✓ 18 plantings watered" and no reason to think 20 had ever been asked for: a silent
+              under-write, one layer up.
               role="alert" and not aria-live="polite": this is the one thing on a success screen
               that is not success. It renders only on a divergence, so no normal batch changes. */}
           {result.warning && (
@@ -635,17 +629,17 @@ export default function LogMany() {
               {result.requested_count ? ` — ${result.count} of ${result.requested_count} were logged.` : ''}
             </p>
           )}
-          {/* V4-WATERMATH-001 F0: state the class that was RECORDED, beside the undo that can take
-              it back. Operational, not celebratory (Reward-UX V101) — it reports a stored value. */}
+          {/* State the class that was RECORDED, beside the undo that can take
+              it back. Operational, not celebratory (Reward UX): it reports a stored value. */}
           {!byVoice && depthApplies && (
             <p data-testid="logmany-depth-recorded" style={{ margin: '-8px 0 16px', color: P.mid, fontSize: '0.82rem' }}>
               Recorded as {waterDepthLabel(batchDepth)}
               {Object.keys(rowDepth).length > 0 && ` · ${Object.keys(rowDepth).length} changed`}
             </p>
           )}
-          {/* V4-EVENTSEL-005: name the note that was STORED, and on how many rows, beside the undo
-              that can take it back. Same operational register as the depth line above (Reward-UX
-              V101 — it reports a stored value, it does not celebrate one). Showing the text itself
+          {/* Name the note that was STORED, and on how many rows, beside the undo
+              that can take it back. Same operational register as the depth line above (it reports
+              a stored value, it does not celebrate one). Showing the text itself
               is what makes "did my note go through?" answerable without opening an event. */}
           {!byVoice && notes.trim() && (
             <p data-testid="logmany-note-recorded" style={{ margin: '-8px 0 16px', color: P.mid, fontSize: '0.82rem', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
@@ -655,7 +649,7 @@ export default function LogMany() {
           <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
             <button type="button" onClick={undo} style={btnGhost}>Undo</button>
             <button type="button" onClick={logMore} style={btnGhost}>Log more</button>
-            {/* §4 FIX: dismiss to the background (the page the user opened this from), not a hard
+            {/* Dismiss to the background (the page the user opened this from), not a hard
                 navigate('/garden') that dumped them on Garden. Full-page fallback = /today. */}
             <button type="button" onClick={dismiss} style={btnPrimary}>Done</button>
           </div>
@@ -665,12 +659,11 @@ export default function LogMany() {
     )
   }
 
-  // ── Picker + scope/preview + confirm ──
-  // V4-LOGMANYUXREFRESH-001 S3 — ONE primary action, rendered in one of TWO places. While the PICK
+  // ONE primary action, rendered in one of TWO places. While the PICK
   // frame is open it belongs in the frame's bottom track, directly under the tray of what is picked
-  // (design §5.2: "what is selected is always on screen … directly above the primary button");
+  // ("what is selected is always on screen, directly above the primary button");
   // otherwise it stays where it has always been, at the foot of the page. Built once and handed to
-  // whichever surface is showing, rather than authored twice — two copies of a commit button is two
+  // whichever surface is showing, rather than authored twice: two copies of a commit button is two
   // places for the disabled rule to drift, and rendering both at once would put the same
   // `Log watered on 3` in the document twice.
   // The hold wears the same disabled treatment as "nothing selected" and "saving" (native `disabled`,
@@ -689,10 +682,10 @@ export default function LogMany() {
     <Shell>
       <Header />
 
-      {/* V5-VOICECARE-001 — first on the page, so it needs no scroll in either host; everything after
+      {/* First on the page, so it needs no scroll in either host; everything after
           the tap happens in its own full-screen frame with the actions in the bottom (thumb) track.
           Renders nothing where the browser cannot listen, and is not mounted at all when the
-          locations could not be read for voice (review MINOR-4). `formState` is only what the voice
+          locations could not be read for voice. `formState` is only what the voice
           write will NOT carry, so the read-back can say so; the component never writes to this form. */}
       {careLocs && (
         <LogManyVoice
@@ -712,7 +705,7 @@ export default function LogMany() {
       )}
 
       <Section label="What happened?" style={SECTION_SPACING}>
-        {/* V4-EVENTSEL-003: the SAME tile-grid selector as Log Event (EventNew). primaries =
+        {/* The SAME tile-grid selector as Log Event (EventNew). primaries =
             shared first-class set minus photo; available = BATCH_EVENT_TYPES scopes the "More"
             panel to batch-eligible types; handlePick routes harvest to per-plant, else selects. */}
         <EventTypePicker
@@ -721,7 +714,7 @@ export default function LogMany() {
           value={eventType}
           onChange={handlePick}
         />
-        {/* V4-LOGMANYHONEST-001: say it BEFORE the tap, not after. Harvest tiles render here but
+        {/* Say it BEFORE the tap, not after. Harvest tiles render here but
             route out to per-plant entry (goPerPlant), because a harvest needs a quantity and unit
             and the batch body cannot carry per-planting values. Un-announced, that reads as a
             mis-tap: the user deliberately chose the bulk surface and silently landed on a
@@ -733,7 +726,7 @@ export default function LogMany() {
         </p>
       </Section>
 
-      {/* ── V4-WATERMATH-001 F0: ONE batch-level amount class ──
+      {/* ONE batch-level amount class.
           Sits directly under the type picker (same placement as Log One) and above the scope, so
           it reads as a property of the batch rather than of any one planting. Per-row overrides
           live in the Review list below and are opt-in: the batch chip alone is a complete answer. */}
@@ -744,11 +737,11 @@ export default function LogMany() {
             onChange={(v) => { setBatchDepth(v); setBatchDepthTouched(true) }}
             groupLabel="How much water for this batch"
           />
-          {/* V4-LOGMANYUXREFRESH-001 S3 — the second sentence is BULK-ONLY, because in PICK mode
+          {/* The second sentence is BULK-ONLY, because in PICK mode
               there is no Review list to send anyone to. The per-row override is a review-list
               affordance (renderRowExtra, rendered beside a review row); the pick frame's rows carry
-              name + crop type and nothing else, per the design. Pointing at a control that is not
-              on screen is the same class of dishonesty V4-LOGMANYHONEST-001 fixed one Section up. */}
+              name + crop type and nothing else. Pointing at a control that is not
+              on screen would be dishonest, like the harvest hint above. */}
           <p style={{ margin: '10px 2px 0', fontSize: '0.78rem', color: P.light, lineHeight: 1.45 }}>
             Applies to every planting in this batch.
             {pickMode ? '' : ' Change individual ones under Review below.'}
@@ -757,15 +750,15 @@ export default function LogMany() {
       )}
 
       <Section label="When?" style={SECTION_SPACING}>
-        {/* V3-EVENT-008 (V002 §5): back-dating for bulk frost / bring-in events logged the
+        {/* Back-dating for bulk frost / bring-in events logged the
             morning after. Defaults to today (empty = server "now"); future dates blocked.
 
-            V4-EVENTSEL-005: this surface KEPT `type="date"` and Log Event moved onto it — see the
+            This surface KEPT `type="date"` and Log Event moved onto it; see the
             long note at Log Event's When block. Log Event's datetime-local was discarding the time
             it collected before the POST, so converging here was converging on the honest control.
             `max` and "Reset to today" stay: they are real Log-Many affordances (a bulk back-date is
             the whole point of this field), not scaffold divergence. The aria-label likewise keeps
-            its back-date hint — that hint describes an affordance Log Event does not have. */}
+            its back-date hint, which describes an affordance Log Event does not have. */}
         <input
           type="date"
           value={eventDate}
@@ -781,12 +774,12 @@ export default function LogMany() {
         )}
       </Section>
 
-      {/* ── V4-EVENTSEL-005: ONE note for the whole batch ──
-          Dave's ruling. Log Many exists for one activity across many plantings ("side-dressed the
+      {/* ONE note for the whole batch.
+          Log Many exists for one activity across many plantings ("side-dressed the
           whole bed"), so a single note is the real use case; per-row text entry on a phone outdoors
           works against the speed that is this surface's entire purpose, and is explicitly NOT in
           scope. If per-row notes are ever wanted they belong in the Review list as an opt-in
-          override, mirroring the water-depth chip — not in the main form.
+          override, mirroring the water-depth chip, not in the main form.
 
           THE LABEL IS LOAD-BEARING. A note field that silently lands on 30 events when the user
           meant one is a data-quality defect, so the fan-out is stated in the collapsed header (the
@@ -795,7 +788,7 @@ export default function LogMany() {
           established on this page.
 
           Collapsed by default, in Log Event's disclosure grammar rather than a Section, because the
-          card IS Log Event's notes card — this row exists to close a parity gap, and the two
+          card IS Log Event's notes card: this row exists to close a parity gap, and the two
           surfaces should read the same. Collapsing also keeps a 90px textarea out of a form that
           already carries a scope checklist. */}
       <div style={{ backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: '12px 18px', ...SECTION_SPACING }}>
@@ -865,12 +858,12 @@ export default function LogMany() {
   )
 }
 
-// V4-WATERMATH-001 F0 — per-row amount override inside the Review list.
+// Per-row amount override inside the Review list.
 //
 // Collapsed by default to a single compact chip showing the class the row WILL be logged with
 // (inherited from the batch unless overridden). Tapping it reveals the three chips for that row
 // only. Two-stage rather than three-chips-always: at 390px a permanent 3-chip group per row costs
-// ~170px of every row's width and turns a review list into a decision list — the 20-40 forced
+// ~170px of every row's width and turns a review list into a decision list, the 20-40 forced
 // decisions the batch chip exists to prevent. The compact chip still SHOWS the class, so nothing
 // is hidden; only the changing of it is one tap away.
 function WaterDepthRowOverride({ planting, excluded, value, overridden, onChange }) {
@@ -917,7 +910,7 @@ function Header() {
   return (
     <div style={{ marginBottom: 24 }}>
       <h1 style={{ margin: 0, color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>Log many</h1>
-      {/* V4-EVENTSEL-004: cross-link matches Log Event's exactly — same ghost style, sitting
+      {/* Cross-link matches Log Event's exactly: same ghost style, sitting
           UNDERNEATH the title (Log Event's pattern), not right-floated. */}
       <div style={{ marginTop: 8 }}>
         <OverlaySwapLink to="/log" style={crossLinkStyle}>Log one →</OverlaySwapLink>
@@ -925,11 +918,10 @@ function Header() {
     </div>
   )
 }
-// V4-EVENTSEL-005: the section card now comes from the shared <Section> (components/FormSection)
-// that Log Event also renders — V4-EVENTSEL-004 had matched two private copies by hand and said so
-// in a comment, which is the arrangement this replaces. Log Many's sections are loose children of a
+// The section card comes from the shared <Section> (components/FormSection)
+// that Log Event also renders. Log Many's sections are loose children of a
 // plain container rather than flex children of a gap:16 <form>, so they pass their own outer
-// spacing; the card itself is identical on both surfaces because it is now literally one module.
+// spacing; the card itself is identical on both surfaces because it is literally one module.
 const SECTION_SPACING = { marginBottom: 16 }
 function Shell({ children }) {
   return (
@@ -943,11 +935,11 @@ function ErrInline({ msg }) { return <p role="alert" style={{ color: P.terra, fo
 
 const btnPrimary = { backgroundColor: P.green, color: P.white, border: 'none', borderRadius: 8, padding: '11px 18px', fontSize: '0.9rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }
 const btnGhost = { backgroundColor: P.white, color: P.green, border: `1px solid ${P.greenLight}`, borderRadius: 8, padding: '10px 16px', fontSize: '0.88rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }
-// V4-EVENTSEL-004: byte-identical to Log Event's cross-link button (EventNew.jsx) so the two match exactly.
+// Byte-identical to Log Event's cross-link button (EventNew.jsx) so the two match exactly.
 const crossLinkStyle = { display: 'inline-block', marginTop: 4, backgroundColor: P.white, color: P.green, border: `1px solid ${P.greenLight}`, borderRadius: 8, padding: '8px 14px', fontSize: '0.85rem', fontWeight: 600, textDecoration: 'none' }
-// V4-LOGMANYUXREFRESH-001 S2 — the fourth sub-44 control on the selection path ("Reset to today",
+// The fourth sub-44 control on the selection path ("Reset to today",
 // the only way back from a back-date). Same one-line fix as ScopeChecklist's twin: `padding: 0` left
 // the line box as the whole target, so inline-flex + the named floor raises it without moving a pixel
-// of the visible text. `marginTop: 8` at the call site still applies — this only sets the box.
+// of the visible text. `marginTop: 8` at the call site still applies; this only sets the box.
 const linkBtn = { background: 'none', border: 'none', color: P.green, fontSize: '0.83rem', fontWeight: 600, cursor: 'pointer', padding: 0, fontFamily: 'inherit', textDecoration: 'underline', display: 'inline-flex', alignItems: 'center', minHeight: 44 }
 const selectStyle = { width: '100%', minHeight: 44, padding: '8px 12px', borderRadius: 8, border: `1px solid ${P.border}`, fontSize: '0.9rem', fontFamily: 'inherit', backgroundColor: P.white, color: P.dark }
