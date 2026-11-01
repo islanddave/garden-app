@@ -8,7 +8,7 @@
 # quietly seeing less.
 #
 # The seven lines, all `console.<level>(JSON.stringify({ msg: '<name>', ... }))` (dev 6cc3a465):
-#   household-membership-denied  warn  lambda/shared-state/index.js        garden-shared-state
+#   household-membership-denied  warn  householdGate, lambda/household.js  garden-<every URL function, below>
 #   household-scope-degraded     log   lambda/daily-plan/handler.js        garden-daily-plan  (once per Space per run)
 #   space-owner-missing          log   lambda/daily-plan/handler.js        garden-daily-plan  (once per Space per run)
 #   assignee-outside-household   log   lambda/daily-plan/handler.js        garden-daily-plan  (once per Space per run)
@@ -41,13 +41,14 @@
 # the proven pattern, and every target function still logs in Text format (the format the patterns were
 # proven on). There is no liveness step: these lines are rare by design, so a zero is the healthy
 # reading, and the pattern proof is what stands in for traffic. scripts/test_household_observability.py
-# pins FK_FUNCTIONS and each msg literal to the code that emits it.
+# pins FK_FUNCTIONS, the membership functions and each msg literal to the code that emits it.
 set -euo pipefail
 
 REGION="${AWS_REGION:-us-east-1}"
 ACCOUNT=769788341849
 NS="Garden/Household"
 SNS_TOPIC="${SNS_TOPIC:-arn:aws:sns:${REGION}:${ACCOUNT}:garden-ops-alerts}"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
 require_account() {
   local got
@@ -59,9 +60,22 @@ require_account() {
 # carry the definition; a filter on their log groups would be dead.
 FK_FUNCTIONS="events evidence-ingest inventory-items locations photos plants preservation projects varieties"
 
+# Every function scripts/lambda-config-expected.json gives a Function URL. Each one's request-context.js runs
+# householdGate, which logs household-membership-denied. Read through post-promote-check.py's url_functions, which
+# refuses a manifest whose URL count moved without review, so this is never a second copy of the list.
+membership_functions() {
+  python3 - "$HERE" <<'PY'
+import importlib.util, os, sys
+spec = importlib.util.spec_from_file_location("post_promote_check", os.path.join(sys.argv[1], "post-promote-check.py"))
+ppc = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ppc)
+print(" ".join(fn.removeprefix("garden-") for fn in ppc.url_functions()))
+PY
+}
+MEMBERSHIP_FUNCTIONS=$(membership_functions) || { echo "cannot read the URL functions from scripts/lambda-config-expected.json" >&2; exit 1; }
+
 # name|log-group function|metric|msg
 FILTERS="
-household-membership-denied|shared-state|HouseholdMembershipDenied|household-membership-denied
 household-scope-degraded|daily-plan|HouseholdScopeDegraded|household-scope-degraded
 household-space-owner-missing|daily-plan|SpaceOwnerMissing|space-owner-missing
 household-assignee-outside|daily-plan|AssigneeOutsideHousehold|assignee-outside-household
@@ -79,12 +93,13 @@ emit_filter() {   # filter-name, function dir, metric, msg
   echo "  ok  garden-$2: $1 -> ${NS}/$3"
 }
 
-each_filter() {   # callback with: name fn metric msg (authz-fk-reject expanded per calling function)
+each_filter() {   # callback with: name fn metric msg (membership and authz-fk-reject expanded per function)
   local name fn metric msg f
   while IFS='|' read -r name fn metric msg; do
     [ -n "$name" ] || continue
     "$1" "$name" "$fn" "$metric" "$msg"
   done <<< "$FILTERS"
+  for f in $MEMBERSHIP_FUNCTIONS; do "$1" household-membership-denied "$f" HouseholdMembershipDenied household-membership-denied; done
   for f in $FK_FUNCTIONS; do "$1" household-authz-fk-reject "$f" AuthzFkReject authz-fk-reject; done
 }
 
@@ -161,7 +176,7 @@ test_patterns() {
 }
 
 ALARMS="
-HouseholdMembershipDenied|garden-household-membership-denied|garden-shared-state refused a caller as not a household member (or GARDEN_HOUSEHOLD_IDS is missing on it): shared state 403s. Check the function's GARDEN_HOUSEHOLD_IDS against garden-events.
+HouseholdMembershipDenied|garden-household-membership-denied|A URL function's household gate refused a caller as not a household member (or GARDEN_HOUSEHOLD_IDS is missing on it): that function 403s. The line's reason splits non-member from env-missing; check the function's GARDEN_HOUSEHOLD_IDS against garden-events.
 HouseholdScopeDegraded|garden-household-scope-degraded|garden-daily-plan narrowed a Space to its owner alone (reason env-missing, env-single-entry or owner-not-in-household): the other household member's plantings drop out of Today. Check GARDEN_HOUSEHOLD_IDS on garden-daily-plan.
 SpaceOwnerMissing|garden-household-space-owner-missing|garden-daily-plan met a Space with no owner (blank created_by) or plantings in no Space: those plantings get no household scope.
 AssigneeOutsideHousehold|garden-household-assignee-outside|garden-daily-plan met plantings assigned to someone outside the Space's household: they are excluded from that Space's plan.
@@ -189,6 +204,7 @@ verify_filters() {
     [ -n "$name" ] || continue
     verify_filter "$name" "$fn" "$metric" "$msg" || bad=1
   done <<< "$FILTERS"
+  for f in $MEMBERSHIP_FUNCTIONS; do verify_filter household-membership-denied "$f" HouseholdMembershipDenied household-membership-denied || bad=1; done
   for f in $FK_FUNCTIONS; do verify_filter household-authz-fk-reject "$f" AuthzFkReject authz-fk-reject || bad=1; done
   return "$bad"
 }
@@ -197,7 +213,8 @@ verify_filters() {
 # JSON log format would need the patterns proven again first.
 verify_log_format() {
   local bad=0 fn fmt
-  for fn in shared-state daily-plan evidence-ingest $FK_FUNCTIONS; do
+  # shellcheck disable=SC2046,SC2086  # one function name per word, by construction
+  for fn in $(printf '%s\n' daily-plan evidence-ingest $FK_FUNCTIONS $MEMBERSHIP_FUNCTIONS | sort -u); do
     fmt=$(aws lambda get-function-configuration --region "$REGION" --function-name "garden-$fn" \
             --query 'LoggingConfig.LogFormat' --output text 2>/dev/null) || fmt="unreadable"
     [ "$fmt" = "Text" ] || { echo "  log format garden-$fn: $fmt (want Text)"; bad=1; }
