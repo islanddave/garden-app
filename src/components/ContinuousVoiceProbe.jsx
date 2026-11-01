@@ -1,64 +1,46 @@
 // src/components/ContinuousVoiceProbe.jsx
 //
-// V5-HARVESTVOICEFLOW-001 (BD-068) — the INSTRUMENT for the half of the investigation that cannot be
-// answered anywhere but on Dave's own phone. Not a feature; not wired into any user-facing surface.
-// It renders only inside the unlinked /admin/voice-debug route, the "device-truth surface"
-// BUG-VOICEDUPE-002 established for exactly this — ask the device, do not reason about the device.
+// V5-HARVESTVOICEFLOW-001 (BD-068) — a device-truth INSTRUMENT, not a feature: it renders only inside
+// the unlinked /admin/voice-debug route and is not wired into any user-facing surface.
 //
-// WHY IT DOES NOT USE lib/transcribe.js, which is the app's own recogniser wrapper: transcribe.js
-// deliberately ends a session on `onend` (endedFired guard, no restart) and layers two iOS watchdogs
-// plus a duplicate-collapsing accumulator on top of the raw stream. All of that is behaviour we are
-// deciding whether to CHANGE, so measuring through it would measure the wrapper. This talks to
-// SpeechRecognition directly and reports what Chrome actually dispatches.
+// WHY IT DOES NOT USE lib/transcribe.js: that wrapper deliberately ends a session on `onend`
+// (endedFired guard, no restart) and layers two iOS watchdogs plus a duplicate-collapsing accumulator
+// on the raw stream. Measuring through it would measure the wrapper. This talks to SpeechRecognition
+// directly and reports what Chrome actually dispatches.
 //
-// THE FOUR QUESTIONS IT ANSWERS, from the ledger row:
+// THE FOUR QUESTIONS IT ANSWERS:
 //   1. Does `continuous = true` survive several utterances in ONE session on Chrome Android, or does
-//      `onend` fire per-utterance? (Chromium 40324711: older Android providers did not support
-//      continuous at all, and Chrome ends a session after a silence window regardless.) The counter
-//      that settles it is sessions-vs-utterances: 1 session and 4 finals = continuous works;
-//      4 sessions and 4 finals = it is re-arming behind the scenes.
-//   2. HOW LONG the re-arm takes. This is the number that decides whether the whole flow is viable,
-//      because the gap is dead air where speech is LOST — Dave saying "231 grams" into a 700ms gap
-//      loses the utterance with no error and no signal, and a flow that silently eats every fourth
-//      value is worse than the form it replaces.
+//      `onend` fire per-utterance? The counter that settles it is sessions-vs-utterances: 1 session
+//      and 4 finals = continuous works; 4 sessions and 4 finals = it is re-arming behind the scenes.
+//   2. HOW LONG the re-arm takes. The gap is dead air where speech is LOST with no error and no
+//      signal, so this number decides whether the whole flow is viable.
 //   3. Whether re-arming re-prompts for microphone permission. Read from the Permissions API before
-//      and after rather than by watching for a dialog, so the answer does not depend on Dave
-//      noticing one.
-//   4. Whether an async round-trip mid-session kills recognition — the "pause while the input is
-//      searched" step in Dave's flow. Probed with a real deferred call, not asserted. ANSWERED on
-//      2026-08-27: it fired at 6008ms, resolved at 6121ms, and recognition carried straight on. The
-//      simulation is therefore opt-in and OFF by default now — see C4. It stayed on one run too long
-//      and confounded the only supersede gap that ever appeared to break the 500ms settle window.
+//      and after rather than by watching for a dialog.
+//   4. Whether an async round-trip mid-session kills recognition. ANSWERED: it does not. The
+//      simulation is opt-in and OFF by default (see C4), because it confounded the supersede-gap
+//      measurement.
 //
-// It ALSO runs every final transcript through the grammar (lib/voiceHarvestGrammar.js) so the
-// classification is visible on the same screen as the raw text: that is how a "three count" that the
-// device actually hears as "3 count" or "three counts" gets caught, rather than being assumed.
+// Every final transcript also runs through the grammar (lib/voiceHarvestGrammar.js), so the
+// classification is visible next to the raw text.
 //
-// ── S0 (build plan V101, 2026-08-27) ────────────────────────────────────────────────────────────
-// THE DEBOUNCE LAYER IS NOW WIRED IN HERE, AND THIS IS THE ONLY PLACE IT RUNS. lib/voiceCommitDebounce
-// .js was written, then edited three times in one day on analysis alone, and had never executed on a
-// device — two of those edits, made in response to measurements, introduced fresh defects. The boss
-// pass froze it to reasoning-only changes until a device run exists. S0 is how that freeze ends: it
-// adds a HOST (a timer and callbacks) around the existing layer and changes not one line of it.
+// S0: THE DEBOUNCE LAYER (lib/voiceCommitDebounce.js) IS WIRED IN HERE, AND THIS IS THE ONLY PLACE
+// IT RUNS. The probe adds a HOST (a timer and callbacks) around the layer and changes none of it.
 // Reverting is deleting one import.
 //
-// WHY THE PROBE AND NOT A REAL SURFACE: the debouncer cannot sit above transcribe.js — that wrapper's
+// WHY THE PROBE AND NOT A REAL SURFACE: the debouncer cannot sit above transcribe.js. That wrapper's
 // BUG-VOICEDUPE-003 fix pins `onResult` to never deliver a revised final (transcribe.rawEvents.test
-// .js:154), and the supersede rule needs exactly that revision, so behind the wrapper it would commit
-// the PREFIX ("231", not "231 G") — a silently wrong harvest weight with both suites green. The probe
-// reads the RAW stream, which is the only stream the layer is correct above.
+// .js), and the supersede rule needs exactly that revision, so behind the wrapper it would commit
+// the PREFIX ("231", not "231 G"), a silently wrong harvest weight. The probe reads the RAW stream,
+// the only stream the layer is correct above.
 //
-// THE THREE INSTRUMENTS S0 OWES, all rendered on screen and all in the copyable log:
-//   * `dueAt()` — when the pending utterance would commit on its own. It was invisible, so a window
-//     that never elapsed and a window that elapsed silently looked identical.
-//   * TICK DRIFT — fired-at minus due-at. A settle window is only real if the host's timer actually
-//     fires when it says. Android freezes timers on hidden pages; a 500 ms window that fires at
-//     +40 000 ms is the staleness case `tick()` now discards, and this is what shows it happening.
+// THE THREE INSTRUMENTS S0 OWES, all on screen and in the copyable log:
+//   * `dueAt()` — when the pending utterance would commit on its own; without it a window that never
+//     elapsed and one that elapsed silently look identical.
+//   * TICK DRIFT — fired-at minus due-at. Android freezes timers on hidden pages; a 500 ms window that
+//     fires at +40 000 ms is the staleness case `tick()` discards, and this shows it happening.
 //   * HELD WRITES THAT NEVER TICKED — `sessionEnd` deliberately refuses to flush a write command, so
-//     every save depends on a tick landing. Replaying the device log produced 4 commits via
-//     sessionEnd and ZERO via tick, which means the entire command axis of this design has never
-//     been observed working. A held write that leaves the pending slot without committing is that
-//     failure, counted.
+//     every save depends on a tick landing. A held write that leaves the pending slot without
+//     committing is that failure, counted.
 // Commits are also split BY PATH (tick / sessionEnd / final) for the same reason: "it committed" is
 // not the finding — WHICH path committed it is.
 import React, { useCallback, useEffect, useRef, useState } from 'react'
@@ -68,17 +50,13 @@ import { createCommitDebouncer, WRITE_CLASS } from '../lib/voiceCommitDebounce.j
 import { acquireMic, releaseMic } from '../lib/micArbiter.js'
 
 // RUN BUDGETS (C3). Two hard stops, so a forgotten probe cannot hold the mic open forever: a re-arm
-// count and a wall clock. The short pair is right for the 4-phrase fixture and WRONG for gate B6.
+// count and a wall clock. The short pair suits the 4-phrase fixture and is WRONG for gate B6.
 const SHORT_BUDGET = { restarts: 24, runMs: 4 * 60 * 1000, label: '24 re-arms / 4 min' }
 
-// B6 asks for ≥20 utterances outdoors, in one session, with Jen's voice and an offline segment. The
-// device re-arms roughly 5 sessions per 4 utterances, so 20 utterances is ~25 re-arms — meaning the
-// short budget hard-stops INSIDE the fixture it exists to measure, and V101's own gate could not be
-// executed by V101's own instrument. This is sized for that run plus mis-hears and retries.
-//
-// IT IS STILL BOUNDED, deliberately. "Long run" must not mean "no stop": twenty minutes of live mic
-// is the cost of the measurement, not a licence, and it is opt-in per run because the person who
-// forgets a 4-minute probe will also forget a 20-minute one.
+// Gate B6 asks for >=20 utterances outdoors in one session; at ~5 sessions per 4 utterances that is
+// ~25 re-arms, so the short budget would hard-stop INSIDE the fixture. This one is sized for that run
+// plus mis-hears and retries. It is still BOUNDED and opt-in per run: live mic for twenty minutes is
+// the cost of the measurement, not a licence.
 const LONG_BUDGET = { restarts: 150, runMs: 20 * 60 * 1000, label: '150 re-arms / 20 min' }
 
 function ctor() {
@@ -141,11 +119,10 @@ export default function ContinuousVoiceProbe() {
   const [stats, setStats] = useState({ sessions: 0, finals: 0, interims: 0, gaps: [] })
   const [env, setEnv] = useState({ onDevice: '…', permBefore: '…', permAfter: '—' })
 
-  // S0 host state. `commits` is the echo — the stand-in for the shipped harvest session ledger that
-  // S3 will use instead. It is a LEDGER, not a pending indicator: the crucible measured a pending
-  // echo rendering committed values for 3/1/276/2 ms (three below one 60 Hz frame, so they never
-  // paint) while 66% of its screen time showed values already discarded. So what persists here is
-  // what committed; what is pending is a recessive line beneath it.
+  // S0 host state. `commits` is the echo, a stand-in for the shipped harvest session ledger. It is a
+  // LEDGER, not a pending indicator: a pending echo spends most of its screen time showing values
+  // already discarded. So what persists here is what committed; what is pending is a recessive line
+  // beneath it.
   const [commits, setCommits] = useState([])
   const [pendingEcho, setPendingEcho] = useState(null)
   const [dueAtMs, setDueAtMs] = useState(null)
@@ -153,12 +130,9 @@ export default function ContinuousVoiceProbe() {
   const [hostMetrics, setHostMetrics] = useState(emptyHostMetrics)
   const [heldOutstanding, setHeldOutstanding] = useState(false)
   const [longRun, setLongRun] = useState(false)
-  // C4. Q4 is answered, and an answered question does not earn an uncontrolled network event at a
-  // fixed offset into every future run. What the fetch kept doing after it had served its purpose was
-  // contaminating the measurement it sat inside: the single supersede gap that appeared to break the
-  // 500ms settle window was 630ms with this round-trip inside it (fired 6008 / resolved 6121, between
-  // finals at 5928 and 6558), against ≤353ms for every clean gap across both device runs. Off unless
-  // someone is deliberately re-asking Q4.
+  // C4. Q4 is answered, so the simulated round-trip fetch contaminates the measurement it sits inside
+  // (the one supersede gap that appeared to break the 500ms settle window had this fetch in it).
+  // Off unless someone is deliberately re-asking Q4.
   const [roundTrip, setRoundTrip] = useState(false)
 
   const recRef = useRef(null)
@@ -168,23 +142,20 @@ export default function ContinuousVoiceProbe() {
   const restartsRef = useRef(0)
   const runTimerRef = useRef(null)
   const wallClockTimerRef = useRef(null)
-  // CAPTURED AT START, never read live. A budget that can change under a run in progress makes the
-  // run's own stop condition unknowable after the fact; the toggle is also disabled while running,
-  // so the two can never disagree.
+  // CAPTURED AT START, never read live: a budget that can change under a run makes the run's own stop
+  // condition unknowable afterwards. The toggle is also disabled while running. roundTripRef is
+  // captured for the same reason, so the log describes the run that actually happened.
   const budgetRef = useRef(SHORT_BUDGET)
-  // Captured at start for the same reason as the budget: a log has to describe the run that actually
-  // happened, and a mode read live could disagree with what the log says fired.
   const roundTripRef = useRef(false)
 
   const debRef = useRef(null)
   const tickTimerRef = useRef(null)
   const metricsRef = useRef(emptyHostMetrics())
   // WHICH ENTRY POINT IS ON THE STACK. onCommit fires synchronously from inside final()/sessionEnd()
-  // /tick(), so the path is knowable exactly — no inference, no heuristic.
+  // /tick(), so the path is known exactly.
   const commitPathRef = useRef(null)
-  // The pending write we are currently waiting on a tick for, held BY REFERENCE. The layer builds a
-  // fresh result object per final(), so object identity is a precise token for "still the same
-  // pending utterance" without the layer having to expose an id.
+  // The pending write we are waiting on a tick for, held BY REFERENCE: the layer builds a fresh result
+  // object per final(), so object identity tells "still the same pending utterance" without an id.
   const heldWriteRef = useRef(null)
 
   const log = useCallback((msg) => {
@@ -205,18 +176,16 @@ export default function ContinuousVoiceProbe() {
     setHeldOutstanding(!!heldWriteRef.current)
   }, [])
 
-  // Reconciles the held-write token against the layer's actual pending slot after every entry point.
-  // A held write that is gone from the slot WITHOUT onCommit or onSuppressed having cleared it did
-  // not commit — and the two ways that happens are NOT the same finding, so they are not one counter.
+  // Reconciles the held-write token against the layer's pending slot after every entry point. A held
+  // write gone from the slot WITHOUT onCommit or onSuppressed clearing it did not commit, and the two
+  // ways that happens are different findings, so they get separate counters.
   //
-  // SUPERSEDED is the design working. "next" pending, then the rest of "next to the fence" arrives
-  // inside the window: the save is correctly replaced by a search and no write fires. That is the
-  // single most valuable behaviour in the whole design, and an instrument that scored it as a failure
-  // would report the feature succeeding as the feature breaking.
+  // SUPERSEDED is the design working: "next" pending, then the rest of "next to the fence" arrives
+  // inside the window, so the save is correctly replaced by a search and no write fires. Scoring it
+  // as a failure would report the feature succeeding as the feature breaking.
   //
-  // LOST is the real defect: the slot emptied with nothing in its place and no commit, no
-  // suppression. Nothing in this host does that, so it should read 0 for the entire device run — a
-  // non-zero value means the layer moved on its own and the model here is wrong.
+  // LOST is the real defect: the slot emptied with nothing in its place and no commit or suppression.
+  // Nothing in this host does that, so it should read 0; non-zero means the model here is wrong.
   const reconcileHeld = useCallback((ctx) => {
     const deb = debRef.current
     const pending = deb ? deb.peek() : null
@@ -267,9 +236,8 @@ export default function ContinuousVoiceProbe() {
     probeOnDevice().then(onDevice => setEnv(e => ({ ...e, onDevice })))
   }, [])
 
-  // Release the mic on unmount no matter how the page is left — a probe that keeps recording after
-  // Dave navigates away is a worse bug than anything it is measuring. The three timers go with it:
-  // a tick firing into an unmounted host would commit against nothing and warn in React.
+  // Release the mic on unmount no matter how the page is left; the three timers go with it, since a
+  // tick firing into an unmounted host would commit against nothing and warn in React.
   useEffect(() => () => {
     stopRequestedRef.current = true
     if (runTimerRef.current) clearTimeout(runTimerRef.current)
@@ -282,9 +250,9 @@ export default function ContinuousVoiceProbe() {
     debRef.current = null
   }, [])
 
-  // S1 — hand the mic back whenever the run stops, however it stopped. Same shape as VoiceHarvest:
-  // the run has several exits and they do not share one, so the state they all converge on is the
-  // only single release point. Never acquires — mounting the probe must not take the mic.
+  // S1 — hand the mic back whenever the run stops, however it stopped. Same shape as VoiceHarvest: the
+  // run has several exits, so `running` going false is the single release point. Never acquires;
+  // mounting the probe must not take the mic.
   useEffect(() => {
     if (running) return
     releaseMic(micTokenRef.current)
@@ -311,22 +279,17 @@ export default function ContinuousVoiceProbe() {
     }
 
     rec.onresult = (ev) => {
-      // GATE B1: resultIndex and results.length, which the first device fixture did not capture even
-      // though voiceDebug.js:99-100 was already recording them on the OTHER capture path. Without the
-      // pair, a re-delivery at the SAME index (the VOICEDUPE signature) is indistinguishable from a
-      // new result at the next one — the exact distinction the whole duplicate analysis turns on.
+      // GATE B1: log resultIndex and results.length. Without the pair, a re-delivery at the SAME
+      // index (the VOICEDUPE signature) is indistinguishable from a new result at the next one.
       log(`result   resultIndex=${ev.resultIndex} len=${ev.results.length}`)
       for (let i = ev.resultIndex; i < ev.results.length; i++) {
         const r = ev.results[i]
         const text = r[0]?.transcript ?? ''
         if (r.isFinal) {
           setStats(s => ({ ...s, finals: s.finals + 1 }))
-          // RAW, via JSON.stringify — BUG-VOICEDUPE-005. This line used to print `text.trim()`, and
-          // that trim is why -004's fix was wrong: the fixture for the cross-slot echo guard was
-          // transcribed from this log, so it encoded byte-identical strings because the instrument
-          // could not display anything else. The device may well have been emitting " 310 G" against
-          // "310 G" all along. An instrument that normalises before it reports decides what the
-          // fixture can say, and therefore what the guard can be written against.
+          // RAW, via JSON.stringify — BUG-VOICEDUPE-005. An instrument that normalises (trims) before
+          // it reports decides what a fixture transcribed from this log can say: the device may emit
+          // " 310 G" against "310 G", and a trimmed line hides that.
           log(`  [${i}] FINAL   ${JSON.stringify(text)}  ->  ${describe(classify(text))}`)
           const deb = debRef.current
           if (deb) {
@@ -362,9 +325,9 @@ export default function ContinuousVoiceProbe() {
         return
       }
       restartsRef.current += 1
-      // THE RESTART, called with NO user gesture. Whether this succeeds is itself a finding: if
-      // Chrome requires a fresh gesture per session, hands-free across a save is impossible and the
-      // flow needs a different shape entirely. An error here is the answer, not a bug in the probe.
+      // THE RESTART, with NO user gesture. Whether this succeeds is itself a finding: if Chrome needs a
+      // fresh gesture per session, hands-free across a save is impossible. An error here is the
+      // answer, not a bug in the probe.
       try {
         rec.start()
       } catch (e) {
@@ -384,10 +347,9 @@ export default function ContinuousVoiceProbe() {
     endedAtRef.current = 0
     t0Ref.current = Date.now()
     setRunning(true)
-    // S1 — held for the whole run, like VoiceHarvest and for the same reason: this probe re-arms on
-    // every onend. The eviction is LOGGED rather than silent, because this instrument's entire value
-    // is that the log explains what the hardware did — a run that ends because another surface took
-    // the mic would otherwise read as a spontaneous stop and pollute the restart-budget numbers.
+    // S1 — held for the whole run, like VoiceHarvest: this probe re-arms on every onend. The eviction
+    // is LOGGED rather than silent, so a run ended by another surface taking the mic does not read as
+    // a spontaneous stop and pollute the restart-budget numbers.
     micTokenRef.current = acquireMic('ContinuousVoiceProbe', () => {
       stopRequestedRef.current = true
       if (runTimerRef.current) { clearTimeout(runTimerRef.current); runTimerRef.current = null }
@@ -410,44 +372,29 @@ export default function ContinuousVoiceProbe() {
     budgetRef.current = longRun ? LONG_BUDGET : SHORT_BUDGET
     roundTripRef.current = roundTrip
     log(`run budget: ${budgetRef.current.label}${longRun ? '  (LONG RUN — mic can stay live for 20 minutes)' : ''}`)
-    // STATED EITHER WAY, deliberately. A log with no round-trip line would otherwise be ambiguous
-    // between "the simulation was off" and "this log predates the toggle" — and a settle-window gap
-    // measured under those two conditions does not mean the same thing.
+    // STATED EITHER WAY, so a log with no round-trip line is not ambiguous between "off" and "predates
+    // the toggle".
     log(`search round-trip simulation: ${roundTrip ? 'ON — any gap spanning +6000ms is CONFOUNDED' : 'OFF — gaps are clean'}`)
-    // SCOPE, STATED IN THE LOG ITSELF — and it is the same principle as the round-trip line above and
-    // the raw-transcript note in the FINAL handler: an instrument that does not declare what it
-    // measures lets a reader assume it measured everything.
-    //
-    // THIS COST A REAL DAY. On 2026-09-13 Dave ran this probe and pasted the log; three conclusions
-    // were drawn from it and all three were wrong, because the log LOOKS like an end-to-end trace of
-    // /log/voice and is not. It reported that the one-breath utterance "still does not parse", that a
-    // trailing "next" was swallowed and the save lost, and that a bare number had been saved as a
-    // search. None of those are probe-observable: this component imports `classify` and nothing else,
-    // while VoiceHarvest additionally runs splitTrailingCommand, segmentCandidates, parseValueSequence
-    // and classifyPartial — precisely the functions that handle those three shapes — and the probe
-    // performs NO writes at all (its only fetch is /manifest.webmanifest). The withdrawal is recorded
-    // in project-state/voice-device-trace-analysis-20260913.md.
-    //
-    // So the line below is not decoration. It travels with every pasted log, into the hands of whoever
-    // reasons about it next, and it is the only thing standing between "classify() said search" and
-    // "the app searched". Do not drop it to tidy the header.
+    // SCOPE, STATED IN THE LOG ITSELF. The log LOOKS like an end-to-end trace of /log/voice and is not:
+    // this component imports `classify` and nothing else, while VoiceHarvest also runs
+    // splitTrailingCommand, segmentCandidates, parseValueSequence and classifyPartial, and the probe
+    // performs NO writes. The line travels with every pasted log and is the only thing separating
+    // "classify() said search" from "the app searched". Do not drop it to tidy the header; the
+    // import-scan test in ContinuousVoiceProbe.test.jsx keeps it true.
     log('scope: this probe runs classify() ONLY and never writes. splitTrailingCommand,')
     log('  segmentCandidates, parseValueSequence, oneBreathReadings and classifyPartial run in /log/voice,')
     log('  NOT here — so a one-breath phrase, a trailing command, or a bare number may resolve on the real')
     log('  page and still read as unparsed/search below. A COMMIT line is a classification, not a save.')
-    // Review MINOR-1 (review-regression-impact.md): the debouncer claims the write cooldown for a
-    // one-breath final that ends in a save word ("165 next"), and the PAGE gives that claim back when
-    // the sentence writes nothing (VoiceHarvest applyCommitted, releaseUnwritten). This probe writes
-    // nothing and releases nothing, so a real "next" said straight after reads SUPPRESSED here while the
-    // page would commit it. Labelled rather than re-implemented: the probe's value is that it shows the
-    // debouncer as it is.
+    // The debouncer claims the write cooldown for a one-breath final ending in a save word ("165
+    // next"), and the PAGE gives that claim back when the sentence writes nothing (VoiceHarvest
+    // applyCommitted, releaseUnwritten). This probe writes nothing and releases nothing, so a real
+    // "next" said straight after reads SUPPRESSED here while the page would commit it. Labelled
+    // rather than re-implemented, because the probe shows the debouncer as it is.
     log('  A SUPPRESSED (cooldown) line is the debouncer\'s own view: after a one-breath "… next" that')
     log('  saves nothing, /log/voice gives the cooldown back, so a "next" said straight after commits there.')
 
-    // A FRESH DEBOUNCER PER RUN, deliberately: `resetSession()` would clear the duplicate-suppression
-    // memory of a layer that might still be holding a pending utterance from the previous run, which
-    // is precisely the footgun its own docstring warns hosts about. A new instance has no history to
-    // mis-clear.
+    // A FRESH DEBOUNCER PER RUN: `resetSession()` would clear the duplicate-suppression memory of a
+    // layer that might still hold a pending utterance from the previous run.
     debRef.current = createCommitDebouncer({
       onCommit: (result, meta) => {
         const path = commitPathRef.current ?? 'unknown'
@@ -472,23 +419,19 @@ export default function ContinuousVoiceProbe() {
     const permBefore = await micPermission()
     setEnv(e => ({ ...e, permBefore, permAfter: '—' }))
     log(`mic permission before: ${permBefore}`)
-    // THE UNIT WORDS STAY IN THIS PROMPT even though v4.131.0 made them optional on the real page
-    // (V5-VOICEVOCAB-001), and the reason is the point of the probe: the assumption happens in
-    // VoiceHarvest, not in classify(), so dropping them here would measure nothing new while giving
-    // up the one measurement this instrument uniquely provides — how Chrome TRANSCRIBES "count" and
-    // "grams". That is what the 2026-09-13 run exposed: "three count" came back as "recount" and the
-    // count was lost, while "grams" transcribed as "G" three times out of three. Recognition of
-    // those two words is a live question; keep saying them here so it stays measurable.
+    // THE UNIT WORDS STAY IN THIS PROMPT even though they are optional on the real page
+    // (V5-VOICEVOCAB-001): that assumption lives in VoiceHarvest, not classify(), and the probe's
+    // unique measurement is how Chrome TRANSCRIBES "count" and "grams" ("three count" has come back
+    // as "recount", "grams" as "G").
     log('SAY: "cucumber" … "three count" … "231 grams" … "next"  (pause between each)')
     log('  (say the unit words HERE even though /log/voice no longer needs them — this run measures')
     log('   how Chrome transcribes them, which is a different question from whether the app needs them)')
 
     arm()
 
-    // Question 4 — an async round-trip mid-session, at roughly the moment the real flow would be
-    // searching for the spoken crop. A real deferred call, so if it DOES disturb recognition the log
-    // shows an onend/onerror right after this line rather than us assuming it cannot. Answered once
-    // already (see the header); this now fires only when someone opts in to asking it again.
+    // Question 4 — an async round-trip mid-session, about when the real flow would be searching for
+    // the spoken crop. A real deferred call, so a disturbance shows as an onend/onerror right after
+    // this line. Fires only when someone opts in.
     if (roundTripRef.current) {
       runTimerRef.current = setTimeout(() => {
         log('— simulating the search round-trip (keep talking) —')
@@ -507,10 +450,8 @@ export default function ContinuousVoiceProbe() {
     }, budgetRef.current.runMs)
   }, [arm, log, longRun, roundTrip])
 
-  // NOTE: the tick timer is deliberately NOT cleared here. A write pending at the moment Dave taps
-  // stop is exactly the case the run is measuring — letting the timer land records whether it ever
-  // fires, whereas cancelling it would manufacture an un-ticked held write and score the instrument's
-  // own cleanup as the finding.
+  // NOTE: the tick timer is deliberately NOT cleared here. A write pending when the user taps stop is
+  // exactly the case being measured; cancelling it would manufacture an un-ticked held write.
   const stop = useCallback(async () => {
     stopRequestedRef.current = true
     if (runTimerRef.current) clearTimeout(runTimerRef.current)
@@ -526,8 +467,7 @@ export default function ContinuousVoiceProbe() {
     ? `${Math.min(...gaps)} / ${Math.round(gaps.reduce((a, b) => a + b, 0) / gaps.length)} / ${Math.max(...gaps)} ms`
     : '— (no re-arm yet)'
 
-  // The one line that decides question 1. Stated as a verdict rather than left for Dave to derive
-  // from two counters, because the whole point of a device probe is to come back with an answer.
+  // The one line that decides question 1, stated as a verdict rather than left to derive from counters.
   const verdict = stats.finals === 0 ? '—'
     : stats.sessions <= 1 ? 'CONTINUOUS HOLDS — one session carried every utterance'
     : `RE-ARMING — ${stats.sessions} sessions for ${stats.finals} utterances`
@@ -583,10 +523,8 @@ export default function ContinuousVoiceProbe() {
         </div>
       </div>
 
-      {/* C3. The short budget hard-stops inside gate B6's own fixture, so the gate could not be
-          executed by the instrument that is supposed to execute it. Opt-in per run, disabled while
-          running, and it says out loud how long the mic can stay live — a 20-minute recorder is a
-          thing you choose, not a default you inherit. */}
+      {/* C3. The short budget hard-stops inside gate B6's own fixture. Opt-in per run, disabled while
+          running, and it says how long the mic can stay live. */}
       <label
         style={{
           display: 'flex', alignItems: 'center', gap: 10, minHeight: 44, marginBottom: 12,
@@ -607,8 +545,7 @@ export default function ContinuousVoiceProbe() {
         </span>
       </label>
 
-      {/* C4. Q4 is answered, so this fires only when someone is deliberately re-asking it. Default OFF
-          is the whole point: the last run's one anomalous supersede gap had this fetch inside it, and
+      {/* C4. Q4 is answered, so this fires only when someone is deliberately re-asking it. Default OFF:
           a settle window cannot be measured through an event the instrument itself injected. */}
       <label
         style={{
@@ -658,8 +595,7 @@ export default function ContinuousVoiceProbe() {
       </div>
 
       {/* THE ECHO. Committed rows persist; the pending utterance is a recessive line beneath them,
-          never the existence condition for the strip. This is the probe's stand-in for the shipped
-          harvest session ledger that S3 uses instead of building anything new. */}
+          never the existence condition for the strip. */}
       <div style={box} data-testid="voice-commit-ledger">
         <div style={{ fontSize: '0.85rem', fontWeight: 700, color: P.dark, marginBottom: 6 }}>
           Committed ({commits.length})
