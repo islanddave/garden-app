@@ -1,15 +1,13 @@
-// /api/app-events — POST-only telemetry sink for ADHD daily-loop signals.
-// V1.2a-1 Session 2 (V002 §A5).
+// /api/app-events: POST-only telemetry sink for ADHD daily-loop signals (V002 §A5). Append-only, from the SPA
+// to the app_events table. Fire-and-forget on the client: failure is non-fatal and never blocks the reward
+// moment (adhd-ux constraint).
 //
-// Append-only telemetry from SPA to app_events table. Fire-and-forget on the client side —
-// failure is non-fatal and never blocks the reward moment (per adhd-ux constraint).
-//
-// Auth: Clerk JWT verified per request → user_clerk_sub = JWT.sub.
+// Auth: Clerk JWT verified per request, user_clerk_sub = JWT.sub.
 // Rate limit: 1000/hour per actor via rate_limit_buckets bucket key 'app_events.write'.
 // Body: { event_name (required), event_source?, session_id?, metadata? }
 //   - event_name: 1-64 chars (DB CHECK enforces; the reply names the kind of refusal, never the constraint)
-//   - metadata: JSONB, Lambda-side rejects >8KB (no DB constraint to avoid retrofit pain — V002 §A5)
-// CORS: Lambda URL config owns CORS (empty handler CORS, mirrors prod Lambda pattern).
+//   - metadata: JSONB, Lambda-side rejects >8KB (no DB constraint, to avoid retrofit pain; V002 §A5)
+// CORS: Lambda URL config owns CORS (empty handler CORS).
 
 import { neon } from '@neondatabase/serverless';
 import { checkRateLimit, withRetryAfter } from './rate-limit.js';

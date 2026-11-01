@@ -1,20 +1,12 @@
-// /api/achievements — V1.2a-1 Session 4
-// GET only. Returns user's earned + visible-locked achievements + count of hidden secrets.
+// /api/achievements: GET only. Returns the user's earned + visible-locked achievements + count of hidden secrets.
 //
-// Response shape:
-//   { earned: AchievementRow[],
-//     locked: AchievementRow[],
-//     total_earned: int,
-//     total_visible: int,
-//     secret_locked_count: int }
-//
-// AchievementRow (earned has earned_at + trigger_event_id; locked omits both):
-//   { id, slug, name, description, emoji, xp_reward, trigger_type, trigger_value,
-//     sort_order, is_secret (earned only), earned_at? trigger_event_id? }
+// Response: { earned: AchievementRow[], locked: AchievementRow[], total_earned, total_visible, secret_locked_count }
+// AchievementRow: { id, slug, name, description, emoji, xp_reward, trigger_type, trigger_value, sort_order,
+//   is_secret (earned only), earned_at? trigger_event_id? } (earned has earned_at + trigger_event_id; locked omits both)
 //
 // Sort: earned by earned_at DESC; locked by sort_order ASC.
 // Secret achievements: included in `earned` IF earned; otherwise counted in `secret_locked_count`.
-// CORS owned by Lambda URL config — handler returns CORS={} per L-052+L-053 + 95bb3c0b CORS race fix.
+// CORS owned by Lambda URL config; handler returns CORS={} (L-052+L-053).
 
 import { neon } from '@neondatabase/serverless';
 import { requestContext } from './request-context.js';

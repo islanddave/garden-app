@@ -1,15 +1,15 @@
-// /api/tags + /api/entity-tags — V4-TAGSUB-001 faceted tag substrate Lambda.
-// Pattern: mirrors lambda/varieties/index.js (Clerk JWT, Secrets Manager, Function-URL-owns-CORS, pg error map).
+// /api/tags + /api/entity-tags: V4-TAGSUB-001 faceted tag substrate Lambda. Mirrors lambda/varieties/index.js
+// (Clerk JWT, Secrets Manager, Function-URL-owns-CORS, pg error map).
 //
-// Auth: Clerk JWT per request -> userId = JWT.sub. Scoping enforced in WHERE clauses (Neon makes PG RLS vestigial).
-// Visibility (D-SCOPE): ONE canonical predicate shape used by every read of tag/entity_tag — a private tag never
-//   leaks cross-user; shared widens only to householdScope; system (derived) is always visible. The
-//   tags-canonical-predicate.test.js static guard fails CI if any tag read drifts from this shape.
-// Derive (D-ARCH): type:/lifecycle: are system-owned derived tags from crop-derive.js. The single-cultivar path
-//   runs IN-PROCESS (varieties Lambda calls applyDerive post-commit, fail-open). The bulk form here is admin-gated.
-// Audit: tag/entity_tag have NO audit trigger (verified prod 2026-06-25); created_by captures the actor. Full
-//   audit-trigger parity is a tracked follow-up (D-AUDIT, partial-defer).
-// NOTE: @neondatabase/serverless 0.10.x has NO sql.unsafe / sql.query — all identifiers are literal in-template.
+// Auth: Clerk JWT per request, userId = JWT.sub; scoping is in WHERE clauses (Neon makes PG RLS vestigial).
+// Visibility (D-SCOPE): ONE canonical predicate shape for every read of tag/entity_tag: a private tag never
+//   leaks cross-user; shared widens only to householdScope; system (derived) is always visible.
+//   tags-canonical-predicate.test.js fails CI if any tag read drifts from this shape.
+// Derive (D-ARCH): type:/lifecycle: are system-owned derived tags from crop-derive.js. The single-cultivar
+//   path runs IN-PROCESS (varieties Lambda calls applyDerive post-commit, fail-open); the bulk form here is
+//   admin-gated.
+// Audit: tag/entity_tag have NO audit trigger; created_by captures the actor (D-AUDIT, partial-defer).
+// NOTE: @neondatabase/serverless 0.10.x has NO sql.unsafe / sql.query, so all identifiers are literal in-template.
 
 import { neon } from '@neondatabase/serverless';
 import { householdScope } from './household.js';

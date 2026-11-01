@@ -1,17 +1,12 @@
-// /api/xp-reconcile — V1.2a-1 Session 4
-// Daily reconciliation Lambda. Invoked by EventBridge (rule: garden-xp-reconcile-daily, cron 0 4 * * ? *).
-// NOT a Function URL endpoint — no HTTP entry; only EventBridge target.
+// /api/xp-reconcile: daily reconciliation Lambda. Invoked by EventBridge (rule: garden-xp-reconcile-daily,
+// cron 0 4 * * ? *). NOT a Function URL endpoint; EventBridge target only.
 //
-// Behavior: compares user_stats.xp vs SUM(xp_events.amount) per user; heals drift.
-// DRY_RUN=true → log drift only.
-// DRY_RUN=false → apply UPDATE.
-//
-// First-run safety: initial deploy sets DRY_RUN=true. After one clean run (visible in CloudWatch logs),
-// flip DRY_RUN=false via:
+// Compares user_stats.xp vs SUM(xp_events.amount) per user and heals drift. DRY_RUN=true logs drift only;
+// DRY_RUN=false applies the UPDATE. Initial deploy sets DRY_RUN=true; after one clean run (CloudWatch logs),
+// flip it with:
 //   scripts/lambda-env-set.sh garden-xp-reconcile DRY_RUN false
-// NOT via a bare `--environment Variables='{DRY_RUN=false}'` (what this comment recommended until
-// 2026-08-18): that argument REPLACES the whole Variables map, so it would drop SECRET_REFRESH.
-// The helper read-merges, guards on RevisionId, and verifies the key set after the write.
+// NOT a bare `--environment Variables='{DRY_RUN=false}'`: that REPLACES the whole Variables map and would
+// drop SECRET_REFRESH. The helper read-merges, guards on RevisionId, and verifies the key set after the write.
 //
 // Kill-switch: aws events disable-rule --name garden-xp-reconcile-daily
 
@@ -70,14 +65,11 @@ export const handler = async (event) => {
       return { ok: true, dry_run: true, users_with_drift: drift.length, total_abs_drift: totalAbsDrift };
     }
 
-    // BUG-XPPROGRESSION-001 — `level` is deliberately NOT in this SET list, and that is the whole
-    // argument for having made it a trigger rather than a caller obligation. This function rewrites
-    // xp behind the Lambda's back at 04:00 daily; if level were computed at write time by the six
-    // XP writers in lambda/events, every reconciliation that moved xp across a threshold would
-    // leave level stale until the user happened to log again. trg_user_stats_level fires on this
-    // UPDATE like any other and re-derives level from the healed xp, for free and with no edit to
-    // this file's logic. `level` is added to RETURNING so a reconciliation that also moved someone's
-    // level is visible in the CloudWatch log rather than silent.
+    // BUG-XPPROGRESSION-001: `level` is deliberately NOT in this SET list; it is maintained by the
+    // trg_user_stats_level trigger. This function rewrites xp at 04:00 daily, so a write-time level would
+    // go stale whenever a reconciliation moved xp across a threshold. The trigger re-derives level from the
+    // healed xp with no edit here. `level` is in RETURNING so a reconciliation that moved someone's level is
+    // visible in CloudWatch.
     const updated = await sql`
       UPDATE user_stats us
       SET xp = COALESCE((SELECT SUM(amount)::int FROM xp_events xe WHERE xe.user_id = us.user_id), 0),

@@ -11,18 +11,15 @@ import { resolvePhotoViewUrl } from './photo-access.js';
 import { isStatusChange, formatStatusChangeNote, buildStatusChangeMetadata, STATUS_CHANGE_EVENT_TYPE } from './statusEvents.js';
 import { validateClear } from './validate.js';
 
-// V4-EVENTSOURCE-001 — event_log.source value written by THIS Lambda. lambda/events/index.js
-// declares 'app'/'app_batch' and explicitly delegates 'app_status' here; the full value set and
-// why 'direct' is reserved-but-never-inferred live in
-// migrations/v4-eventsource-001/0a-additive-ddl.sql. The column carries a NOT VALID CHECK, so an
-// unlisted value 23514s on write. 0a is applied to prod AND staging, so including the column in
-// the INSERT below cannot 42703.
+// event_log.source value written by THIS Lambda (V4-EVENTSOURCE-001). lambda/events/index.js declares
+// 'app'/'app_batch' and delegates 'app_status' here; the value set, and why 'direct' is reserved but never
+// inferred, are in migrations/v4-eventsource-001/0a-additive-ddl.sql. The column carries a NOT VALID CHECK, so
+// an unlisted value 23514s on write; 0a is applied to prod AND staging, so the INSERT cannot 42703.
 const EVENT_SOURCE_STATUS = 'app_status';
 
 // photo-access.js reads the CloudFront signing key through this client; the kit holds its own for garden-app/secrets.
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
-// S3 client for featured-photo view URL enrichment.
-// Matches lambda/photos checksum hardening (3.679+ presign-URL incompatibility).
+// S3 client for featured-photo view URL enrichment; checksum hardening matches lambda/photos (3.679+ presign-URL incompatibility).
 const s3 = new S3Client({
   region: process.env.AWS_REGION ?? 'us-east-1',
   requestChecksumCalculation: 'WHEN_REQUIRED',
@@ -58,11 +55,11 @@ function secretsFailure(err, { missing, keys }) {
   return resp(500, { error: 'Internal server error' });
 }
 
-// V3-REPARENT-001: native reparent core. One atomic CTE (a single neon request = one txn):
-// pre-move snapshot -> reparent_event (op_id-deduped) -> version-guarded parent UPDATE.
-// The base-table trigger container_reparent_after fires on the parent_project_id change,
-// running in-txn acyclicity (RAISE on cycle -> the whole statement aborts) + closure
-// maintenance. (container is an auto-updatable view over plant_projects; we write the base.)
+// V3-REPARENT-001: native reparent core. One atomic CTE (a single neon request = one txn): pre-move
+// snapshot -> reparent_event (op_id-deduped) -> version-guarded parent UPDATE. The base-table trigger
+// container_reparent_after fires on the parent_project_id change, running in-txn acyclicity (RAISE on
+// cycle aborts the statement) + closure maintenance. (container is an auto-updatable view over
+// plant_projects; we write the base.)
 export async function reparentCore(sql, { subjectId, newParentId, opId, expectedVersion, userId, householdIds }) {
   // 1. Idempotent replay: this op_id already recorded -> return the prior outcome, no re-move.
   const prior = await sql`
@@ -140,34 +137,23 @@ export async function reparentCore(sql, { subjectId, newParentId, opId, expected
   }
 }
 
-// WS-A1: project share route target. `/garden/:slug` was an UNAUTHENTICATED surface until
-// 2026-09-09; it is now behind verifyToken like every other path in this handler, and the "public"
-// in the URL is historical. TWO independent boundaries still guard the projection — kept, not
-// retired, because neither is an auth check and both stay meaningful for a signed-in caller:
-//
-//   (1) ROW GATE — is_public on both the project and its events. ADDED 2026-08-24, reversing the
-//       earlier "post-PUBHIDE: no is_public gate, per Dave's locked decision". Reversed by Dave
-//       ("add the filter and keep the route") after an audit found this route serving is_public=false
-//       projects, with notes, to anyone who guesses a slug. CAVEAT for whoever reads this next:
-//       V4-PUBHIDE-001 removed the is_public toggle from every create/edit form and defaults it
-//       true server-side, so this gate hides the 5 projects historically marked private and gives
-//       NO ongoing control — there is no UI to unpublish. A `published_at` column (default NULL) is
-//       the intended durable axis; until it ships, do not read this gate as user-facing curation.
-//   (2) COLUMN GATE — the deny-by-default projection below. The response object is built
-//       key-by-key and a DB row is NEVER spread, so a newly-added or sensitive column can't leak.
-//
-// The two are deliberately independent: a row that passes (1) still cannot leak a column that (2)
-// omits, and each is tested separately so neither can mask a regression in the other.
-// slug is globally unique (plant_projects_slug_key) and is a bound parameter (neon tagged-template),
-// never string-interpolated.
+// WS-A1 project share route target. `/garden/:slug` is behind verifyToken like every other path here; the
+// "public" in the URL is historical. TWO independent boundaries still guard the projection; neither is an
+// auth check:
+//   (1) ROW GATE: is_public on both the project and its events. CAVEAT: V4-PUBHIDE-001 removed the
+//       is_public toggle from every create/edit form and defaults it true server-side, so this gate hides
+//       only the 5 projects historically marked private and gives NO ongoing control (there is no UI to
+//       unpublish). A `published_at` column (default NULL) is the intended durable axis; do not read this
+//       gate as user-facing curation.
+//   (2) COLUMN GATE: the deny-by-default projection below. The response is built key-by-key and a DB row
+//       is NEVER spread, so a newly-added or sensitive column can't leak.
+// Each is tested separately so neither can mask a regression in the other. slug is globally unique
+// (plant_projects_slug_key) and a bound parameter (neon tagged template), never string-interpolated.
 async function handlePublicProject(slug, secrets) {
   try {
     const sql = neon(secrets.NEON_DATABASE_URL);
-    // NO location of any kind. location_path was published here until 2026-08-27; on a site whose
-    // top-level locations are named House / Stable / Drive / Pasture it does not describe a garden
-    // layout, it tells an anonymous reader this is a farmstead with a house and a stable — in a
-    // named town. Dropped with the LEFT JOIN that existed solely to feed it. The forbidden-column
-    // guard in public-route.test.js now pins its absence, so re-adding it fails a test.
+    // NO location of any kind: it would tell an anonymous reader this is a farmstead with a house and a
+    // stable in a named town. The forbidden-column guard in public-route.test.js pins its absence.
     const rows = await sql`
       SELECT /* public-slug: deny-by-default allowlist */
              c.id,
@@ -240,16 +226,10 @@ export const handler = async (event) => {
   const rawPath = event.rawPath ?? '/api/projects';
   const qs = event.queryStringParameters ?? {};
 
-  // WS-A1 share route, now AUTH-GATED (2026-09-09). This dispatch used to sit above verifyToken so
-  // `/garden/:slug` rendered to anonymous visitors; that bypass is retired — the app has no
-  // unauthenticated content surface any more. Only the bypass was removed, not the handler: this
-  // is still the ONLY code path serving /api/projects/public/:slug (the two-segment path cannot
-  // match the one-segment by-id idMatch below, which forbids an interior slash), so deleting the
-  // dispatch outright would 405 the route for signed-in users too. Both boundaries documented on
-  // handlePublicProject — the is_public ROW gate and the deny-by-default COLUMN projection — are
-  // deliberately KEPT. They are narrower than the auth check rather than redundant with it: the
-  // projection is what stops a newly-added sensitive column reaching this response, and it earns
-  // its keep whoever is asking. Must stay ahead of idMatch for the same reason it always did.
+  // WS-A1 share route, now AUTH-GATED. This dispatch is still the ONLY code path serving
+  // /api/projects/public/:slug (the two-segment path cannot match the one-segment by-id idMatch below), so
+  // deleting it would 405 the route for signed-in users. Both boundaries documented on handlePublicProject
+  // are KEPT: they are narrower than the auth check, not redundant with it. Must stay ahead of idMatch.
   const publicMatch = method === 'GET'
     ? rawPath.match(/^\/api\/projects\/public\/([^/]+)$/)
     : null;
@@ -285,17 +265,12 @@ export const handler = async (event) => {
     if (typesItemMatch) {
       const typeId = typesItemMatch[1];
       if (method === 'DELETE') {
-        // BUG-DELNOOPOK-001: RETURNING-gated, so a not-found / already-deleted / not-owned DELETE
-        // 404s instead of reporting success. Collapsing those three into one status is deliberate
-        // (distinguishing them leaks existence) and matches every sibling route.
-        //
-        // The predicate is `created_by = ${userId}`, NOT `= ANY(${householdIds})`, and that is
-        // DELIBERATELY LEFT ALONE here: household-mode.test.js:60 pins it by name
-        // ('project_types delete guard remains owner-only (out of scope)'). Widening it is a
-        // separate authz decision, not a rider on a response-contract fix. The 404 does not make
-        // it user-visible: ProjectTypes.jsx (typeFlags) only renders the Delete button on is_own,
-        // which the GET below computes as created_by = the caller, so a second household member has no path to this route for a
-        // type they do not own. Revisit only together with that test.
+        // BUG-DELNOOPOK-001: RETURNING-gated, so a not-found / already-deleted / not-owned DELETE 404s
+        // (collapsed deliberately: distinguishing them leaks existence).
+        // The predicate is `created_by = ${userId}`, NOT `= ANY(${householdIds})`, DELIBERATELY: household-mode.test.js
+        // pins it by name ('project_types delete guard remains owner-only (out of scope)'). Widening it is a
+        // separate authz decision. ProjectTypes.jsx only renders Delete on is_own (created_by = the caller), so a
+        // second household member has no path here for a type they do not own. Revisit only together with that test.
         const rows = await sql`
           UPDATE project_types SET deleted_at = NOW()
           WHERE id = ${typeId} AND created_by = ${userId} AND deleted_at IS NULL
@@ -310,11 +285,10 @@ export const handler = async (event) => {
     // --- /api/projects/types ---
     if (typesMatch) {
       if (method === 'GET') {
-        // BUG-ARCHIVEHIDE-002 / audit I36 (Dave, AskUserQuestion, first-hand, 2026-10-15: "Household
-        // only"; ledger DEC-ARCHIVECARVEOUTS-001). Built-in types (created_by NULL) stay shared; a
-        // user-made type is listed only to its creator's household, and no row carries its creator's
-        // Clerk sub any more. The page needs two facts, not the sub: is_system (the badge) and
-        // is_own (the Delete button, which the DELETE route below still gates owner-only).
+        // Built-in types (created_by NULL) stay shared; a user-made type is listed only to its creator's
+        // household, and no row carries its creator's Clerk sub (BUG-ARCHIVEHIDE-002 / audit I36;
+        // DEC-ARCHIVECARVEOUTS-001). The page needs is_system (the badge) and is_own (the Delete button,
+        // which the DELETE route still gates owner-only).
         const rows = await sql`
           SELECT id, name, category, description, icon,
                  (created_by IS NULL) AS is_system,
@@ -413,19 +387,14 @@ export const handler = async (event) => {
     }
 
     // --- /api/projects/:id ---
-    // ── V4-RESTORESURFACE-001 — the recovery path for containers (audit I9) ────────────────────
-    //
-    // 12 containers are soft-deleted in prod with no way back — and restoring one is worth more
-    // than its own row: 11 of the 33 soft-deleted PLANTINGS are invisible to the plants recovery
-    // surface precisely because their container is deleted (the F4 gate). This route is the first
-    // step of that two-step path, so it unblocks a third of the planting backlog as a side effect.
+    // ── Recovery path for containers (V4-RESTORESURFACE-001, audit I9) ──
+    // Restoring a container is the FIRST step of a two-step recovery: plantings under a deleted container
+    // are invisible to /api/plants/deleted until it is live (the F4 gate).
     if (rawPath === '/api/projects/deleted' && method === 'GET') {
       const rawLimit = Number(event?.queryStringParameters?.limit);
       const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(Math.trunc(rawLimit), 1), 200) : 50;
-      // The planting counts are a SEPARATE query rather than a correlated subquery on purpose: a
-      // subquery's own FROM truncates this block for select-columns.test.js's extractor, which
-      // would silently exempt this read from the PROJ-RESCOPE column guard. A read that dodges a
-      // guard by accident is worse than one that fails it.
+      // The planting counts are a SEPARATE query on purpose: a correlated subquery's own FROM truncates this
+      // block for select-columns.test.js's extractor, silently exempting this read from the PROJ-RESCOPE column guard.
       const rows = await sql`
         SELECT c.id, c.display_name AS name, c.slug, c.type AS kind,
                c.parent_id AS parent_project_id, c.target_end_date, c.kind_set_at,
@@ -437,8 +406,6 @@ export const handler = async (event) => {
          LIMIT ${limit}
       `;
       const ids = rows.map((r) => r.id);
-      // Why the count matters: restoring a container is the FIRST step of a two-step recovery —
-      // plantings under a deleted container are invisible to /api/plants/deleted until it is live.
       const counts = ids.length ? await sql`
         SELECT container_id, count(*)::int AS n
           FROM public.garden_node
@@ -464,10 +431,8 @@ export const handler = async (event) => {
       if (!existing.deleted_at) {
         return resp(200, { id: existing.id, deleted_at: null, already_restored: true });
       }
-      // Restores the CONTAINER ONLY. Its plantings keep whatever deleted_at they carry: the DELETE
-      // arm above never cascaded to them, so resurrecting them here would restore rows the user
-      // never deleted at this level. They become visible in /api/plants/deleted once this row is
-      // live, and are restored individually from there — the deliberate two-step.
+      // Restores the CONTAINER ONLY. The DELETE arm never cascaded to its plantings, so they keep whatever
+      // deleted_at they carry and are restored individually from /api/plants/deleted: the deliberate two-step.
       const rows = await sql`
         UPDATE public.container
            SET deleted_at = NULL
@@ -582,10 +547,9 @@ export const handler = async (event) => {
         });
       }
 
-      // V1.2a-4 S6: admin classify route — PATCH /api/projects/:id
-      // ADMIN_CLERK_SUBS env var allowlist (fail-closed). Transactional audit + UPDATE
-      // via single CTE so audit row only commits when UPDATE matches a live row.
-      // Per design proj-rescope-s6-design-V001-20260519.1625.md §5.1.
+      // V1.2a-4 S6: admin classify route, PATCH /api/projects/:id. ADMIN_CLERK_SUBS allowlist (fail-closed).
+      // Audit + UPDATE in a single CTE so the audit row only commits when the UPDATE matches a live row
+      // (design proj-rescope-s6-design-V001-20260519.1625.md §5.1).
       if (method === 'PATCH') {
         const ADMIN_CLERK_SUBS = (process.env.ADMIN_CLERK_SUBS ?? '')
           .split(',').map(s => s.trim()).filter(Boolean);
@@ -610,11 +574,9 @@ export const handler = async (event) => {
           return resp(400, { error: 'PATCH body must include kind and/or parent_project_id' });
         }
 
-        // Single CTE: audit INSERT pulls pre_state from plant_projects, UPDATE
-        // changes it. If WHERE matches no row, both CTEs return empty → no
-        // orphan audit. WHERE has no `created_by = userId` — admin overrides ownership.
-        // The audit row's workspace_id is the project's own (V5-SPACETENANCYKEY-001 2.2,
-        // parent-derived), read in `pre` with the rest of the pre-image.
+        // Single CTE: the audit INSERT pulls pre_state, the UPDATE changes it; if WHERE matches no row both
+        // are empty, so no orphan audit. No `created_by = userId`: admin overrides ownership. The audit
+        // row's workspace_id is the project's own (V5-SPACETENANCYKEY-001 2.2), read in `pre`.
         const rows = await sql`
           WITH pre AS (
             SELECT id, classification AS kind, parent_id AS parent_project_id, display_name AS name,
@@ -661,24 +623,20 @@ export const handler = async (event) => {
           return resp(400, { error: 'A project cannot be its own parent', code: 'project_own_parent' });
         }
 
-        // V1.2a-4 S1 (PROJ-RESCOPE): validate kind enum server-side. Mirrors
-        // the DB CHECK (kind IN ('campaign','category','cultivar') OR kind IS NULL).
+        // Kind enum, validated server-side (PROJ-RESCOPE); mirrors the DB CHECK (kind IN ('campaign','category','cultivar') OR kind IS NULL).
         const ALLOWED_KINDS = ['campaign', 'category', 'cultivar'];
         const hasKind = Object.prototype.hasOwnProperty.call(body, 'kind');
         if (hasKind && body.kind != null && !ALLOWED_KINDS.includes(body.kind)) {
           return resp(400, { error: `kind must be one of ${ALLOWED_KINDS.join(', ')} or null` });
         }
 
-        // V2-PHOTO-F1: strict validation for featured_photo_id.
-        // If the field is present AND non-null, the photo must exist AND be
-        // linked to this project via photos.project_id. Otherwise return 400.
-        // Field-presence test (not truthy test) lets callers set it to null to clear.
+        // V2-PHOTO-F1: a non-null featured_photo_id must be a photo linked to this project via
+        // photos.project_id, else 400. Field-presence (not truthy) lets callers set null to clear.
         const hasFeatured = Object.prototype.hasOwnProperty.call(body, 'featured_photo_id');
         const hasAssignee = Object.prototype.hasOwnProperty.call(body, 'assignee_user_id');
-        // BUG-LAMBDAVALIDATION-001 (I39): assignee_user_id was written verbatim, so any string (a
-        // stranger's sub, an object) could land in the column the dashboard's "assigned to me" tiles
-        // read. A non-null value must be one of the caller's household ids; null still clears. For a
-        // non-member householdIds is [caller], so they can assign only themselves.
+        // BUG-LAMBDAVALIDATION-001 (I39): assignee_user_id was written verbatim, so any string could land in
+        // the column the dashboard's "assigned to me" tiles read. A non-null value must be one of the
+        // caller's household ids (a non-member's is [caller], so they can assign only themselves); null still clears.
         if (hasAssignee && body.assignee_user_id != null
           && !(typeof body.assignee_user_id === 'string' && householdIds.includes(body.assignee_user_id))) {
           return resp(400, { error: 'assignee_user_id must be a household member' });
@@ -696,8 +654,7 @@ export const handler = async (event) => {
           }
         }
 
-        // AUTHZ (V4-AUTHZSWEEP-001): the PUT can set location_id too, so it needs the same gate as
-        // the create path — otherwise the edit path reopens exactly what the create path closes.
+        // AUTHZ (V4-AUTHZSWEEP-001): the PUT can set location_id too, so it needs the same gate as the create path.
         if (body.location_id != null) {
           if (!await loadOwnedLocation(sql, body.location_id, householdIds)) {
             warnRejectedFk(userId, 'container', 'location_id', body.location_id);
@@ -705,15 +662,12 @@ export const handler = async (event) => {
           }
         }
 
-        // AUTHZ (BUG-AUTHZFKENUM-001): parent_project_id is a cross-entity FK set straight from the
-        // body, and this PUT was the ONE path that took it ungated — POST gates it inline against
-        // container.created_by and reparentCore validates the new parent, so only the edit verb was
-        // open. Cost was not merely a bad FK: the read surface at the top of this file LEFT JOINs
-        // `public.container p ON p.id = pp.parent_id` with NO household predicate and selects
-        // `p.display_name AS parent_project_name`, so an attacker who parented their own project to
-        // a victim's container read that container's name back out of their own GET. Generic 400,
-        // no existence oracle. Measured on live prod: 68 parented projects, all single-owner — this
-        // gate costs zero legitimate writes. Self-reference is caught above; this is ownership.
+        // AUTHZ (BUG-AUTHZFKENUM-001): parent_project_id is a cross-entity FK taken straight from the body, and
+        // this PUT was the one path that took it ungated (POST gates it inline, reparentCore validates the new
+        // parent). Beyond a bad FK, the read at the top of this file LEFT JOINs `public.container p ON p.id =
+        // pp.parent_id` with NO household predicate and selects `p.display_name AS parent_project_name`, so
+        // parenting your own project to a victim's container read its name back. Generic 400, no existence
+        // oracle. Self-reference is caught above; this is ownership.
         if (body.parent_project_id != null) {
           if (!await loadOwnedProject(sql, body.parent_project_id, householdIds)) {
             warnRejectedFk(userId, 'container', 'parent_id', body.parent_project_id);
@@ -721,8 +675,7 @@ export const handler = async (event) => {
           }
         }
 
-        // V1.2a-4 S1: when kind transitions NULL -> non-NULL, stamp kind_set_at = NOW().
-        // Otherwise leave kind_set_at alone. Handled inline in the UPDATE using CASE.
+        // kind_set_at is stamped when kind transitions NULL -> non-NULL, inline in the UPDATE using CASE.
         const cur = await sql`
           SELECT c.status AS old_status
           FROM public.container c
@@ -732,29 +685,20 @@ export const handler = async (event) => {
         `;
         if (!cur.length) return resp(404, { error: 'Not found' });
 
-        // BUG-BLANKNAME-001 (2026-08-07). display_name is NOT NULL, but the COALESCE only guards
-        // NULL and ProjectDetail.jsx:391 sends `form.name.trim()` — so an emptied box sends '',
-        // which is not NULL, passes both the COALESCE and the constraint, and blanks the project
-        // name every card, picker and the unauthenticated /garden/:slug share route renders.
-        // Cosmetic here rather than a care regression (unlike the locations twin, whose name feeds
-        // the daily-plan `covered` predicate), but the same one-line class and the same fix.
-        //
-        // Narrow on purpose: `name: null` and an absent key are this PUT's existing no-op grammar
-        // and every current caller depends on them. Only a present, non-null, whitespace-only
-        // string is refused. Mirrors varieties/validate.js:54.
+        // BUG-BLANKNAME-001. display_name is NOT NULL but COALESCE only guards NULL, and ProjectDetail.jsx
+        // sends `form.name.trim()`: an emptied box sends '', which blanks the name every card, picker and
+        // /garden/:slug share route renders. Narrow on purpose: `name: null` and an absent key are this PUT's
+        // existing no-op grammar; only a present, non-null, whitespace-only string is refused. Mirrors
+        // varieties/validate.js.
         if (body.name != null && (typeof body.name !== 'string' || !body.name.trim())) {
           return resp(400, { error: 'name cannot be blank' });
         }
 
-        // BUG-COALESCECLEAR-001. `clear` is an explicit array of column keys to set to NULL.
-        // Absent/[] is byte-identical to the prior behaviour, so every existing caller is
-        // unaffected and this ships inert until a client opts in. Validated BEFORE the UPDATE so an
-        // un-clearable key is a 400 with a message, never a constraint violation.
-        //
-        // (Measured this session: `err.code` and `err.constraint` DO survive `sql.transaction`
-        // intact, so the 23514 -> 400 mapping in this file's catch is live on the PUT path, not
-        // dead code as two comments elsewhere in the repo claimed. Pre-validating here is still
-        // right — a named 400 beats a constraint name — but it is belt, not the only belt.)
+        // BUG-COALESCECLEAR-001. `clear` is an explicit array of column keys to set to NULL. Absent/[] is
+        // byte-identical to the prior behaviour. Validated BEFORE the UPDATE so an un-clearable key is a 400
+        // with a message, never a constraint violation. (`err.code` and `err.constraint` DO survive
+        // `sql.transaction`, so the 23514 -> 400 mapping in this file's catch is live on the PUT path;
+        // pre-validating is still right, since a named 400 beats a constraint name.)
         const _cerr = validateClear(body.clear, body);
         if (_cerr) return resp(400, { error: _cerr });
         const clear = Array.isArray(body.clear) ? body.clear : [];
@@ -763,9 +707,8 @@ export const handler = async (event) => {
         const _newStatus = body.status != null ? body.status : _oldStatus;
         const _statusChanged = isStatusChange(_oldStatus, _newStatus);
 
-        // V3-EVENT-003 (project-level): emit a status_change audit event IN THE SAME
-        // TRANSACTION as the project status UPDATE, only on a real change. container has no
-        // RLS (explicit household scope above); event_log + entity_memory do -> set_config.
+        // V3-EVENT-003: emit a status_change audit event IN THE SAME TRANSACTION as the status UPDATE, only on
+        // a real change. container has no RLS (explicit household scope above); event_log + entity_memory do -> set_config.
         const _stmts = [
           sql`
           UPDATE public.container
@@ -835,9 +778,7 @@ export const handler = async (event) => {
       }
 
       if (method === 'DELETE') {
-        // BUG-DELNOOPOK-001: RETURNING-gated. Was an unconditional {ok:true}, so a not-found /
-        // already-deleted / not-owned DELETE reported success; now 404, matching the PUT directly
-        // above (:784) and every other verb on this path.
+        // BUG-DELNOOPOK-001: RETURNING-gated, so a not-found / already-deleted / not-owned DELETE 404s like the PUT.
         const rows = await sql`
           UPDATE public.container
           SET deleted_at = NOW()
@@ -854,17 +795,13 @@ export const handler = async (event) => {
     }
 
     // --- /api/projects ---
-    // Care re-key Step D (care-rekey-001 / V4-CAREKEY-001): the four last_activity_at subselects
-    // below read the CONTAINER CARE ROLLUP — the newest last_event_at across { the container's
-    // plantings' entity_memory rows } ∪ { the container's own row } — not the single container-keyed
-    // row they used to read. Same rollup shape as dashboard/handlers.js; the long rationale lives
-    // there. The project arm stays in the OR because project-LEVEL events (no plant_id) are the only
-    // activity 7 live containers have, and 55 live events carry no plant_id at all. MAX ignores NULL,
-    // so a container with only one arm still reports it, and the COALESCE to created_at is unchanged.
+    // The four last_activity_at subselects below read the CONTAINER CARE ROLLUP (newest last_event_at across
+    // the container's plantings' entity_memory rows UNION its own row), the same shape as dashboard/handlers.js,
+    // where the rationale lives. The project arm stays: project-LEVEL events (no plant_id) are the only
+    // activity some containers have. MAX ignores NULL, so a container with one arm still reports it.
     if (method === 'GET') {
-      // V1.2a-4 S6: admin extension — ?admin=1 returns ALL alive rows regardless
-      // of ownership. Allowlist same as PATCH (ADMIN_CLERK_SUBS). Fail-closed.
-      // Per design proj-rescope-s6-design-V001-20260519.1625.md §5.4.
+      // ?admin=1 returns ALL alive rows regardless of ownership; same ADMIN_CLERK_SUBS allowlist as PATCH,
+      // fail-closed (design proj-rescope-s6-design-V001-20260519.1625.md §5.4).
       const adminMode = qs.admin === '1';
       if (adminMode) {
         const ADMIN_CLERK_SUBS = (process.env.ADMIN_CLERK_SUBS ?? '')
@@ -895,13 +832,10 @@ export const handler = async (event) => {
         return resp(200, rows);
       }
 
-      // Optional filter: ?parent_id=<uuid> returns only children of that parent
-      // ?parent_id=null returns only root-level projects
+      // Optional filter: ?parent_id=<uuid> returns only children of that parent; ?parent_id=null only root-level projects.
       const parentIdFilter = qs.parent_id;
 
-      // V1.2a-4 S1.A-hotfix: add kind_set_at to LIST SELECTs to match by-id +
-      // POST/PUT response shape. kind + target_end_date already returned by S1
-      // ship; kind_set_at was the gap. Pairs with PROJ-RESCOPE §4.1 columns.
+      // LIST SELECTs carry kind_set_at to match the by-id + POST/PUT response shape (PROJ-RESCOPE §4.1).
       let rows;
       if (parentIdFilter === 'null' || parentIdFilter === '') {
         rows = await sql`
@@ -968,27 +902,21 @@ export const handler = async (event) => {
 
     if (method === 'POST') {
       const body = JSON.parse(event.body ?? '{}');
-      // BUG-LAMBDAVALIDATION-001 (I38): `!body.name` let '   ' through (a blank-named container) and
-      // 500'd on a number at body.name.toLowerCase() below. Same rule as the PUT's BUG-BLANKNAME-001
-      // guard; the POST keeps its own message.
+      // BUG-LAMBDAVALIDATION-001 (I38): `!body.name` let '   ' through and 500'd on a number at
+      // body.name.toLowerCase() below. Same rule as the PUT's blank guard; the POST keeps its own message.
       if (typeof body.name !== 'string' || !body.name.trim()) return resp(400, { error: 'name is required' });
-      // V1.2a-4 S1 (PROJ-RESCOPE): validate kind enum server-side. A null/absent
-      // kind is coalesced to a default below (S6) so alive rows are never kind=NULL.
+      // Kind enum, validated server-side (PROJ-RESCOPE). A null/absent kind is coalesced to a default below.
       const ALLOWED_KINDS = ['campaign', 'category', 'cultivar'];
       if (body.kind != null && !ALLOWED_KINDS.includes(body.kind)) {
         return resp(400, { error: `kind must be one of ${ALLOWED_KINDS.join(', ')} or null` });
       }
-      // V1.2a-4 S6 (PROJ-RESCOPE): an alive plant_projects row must never have
-      // kind=NULL or the s6-0a CHECK (kind IS NOT NULL OR deleted_at IS NOT NULL)
-      // 500s every such create (e.g. ProjectNew's "Not sure yet" default sends
-      // null). Coalesce a missing kind to 'campaign' (dominant new-project type);
+      // An alive row must never have kind=NULL or the s6-0a CHECK (kind IS NOT NULL OR deleted_at IS NOT
+      // NULL) 500s the create (ProjectNew's "Not sure yet" sends null). A missing kind becomes 'campaign';
       // /admin/classify can reclassify later. Server-side backstop for ALL callers.
       const effectiveKind = body.kind ?? 'campaign';
-      // AUTHZ (V4-AUTHZSWEEP-001): location_id and parent_project_id are cross-entity FKs taken
-      // straight from the body. The reparent path (reparentCore) already proves ownership of a new
-      // parent; the CREATE path did not, so a project could be born parented to another household's
-      // container — inheriting its position in that household's tree. Generic 400s, no existence
-      // oracle. A container is the projects table's own row type, so its owner column is created_by.
+      // AUTHZ (V4-AUTHZSWEEP-001): location_id and parent_project_id are cross-entity FKs taken from the body.
+      // reparentCore proves ownership of a new parent but the CREATE path did not, so a project could be born
+      // parented to another household's container. Generic 400s, no existence oracle.
       if (body.location_id != null) {
         if (!await loadOwnedLocation(sql, body.location_id, householdIds)) {
           warnRejectedFk(userId, 'container', 'location_id', body.location_id);
@@ -1007,7 +935,7 @@ export const handler = async (event) => {
           return resp(400, { error: 'parent_project_id does not match a project you can use' });
         }
       }
-      // Validate parent_project_id is not self-referential (can't know id yet, but guard against explicit self-reference attempts via name matching — full guard at PUT)
+      // Self-reference cannot be guarded here (the id is not known yet); the PUT guards it.
       const rows = await sql`
         INSERT INTO public.container
           (display_name, slug, status, variety, description, start_date, is_public, location_id, created_by, parent_id,

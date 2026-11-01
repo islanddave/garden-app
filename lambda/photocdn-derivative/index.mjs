@@ -1,22 +1,19 @@
-// V4-PHOTOCDN-001 — derivative generator Lambda (INTERNAL-INVOKE ONLY).
-// V102 model (fact-settled 2026-07-02): the photos distro is PURE S3+OAC — `/d/*` serves the
-// derivatives bucket directly, `/o/*` serves originals via a viewer-request strip-o-prefix fn.
-// This Lambda is NOT a CloudFront origin and has NO Function URL. It is invoked INTERNALLY
-// (aws lambda invoke, RequestResponse) by the P3 backfill driver / upload path to GENERATE and
-// PERSIST WebP derivatives (+ a blurhash) into the derivatives bucket. The invoke boundary is IAM
-// (lambda:InvokeFunction on the dedicated role) — the retired origin_verify_secret is gone.
+// V4-PHOTOCDN-001: derivative generator Lambda (INTERNAL-INVOKE ONLY). The photos distro is PURE S3+OAC:
+// `/d/*` serves the derivatives bucket directly, `/o/*` serves originals via a viewer-request strip-o-prefix
+// fn. This Lambda is NOT a CloudFront origin and has NO Function URL; the P3 backfill driver / upload path
+// invokes it (aws lambda invoke, RequestResponse) to GENERATE and PERSIST WebP derivatives (+ a blurhash)
+// into the derivatives bucket. The invoke boundary is IAM (lambda:InvokeFunction on the dedicated role).
 //
-// Path contract (path-addressed, NOT opaque-hashed — the key must be reversible so the original is
-// recoverable): GET-style event `rawPath = /d/<variant>/<etag>/<original-key...>.webp`
-//   variant ∈ {thumb, card}; etag = the original's S3 ETag (hex, no quotes; multipart keeps the -N
-//   suffix verbatim) — replacement at the same key yields a new etag => new derivative path (free
-//   invalidation). ETag-mismatch: serve from the CURRENT original but SKIP the S3 write (never
-//   persist a derivative under a stale-etag key).
-// Response: statusCode 200 + `content-type: image/webp` + base64 body (the derivative bytes). On the
-//   `thumb` variant ONLY, a compact `x-blurhash` header carries the original's blurhash (a per-ORIGINAL
-//   property — computed once, not per-variant); the backfill reads it to persist photos.blurhash.
+// Path contract (path-addressed, NOT opaque-hashed, so the key is reversible and the original recoverable):
+// `rawPath = /d/<variant>/<etag>/<original-key...>.webp`, variant ∈ {thumb, card}; etag = the original's S3
+// ETag (hex, no quotes; multipart keeps the -N suffix verbatim). Replacement at the same key yields a new
+// etag => new derivative path (free invalidation). ETag-mismatch: serve from the CURRENT original but SKIP
+// the S3 write (never persist a derivative under a stale-etag key).
+// Response: 200 + `content-type: image/webp` + base64 body. On the `thumb` variant ONLY, an `x-blurhash`
+// header carries the original's blurhash (a per-ORIGINAL property, computed once); the backfill reads it to
+// persist photos.blurhash.
 // Self-test route `/d/__selftest__` decodes an embedded HEIC/raster and returns a JSON health probe
-//   (arch/sharp/heif) — used by the deploy verification step to prove the arm64 build actually loads.
+// (arch/sharp/heif); the deploy verification step uses it to prove the arm64 build loads.
 import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import sharp from 'sharp';
 import { encode as blurhashEncode } from 'blurhash';
@@ -38,9 +35,9 @@ const resp = (status, body, headers = {}) => ({
   body: typeof body === 'string' ? body : JSON.stringify(body),
 });
 
-// Compute a blurhash from the ORIGINAL buffer. ensureAlpha() forces 4-channel RGBA (blurhash.encode
-// assumes 4 bytes/pixel — a 3-channel raster mis-strides into garbage), downscaled to a tiny raster
-// (encode is O(w*h*comp)). Uses info.width/height (post-resize), never the resize target.
+// Compute a blurhash from the ORIGINAL buffer. ensureAlpha() forces 4-channel RGBA (blurhash.encode assumes
+// 4 bytes/pixel; a 3-channel raster mis-strides into garbage), downscaled to a tiny raster (encode is
+// O(w*h*comp)). Uses info.width/height (post-resize), never the resize target.
 async function computeBlurhash(originalBuf) {
   const { data, info } = await sharp(originalBuf)
     .resize(BLURHASH_RASTER, BLURHASH_RASTER, { fit: 'inside' })
@@ -87,8 +84,8 @@ export const handler = async (event) => {
     return resp(500, { error: 'Generation failed' });
   }
 
-  // blurhash is a per-ORIGINAL property — compute ONCE, on the thumb variant only (avoids double work
-  // and two-values-that-should-match). Non-fatal: a blurhash failure must not block the derivative.
+  // blurhash is a per-ORIGINAL property: compute ONCE, on the thumb variant only. Non-fatal: a blurhash
+  // failure must not block the derivative.
   let blurhash = null;
   if (variant === 'thumb') {
     try { blurhash = await computeBlurhash(original); }
