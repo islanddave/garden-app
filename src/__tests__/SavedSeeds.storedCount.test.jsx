@@ -51,7 +51,7 @@
 //     echoed stale value would revert a count written minutes earlier through /seed-measure.
 // No jest-dom (L-182).
 import React from 'react'
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, onTestFinished } from 'vitest'
 import { render, screen, waitFor, act, fireEvent } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -396,6 +396,11 @@ describe('BUG-SEEDZEROSOWABLE-001 — the advance sheet asks at every stage', ()
   })
 
   it('sends a COMPLETE body — the wide PUT nulls every column it does not name', async () => {
+    // year_harvested comes from the stage date, which defaults to today. Pin today in 2026 so the
+    // `toBe(2026)` below still checks the year that was entered.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-10-15T12:00:00'))
+    onTestFinished(() => vi.useRealTimers())
     await mount()
     await click('advance-stage')
     await typeCount('14')
