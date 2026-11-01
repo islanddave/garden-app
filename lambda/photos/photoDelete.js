@@ -4,7 +4,7 @@
 // @aws-sdk/@clerk/@neondatabase deps are per-Lambda, not installed here)", so everything written
 // into it can only ever be covered by SQL-TEXT assertions — a tier that cannot prove a statement
 // runs, cannot prove ORDER, cannot prove a branch was taken, and has already let this repo ship
-// features that were inert. This file imports nothing but node built-ins, so its behaviour is
+// features that were inert. This file imports only the dependency-free ./audit-actor.js, so its behaviour is
 // executed by the unit suite against a recording fake `sql` (the household.js / authz-parents.js /
 // photo-access.js precedent). index.js keeps only auth, routing, and the response envelope.
 //
@@ -14,6 +14,8 @@
 // would additionally be BLOCKED by preservation_log.photo_id (ON DELETE NO ACTION) and would
 // SILENTLY DESTROY share history via share_log.photo_id (ON DELETE CASCADE) — so the rule is also
 // what keeps referential integrity honest here, not merely a policy.
+
+import { withActor } from './audit-actor.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -278,7 +280,10 @@ export async function softDeletePhoto(sql, { photoId, householdIds, userId, spac
 // featured_image_id / plant_varieties.photo_id / preservation_log.photo_id are not replayed: all
 // three are 0-populated on prod and none has a designation UI, so there is no user intent to
 // restore. Their delete-side null remains, which is the safe direction.
-async function restoreHeroPointers(sql, photo, householdIds, spaceEnabled) {
+//
+// The garden_node and spaces arms go through withActor (their audit triggers read the actor GUC); the other three
+// tables have no actor trigger and stay bare. A refused actor throws into the non-fatal catch below.
+async function restoreHeroPointers(sql, photo, householdIds, userId, spaceEnabled) {
   try {
     if (photo.project_id) {
       await sql`
@@ -291,7 +296,7 @@ async function restoreHeroPointers(sql, photo, householdIds, spaceEnabled) {
       `;
     }
     if (photo.effective_plant_id) {
-      await sql`
+      await withActor(sql, userId, () => [sql`
         UPDATE public.garden_node p
            SET featured_photo_id = ${photo.id}
           FROM public.container pp
@@ -300,7 +305,7 @@ async function restoreHeroPointers(sql, photo, householdIds, spaceEnabled) {
            AND pp.created_by = ANY(${householdIds})
            AND p.featured_photo_id IS NULL
            AND p.deleted_at IS NULL
-      `;
+      `]);
     }
     if (photo.location_id) {
       await sql`
@@ -324,13 +329,13 @@ async function restoreHeroPointers(sql, photo, householdIds, spaceEnabled) {
     }
     // No deleted_at predicate: `spaces` has no such column (see PHOTO_POINTERS).
     if (spaceEnabled && photo.space_id) {
-      await sql`
+      await withActor(sql, userId, () => [sql`
         UPDATE public.spaces
            SET featured_photo_id = ${photo.id}
          WHERE id = ${photo.space_id}
            AND created_by = ANY(${householdIds})
            AND featured_photo_id IS NULL
-      `;
+      `]);
     }
   } catch (err) {
     console.error('hero replay non-fatal failure', err?.message ?? err);
@@ -349,7 +354,7 @@ async function restoreHeroPointers(sql, photo, householdIds, spaceEnabled) {
  *
  * @returns {{status:number, body:object}}
  */
-export async function restorePhoto(sql, { photoId, householdIds, spaceEnabled = false }) {
+export async function restorePhoto(sql, { photoId, householdIds, userId, spaceEnabled = false }) {
   if (!UUID_RE.test(String(photoId))) return { status: 404, body: { error: 'Photo not found' } };
 
   const photo = await loadOwnedPhotoForDelete(sql, photoId, householdIds);
@@ -384,7 +389,7 @@ export async function restorePhoto(sql, { photoId, householdIds, spaceEnabled = 
     return { status: 200, body: { id: photoId, deleted_at: null, already_restored: true } };
   }
 
-  await restoreHeroPointers(sql, photo, householdIds, spaceEnabled);
+  await restoreHeroPointers(sql, photo, householdIds, userId, spaceEnabled);
   return { status: 200, body: { id: restored.id, deleted_at: null } };
 }
 

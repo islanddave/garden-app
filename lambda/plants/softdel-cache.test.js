@@ -95,7 +95,11 @@ describe('BUG-CACHEORPHANLEAK-001 — the soft-delete drops the cache row', () =
   // one-statement security property; the 404 above made the route observable but did NOT make a
   // second, unpredicated statement safe.
   it('the whole DELETE branch is still ONE sql call', () => {
-    expect((branch.match(/await sql`/g) ?? []).length).toBe(1);
+    // OPS-AUDITGUCTABLES-001: the one statement rides behind the actor GUC in one withActor batch, so: no bare
+    // `await sql`, one withActor call, and one template in the whole branch.
+    expect((branch.match(/await sql`/g) ?? []).length).toBe(0);
+    expect((branch.match(/await withActor\(sql, userId, \(\) => \[sql`/g) ?? []).length).toBe(1);
+    expect((branch.match(/\bsql`/g) ?? []).length).toBe(1);
   });
 
   // MUTATION: remove either ownership arm from the UPDATE -> RED. The cache delete is only as safe

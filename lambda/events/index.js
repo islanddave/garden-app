@@ -2473,7 +2473,7 @@ export const handler = async (event) => {
           // string depending on version, and toISOString() makes the bind deterministic.
           const priorGerminatedAt = new Date(existing.event_date).toISOString();
           try {
-            await sql`
+            await withActor(sql, userId, () => [sql`
               UPDATE public.garden_node p
                  SET germinated_at = ${eventDate}::timestamptz,
                      germinated_at_approx = false,
@@ -2484,7 +2484,7 @@ export const handler = async (event) => {
                  AND pp.created_by = ANY(${householdIds})
                  AND p.deleted_at IS NULL
                  AND p.germinated_at = ${priorGerminatedAt}::timestamptz::date
-            `;
+            `]);
           } catch (e) {
             // Same non-atomicity as the care-cache block above: event_log has already committed,
             // so a failure here leaves the event corrected and the anchor stale. Greppable rather

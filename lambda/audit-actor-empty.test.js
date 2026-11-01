@@ -140,7 +140,8 @@ describe('BUG-VARIETYACTOREMPTY-001 — the actor that lands can never be the em
     // same reason. 7 -> 8 on 2026-10-06 (V5-VARIETYBLEND-001) for blend.js setActor.
     // D2 W1 (R-W1-2): varieties' binds moved into withActor calls, one per transaction, so blend.js's one
     // shared bind became two calls: 6 + 2 withActor calls + photoDelete's 1 bind = 9.
-    expect([...binds, ...actorCalls]).toHaveLength(9);
+    // OPS-AUDITGUCTABLES-001: photoDelete.js's restore replay adds 2 withActor calls (garden_node, spaces) = 11.
+    expect([...binds, ...actorCalls]).toHaveLength(11);
   });
 
   // ── the normalizer, driven directly (varieties copy) ──────────────────────────────────────────

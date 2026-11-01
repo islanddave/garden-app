@@ -56,6 +56,20 @@ function walkAst(node, visit) {
   }
 }
 
+// walkAst that also passes the innermost named function (declaration, or `const name = (…) => …`) around each node.
+function walkInFn(node, fn, visit) {
+  if (!node || typeof node !== 'object') return
+  if (Array.isArray(node)) { for (const n of node) walkInFn(n, fn, visit); return }
+  if (node.type === 'FunctionDeclaration' && node.id) fn = node.id.name
+  else if (node.type === 'VariableDeclarator' && node.id.type === 'Identifier' &&
+           ['ArrowFunctionExpression', 'FunctionExpression'].includes(node.init?.type)) fn = node.id.name
+  if (typeof node.type === 'string') visit(node, fn)
+  for (const key of Object.keys(node)) {
+    if (key === 'type' || key === 'loc' || key === 'range') continue
+    walkInFn(node[key], fn, visit)
+  }
+}
+
 // Interpolations collapse to ` ? ` so a bind can never fuse two SQL identifiers into one token.
 const sqlText = (n) => n.quasi.quasis.map((q) => q.value.raw).join(' ? ')
 const isSqlTemplate = (n) =>
@@ -71,12 +85,25 @@ const isSqlTransaction = (n) =>
 // Release F (v5-fermentpath-001) attaches statement-level audit triggers to kitchen_batch_input
 // (audit_stmt_update) and kitchen_stage_log (audit_stmt_update_no_soft_delete); a pick line's hard
 // DELETE is batched too (06 §3.7: "so audit-actor-guc.test.js stays green").
-const AUDITED_DML = /\b(update|delete\s+from)\s+(only\s+)?(public\.)?(event_log|harvest_log|preservation_log|kitchen_batch_input|kitchen_stage_log)\b/is
+// OPS-AUDITGUCTABLES-001: every other table whose audit trigger reads the actor GUC (R-OQ4-1), plus the two
+// auto-updatable views Lambdas write them through. A statement trigger cannot sit on a view, so a write through
+// garden_node or cultivar fires the base table's trigger, which reads the same GUC.
+const AUDITED_DML = /\b(update|delete\s+from)\s+(only\s+)?(public\.)?(event_log|harvest_log|preservation_log|kitchen_batch_input|kitchen_stage_log|plants|garden_node|plant_varieties|cultivar|source|plots|spaces|platform_operators)\b/is
+// INSERT is audited only on the tables with an INSERT arm; plants and source have none.
+const AUDITED_INSERT = /\binsert\s+into\s+(public\.)?(plant_varieties|cultivar|plots|spaces|platform_operators)\b/is
 // … plus the four prod functions whose bodies mutate them. archive_events_subset soft-deletes the
 // merge drop set, which writes event_log.deleted_at — a watched column — so a call to it is an
 // audited write even though no `UPDATE event_log` string appears at the call site.
 const AUDITED_FN = /\b(archive_events_subset|archive_plant_events|archive_container_events|unarchive_events_apply)\s*\(/i
-const isAuditedWrite = (n) => isSqlTemplate(n) && (AUDITED_DML.test(sqlText(n)) || AUDITED_FN.test(sqlText(n)))
+const isAuditedWrite = (n) => isSqlTemplate(n) &&
+  (AUDITED_DML.test(sqlText(n)) || AUDITED_INSERT.test(sqlText(n)) || AUDITED_FN.test(sqlText(n)))
+const VIEW_BASE = { garden_node: 'plants', cultivar: 'plant_varieties' }
+// The base table an audited write lands on (the four functions all write event_log).
+function auditedTable(text) {
+  const m = text.match(AUDITED_DML) ?? text.match(AUDITED_INSERT)
+  const t = m ? m[m.length - 1].toLowerCase() : 'event_log'
+  return VIEW_BASE[t] ?? t
+}
 
 // Binds the actor rather than hardcoding it, and is transaction-local (`true`) so it cannot leak
 // onto a pooled connection and mis-attribute somebody else's write.
@@ -194,19 +221,27 @@ const ALL_AUDITED = FILES.flatMap((rel) => {
   const ast = acorn.parse(readFileSync(join(ROOT, rel), 'utf8'),
                           { ecmaVersion: 'latest', sourceType: 'module', locations: true })
   const out = []
-  walkAst(ast, (n) => { if (isAuditedWrite(n)) out.push({ file: rel, line: n.loc.start.line, start: n.start, text: sqlText(n) }) })
+  walkInFn(ast, null, (n, fn) => {
+    if (isAuditedWrite(n)) out.push({ file: rel, fn, line: n.loc.start.line, start: n.start, text: sqlText(n), table: auditedTable(sqlText(n)) })
+  })
   return out
 })
 
-// The ONE audited write that is neither executed nor batched where it is written: merge.js's
-// repoint is built in plantMemoryRepoint.js and handed back as an object property for the caller to
-// put in ITS transaction. Exempt here, and the handoff is closed by the named merge.js test below
-// — remove that test and this exemption becomes a hole.
-// Put-Up release 1b adds the second: lambda/photos/photoDelete.js builds its pointer-null statements
-// (one of them `UPDATE public.preservation_log SET photo_id = NULL`) in pointerNullStatement() and
-// spreads them into softDeletePhoto's `statements`, whose element 0 is the GUC — the checker models a
-// spread call as opaque. Closed by the named photoDelete test below.
-const DEFERRED_TO_CALLER = new Set(['lambda/plants/plantMemoryRepoint.js', 'lambda/photos/photoDelete.js'])
+// Builders whose audited writes are neither executed nor batched where they are written: each hands its template
+// back for the caller to put in ITS batch. Keyed `file#function`, not by file, so a bare write elsewhere in the same
+// file is still a stray. Each handoff is closed by a named test below — remove that test and its exemption is a hole.
+// - buildPlantEventRepoint: merge.js puts `memory.repoint` in its GUC-led stmts.
+// - pointerNullStatement: spread into softDeletePhoto's `statements` (element 0 the GUC); a spread call is opaque here.
+// - insertBlend / reviveBlend: called as elements of blendRoute's withActor builders.
+const DEFERRED_TO_CALLER = new Set([
+  'lambda/plants/plantMemoryRepoint.js#buildPlantEventRepoint',
+  'lambda/photos/photoDelete.js#pointerNullStatement',
+  'lambda/varieties/blend.js#insertBlend',
+  'lambda/varieties/blend.js#reviveBlend',
+])
+// Tables whose audit trigger has at least one Lambda writer today; plots and platform_operators have none.
+const TABLES_WITH_WRITERS = ['event_log', 'harvest_log', 'kitchen_batch_input', 'kitchen_stage_log', 'plant_varieties',
+  'plants', 'preservation_log', 'source', 'spaces']
 
 describe('BUG-EVENTAUDITACTOR-001 — actor GUC shares a transaction with every audited write', () => {
   // ── anti-vacuity ────────────────────────────────────────────────────────────────────────────
@@ -221,6 +256,11 @@ describe('BUG-EVENTAUDITACTOR-001 — actor GUC shares a transaction with every 
     // 8 direct DML sites in events/index.js + the merge repoint + archive_events_subset.
     expect(ALL_AUDITED.length).toBeGreaterThanOrEqual(10)
     expect(AUDITING_GROUPS.length).toBeGreaterThanOrEqual(6)
+  })
+
+  it('OPS-AUDITGUCTABLES-001: the matcher finds a write on every audited table a Lambda writes', () => {
+    const seen = new Set(ALL_AUDITED.map((w) => w.table))
+    expect(TABLES_WITH_WRITERS.filter((t) => !seen.has(t))).toEqual([])
   })
 
   it('the set_config matcher rejects the shapes that would defeat the trigger', () => {
@@ -239,6 +279,20 @@ describe('BUG-EVENTAUDITACTOR-001 — actor GUC shares a transaction with every 
     expect(isAuditedWrite(mk('SELECT id FROM preservation_log WHERE id =  ? '))).toBe(false)
     expect(isAuditedWrite(mk('UPDATE kitchen_stage_log SET note =  ? '))).toBe(true)
     expect(isAuditedWrite(mk('DELETE FROM kitchen_batch_input WHERE id =  ? '))).toBe(true)
+    expect(isAuditedWrite(mk('UPDATE public.garden_node p SET featured_photo_id =  ? '))).toBe(true)
+    expect(isAuditedWrite(mk('WITH gone AS (UPDATE garden_node SET deleted_at = NOW())'))).toBe(true)
+    expect(isAuditedWrite(mk('UPDATE spaces SET featured_photo_id =  ? '))).toBe(true)
+    expect(isAuditedWrite(mk('UPDATE public.source s SET name =  ? '))).toBe(true)
+    expect(isAuditedWrite(mk('INSERT INTO cultivar (id) VALUES ( ? )'))).toBe(true)
+    expect(isAuditedWrite(mk('INSERT INTO public.plots (id) VALUES ( ? )'))).toBe(true)
+    expect(isAuditedWrite(mk('DELETE FROM platform_operators WHERE id =  ? '))).toBe(true)
+    // no INSERT arm on plants or source; a read is never a write
+    expect(isAuditedWrite(mk('INSERT INTO garden_node (id) VALUES ( ? )'))).toBe(false)
+    expect(isAuditedWrite(mk('INSERT INTO source (id) VALUES ( ? )'))).toBe(false)
+    expect(isAuditedWrite(mk('SELECT featured_photo_id FROM spaces WHERE id =  ? '))).toBe(false)
+    expect(isAuditedWrite(mk('UPDATE source_contact SET note =  ? '))).toBe(false)
+    expect(auditedTable('UPDATE public.garden_node p SET x = 1')).toBe('plants')
+    expect(auditedTable('INSERT INTO cultivar (id) VALUES (1)')).toBe('plant_varieties')
   })
 
   // ── the core property ───────────────────────────────────────────────────────────────────────
@@ -253,9 +307,14 @@ describe('BUG-EVENTAUDITACTOR-001 — actor GUC shares a transaction with every 
 
   it('no audited write is issued outside a transaction batch', () => {
     const stray = ALL_AUDITED
-      .filter((w) => !COVERED.has(`${w.file}@${w.start}`) && !DEFERRED_TO_CALLER.has(w.file))
+      .filter((w) => !COVERED.has(`${w.file}@${w.start}`) && !DEFERRED_TO_CALLER.has(`${w.file}#${w.fn}`))
       .map((w) => `${w.file}:${w.line}  ${w.text.trim().replace(/\s+/g, ' ').slice(0, 80)}`)
     expect(stray).toEqual([])
+  })
+
+  it('every DEFERRED_TO_CALLER builder still holds an audited write (no stale exemption)', () => {
+    const held = new Set(ALL_AUDITED.map((w) => `${w.file}#${w.fn}`))
+    expect([...DEFERRED_TO_CALLER].filter((k) => !held.has(k))).toEqual([])
   })
 
   // ── withActor (D2 R-W1-1): the helper, and every call to it ─────────────────────────────────────
@@ -412,5 +471,24 @@ describe('BUG-EVENTAUDITACTOR-001 — actor GUC shares a transaction with every 
     // And the repoint really is the event_log write we think it is.
     const repoint = readFileSync(join(ROOT, 'lambda/plants/plantMemoryRepoint.js'), 'utf8')
     expect(repoint).toMatch(/repoint:\s*sql`UPDATE event_log SET plant_id/)
+  })
+
+  // Closes the blend.js exemptions above: every call to insertBlend / reviveBlend anywhere in lambda/ is an element
+  // of a withActor builder array, so the GUC leads the batch that sends it.
+  it('OPS-AUDITGUCTABLES-001: insertBlend and reviveBlend are only ever elements of a withActor batch', () => {
+    // No backtick from here to the end of the file: src/__tests__/sqlTemplateComments.test.js reads the sql-tag
+    // in the repoint regex above as a template and pairs it with the next backtick it finds.
+    const inBatch = new Set(WITH_ACTOR.flatMap((g) => g.members.map((m) => g.file + '@' + m.start)))
+    const calls = FILES.flatMap((rel) => {
+      const out = []
+      walkAst(parseFile(rel), (n) => {
+        if (n.type === 'CallExpression' && n.callee.type === 'Identifier' && ['insertBlend', 'reviveBlend'].includes(n.callee.name)) {
+          out.push({ key: rel + '@' + n.start, at: rel + ':' + n.loc.start.line + ' ' + n.callee.name })
+        }
+      })
+      return out
+    })
+    expect(new Set(calls.map((c) => c.at.split(' ')[1]))).toEqual(new Set(['insertBlend', 'reviveBlend']))
+    expect(calls.filter((c) => !inBatch.has(c.key)).map((c) => c.at)).toEqual([])
   })
 })

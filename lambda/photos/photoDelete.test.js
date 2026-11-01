@@ -292,7 +292,7 @@ describe('W-DEL / DD8 — restore is the durable recovery path', () => {
 
   it('clears deleted_at, household-scoped, and only from the deleted state', async () => {
     const sql = fakeSql(responderFor(DELETED));
-    const { status, body } = await restorePhoto(sql, { photoId: PHOTO, householdIds: HOUSE });
+    const { status, body } = await restorePhoto(sql, { photoId: PHOTO, householdIds: HOUSE, userId: 'user_a' });
     expect(status).toBe(200);
     expect(body).toEqual({ id: PHOTO, deleted_at: null });
     const upd = sql.calls.find((c) => /UPDATE photos SET deleted_at = NULL/.test(c.text));
@@ -301,9 +301,9 @@ describe('W-DEL / DD8 — restore is the durable recovery path', () => {
   });
 
   it('404s unknown/foreign, and is idempotent on an already-live photo', async () => {
-    expect((await restorePhoto(fakeSql(responderFor(null)), { photoId: PHOTO, householdIds: HOUSE })).status).toBe(404);
+    expect((await restorePhoto(fakeSql(responderFor(null)), { photoId: PHOTO, householdIds: HOUSE, userId: 'user_a' })).status).toBe(404);
     const live = fakeSql(responderFor(LIVE_PHOTO));
-    const { status, body } = await restorePhoto(live, { photoId: PHOTO, householdIds: HOUSE });
+    const { status, body } = await restorePhoto(live, { photoId: PHOTO, householdIds: HOUSE, userId: 'user_a' });
     expect(status).toBe(200);
     expect(body.already_restored).toBe(true);
     expect(live.calls.some((c) => /UPDATE photos/.test(c.text))).toBe(false);
@@ -317,7 +317,7 @@ describe('W-DEL / DD8 — restore is the durable recovery path', () => {
       inventory_item_id: 'inv-1', space_id: 'space-1', effective_plant_id: 'plant-1',
     };
     const sql = fakeSql(responderFor(parented));
-    await restorePhoto(sql, { photoId: PHOTO, householdIds: HOUSE, spaceEnabled: true });
+    await restorePhoto(sql, { photoId: PHOTO, householdIds: HOUSE, userId: 'user_a', spaceEnabled: true });
 
     const replays = sql.calls.filter((c) => /SET featured_photo_id = \?/.test(c.text));
     expect(replays).toHaveLength(4 + 1); // container, garden_node, locations, inventory_items, spaces
@@ -330,6 +330,11 @@ describe('W-DEL / DD8 — restore is the durable recovery path', () => {
     }
     // spaces has no deleted_at column — asserting one 42703s and the replay silently never happens.
     expect(replays.find((c) => /UPDATE public\.spaces/.test(c.text)).text).not.toMatch(/deleted_at/);
+    // OPS-AUDITGUCTABLES-001: the two audited arms each run behind the caller's actor GUC; container, locations
+    // and inventory_items have no actor trigger and stay bare.
+    expect(sql.transactions.map((tx) => tx.map((c) => c.text.match(/^(SELECT set_config|UPDATE public\.\w+)/)?.[0])))
+      .toEqual([['SELECT set_config', 'UPDATE public.garden_node'], ['SELECT set_config', 'UPDATE public.spaces']]);
+    for (const tx of sql.transactions) expect(tx[0].values).toEqual(['user_a']);
   });
 
   it('THE LOAD-BEARING ONE — the plant replay is EVENT-INCLUSIVE, not photos.plant_id only', async () => {
@@ -342,7 +347,7 @@ describe('W-DEL / DD8 — restore is the durable recovery path', () => {
     // it again — forever.
     const eventPhoto = { ...DELETED, plant_id: null, effective_plant_id: 'plant-from-event' };
     const sql = fakeSql(responderFor(eventPhoto));
-    await restorePhoto(sql, { photoId: PHOTO, householdIds: HOUSE });
+    await restorePhoto(sql, { photoId: PHOTO, householdIds: HOUSE, userId: 'user_a' });
 
     const pre = sql.calls[0];
     expect(pre.text).toContain('LEFT JOIN public.event_log e ON e.id = ph.event_id');
@@ -351,6 +356,11 @@ describe('W-DEL / DD8 — restore is the durable recovery path', () => {
     const plantReplay = sql.calls.find((c) => /UPDATE public\.garden_node/.test(c.text));
     expect(plantReplay).toBeTruthy();
     expect(plantReplay.values).toContain('plant-from-event');
+    // …and it is sent as element 1 of a batch whose element 0 is the caller's actor GUC (OPS-AUDITGUCTABLES-001).
+    const tx = sql.transactions.find((t) => t.includes(plantReplay));
+    expect(tx?.[0].text).toMatch(/^SELECT set_config\('app\.actor_clerk_sub', \?, true\)$/);
+    expect(tx?.[0].values).toEqual(['user_a']);
+    expect(tx?.indexOf(plantReplay)).toBe(1);
   });
 
   it('does NOT event-widen the project / location / inventory / space replays', async () => {
@@ -358,7 +368,7 @@ describe('W-DEL / DD8 — restore is the durable recovery path', () => {
     // its own write validator sets a hero the write would refuse — the same divergence as above, in
     // the opposite direction.
     const sql = fakeSql(responderFor({ ...DELETED, project_id: null, effective_plant_id: 'p1' }));
-    await restorePhoto(sql, { photoId: PHOTO, householdIds: HOUSE, spaceEnabled: true });
+    await restorePhoto(sql, { photoId: PHOTO, householdIds: HOUSE, userId: 'user_a', spaceEnabled: true });
     expect(sql.calls.some((c) => /UPDATE public\.container/.test(c.text))).toBe(false);
     expect(sql.calls.some((c) => /UPDATE public\.locations/.test(c.text))).toBe(false);
     expect(sql.calls.some((c) => /UPDATE public\.inventory_items/.test(c.text))).toBe(false);
@@ -367,7 +377,7 @@ describe('W-DEL / DD8 — restore is the durable recovery path', () => {
 
   it('NEGATIVE — restore never nulls a pointer and never hard-deletes', async () => {
     const sql = fakeSql(responderFor({ ...DELETED, project_id: 'proj-1', effective_plant_id: 'plant-1' }));
-    await restorePhoto(sql, { photoId: PHOTO, householdIds: HOUSE, spaceEnabled: true });
+    await restorePhoto(sql, { photoId: PHOTO, householdIds: HOUSE, userId: 'user_a', spaceEnabled: true });
     for (const c of sql.calls) {
       expect(c.text, c.text).not.toMatch(/SET\s+\w*photo\w*_id\s*=\s*NULL/i);
       expect(c.text, c.text).not.toMatch(/DELETE\s+FROM/i);
@@ -386,7 +396,7 @@ describe('W-DEL / DD8 — restore is the durable recovery path', () => {
       if (/UPDATE photos SET deleted_at = NULL/.test(text)) throw boom;
       return [];
     });
-    const { status, body } = await restorePhoto(sql, { photoId: PHOTO, householdIds: HOUSE });
+    const { status, body } = await restorePhoto(sql, { photoId: PHOTO, householdIds: HOUSE, userId: 'user_a' });
     expect(status).toBe(409);
     expect(body.code).toBe('photo_duplicate');
   });
@@ -397,7 +407,7 @@ describe('W-DEL / DD8 — restore is the durable recovery path', () => {
       if (/UPDATE photos SET deleted_at = NULL/.test(text)) throw Object.assign(new Error('boom'), { code: '08006' });
       return [];
     });
-    await expect(restorePhoto(sql, { photoId: PHOTO, householdIds: HOUSE })).rejects.toThrow('boom');
+    await expect(restorePhoto(sql, { photoId: PHOTO, householdIds: HOUSE, userId: 'user_a' })).rejects.toThrow('boom');
   });
 
   it('keeps the hero replay NON-FATAL — a failed replay still returns the restored photo', async () => {
@@ -408,7 +418,7 @@ describe('W-DEL / DD8 — restore is the durable recovery path', () => {
       if (/UPDATE public\.container/.test(text)) throw new Error('replay exploded');
       return [];
     });
-    const { status, body } = await restorePhoto(sql, { photoId: PHOTO, householdIds: HOUSE });
+    const { status, body } = await restorePhoto(sql, { photoId: PHOTO, householdIds: HOUSE, userId: 'user_a' });
     expect(status).toBe(200);
     expect(body.deleted_at).toBeNull();
   });

@@ -10,9 +10,9 @@
 // What only a real database proves here (rehearse_local.py proves the same SQL on a prod-schema replica;
 // this file drives the REAL photos Lambda for the writers):
 //   * 1.1: each writer of spaces leaves exactly one audit row, scoped to this file's Space and action, with
-//     the actor the code stamps: the user for the soft delete (photoDelete.js sets app.actor_clerk_sub in the
-//     same batch), 'system' for auto-promote, the hero PUT, the restore replay and the ON DELETE SET NULL of a
-//     hard photo delete. A same-hero PUT writes none and keeps the 1.2 data gate green for this Space.
+//     the actor the code stamps: the user for the soft delete, auto-promote, the hero PUT and the restore replay
+//     (each sets app.actor_clerk_sub in the same batch; OPS-AUDITGUCTABLES-001), 'system' for the ON DELETE SET
+//     NULL of a hard photo delete. A same-hero PUT writes none and keeps the 1.2 data gate green for this Space.
 //   * 1.2: a coordinate change refuses (P0001, spaces_repoint_guard) while weather names the Space, in every
 //     shape that reaches it (value to value, to NULL, from NULL, ON CONFLICT DO UPDATE, several rows), and
 //     passes when the triple is unchanged or the Space has no weather.
@@ -166,7 +166,7 @@ describe.skipIf(!APPLIED)('spaces guards and audit (v5-spaceguard-001)', () => {
       expect(rows[0].after_jsonb.name).toBe(`int-spaceguard-hero-${RUN}`)
     })
 
-    it('upload auto-promotes the first space photo (photos/index.js:180): one row, actor system', async () => {
+    it('upload auto-promotes the first space photo (photos/index.js:180): one row, actor = the user', async () => {
       let res
       const rows = await auditedBy(ids.hero, 'UPDATE', async () => {
         res = await callHandler(handler, {
@@ -176,7 +176,7 @@ describe.skipIf(!APPLIED)('spaces guards and audit (v5-spaceguard-001)', () => {
       expect(res.status).toBeLessThan(300)
       ids.p1 = res.body.id
       expect(rows).toHaveLength(1)
-      expect(rows[0].actor_clerk_sub).toBe('system')
+      expect(rows[0].actor_clerk_sub).toBe(USER)
       expect(rows[0].after_jsonb.featured_photo_id).toBe(ids.p1)
     })
 
@@ -191,7 +191,7 @@ describe.skipIf(!APPLIED)('spaces guards and audit (v5-spaceguard-001)', () => {
       expect(rows).toHaveLength(0)
     })
 
-    it('PUT space-featured (photos/index.js:844): one row, actor system', async () => {
+    it('PUT space-featured (photos/index.js:844): one row, actor = the user', async () => {
       let res
       const rows = await auditedBy(ids.hero, 'UPDATE', async () => {
         res = await callHandler(handler, {
@@ -200,7 +200,7 @@ describe.skipIf(!APPLIED)('spaces guards and audit (v5-spaceguard-001)', () => {
       })
       expect(res.status).toBe(200)
       expect(rows).toHaveLength(1)
-      expect(rows[0].actor_clerk_sub).toBe('system')
+      expect(rows[0].actor_clerk_sub).toBe(USER)
       expect(rows[0].after_jsonb.featured_photo_id).toBe(ids.p2)
     })
 
@@ -227,14 +227,14 @@ describe.skipIf(!APPLIED)('spaces guards and audit (v5-spaceguard-001)', () => {
       expect(rows[0].after_jsonb.featured_photo_id).toBeNull()
     })
 
-    it('restoring it replays the hero (photoDelete.js:328): one row, actor system', async () => {
+    it('restoring it replays the hero (photoDelete.js:328): one row, actor = the user', async () => {
       let res
       const rows = await auditedBy(ids.hero, 'UPDATE', async () => {
         res = await callHandler(handler, { method: 'POST', path: `/api/photos/${ids.p2}/restore` })
       })
       expect(res.status).toBe(200)
       expect(rows).toHaveLength(1)
-      expect(rows[0].actor_clerk_sub).toBe('system')
+      expect(rows[0].actor_clerk_sub).toBe(USER)
       expect(rows[0].after_jsonb.featured_photo_id).toBe(ids.p2)
     })
 
