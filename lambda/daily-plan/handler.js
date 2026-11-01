@@ -1378,18 +1378,13 @@ async function run({ pg, today, dryRun = true,geocodeZip, fetchNWS, fetchPrecip,
       console.log(JSON.stringify({ msg: 'assignee-outside-household', space_id: spaceId, count: ids.length, plant_ids: ids.slice(0, 50) }));
     }
   }
-  // DRG-WXSTATION-001: one account-level station fetch per run (V200 §3), derived to a normalized reading.
-  // fetchStation is fully guarded (returns null on any secret/HTTP/timeout failure) so it can NEVER empty the
-  // nightly plan (B6); a null station simply leaves Open-Meteo/NWS as the source.
+  // One account-level station fetch per run, derived to a normalized reading. fetchStation is fully guarded (returns null on any secret/HTTP/timeout failure) so it can NEVER empty the
+  // nightly plan; a null station simply leaves Open-Meteo/NWS as the source.
   const stationRaw = fetchStation ? await fetchStation() : null;
   console.log(JSON.stringify({ msg: 'station-fetched', ms: Date.now() - t0, present: !!stationRaw }));
-  // BUG-DERIVESTATIONBARE-001 — the DERIVATION gets the same promise the FETCH above already makes.
-  // fetchStation is guarded so a gauge outage can never empty the nightly plan (B6); deriveStation beside
-  // it was bare, so one throw here (a bad `tz` in AWN_STATIONS_JSON reaching Intl is the live path — the
-  // records themselves are attacker-free but the config is hand-edited) cost the ENTIRE plan for every
-  // Space and the frost alert with it. Failure semantics, chosen deliberately rather than left undeclared:
-  // degrade to "no gauge" — byte-identical to the null-fetch state the code already handles everywhere —
-  // and NAME the degrade so it is observable instead of silent (L-443: keep the detection, drop the outage).
+  // The DERIVATION gets the same promise the FETCH above makes. fetchStation is guarded so a gauge outage can never empty the nightly plan; deriveStation beside it was bare, so one throw
+  // here (a bad `tz` in the hand-edited AWN_STATIONS_JSON reaching Intl is the live path) would cost the ENTIRE plan for every Space and the frost alert with it. Degrade to "no gauge" —
+  // byte-identical to the null-fetch state the code already handles everywhere — and NAME the degrade so it is observable instead of silent.
   let station = null;
   let stationDegraded = null;
   try {
@@ -1399,40 +1394,28 @@ async function run({ pg, today, dryRun = true,geocodeZip, fetchNWS, fetchPrecip,
     console.error(JSON.stringify({ msg: 'station-derive-failed', degraded: 'station_derive_failed', error: stationDegraded }));
   }
   let boundSpaces = 0;
-  // BUG-STATIONDEGRADESILENT-001 — the per-Space fetch degrades below, collected so the station_unbound ops
-  // alert can NAME what fired this run instead of only saying that something did.
+  // The per-Space fetch degrades below, collected so the station_unbound ops alert can NAME what fired this run instead of only saying that something did.
   const wxDegradeMarkers = [];
-  // V4-WATERMATH-001 F1 — the ledger flag, read ONCE and used for exactly one thing in F1: whether the
-  // weather_daily SELECT happens at all. Default OFF, and OFF is byte-identical — the engine is not
-  // wired to this data yet (that is F2), so with the flag off this run issues zero reads against the
-  // new relation. The WRITE below is deliberately NOT behind this flag: the substrate has to be
-  // accumulating before the fold that consumes it is switched on, which is the entire reason F1 is a
-  // separate ship. Mirror any flip in src/lib/featureFlags.js when F2 gives it a client-side meaning.
+  // The ledger flag, read ONCE. Default OFF, and OFF is byte-identical: with it off this run issues zero reads against weather_daily. The WRITE below is deliberately NOT behind this
+  // flag: the substrate has to be accumulating before the fold that consumes it is switched on. Mirror any flip in src/lib/featureFlags.js.
   const waterLedgerEnabled = _flag('CARE_WATER_LEDGER_ENABLED', process.env.CARE_WATER_LEDGER_ENABLED === 'true');
-  // V4-WATERMATH-001 F2 — the fold's per-planting event window, ONE query per run, STRICTLY behind
-  // the flag (flag OFF issues zero of these — pinned by an executing test in ledger-run.test.js,
-  // same reachability proof as the weather_daily read below). null = read failed -> the generatePlan
-  // call passes enabled=false and the whole run degrades to flag-OFF (see readLedgerEvents).
+  // The fold's per-planting event window, ONE query per run, STRICTLY behind the flag (flag OFF issues zero of these — pinned by an executing test in ledger-run.test.js, the same
+  // reachability proof as the weather_daily read below). null = read failed -> generatePlan gets enabled=false and the whole run degrades to flag-OFF (see readLedgerEvents).
   const ledgerEvents = waterLedgerEnabled ? await readLedgerEvents(pg, weatherWindowStart(today), today) : null;
   // Resolve each Space's weather once (zip-driven). Multi-Space ready: keyed by space id.
   const wxBySpace = {}, hyBySpace = {}, coordsBySpace = {}, stationProvBySpace = {}, wxDailyBySpace = {};
-  const droughtBySpace = {};   // V5-LEGACYEXCEPTIONCARE-001 — its OWN series, unconditional; see below.
-  // V5-DROUGHTSPACE-001 — the drought line is a GARDEN-WIDE claim, so the denominator of its
-  // watering-reset rule must be the population the plan actually speaks for. Built from `plantings`
-  // (this run's own SELECT, already filtered to live/non-ended/non-planning) rather than from a second
-  // query, so the numerator and the denominator cannot drift apart into a mismatched fraction.
+  const droughtBySpace = {};   // its OWN series, unconditional; see below.
+  // The drought line is a GARDEN-WIDE claim, so the denominator of its watering-reset rule must be the population the plan actually speaks for. Built from `plantings` (this run's own
+  // SELECT, already filtered to live/non-ended/non-planning) rather than from a second query, so numerator and denominator cannot drift into a mismatched fraction.
   const popBySpace = {};
   for (const p of plantings) (popBySpace[p.workspace_id] ||= new Set()).add(String(p.id));
   // ONE read for every Space — the per-Space split is the set intersection below, not a second query.
   // null = the read failed, which is NOT "he did not water" (see evaluateDrought's refusal branch).
   const deepWaterRows = await drought.readDeepWaterDays(pg, drought.windowStart(today), prevPlanDate(today));
   for (const s of spaces) {
-    // BUG-WXFETCHFROSTCLEAR-001 — same seam, same promise. The SHIPPED fetchNWS/fetchPrecip catch
-    // everything and return null (index.js), and a null weather is already handled correctly downstream:
-    // frostEval gets tonightLow null + lowSource 'forecast_absent', sets degraded, and in frost season
-    // that raises the frost_eval_degraded ops alert — silence never reads as "no frost". What was NOT
-    // guarded is the seam itself: an injected or future fetcher that THROWS would take the whole run, and
-    // with it every Space's plan and the frost alert. Degrade this Space to no-weather and name it.
+    // Same seam, same promise: the SHIPPED fetchNWS/fetchPrecip catch everything and return null (index.js), and a null weather is handled downstream (frostEval gets tonightLow null +
+    // lowSource 'forecast_absent', sets degraded, and in frost season raises the frost_eval_degraded ops alert — silence never reads as "no frost"). What was NOT guarded is the seam
+    // itself: an injected or future fetcher that THROWS would take the whole run, every Space's plan and the frost alert with it. Degrade this Space to no-weather and name it.
     let wx = null; let hy = null;
     try {
       wx = await weatherForSpace(s, { geocodeZip, fetchNWS });
@@ -1446,11 +1429,9 @@ async function run({ pg, today, dryRun = true,geocodeZip, fetchNWS, fetchPrecip,
       console.error(JSON.stringify({ msg: 'hydrology-fetch-failed', degraded: 'hydrology_fetch_failed', space: s.id, error: e?.message || String(e) }));
       wxDegradeMarkers.push(`hydrology_fetch_failed (space ${s.id})`);
     }
-    // BUG-RAINFCSTONEMODEL-001 — tomorrow's and the day after's rain from five models, overlaid onto the
-    // hydrology BEFORE the gauge merge (which never touches day-ahead fields) and before anything reads it.
-    // Optional dependency: a caller that passes no fetchRainForecast — every existing run() test — gets the
-    // best_match hydrology it always got. Same seam discipline as the two fetches above: the shipped fetcher
-    // returns null on any failure, and a fetcher that THROWS degrades this Space to best_match, never the run.
+    // Tomorrow's and the day after's rain from five models, overlaid onto the hydrology BEFORE the gauge merge (which never touches day-ahead fields) and before anything reads it. Optional
+    // dependency: a caller that passes no fetchRainForecast gets the best_match hydrology it always got. Same seam discipline as the two fetches above: the shipped fetcher returns null on
+    // any failure, and a fetcher that THROWS degrades this Space to best_match, never the run.
     let coords;
     if (hy && fetchRainForecast) {
       try {
@@ -1466,9 +1447,8 @@ async function run({ pg, today, dryRun = true,geocodeZip, fetchNWS, fetchPrecip,
     const st = bindStationToSpace(s, station);
     let prov = {};
     if (st) {
-      // BUG-RAINACTUAL-001: planDay makes the gauge buckets address the day the PLAN is for, not the day the
-      // AWN fetch happened on. Identical in every live run (today === todayET() === the station's civil D0);
-      // it is what makes a `--today` replay read the day it is actually replaying.
+      // planDay makes the gauge buckets address the day the PLAN is for, not the day the AWN fetch happened on. Identical in every live run; it is what makes a `--today` replay read the day
+      // it is actually replaying.
       const mh = mergeStationHydrology(hy, st, { planDay: today }); hy = mh.merged;
       const mw = mergeStationWeather(wx, st);   wx = mw.merged;
       prov = { ...mh.prov, ...mw.prov };
@@ -1477,44 +1457,31 @@ async function run({ pg, today, dryRun = true,geocodeZip, fetchNWS, fetchPrecip,
     wxBySpace[s.id] = wx;
     hyBySpace[s.id] = hy;
     stationProvBySpace[s.id] = prov;
-    coordsBySpace[s.id] = coords !== undefined ? coords : await coordsForSpace(s, { geocodeZip });   // DRG-WXROLL-001: for client live-refresh (resolved once above when the rain forecast needed it)
+    coordsBySpace[s.id] = coords !== undefined ? coords : await coordsForSpace(s, { geocodeZip });   // for client live-refresh (resolved once above when the rain forecast needed it)
     console.log(JSON.stringify({ msg: 'space-wx', space: s.id, ms: Date.now() - t0, wx: !!wx, hy: !!hy }));
-    // V4-WATERMATH-001 F1 — persist this Space's completed days, then (ONLY behind the flag) read the
-    // fold window back. Order matters: the write goes first so a same-night backfill of a gap is
-    // visible to the read in the same run rather than a day later.
-    //
-    // The write is gated on !dryRun and is non-fatal by construction (writeWeatherDaily never throws),
-    // so neither a dry replay nor an unapplied migration can affect anything below this line.
+    // Persist this Space's completed days, then (ONLY behind the flag) read the fold window back. Order matters: the write goes first so a same-night backfill of a gap is visible to the
+    // read in the same run. The write is gated on !dryRun and is non-fatal by construction (writeWeatherDaily never throws), so neither a dry replay nor an unapplied migration can affect
+    // anything below this line.
     if (!dryRun) await writeWeatherDaily(pg, s.id, today, hy, prov);
-    // FLAG OFF => this expression short-circuits to null and readWeatherDaily is NEVER CALLED, so no
-    // statement mentioning weather_daily is ever sent by the read path. That is the seededgate
-    // guarantee, and it is pinned by an executing test that counts real queries (weatherdaily.test.js),
-    // not by a source assertion — the claim is about reachability, which source text cannot show.
+    // FLAG OFF => this expression short-circuits to null and readWeatherDaily is NEVER CALLED, so no statement mentioning weather_daily is ever sent by the read path (the seededgate
+    // guarantee). Pinned by an executing test that counts real queries (weatherdaily.test.js), not by a source assertion: the claim is about reachability, which source text cannot show.
     wxDailyBySpace[s.id] = waterLedgerEnabled
       ? await readWeatherDaily(pg, s.id, weatherWindowStart(today), prevPlanDate(today))
       : null;
-    // V5-LEGACYEXCEPTIONCARE-001 — the drought signal's OWN series, deliberately NOT riding the line
-    // above. That one is gated on CARE_WATER_LEDGER_ENABLED, which is absent from the live
-    // garden-daily-plan env (verified in AWS 2026-09-08), so weatherDaily is null in every production
-    // run and the only unconditional weather input is hydrology.recent_precip_in — TWO days, nowhere
-    // near 20. Flipping the flag to unblock this would arm the whole Water Ledger fold for both users at
-    // once; the crucible verdict's "What NOT to do" forbids that as an opening move. So: a second,
-    // narrower read (date + precip_in only) that works with the flag off and changes nothing the ledger
-    // path does when the flag is on. Same window bounds, same settled-days-only semantics.
-    //
-    // The window ASKED FOR and the window RETURNED are different questions — evaluateDrought re-derives
-    // its own coverage from the rows and refuses rather than counting a dry run over a short array.
+    // The drought signal's OWN series, deliberately NOT riding the line above: that one is gated on CARE_WATER_LEDGER_ENABLED, which is off in the live garden-daily-plan env, so weatherDaily
+    // is null in every production run and the only unconditional weather input is hydrology.recent_precip_in — TWO days, nowhere near 20. Flipping the flag to unblock this would arm the
+    // whole Water Ledger fold for both users at once. So: a second, narrower read (date + precip_in only) that works with the flag off and changes nothing the ledger path does when the flag
+    // is on. Same window bounds, same settled-days-only semantics.
+    // The window ASKED FOR and the window RETURNED are different questions — evaluateDrought re-derives its own coverage from the rows and refuses rather than counting a dry run over a
+    // short array.
     const _drSeries = await drought.readDroughtSeries(pg, s.id, drought.windowStart(today), prevPlanDate(today));
-    // V5-DROUGHTSPACE-001 — the second reset source. Scoped and denominated by this Space's own plan
-    // population, so "a third of the garden" means a third of THIS garden.
+    // The second reset source. Scoped and denominated by this Space's own plan population, so "a third of the garden" means a third of THIS garden.
     const _drWater = drought.deepWaterResetDays(deepWaterRows, popBySpace[s.id]);
     droughtBySpace[s.id] = drought.evaluateDrought(_drSeries, { asOfDate: prevPlanDate(today),
       waterResetDays: _drWater.days, waterEventsUnavailable: _drWater.unavailable });
-    // Emitted on EVERY run, firing or not — same discipline as 'frost-eval'. A signal that silently
-    // reads `insufficient` every night (a gap in weather_daily, a failed read) must be visible in
-    // CloudWatch, because "never fired" and "could never fire" are indistinguishable from the plan alone.
-    // The watering half carries its own numbers for the same reason: a reset rule that never fires, and
-    // one that fires every day, both look like silence from the plan row.
+    // Emitted on EVERY run, firing or not — same discipline as 'frost-eval'. A signal that silently reads `insufficient` every night (a gap in weather_daily, a failed read) must be visible in
+    // CloudWatch, because "never fired" and "could never fire" are indistinguishable from the plan alone. The watering half carries its own numbers for the same reason: a reset rule that never
+    // fires, and one that fires every day, both look like silence from the plan row.
     console.log(JSON.stringify({ msg: 'drought-signal', space: s.id, plan_date: today,
       rows: Array.isArray(_drSeries) ? _drSeries.length : null, ...droughtBySpace[s.id],
       water_population: _drWater.population, water_required: _drWater.required,
@@ -1522,112 +1489,73 @@ async function run({ pg, today, dryRun = true,geocodeZip, fetchNWS, fetchPrecip,
       water_unavailable: _drWater.unavailable }));
   }
   // Group plantings by Space so each gets its own forecast; within a Space, engine splits per caretaker.
-  // DRG-WXSTATION-001 observability (V200 §3): one structured line per run — chosen source, recent value,
-  // station data-age + freshness/coverage, so a silent fallback is visible in CloudWatch.
+  // Observability: one structured line per run — chosen source, recent value, station data-age + freshness/coverage, so a silent fallback is visible in CloudWatch.
   console.log(JSON.stringify({ msg: 'station', present: !!station, boundSpaces,
     mac: station && station.mac, fresh: station && station.fresh, dataAgeMin: station && station.dataAgeMin,
     tempF: station && station.tempF, recentPrecipIn: station && station.recentPrecipIn,
-    // BUG-RAINACTUAL-001: the two buckets that now drive today + the yesterday actual, so a wrong number is
-    // diagnosable from CloudWatch alone (design §7 — "gauge = truth" must not become "gauge = infallible").
+    // The two buckets that now drive today + the yesterday actual, so a wrong number is diagnosable from CloudWatch alone ("gauge = truth" must not become "gauge = infallible").
     todayPrecipIn: station && station.todayPrecipIn, yesterdayPrecipIn: station && station.yesterdayPrecipIn,
     planDay: today, stationDay0: station && station.day0, stationHour0: station && station.hour0,
-    // H5: which basis produced today_remaining_in, and (on the fallback) why the hourly path was refused.
-    // Without this a silent slide back to the whole-day subtraction — the exact defect H5 corrects — would
-    // be invisible in CloudWatch.
+    // Which basis produced today_remaining_in, and (on the fallback) why the hourly path was refused. Without this a silent slide back to the whole-day subtraction would be invisible.
     remainingBasis: Object.values(stationProvBySpace).map((p) => p && p.today_remaining_basis).filter(Boolean),
     remainingFallback: Object.values(stationProvBySpace).map((p) => p && p.today_remaining_fallback).filter(Boolean),
     coversLookback: station && station.coversLookback, uncertainty: station && station.uncertainty,
-    // DRG-WXSTATION-003: `uncertainty` is one string and 'frozen' outranks 'warmup', and on a frozen-today-only
-    // run it is not in the stored plan's provenance at all. The day list says which days lost their gauge total.
+    // `uncertainty` is one string and 'frozen' outranks 'warmup', and on a frozen-today-only run it is not in the stored plan's provenance at all. The day list says which days lost their gauge total.
     frozenDays: station && station.frozenDays,
-    // V5-STATIONHEALTHYEAR-001: the longest outdoor-field gap in the trailing 24 h, on EVERY run. tempF above is
-    // only the newest record, so without this an overnight array dropout could not be measured from CloudWatch.
+    // The longest outdoor-field gap in the trailing 24 h, on EVERY run. tempF above is only the newest record, so without this an overnight array dropout could not be measured from CloudWatch.
     arraySilent: station && station.arraySilence ? station.arraySilence.silent : null,
     arrayGapMin: station && station.arraySilence
       ? Object.fromEntries(Object.entries(station.arraySilence.gaps).map(([f, g]) => [f, g.longestMin])) : null }));
-  // BUG-STATIONDEGRADESILENT-001 — a station that is CONFIGURED but bound to no Space. boundSpaces was only ever
-  // logged, so a derive throw, a fetch that came back empty and Space coordinates that drifted off the gauge all
-  // ended in the same silent place: every Space on forecast-only rain and a tonightLow with no station floor.
-  // "Configured" is stationConfig(), the predicate fetchStation and deriveStation already read, so a deployment
-  // with no AWN_STATIONS_JSON never looks like an outage. All-Spaces-unbound only: a Space that is not at the
-  // gauge is correctly unbound, and nothing here can tell it from one whose coordinates drifted.
+  // A station that is CONFIGURED but bound to no Space. boundSpaces was only ever logged, so a derive throw, a fetch that came back empty and Space coordinates that drifted off the gauge all
+  // ended in the same silent place: every Space on forecast-only rain and a tonightLow with no station floor. "Configured" is stationConfig(), the predicate fetchStation and deriveStation
+  // already read, so a deployment with no AWN_STATIONS_JSON never looks like an outage. All-Spaces-unbound only: a Space that is not at the gauge is correctly unbound, and nothing here
+  // can tell it from one whose coordinates drifted.
   const stationCfg = stationConfig();
   const stationUnbound = stationCfg.length > 0 && spaces.length > 0 && boundSpaces === 0;
-  // BUG-STATIONSTALESILENT-001 — the half the line above cannot see: a station that BINDS but whose newest reading
-  // is older than FRESHNESS_MAX_MIN (console or WiFi offline). boundSpaces counts it, yet mergeStationHydrology and
-  // mergeStationWeather gate every gauge field on `fresh`, so rain falls back to forecast, the tonightLow floor is
-  // skipped and the offline nights leave no overnight minimum. boundSpaces > 0 implies a station, and makes this
-  // exclusive with stationUnbound, so a run never sends both.
+  // The half the line above cannot see: a station that BINDS but whose newest reading is older than FRESHNESS_MAX_MIN (console or WiFi offline). boundSpaces counts it, yet mergeStationHydrology
+  // and mergeStationWeather gate every gauge field on `fresh`, so rain falls back to forecast, the tonightLow floor is skipped and the offline nights leave no overnight minimum. boundSpaces > 0
+  // implies a station, and makes this exclusive with stationUnbound, so a run never sends both.
   const stationStale = boundSpaces > 0 && !station.fresh;
-  // V5-STATIONHEALTHYEAR-001 — the third station state: bound AND fresh (the console is online) but the outdoor
-  // array went quiet for >= ARRAY_SILENT_MIN_GAP_MIN in the trailing 24 h (station.js arraySilence: the alkaline
-  // cold dropout, or a dead array). `fresh` makes it exclusive with stationStale and boundSpaces > 0 with
-  // stationUnbound, so the three station conditions can never send two emails from one run.
+  // The third station state: bound AND fresh (the console is online) but the outdoor array went quiet for >= ARRAY_SILENT_MIN_GAP_MIN in the trailing 24 h (station.js arraySilence: the alkaline
+  // cold dropout, or a dead array). `fresh` makes it exclusive with stationStale and boundSpaces > 0 with stationUnbound, so the three station conditions can never send two emails from one run.
   const stationArraySilent = boundSpaces > 0 && station.fresh
     && !!(station.arraySilence && station.arraySilence.silent.length);
-  // Unassigned -> the planting's Space owner (ownerBySpace above, BUG-AUTHZLAMBDA-001). This was the
-  // OWNER_FALLBACK_SUB env, one sub for every Space; it is no longer read, and an unowned Space does NOT
-  // fall back to it (its plantings go to __UNASSIGNED__, engine.js).
-  // DRG-WXWATER-001 coarse-v1: SINGLE flag read-site (spec I2 — plan is computed once nightly, all readers consume
-  // the stored plan, so one flag here is inherently consistent). Default OFF; the 3-substrate-tier rain model is
+  // Unassigned -> the planting's Space owner (ownerBySpace above). An unowned Space does NOT fall back to a global sub (its plantings go to __UNASSIGNED__, engine.js).
+  // SINGLE flag read-site for the 3-substrate-tier rain model: the plan is computed once nightly and all readers consume the stored plan, so one flag here is inherently consistent. Default OFF;
   // inert (byte-identical plan) until CARE_RAIN_CREDIT_ENABLED=true is set after shadow-soak.
   const rainCreditEnabled = _flag('CARE_RAIN_CREDIT_ENABLED', process.env.CARE_RAIN_CREDIT_ENABLED === 'true');
-  // DRG-WXFLAGSPLIT-001 F1: the max-days CEILING gets its own flag, split out of CARE_RAIN_CREDIT_ENABLED.
-  // Both default OFF, so this ship is inert (byte-identical plan). The split exists so F2 can flip the tiered
-  // CREDIT on by itself, with the interval ceiling still off, instead of the two behaviours moving together.
+  // The max-days CEILING has its own flag, split out of CARE_RAIN_CREDIT_ENABLED so the tiered CREDIT can be flipped on by itself with the interval ceiling still off. Both default OFF.
   // Mirror any flip in src/lib/featureFlags.js — the CJS Lambda cannot import that ESM module.
   const rainMaxDaysEnabled = _flag('CARE_RAIN_MAXDAYS_ENABLED', process.env.CARE_RAIN_MAXDAYS_ENABLED === 'true');
-  // BUG-TODAYWATER-001: today-forecast suppression. DEFAULT OFF, so this ship is inert (byte-identical
-  // plan) until flipped after a dry-run replay. The flag is not ceremony -- it is the rollback path. This
-  // Lambda has NO staging surface (deploy-staging.yml's matrix omits daily-plan) and deploy-lambda.yml
-  // redeploys all 26 functions from a main SHA, so reverting the code means a promote-gate cycle with Dave
-  // approval plus a 26-function redeploy. With the flag, rollback is one update-function-configuration
-  // followed by scripts/rerun-daily-plan.sh --live: about two minutes, no promote.
+  // Today-forecast suppression. DEFAULT OFF, so it is inert (byte-identical plan) until flipped after a dry-run replay. The flag is the rollback path: this Lambda has NO staging surface
+  // (deploy-staging.yml's matrix omits daily-plan) and deploy-lambda.yml redeploys all 26 functions from a main SHA, so reverting the code means a promote-gate cycle with Dave approval plus a
+  // 26-function redeploy. With the flag, rollback is one update-function-configuration followed by scripts/rerun-daily-plan.sh --live: about two minutes, no promote.
   // Mirror any flip in src/lib/featureFlags.js -- the CJS Lambda cannot import that ESM module.
   const todayAwareEnabled = _flag('CARE_TODAY_AWARE_ENABLED', process.env.CARE_TODAY_AWARE_ENABLED === 'true');
-  // Forecast-aware watering deferral, Dave 2026-09-13. BOTH default OFF, so the deploy is inert and each
-  // behaviour change is a deliberate flip rather than a side effect of shipping — the same posture as
-  // measuredCreditEnabled below, and for the same reason: these decide whether a thirsty plant is skipped.
+  // Forecast-aware watering deferral. BOTH default OFF, so each behaviour change is a deliberate flip rather than a side effect of shipping — the same posture as measuredCreditEnabled below, and
+  // for the same reason: these decide whether a thirsty plant is skipped.
   //
-  // CARE_RAIN_DEFER_DRY_ENABLED — lets tomorrow's forecast defer a DRY planting, not merely an already-wet
-  // one (engine 'incoming_dry'). Bars reuse SOAK_FCST_QPF_IN/POP_PCT, backtested over 85 days of this
-  // season's stored plans: 9 firings, 0 busts. FLIP THIS SECOND — it is the one with a real downside if
-  // the forecast is wrong, and it is worth watching sat_kind='incoming_dry' rows for a week first.
+  // CARE_RAIN_DEFER_DRY_ENABLED — lets tomorrow's forecast defer a DRY planting, not merely an already-wet one (engine 'incoming_dry'). Bars reuse SOAK_FCST_QPF_IN/POP_PCT, backtested over 85 days of
+  // stored plans: 9 firings, 0 busts. FLIP THIS SECOND — it is the one with a real downside if the forecast is wrong; watch sat_kind='incoming_dry' rows for a week first.
   //
-  // CARE_RAIN_SOON_ENABLED — near-term branch ('soon'): >= SOON_QPF_IN within station.NEAR_TERM_WINDOW_H
-  // hours. FLIP THIS FIRST: a ~3-hour horizon re-evaluated hourly is the lowest-risk of the forecast
-  // branches, because a bust is visible and corrected within the hour with the watering day still ahead.
-  // It is only defensible at all because of OPS-PLANHOURLY-001; do NOT enable it on a 3-runs-a-day schedule.
+  // CARE_RAIN_SOON_ENABLED — near-term branch ('soon'): >= SOON_QPF_IN within station.NEAR_TERM_WINDOW_H hours. FLIP THIS FIRST: a ~3-hour horizon re-evaluated hourly is the lowest-risk of the forecast
+  // branches, because a bust is visible and corrected within the hour with the watering day still ahead. It is only defensible because the plan regenerates hourly; do NOT enable it on a 3-runs-a-day
+  // schedule.
   const deferDryEnabled = _flag('CARE_RAIN_DEFER_DRY_ENABLED', process.env.CARE_RAIN_DEFER_DRY_ENABLED === 'true');
   const soonAwareEnabled = _flag('CARE_RAIN_SOON_ENABLED', process.env.CARE_RAIN_SOON_ENABLED === 'true');
-  // BUG-RAINBEDWAITCONFLICT-001 — Dave, 2026-09-28, asked which rule wins for a DRY in-ground bed when
-  // at least 0.50" is forecast for tomorrow at 60%+: "let beds wait". So the 'incoming_dry' branch runs
-  // for established in-ground plantings (a bed transplanted or sown in the last 21 days keeps its card
-  // under every forecast kind and whatever these flags say: engine youngBed, 2026-10-09; containers
-  // still need CARE_RAIN_DEFER_DRY_ENABLED above, OFF), and
-  // the rain callout moves to the same bars. Before this, Today's rain line said "let in-ground beds
-  // wait" at a private 0.30"/50% while the list under it watered every dry bed. No env flag: the
-  // decision is made, and the Today widget and CareNeeded mirror the rule client-side (wateringScale
-  // bedsWaitForRain), where a Lambda flag could not reach them. Undo = revert the commit.
+  // "Let beds wait": for a DRY in-ground bed with at least 0.50" forecast for tomorrow at 60%+, the 'incoming_dry' branch runs for established in-ground plantings (a bed transplanted or sown in the
+  // last 21 days keeps its card under every forecast kind and whatever these flags say: engine youngBed; containers still need CARE_RAIN_DEFER_DRY_ENABLED above, OFF), and the rain callout moves to
+  // the same bars, so Today's rain line no longer says "let in-ground beds wait" while the list under it waters every dry bed. No env flag: the decision is made, and the Today widget and CareNeeded
+  // mirror the rule client-side (wateringScale bedsWaitForRain), where a Lambda flag could not reach them. Undo = revert the commit.
   const deferDryBedsEnabled = true;
-  // BUG-RAINFORECASTCREDIT-001 — rain credit spends MEASURED precipitation only (engine.creditPrecip).
-  // Default OFF: absent env => byte-identical plan, so the deploy is inert and the behaviour change is a
-  // deliberate flip, not a side effect of shipping. Flipping it makes the engine stop crediting rain that
-  // has not fallen, which REDUCES skips -- i.e. it errs toward watering, the fail-safe direction.
+  // Rain credit spends MEASURED precipitation only (engine.creditPrecip). Default OFF: absent env => byte-identical plan, so the behaviour change is a deliberate flip. Flipping it makes the engine
+  // stop crediting rain that has not fallen, which REDUCES skips — it errs toward watering, the fail-safe direction.
   const measuredCreditEnabled = _flag('CARE_RAIN_MEASURED_CREDIT_ENABLED', process.env.CARE_RAIN_MEASURED_CREDIT_ENABLED === 'true');
-  // BUG-SEEDEDGATE-001 — structural cadence provenance replaces the in-payload _seeded marker.
-  // DEFAULT OFF, and OFF is byte-identical.
+  // Structural cadence provenance replaces the in-payload _seeded marker. DEFAULT OFF, and OFF is byte-identical.
   //
-  // The flag is applied by NULLING the column on every row rather than by branching in the engine.
-  // resolveCadence has FOUR call sites — engine.js coldFor, the water loop, owner grouping, and
-  // cadenceTenderFor in this file — and a threaded parameter is one missed site away from the same
-  // planting resolving two different ways in one run. Carrying the flag on the DATA makes that
-  // structurally impossible.
-  //
-  // Expected delta on flip, measured on prod 2026-08-07: exactly 6 plantings. Chives 3->4,
-  // Garlic Chives 3->4, Christmas Cactus 7->8 (inert, dormant), Echeveria x2 10->12, and Jade Plant
-  // 16->12 — the only one that GAINS a task on flip day. Collards stays 2: its cadence_scopes is [].
-  // Rollback is one update-function-configuration plus a rerun; no promote needed.
+  // The flag is applied by NULLING the column on every row rather than by branching in the engine. resolveCadence has FOUR call sites — engine.js coldFor, the water loop, owner grouping, and
+  // cadenceTenderFor in this file — and a threaded parameter is one missed site away from the same planting resolving two different ways in one run. Carrying the flag on the DATA makes that
+  // structurally impossible. Rollback is one update-function-configuration plus a rerun; no promote needed.
   const cadenceScopesEnabled = _flag('CARE_CADENCE_SCOPES_ENABLED', process.env.CARE_CADENCE_SCOPES_ENABLED === 'true');
   if (!cadenceScopesEnabled) { for (const p of plantings) p.cadence_scopes = null; }
   // Loud, not silent: if the driver ever hands text[] back unparsed, resolveCadence's Array.isArray
@@ -1635,34 +1563,22 @@ async function run({ pg, today, dryRun = true,geocodeZip, fetchNWS, fetchPrecip,
   else console.log(JSON.stringify({ msg: 'cadence-scopes', rows: plantings.length,
     arrays: plantings.filter((p) => Array.isArray(p.cadence_scopes)).length,
     bearing: plantings.filter((p) => Array.isArray(p.cadence_scopes) && p.cadence_scopes.length > 0).length }));
-  // ── DRG-CADENCEOBS-001 — cadence-floor observability. MEASUREMENT ONLY ──────────────────────────
-  // Reads nothing back, writes nothing, mutates nothing, and contributes nothing to the plan payload.
-  // The engine already computes _via at four call sites and DISCARDS it at all four; this is the one
-  // place that keeps the number. engine.js:81 (the `_via:'default'` fallthrough) hands a planting the
-  // house 3-day container cadence with no log, no counter and no flag — 20 of 229 active plantings on
-  // prod 2026-08-17, all 20 Dave's, producing 18 of his 194 water_due tasks. Nobody could see that.
+  // ── Cadence-floor observability. MEASUREMENT ONLY ──
+  // Reads nothing back, writes nothing, mutates nothing, and contributes nothing to the plan payload. The engine computes _via at four call sites and DISCARDS it at all four; this is the one place
+  // that keeps the number: a `_via:'default'` fallthrough hands a planting the house 3-day container cadence with no log, no counter and no flag.
   //
-  // Zero-behaviour-change BY CONSTRUCTION, not by care: it runs OUTSIDE generatePlan (the plan object
-  // is built from explicitly named keys at engine.js:703-711), resolveCadence is pure (every arm
-  // returns a fresh spread), and it runs AFTER line 916 so it observes exactly the array generatePlan
-  // will receive — this can never disagree with the cadence the run actually applied. The counters are
-  // built into local objects; nothing is stamped onto p, because the SAME array is handed to
-  // generatePlan AND to frostClass.summarize and a stamped field would travel into both.
+  // Zero-behaviour-change BY CONSTRUCTION: it runs OUTSIDE generatePlan (the plan object is built from explicitly named keys), resolveCadence is pure (every arm returns a fresh spread), and it runs
+  // AFTER the cadence_scopes nulling so it observes exactly the array generatePlan will receive. The counters are built into local objects; nothing is stamped onto p, because the SAME array is
+  // handed to generatePlan AND to frostClass.summarize and a stamped field would travel into both.
   //
-  // by_owner mirrors engine.ownerFor (assignee, else the Space owner generatePlan gets; System subs and
-  // assignees outside the Space household are already nulled
-  // at line 809). Pooled-only would go blind to Jen: her 16 rows sit inside Dave's 213, and her 0 %
-  // naked-default is a small-sample zero, not a property.
+  // by_owner mirrors engine.ownerFor (assignee, else the Space owner generatePlan gets; System subs and assignees outside the Space household are already nulled above). Pooled-only would go blind to
+  // the smaller household member: a small-sample zero is not a property.
   //
-  // no_interval_key counts the SECOND, less obvious entry to the bare 3 (engine.js:489-491): a profile
-  // adopted at ANY arm that carries neither *_container nor *_inground falls to cad.default anyway.
-  // Zero on prod today; it costs nothing to count and it is the failure mode that would otherwise
-  // reappear invisibly (the live system care row expresses its interval under the UNREAD key
-  // `water_interval_days`).
+  // no_interval_key counts the SECOND, less obvious entry to the bare 3: a profile adopted at ANY arm that carries neither *_container nor *_inground falls to cad.default anyway (the live system
+  // care row expresses its interval under the UNREAD key `water_interval_days`). It costs nothing to count and is the failure mode that would otherwise reappear invisibly.
   //
-  // Not flag-gated, deliberately — the cadence-scopes log above is not either, and a kill switch on a
-  // console.log inside a try/catch is ceremony. The try/catch is NOT ceremony: a throw here would empty
-  // the nightly plan for both users, which is a failure this file has already suffered once (line 746).
+  // Not flag-gated, deliberately — the cadence-scopes log above is not either, and a kill switch on a console.log inside a try/catch is ceremony. The try/catch is NOT ceremony: a throw here would
+  // empty the nightly plan for both users.
   try {
     const via = {}, nakedIds = [], byOwner = {};
     let noIntervalKey = 0;
@@ -1680,40 +1596,31 @@ async function run({ pg, today, dryRun = true,geocodeZip, fetchNWS, fetchPrecip,
   } catch (err) {
     console.log(JSON.stringify({ msg: 'cadence-fallback-failed', error: String((err && err.message) || err) }));
   }
-  // ── V4-FROST-001 F3 — frost alert channel (design §3, decisions D1–D6) ──────────────────────────
-  // F6 kill switch, default OFF. Flag OFF still EVALUATES and LOGS (§3-8 wants the 2026 corpus started
-  // before anything reads it) but never publishes and never writes alerts_sent — so the stored plan is
-  // byte-identical to pre-frost. Flipping it is the whole of F6.
-  // It switches the FROST channel and its frost-degrade ops alerts only. The three station-health alerts below
-  // (station_unbound, station_stale, station_array_silent) deliberately do NOT read it: Dave 2026-09-18 chose
-  // "year-round emails, no switch" (V5-STATIONHEALTHYEAR-001), so turning frost alerts off must not also, and
-  // silently, turn off the only signal that the weather station is broken.
+  // ── Frost alert channel ──
+  // F6 kill switch, default OFF. Flag OFF still EVALUATES and LOGS (the 2026 corpus should start before anything reads it) but never publishes and never writes alerts_sent — so the stored plan is
+  // byte-identical to pre-frost. Flipping it is the whole of F6. It switches the FROST channel and its frost-degrade ops alerts only. The three station-health alerts below (station_unbound,
+  // station_stale, station_array_silent) deliberately do NOT read it: Dave chose "year-round emails, no switch", so turning frost alerts off must not also, and silently, turn off the only signal that
+  // the weather station is broken.
   const frostAlertEnabled = process.env.FROST_ALERT_ENABLED === 'true';
-  // G3: tonightLow means three different nights depending on which run reads it. Only the 15:30 ET
-  // intraday-pm run may evaluate. resolveFrostRun is pure; index.js supplies the ET hour.
+  // tonightLow means three different nights depending on which run reads it. Only the 15:30 ET intraday-pm run may evaluate. resolveFrostRun is pure; index.js supplies the ET hour.
   const frostRun = resolveFrostRun(event, { etHour });
   const frostSeason = isFrostSeason(today);                       // §3-7 Sep 1 – Nov 15
   const frostPublished = new Set();       // one publish per dedup key per invocation, across users
-  const planWritten = new Map();          // V5-SPACEISOLATION-001: (user_id, plan_date) rows written by this invocation
+  const planWritten = new Map();          // (user_id, plan_date) rows written by this invocation
   const frostFailures = [];               // §3-7: collected, then THROWN after the plan is durable
   const plans = [];
   const bySpace = {};
   for (const p of plantings) (bySpace[p.workspace_id] ||= []).push(p);
-  // V5-SPACEISOLATION-001: Spaces in id order (string compare), not the plantings query's row order (no ORDER BY,
-  // and an UPDATE can move a row), so the "first group" firstGroupItems keeps is the same Space every run, and so is
-  // the group that backfills yesterday's rain onto that row. One Space: one entry, unchanged.
+  // Spaces in id order (string compare), not the plantings query's row order (no ORDER BY, and an UPDATE can move a row), so the "first group" firstGroupItems keeps is the same Space every run, and
+  // so is the group that backfills yesterday's rain onto that row. One Space: one entry, unchanged.
   const spaceOrder = Object.entries(bySpace).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
   for (const [spaceId, rows] of spaceOrder) {
-    // BUG-INGROUND39FSLIVER-001 — the frost decision is made BEFORE the plan, so the in-ground cold card
-    // can drop only for a planting this decision names (engine.coldFor). The evaluating runs (14-17 ET)
-    // compute it exactly as before: a throw (an invalid FROST_BAND_THRESHOLDS_JSON inside summarize)
-    // still fails the run loud. Every other run computes it only while the alert is on, since coldFor
-    // ignores coverage with the flag off, and never publishes or logs it. There a throw keeps every
-    // in-ground card (coverage null) instead of costing the plan: those runs never evaluated frost before.
+    // The frost decision is made BEFORE the plan, so the in-ground cold card can drop only for a planting this decision names (engine.coldFor). The evaluating runs (14-17 ET) compute it exactly as
+    // before: a throw (an invalid FROST_BAND_THRESHOLDS_JSON inside summarize) still fails the run loud. Every other run computes it only while the alert is on, since coldFor ignores coverage with
+    // the flag off, and never publishes or logs it. There a throw keeps every in-ground card (coverage null) instead of costing the plan: those runs never evaluated frost before.
     const frostIn = { rows, weather: wxBySpace[spaceId], hydrology: hyBySpace[spaceId],
       lowSource: (stationProvBySpace[spaceId] || {}).low_source, spaceId, today, frostSeason };
-    // BUG-FROSTDUPTWOUSERS-001 — this Space's frost sends so far today, off every user's row (readSpaceAlertsSent),
-    // read ONCE and before anything in the Space is written. The per-user gate below adds it to the row's own list,
+    // This Space's frost sends so far today, off every user's row (readSpaceAlertsSent), read ONCE and before anything in the Space is written. The per-user gate below adds it to the row's own list,
     // and every row is written back with it, so one send dedups the whole Space whichever user's loop made it.
     const spaceSent = frostAlertEnabled ? await readSpaceAlertsSent(pg, spaceId, today) : [];
     let frost = null;
@@ -1723,11 +1630,9 @@ async function run({ pg, today, dryRun = true,geocodeZip, fetchNWS, fetchPrecip,
         console.error(JSON.stringify({ msg: 'frost coverage FAILED — in-ground cold cards kept', space: spaceId, error: e?.message }));
       }
     }
-    // BUG-INGROUNDPOSTWINDOW-001 — a run AFTER the window (or one that cannot place itself before it) has no later
-    // evaluation that night, so an in-ground card may drop only for an email that actually went out: sentCoverage
-    // keeps a planting 'named' only when today's sends named its crop at least as severely as this run's own
-    // decision. The evaluating runs keep the decision's coverage (that decision is the email), and so do the runs
-    // before the window, which the evaluating runs still follow. Flag off: no frost here, no coverage, card kept.
+    // A run AFTER the window (or one that cannot place itself before it) has no later evaluation that night, so an in-ground card may drop only for an email that actually went out: sentCoverage keeps a
+    // planting 'named' only when today's sends named its crop at least as severely as this run's own decision. The evaluating runs keep the decision's coverage (that decision is the email), and so do the
+    // runs before the window, which the evaluating runs still follow. Flag off: no frost here, no coverage, card kept.
     let coverage = frost ? frost.coverage : null;
     if (coverage && !frostRun.evaluate && !frostRun.beforeWindow) {
       const predicted = coverage;
