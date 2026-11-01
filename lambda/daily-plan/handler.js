@@ -1,50 +1,48 @@
 'use strict';
-// DRG-TODAY-001 — overnight Daily Plan generator.
-// Pattern mirrors garden-xp-reconcile: EventBridge nightly (midnight ET), DRY_RUN-gated, no Fn URL, kill-switchable.
-// Reads Neon (conn from Secrets Manager SECRET_ARN_NEON — NEVER hardcode), resolves weather from each Space's
-// postal_code (zip-driven, not hardcoded), runs ./engine per CARETAKER, idempotent upsert into daily_plan.
+// Overnight Daily Plan generator (EventBridge, DRY_RUN-gated, no Fn URL, kill-switchable; mirrors garden-xp-reconcile).
+// Reads Neon (conn from Secrets Manager SECRET_ARN_NEON — NEVER hardcode), resolves weather from each Space's postal_code
+// (zip-driven, not hardcoded), runs ./engine per CARETAKER,
+// idempotent upsert into daily_plan.
 const { generatePlan, PLAN_SCHEMA_VERSION, resolveCadence } = require('./engine');
-const { stationConfig, deriveStation, bindStationToSpace, mergeStationHydrology, mergeStationWeather, FRESHNESS_MAX_MIN, ARRAY_SILENT_MIN_GAP_MIN } = require('./station'); // DRG-WXSTATION-001; stationConfig BUG-STATIONDEGRADESILENT-001; FRESHNESS_MAX_MIN BUG-STATIONSTALESILENT-001; ARRAY_SILENT_MIN_GAP_MIN V5-STATIONHEALTHYEAR-001
-const { summarize } = require('./frostClass');                                   // V4-FROST-001 F2 (D6 per-crop bands)
-const { frostEval, frostCoverage, sentCoverage, isFrostSeason, resolveFrostRun, escalatesBeyond, advisoryNight, nightPhrase, sentNight, countsAsSent } = require('./frostEval');    // V4-FROST-001 F1/F3; escalatesBeyond OPS-PLANHOURLY-001; frostCoverage BUG-INGROUND39FSLIVER-001; sentCoverage BUG-INGROUNDPOSTWINDOW-001; advisoryNight/nightPhrase frostSubject (BUG-FROSTADVISORYNIGHTWORDING-001 F9.1); sentNight BUG-FROSTESCALATENIGHTMOVE-001; countsAsSent BUG-FROSTREHEARSALSWALLOWS-001
-const { nightsFrom } = require('./radiativeFrost');                              // V5-RADIATIVEFROST-001
-const { resolveRainRun, rainDecision, previousDay, rainMetadata } = require('./rainLog'); // V4-RAINAUTOLOG-001 pt2
-const drought = require('./droughtSignal');                                      // V5-LEGACYEXCEPTIONCARE-001
-const { householdIds, spaceScope } = require('./householdScope');                 // BUG-AUTHZLAMBDA-001
-const { applyRainForecast } = require('./rainForecast');                         // BUG-RAINFCSTONEMODEL-001
+const { stationConfig, deriveStation, bindStationToSpace, mergeStationHydrology, mergeStationWeather, FRESHNESS_MAX_MIN, ARRAY_SILENT_MIN_GAP_MIN } = require('./station');
+const { summarize } = require('./frostClass');
+const { frostEval, frostCoverage, sentCoverage, isFrostSeason, resolveFrostRun, escalatesBeyond, advisoryNight, nightPhrase, sentNight, countsAsSent } = require('./frostEval');
+const { nightsFrom } = require('./radiativeFrost');
+const { resolveRainRun, rainDecision, previousDay, rainMetadata } = require('./rainLog');
+const drought = require('./droughtSignal');
+const { householdIds, spaceScope } = require('./householdScope');
+const { applyRainForecast } = require('./rainForecast');
 
-// The machine actor for rows this Lambda writes on nobody's behalf. Same source as the SYSTEM_SUBS
-// set built further down, and FIRST-of-list because that variable is documented as accepting a
-// comma-separated list while set_config needs exactly one sub. Note this is the ACTOR (who is
-// writing), not the OWNER: rain rows are created_by the PLANTING's owner so they sit in the right
-// household, and their machine provenance is carried by source='import' instead.
+// The machine actor for rows this Lambda writes on nobody's behalf. Same source as the SYSTEM_SUBS set built further down, and FIRST-of-list
+// because that variable is documented as accepting a comma-separated list while set_config needs exactly one sub. This is the ACTOR (who is
+// writing), not the OWNER: rain rows are created_by the PLANTING's owner so they sit in the right household, and their machine provenance is
+// carried by source='import' instead.
 const SYSTEM_ACTOR_FALLBACK =
   (process.env.SYSTEM_CLERK_SUB || 'user_3D7uvqWjyxdq3jgVwTZs0mKT7Xd').split(',')[0].trim();
-const cadence = require('./cadence-data-v2.json'); // per-variety research cadence (161). Swap to v_resolved_care once care_profile is seeded (CARE-CADENCE-001).
-const fertModel = require('./fertilization-model.json'); // substrate-aware feed model. REQUIRED by engine.generatePlan (it derefs fertModel.water_quality / .amendments_in_inventory); omitting it crashes every run.
+const cadence = require('./cadence-data-v2.json'); // bundled per-variety cadence; the fallback beneath the DB-resolved care profile
+const fertModel = require('./fertilization-model.json'); // REQUIRED by engine.generatePlan (it derefs fertModel.water_quality / .amendments_in_inventory); omitting it crashes every run.
 
 // Space-zip -> NWS forecast (low + high). Zip geocoded via cached spaces.weather_lat/lng, else a geocoder.
 // All HTTP injected for testability; no network at module load.
 async function weatherForSpace(space, { geocodeZip, fetchNWS }) {
   let { weather_lat: lat, weather_lng: lng, postal_code } = space;
   if ((lat == null || lng == null) && postal_code && geocodeZip) {
-    // DRG-NIGHTLYTIMEOUT-001: geocodeZip is now bounded (AbortSignal) and throws on timeout; guard
-    // like coordsForSpace so a geocode failure degrades to null weather instead of crashing the run.
+    // geocodeZip is bounded (AbortSignal) and throws on timeout; guard like coordsForSpace so a geocode failure degrades to null weather instead of
+    // crashing the run.
     try { const g = await geocodeZip(postal_code); lat = g.lat; lng = g.lng; } catch (_) { return null; }
   }
   if (lat == null || lng == null) return null;              // no Space location -> no weather coupling (engine still runs)
   return fetchNWS(lat, lng);                                // -> { tonightLow, highToday, code, unit, short }
 }
 
-// FULL-PICTURE GATE (Dave directive): the nightly run must assemble the whole temporal window BEFORE any
-// watering suggestion -- what already fell (N0/D0 actuals: 'did it rain 0.5" yesterday?') AND what's coming
-// (N1 tonight + D2 tomorrow + N2). Open-Meteo gives reliable past-days + forecast precip in inches (NWS
-// station precip fields are frequently null). If precip data can't be assembled, we DON'T silently assume
-// dry -- we proceed with no rain-credit and raise the uncertainty flag (engine.hydrologyStatus).
+// FULL-PICTURE GATE: the nightly run assembles the whole temporal window BEFORE any watering suggestion — what already fell (D0 actuals: 'did it
+// rain 0.5" yesterday?') AND what's coming (tonight, tomorrow, the day after). Open-Meteo gives reliable past-days + forecast precip in inches (NWS
+// station precip fields are frequently null). If precip data can't be assembled we DON'T silently assume dry — we proceed with no rain-credit and
+// raise the uncertainty flag (engine.hydrologyStatus).
 async function hydrologyForSpace(space, { geocodeZip, fetchPrecip }) {
   let { weather_lat: lat, weather_lng: lng, postal_code } = space;
   if ((lat == null || lng == null) && postal_code && geocodeZip) {
-    try { const g = await geocodeZip(postal_code); lat = g.lat; lng = g.lng; } catch (_) { return null; } // DRG-NIGHTLYTIMEOUT-001: degrade, don't crash
+    try { const g = await geocodeZip(postal_code); lat = g.lat; lng = g.lng; } catch (_) { return null; } // degrade, don't crash
   }
   if (lat == null || lng == null || !fetchPrecip) return null;
   // fetchPrecip(lat,lng) -> { recent_precip_in (D-2+D-1 actual), upcoming_precip_in (D1+D2),
@@ -52,9 +50,8 @@ async function hydrologyForSpace(space, { geocodeZip, fetchPrecip }) {
   return fetchPrecip(lat, lng);
 }
 
-// DRG-WXROLL-001 — resolve a Space's coordinates once (cached spaces.weather_lat/lng, else geocoded zip) so
-// they can be embedded in the stored plan, letting the Today client re-fetch live precip for the SAME point.
-// Returns null when no location is resolvable (weather is simply absent; the engine still runs).
+// Resolve a Space's coordinates once (cached spaces.weather_lat/lng, else geocoded zip) so they can be embedded in the stored plan, letting the Today
+// client re-fetch live precip for the SAME point. Returns null when no location is resolvable (weather is simply absent; the engine still runs).
 async function coordsForSpace(space, { geocodeZip }) {
   let { weather_lat: lat, weather_lng: lng, postal_code } = space;
   if ((lat == null || lng == null) && postal_code && geocodeZip) {
@@ -64,26 +61,14 @@ async function coordsForSpace(space, { geocodeZip }) {
   return { lat: Number(lat), lng: Number(lng) };
 }
 
-// BUG-TODAYWATER-001 — how many earlier generations of the SAME day to retain inside items.prior_runs.
-//
-// OPS-PLANHOURLY-001 (2026-09-13) — was 3 with a plain `.slice(0, 3)`, sized when the day held exactly
-// three generations ("a 4th would mean someone re-ran manually"). Under the hourly schedule the day
-// holds 19, and that sizing did not merely truncate — it INVERTED. `.slice(0, 3)` keeps the FIRST
-// three, so from run #4 onward each run appended its predecessor and immediately dropped it again:
-// the trail would have frozen on runs 1-3 and recorded nothing about the other 16. Silent, and no
-// test could have caught it — the cap behaved exactly as written, only its premise had expired. That
-// is the worst shape for an audit surface, because hourly regeneration is precisely what makes
-// "which generation produced this, and what rain did it believe?" the question you need answered.
-//
-// The fix keeps BOTH ends deliberately: the day's first entry (the overnight baseline the original
-// comment correctly valued — it is the forecast the day was planned against) plus the most recent
-// MAX-1. The middle of the day is what gets dropped, which is the part that carries least: a
-// suppression is diagnosed from what the baseline predicted versus what the last few hours measured.
-//
-// 12 covers the baseline plus ~11 hours of the daylight watering window. CORRECTED 2026-09-28
-// (v4.158.0 pre-promote review): this key is NOT server-side only. daily-plan-read serves the row's
-// items whole, so prior_runs reaches the phone (~28 KB at 8 entries, measured 2026-09-28). An earlier
-// line here said the read Lambda "never ships prior_runs"; it was wrong. Size it with that in mind.
+// How many earlier generations of the SAME day to retain inside items.prior_runs.
+// The cap keeps BOTH ends: the day's first entry (the overnight baseline, the forecast the day was planned against) plus the most recent MAX-1.
+// A plain `.slice(0, N)` keeps the FIRST N, so once the day holds more than N generations each run would append its predecessor and immediately drop
+// it, freezing the trail on the first runs: silent, and no test would catch it because the cap behaves exactly as written. The middle of the day is
+// what gets dropped, the part that carries least: a suppression is diagnosed from what the baseline predicted versus what the last few hours measured.
+// 12 covers the baseline plus ~11 hours of the daylight watering window under the hourly schedule.
+// This key is NOT server-side only: daily-plan-read serves the row's items whole, so prior_runs reaches the phone (~28 KB at 8 entries). Size it
+// with that in mind.
 const PRIOR_RUNS_MAX = 12;
 
 // Read the row this run is about to replace and fold it into a compact history entry. Returns [] on a
@@ -112,26 +97,22 @@ async function readPriorRuns(pg, userId, planDate) {
   }
 }
 
-// BUG-TODAYWATER-001 actuals backfill — previous plan_date as YYYY-MM-DD (pure UTC date math, matching
-// engine.daysBetween's calendar convention; plan_date is a calendar label, not an instant).
+// Previous plan_date as YYYY-MM-DD (pure UTC date math, matching engine.daysBetween's calendar convention; plan_date is a calendar label, not an
+// instant).
 function prevPlanDate(iso) {
   const d = new Date(iso + 'T00:00:00Z');
   d.setUTCDate(d.getUTCDate() - 1);
   return d.toISOString().slice(0, 10);
 }
 
-// Write yesterday's OBSERVED rain (hy.yesterday_precip_actual_in, from the past-days array fetchPrecip
-// already reads) onto YESTERDAY's plan row as items.today_precip_actual_in — additive jsonb key, no DDL, no
-// PLAN_SCHEMA_VERSION bump (readers select named keys). This is what makes "did we skip on a forecast that
-// busted?" answerable: yesterday's row holds the forecast it acted on (today_precip_in / prior_runs) and,
-// after this run, what actually fell. Same fail-open posture as readPriorRuns — an audit write may NEVER
-// break plan generation. Scope: same user_id + previous plan_date ONLY; the CURRENT day's row is untouched
-// (flag-OFF byte-parity). 0 is real data (an observed dry day); null/absent means unknown -> no write.
-// BUG-RAINACTUAL-001 H3 — the value is now gauge-first (station.mergeStationHydrology), and a SECOND key,
-// today_precip_actual_source, is written beside it in the SAME statement. That label is not decoration: an
-// "actual" that is silently Open-Meteo's own hindcast is exactly how 2026-08-03 came to be recorded as 4.63"
-// against 2.22" on the on-site gauge. `prov` is the Space's station provenance bag; with no station bound
-// there is no ambiguity about what the number is, so the label is 'forecast'.
+// Write yesterday's OBSERVED rain (hy.yesterday_precip_actual_in, from the past-days array fetchPrecip already reads) onto YESTERDAY's plan row as
+// items.today_precip_actual_in — additive jsonb key, no DDL, no PLAN_SCHEMA_VERSION bump (readers select named keys). This makes "did we skip on a
+// forecast that busted?" answerable: yesterday's row holds the forecast it acted on (today_precip_in / prior_runs) and, after this run, what actually
+// fell. Same fail-open posture as readPriorRuns — an audit write may NEVER break plan generation. Scope: same user_id + previous plan_date ONLY; the
+// CURRENT day's row is untouched (flag-OFF byte-parity). 0 is real data (an observed dry day); null/absent means unknown -> no write.
+// The value is gauge-first (station.mergeStationHydrology), and a SECOND key, today_precip_actual_source, is written beside it in the SAME statement:
+// an "actual" that is silently Open-Meteo's own hindcast is how a 4.63" day was recorded against 2.22" on the on-site gauge. `prov` is the Space's
+// station provenance bag; with no station bound the label is 'forecast'.
 async function backfillYesterdayActual(pg, userId, today, hy, prov) {
   try {
     const v = hy ? hy.yesterday_precip_actual_in : null;
@@ -152,56 +133,38 @@ async function backfillYesterdayActual(pg, userId, today, hy, prov) {
   }
 }
 
-// ── V4-WATERMATH-001 F1 (W-F2A-WX) — the weather_daily substrate ─────────────────────────────────
-// Canon: watering-cadence-math-design-V100-20260812.md Part 4. Migration: migrations/v4-weatherdaily-001.
+// ── The weather_daily substrate ──
+// Canon: watering-cadence-math-design-V100-20260812.md Part 4. Migration: migrations/v4-weatherdaily-001; the five appended quantities (daylight_s,
+// sunshine_s, solar_mj_m2, wind_max_mph, precip_hours) ride the SAME Open-Meteo call (migrations/v5-wxbackfillvars-001).
+// SUBSTRATE only: nothing here changes a watering verdict. The engine reads weather_daily only behind CARE_WATER_LEDGER_ENABLED, and the ledger's
+// demand term integrates over a 30-day window, so the series has to accumulate long before the fold that consumes it is switched on.
+// readWeatherDaily's SELECT list is deliberately NOT widened until something reads the new columns.
 //
-// WIDENED 2026-09-07 by V5-WXBACKFILLVARS-001 (migrations/v5-wxbackfillvars-001): five more daily
-// quantities — daylight_s, sunshine_s, solar_mj_m2, wind_max_mph, precip_hours — ride the SAME
-// Open-Meteo call this writer already depended on. Substrate only, again: nothing reads them yet, and
-// readWeatherDaily's SELECT list is deliberately NOT widened until something does.
-//
-// F1 ships the SUBSTRATE only. Nothing here changes a single watering verdict — the engine does not
-// read weather_daily yet (that is F2, behind CARE_WATER_LEDGER_ENABLED) — and that is the point: the
-// ledger's demand term integrates over a 30-day window, so the series has to have been accumulating
-// long before the fold that consumes it is switched on.
-//
-// WRITE DISCIPLINE, and why each clause of it is load-bearing:
-//   * COMPLETED DAYS ONLY. Sourced from hydrology.settled_days, which excludes D0 by construction.
-//     A 15:30 intraday run persisting today's partial total would be indistinguishable from a real
-//     dry day on every later read.
-//   * !dryRun ONLY. A dry replay must read and never write — the same wrapper contract that governs
-//     every other write in this run (scripts/rerun-daily-plan.sh depends on a dry invoke being
-//     zero-write, and the A0.2/A0.3 sentinels exist to prove the deployed zip honours it).
-//   * STRICTLY BEFORE `today`. This is the guard against the `--today <past>` replay trap: the
-//     wrapper's `--today` overrides the PLAN DATE but the fetchers still call Open-Meteo relative to
-//     NOW, so a "historical" replay holds today's weather wearing a past date's label. Without this
-//     comparison, one `--live --today 2026-07-01` would stamp this week's ET0 onto July rows and the
-//     corruption would be invisible — the values are plausible and the provenance column would say
-//     'openmeteo_live', which would be true and useless.
-//   * NON-FATAL, ALWAYS, AND PER ROW. Same fail-open posture as readPriorRuns and
-//     backfillYesterdayActual: this is substrate accumulation, and losing a night of it is a rounding
-//     error against losing the nightly plan. The catch is what makes the migration-lands-late window
-//     survivable at all. The BOUNDARY is the row (BUG-WXWRITEOVERWRITE-001): it used to be the whole
-//     loop, so one row that violated a CHECK took every LATER day of the same run down with it —
-//     silently, since the outer catch logged one line that read like a single failed write.
+// WRITE DISCIPLINE, and why each clause is load-bearing:
+//   * COMPLETED DAYS ONLY. Sourced from hydrology.settled_days, which excludes D0 by construction. A 15:30 intraday run persisting today's partial
+//     total would be indistinguishable from a real dry day on every later read.
+//   * !dryRun ONLY. A dry replay must read and never write — scripts/rerun-daily-plan.sh depends on a dry invoke being zero-write, and the A0.2/A0.3
+//     sentinels exist to prove the deployed zip honours it.
+//   * STRICTLY BEFORE `today`. The guard against the `--today <past>` replay trap: the wrapper's `--today` overrides the PLAN DATE but the fetchers
+//     still call Open-Meteo relative to NOW, so a "historical" replay holds today's weather wearing a past date's label, and the provenance column
+//     would say 'openmeteo_live': true and useless.
+//   * NON-FATAL, ALWAYS, AND PER ROW. Same fail-open posture as readPriorRuns and backfillYesterdayActual: losing a night of substrate is a rounding
+//     error against losing the nightly plan. The catch is what makes the migration-lands-late window survivable. The BOUNDARY is the row: with the
+//     loop as the boundary, one row that violated a CHECK took every LATER day of the run down with it, silently.
 const WEATHER_DAILY_SOURCE_GAUGE = 'gauge_merged';
 const WEATHER_DAILY_SOURCE_LIVE = 'openmeteo_live';
-// 'openmeteo_archive' is the third domain value. This writer never emits it — only
-// scripts/backfill-weather-daily.mjs does — but the conflict policy below has to rank it, so it is
-// named here rather than only inside a SQL string.
+// 'openmeteo_archive' is the third domain value. This writer never emits it (only scripts/backfill-weather-daily.mjs does), but the conflict policy
+// below has to rank it, so it is named here rather than only inside a SQL string.
 
-// The relation-missing case is the one error worth treating as terminal for the loop rather than as a
-// bad row: every remaining day would fail identically, and N identical warnings is how a real
-// per-row defect gets lost in the noise later. Matched on SQLSTATE where the driver supplies one and
-// on the message otherwise (the neon http driver does not always carry `code`).
+// The relation-missing case is terminal for the loop rather than a bad row: every remaining day would fail identically, and N identical warnings is
+// how a real per-row defect gets lost in the noise. Matched on SQLSTATE where the driver supplies one and on the message otherwise (the neon http
+// driver does not always carry `code`).
 const isRelationMissing = (e) =>
   e?.code === '42P01' || /relation .*does not exist/i.test(e?.message || '');
 
-// THE CONFLICT POLICY. Mirrored VERBATIM in scripts/backfill-weather-daily.mjs and pinned by
-// weather-daily-conflict-sync.test.js — a backfill with a laxer policy than the nightly writer would
-// undo the nightly writer's work every time it ran, and "keep these in step" written in a comment is
-// not a mechanism (that comment already existed and the two had drifted apart in everything but
-// precip). Edit one, edit both; the test compares the emitted text, not the intent.
+// THE CONFLICT POLICY. Mirrored VERBATIM in scripts/backfill-weather-daily.mjs and pinned by weather-daily-conflict-sync.test.js — a backfill with a
+// laxer policy than the nightly writer would undo the nightly writer's work every time it ran, and "keep these in step" in a comment is not a
+// mechanism. Edit one, edit both; the test compares the emitted text, not the intent.
 const WEATHER_DAILY_CONFLICT_SET =
   `on conflict (space_id, "date") do update set
            -- BUG-WXWRITEOVERWRITE-001 — QUALITY-RANKED, PER FIELD. This guard used to cover precip_in
@@ -296,28 +259,23 @@ const WEATHER_DAILY_CONFLICT_SET =
            plot_id = coalesce(weather_daily.plot_id, excluded.plot_id),
            updated_at = now()`;
 
-// V5-SPACEPLOTTIER-001 (3.2b) — the plot_id each weather_daily writer stamps: the live default plot of
-// the SAME Space the row is written for. It is a scalar subquery inside the INSERT, so it costs no
-// extra round trip, and it binds the very parameter that supplies space_id, so it cannot name a plot
-// of another Space (the composite FK (plot_id, space_id) -> plots(id, workspace_id) would refuse one
-// with 23503 regardless). At most one row: plots carries a partial unique index on (workspace_id)
-// WHERE is_default AND deleted_at IS NULL. A Space with no default plot gets NULL, which MATCH SIMPLE
-// accepts until 3.2d sets NOT NULL. Mirrored in scripts/backfill-weather-daily.mjs and pinned by
-// weather-daily-conflict-sync.test.js.
+// The plot_id each weather_daily writer stamps: the live default plot of the SAME Space the row is written for. A scalar subquery inside the INSERT,
+// so no extra round trip, and it binds the very parameter that supplies space_id, so it cannot name a plot of another Space (the composite FK
+// (plot_id, space_id) -> plots(id, workspace_id) would refuse one with 23503 regardless). At most one row: plots carries a partial unique index on
+// (workspace_id) WHERE is_default AND deleted_at IS NULL. A Space with no default plot gets NULL, which MATCH SIMPLE accepts. Mirrored in
+// scripts/backfill-weather-daily.mjs and pinned by weather-daily-conflict-sync.test.js.
 
-// Upsert the completed days from one Space's hydrology bag. Returns the number of rows written; never
-// throws, never returns a rejected promise. `prov` is the Space's station provenance bag, which is the
-// ONLY thing that can distinguish a gauge reading from a model hindcast (see the H3 note in station.js —
-// an "actual" that is silently a forecast is the exact defect BUG-RAINACTUAL-001 was filed for).
+// Upsert the completed days from one Space's hydrology bag. Returns the number of rows written; never throws, never returns a rejected promise.
+// `prov` is the Space's station provenance bag, the ONLY thing that can distinguish a gauge reading from a model hindcast (see the H3 note in
+// station.js).
 async function writeWeatherDaily(pg, spaceId, today, hy, prov) {
   try {
     const days = hy && Array.isArray(hy.settled_days) ? hy.settled_days : null;
     if (!days || !days.length) return 0;
     if (typeof today !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(today)) return 0;
     const yesterday = prevPlanDate(today);
-    // The gauge-merged D-1 figure, if station.mergeStationHydrology established one. Read from the
-    // TOP-LEVEL key rather than from settled_days because the merge writes it there — settled_days
-    // deliberately carries the raw model value so the two can be told apart here.
+    // The gauge-merged D-1 figure, if station.mergeStationHydrology established one. Read from the TOP-LEVEL key rather than from settled_days because
+    // the merge writes it there; settled_days deliberately carries the raw model value so the two can be told apart here.
     const mergedYest = Number.isFinite(hy.yesterday_precip_actual_in) ? hy.yesterday_precip_actual_in : null;
     const yestIsGauge = !!(prov && prov.yesterday_actual_source === 'station');
     let written = 0;
