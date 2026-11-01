@@ -932,11 +932,11 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
     }
   }
 
-  // V5-SEEDSTAB-001 — a lot the shell asked to show must be ON SCREEN, so a page crop filter that
+  // A lot the shell asked to show must be ON SCREEN, so a page crop filter that
   // would hide it is cleared, and the page says why its filter just changed.
   const [clearedFor, setClearedFor] = useState(null)
-  // Any lot this page files — slice 2 put a save made with "Not yet" here too, in Not started, so the
-  // shell's outline of that save finally has a card to land on instead of confirming with a toast alone.
+  // Any lot this page files, Not started included, so the
+  // shell's outline of a save made with "Not yet" has a card to land on.
   const highlightLot = highlight?.id != null
     ? pageLots.find((i) => String(i.id) === String(highlight.id)) ?? null
     : null
@@ -953,9 +953,9 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
     setTrackedCropSel(new Set())
     setClearedFor(highlightLot.variety_name || highlightLot.name || 'that lot')
   }, [highlightLot, highlight?.seq])  // eslint-disable-line react-hooks/exhaustive-deps
-  // Ready only once the lot's card is actually ON the page. `items != null` alone let the outline — and
-  // its one scrollIntoView — fire in the render right after a save, before the reload brought the new
-  // card in, so nothing scrolled to it when it landed (lane T4). My seeds already waited for its row.
+  // Ready only once the lot's card is actually ON the page. `items != null` alone would let the
+  // outline, and its one scrollIntoView, fire in the render right after a save, before the reload
+  // brought the new card in, so nothing would scroll to it. My seeds already waits for its row.
   const highlightShown = highlightLot != null
     && [...visibleUnstarted, ...visibleTracked].some((i) => String(i.id) === String(highlightLot.id))
   const outlined = useLotOutline(highlight, { ready: items != null && highlightShown, skipArrival: restoredState !== undefined || poppedIn })
@@ -975,9 +975,9 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
   return (
     <Frame>
       {!embedded && (<>
-      {/* BUG-SEEDTAPTARGET-001 — `center`, not `baseline`. The cross-link below is now a 44px box
-          rather than a 16px line of text, and baseline alignment would hang that box off the
-          heading's baseline instead of centring it against the heading. */}
+      {/* `center`, not `baseline`: the cross-link below is a 44px box rather than a 16px line of
+          text, and baseline alignment would hang that box off the heading's baseline instead of
+          centring it against the heading. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
         <h1 style={{ margin: 0, color: P.green, fontSize: '1.3rem', fontWeight: 700, flex: 1 }}>
           Saved seeds
@@ -997,14 +997,10 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
         Seed you saved yourself, and where each lot has got to.
       </p>
 
-      {/* V4-SEEDINTAKEAGNOSTIC-001 — the door this page never had.
-          Dave, 2026-09-03: "I still cannot find an easy way to start a saved seed path anywhere."
-          He was right, and the page was worse than he described: BOTH previous doors were
-          CONDITIONAL. One lived in the empty state, so it vanished the moment a single lot existed;
-          the other was buried inside the tracking picker's scroll. Neither started a seed lot — both
-          linked to the generic /inventory/add form, which makes a packet with no parent.
-          ALWAYS RENDERED, above the fold, before any conditional branch. A primary action that only
-          appears when the page is empty is not a primary action. */}
+      {/* The door to start a saved-seed path. ALWAYS RENDERED, above the fold, before any
+          conditional branch: a primary action that only appears when the page is empty is not a
+          primary action. (The generic /inventory/add form makes a packet with no parent, so it is
+          not a start for a seed lot.) */}
       <button
         type="button"
         onClick={() => setIntakeOpen(true)}
@@ -1033,10 +1029,10 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
       )}
 
       {pageLots.length === 0 && (
-        // The empty state does the teaching, because on the day this ships EVERY visit is empty —
+        // The empty state does the teaching, because on a first visit EVERY visit is empty:
         // there are no tracked lots and no seed_saved events anywhere in the app. An empty page with
-        // a bare "nothing here" would send Dave straight back out again.
-        // V5-SEEDSTAB-001 slice 2 — a Not started lot counts: someone who has saved seed is past the
+        // a bare "nothing here" would send the owner straight back out again.
+        // A Not started lot counts: someone who has saved seed is past the
         // lesson this panel teaches.
         <div data-testid="saved-seeds-empty" style={emptyStyle}>
           <p style={{ margin: '0 0 10px', fontWeight: 600, color: P.green }}>Nothing in flight yet.</p>
@@ -1044,22 +1040,14 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
             When you save seed from a plant, track it here and this page will tell you what is
             fermenting, what is drying, and how long it has been that way.
           </p>
-          {/* V4-SEEDLINK-001 rewrote this paragraph. It used to send the user to log a
-              "Seed saved" EVENT on the planting — a dead end: that event type has never been
-              logged once in the app's history, has no side effect of any kind, and could not point
-              at a seed lot even if it had (event_log's only FK to inventory_items means "the
-              product I sprayed"). Provenance now has a real column and a real control, so the copy
-              points at it. Leaving the old sentence standing would be worse than never having
-              written it. */}
-          {/* V4-SEEDNOPLANTING-001 rewrote this paragraph, for the reason the version before it
-              records about its own predecessor: it answered a question the visitor is not asking
-              yet. "Where does provenance live" matters once a lot exists; on an EMPTY page the only
-              question is "I am holding seed — where do I start", and the previous copy sent the
-              reader to Inventory to look for a control on a packet that may not exist.
-              Both doors, named by where the seed came from, because that is the fork the user is
-              actually standing at. The planting one is a Link to the plant list rather than to a
-              sheet: the Save-seed sheet needs a planting as a parameter, so the honest route is
-              "pick the plant, then Save seed on its page". */}
+          {/* Points at the real provenance column and control. (Logging a "Seed saved" EVENT on the
+              planting is a dead end: that event type has no side effect and cannot point at a seed
+              lot, since event_log's only FK to inventory_items means "the product I sprayed".) */}
+          {/* On an EMPTY page the only question is "I am holding seed, where do I start", not
+              "where does provenance live", so both doors are named by where the seed came from,
+              which is the fork the user is standing at. The planting one is a Link to the plant list
+              rather than to a sheet: the Save-seed sheet needs a planting as a parameter, so the
+              honest route is "pick the plant, then Save seed on its page". */}
           <p style={{ margin: '0 0 4px', color: P.mid, fontSize: '0.8rem', lineHeight: 1.6 }}>
             Saved seed from one of your plants? Open that planting and tap{' '}
             <strong>Save seed</strong> — it remembers the parent for you.
@@ -1068,11 +1056,9 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
             From something else — a shop pepper, a gift, a u-pick?
           </p>
           {/* A BLOCK TARGET, not a link inside the sentence. The layout gate's tap census measured
-              the inline version of this at FIFTEEN pixels, which is the same defect
-              BUG-SEEDTAPTARGET-001 just fixed on the card anchors — reintroduced by me one paragraph
-              later, and caught only because the census counts every link rather than a named list.
-              WCAG 2.5.8's inline-link exemption does not cover it: this is the primary action of an
-              empty state, on the first screen a new user sees, reached with wet hands. */}
+              the inline version at FIFTEEN pixels. WCAG 2.5.8's inline-link exemption does not
+              cover it: this is the primary action of an empty state, on the first screen a new
+              user sees, reached with wet hands. */}
           <Link
             to={ADD_PACKET_HREF}
             state={SAVED_RETURN_STATE}
@@ -1132,7 +1118,7 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
         </p>
       )}
 
-      {/* V5-SEEDSTAB-001 slice 2 — Not started, FIRST: it is the step before the first stage, and the
+      {/* Not started, FIRST: it is the step before the first stage, and the
           sections below run in process order. The stages' card, with two differences. Its status line
           says how long ago the lot was added, since it has no stage clock. And "Start →" sits where
           they carry their advance: it opens the process question for THIS lot, the step the track sheet
@@ -1229,8 +1215,8 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
                   }}
                 >
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    {/* The card's way in, so a 44px target (BUG-SEEDTAPTARGET-001's reasoning, below):
-                        it rendered 18px tall on a one-line name and 36px on two, and WCAG 2.5.8's
+                    {/* The card's way in, so a 44px target (see set-source-plant, below): it would
+                        otherwise render 18px tall on a one-line name and 36px on two, and WCAG 2.5.8's
                         inline-link exemption covers a link inside a sentence, not a card title. Flex
                         across the column, so the whole title line is the target. */}
                     <Link
@@ -1241,32 +1227,28 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
                     >
                       {item.variety_name || item.name}
                     </Link>
-                    {/* BUG-SEEDELAPSEDUPDATED-001 — elapsed from stage_entered_at, NOT updated_at.
-                        set_updated_at is a BEFORE UPDATE ROW trigger that fires on every write to
-                        the row, so "4 days in drying" reset to "today" the moment anything else on
-                        the lot was edited — attaching a parent plant did it — with no stage change.
-                        The server derives stage_entered_at from the lot's latest seed_lot_stage_log
-                        entry FOR ITS CURRENT STAGE, which is the fact this line claims to render.
-                        No fallback to updated_at when it is absent, deliberately: a wrong duration
-                        is worse than none, and falling back would silently reinstate the bug.
-                        P.mid rather than P.light: this line is the one the page exists to be
-                        read for, so it takes the stronger ink. (The original reason — P.light was
-                        #777 at 4.478:1, under the AA floor — was retired by V4-INKCONTRAST-001,
-                        which repainted P.light to #707070 at 4.952:1 on white. P.light now passes;
-                        P.mid is still right here on emphasis grounds, not contrast grounds.) */}
+                    {/* Elapsed from stage_entered_at, NOT updated_at. set_updated_at is a BEFORE
+                        UPDATE ROW trigger that fires on every write to the row, so "4 days in drying"
+                        would reset to "today" the moment anything else on the lot was edited (attaching
+                        a parent plant does it) with no stage change. The server derives
+                        stage_entered_at from the lot's latest seed_lot_stage_log entry FOR ITS CURRENT
+                        STAGE, which is the fact this line claims to render. No fallback to updated_at
+                        when it is absent, deliberately: a wrong duration is worse than none, and
+                        falling back would silently reinstate the bug.
+                        P.mid rather than P.light: this line is the one the page exists to be read for,
+                        so it takes the stronger ink (emphasis, not contrast). */}
                     <div style={{ color: urgency ? urgency.ink : P.mid, fontSize: '0.78rem', marginTop: 3, fontWeight: urgency ? 600 : 400 }}>
                       {elapsedLabel(item.stage_entered_at)
                         ? `${elapsedLabel(item.stage_entered_at)} in ${STAGE_META[s].label.toLowerCase()}`
                         : `In ${STAGE_META[s].label.toLowerCase()}`}
                       {item.seed_process ? ` · ${item.seed_process} process` : ''}
                     </div>
-                    {/* V4-SEEDFRESHPROCESS-001 — the wet-seed drying warning, per Dave's ask.
-                        Shown ONLY for a `fresh` lot that is currently drying: that seed came out of
-                        a ripe fruit and is genuinely wet, unlike a `dry` lot threshed from a pod
-                        that dried on the plant. Same stage, materially different risk, and this one
-                        is the one that moulds. Gated on both facts rather than on the stage alone,
-                        because a warning that appears on every drying lot is noise on the majority
-                        and stops being read before it matters. */}
+                    {/* The wet-seed drying warning. Shown ONLY for a `fresh` lot that is currently
+                        drying: that seed came out of a ripe fruit and is genuinely wet, unlike a `dry`
+                        lot threshed from a pod that dried on the plant. Same stage, materially
+                        different risk, and this one is the one that moulds. Gated on both facts rather
+                        than on the stage alone, because a warning that appears on every drying lot is
+                        noise on the majority and stops being read before it matters. */}
                     {s === 'drying' && item.seed_process === 'fresh' && (
                       <div
                         data-testid="fresh-drying-note"
@@ -1291,27 +1273,20 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
                         </div>
                       </div>
                     )}
-                    {/* V5-SEEDSTAB-001 slice 3 — seed saved off an F1 plant is F2 and will not come
+                    {/* Seed saved off an F1 plant is F2 and will not come
                         true (seedLots.isF2Lot, the one predicate My seeds' chip and the Breeding fact
                         read too). A fact about the seed, not a stage warning, so the neutral chip. */}
-                    {/* V5-SEEDMULTIPARENT-001 release 2b — and "Mixed seed" / "Part F2" beside it, off
-                        the jar's parent set (LotChips). */}
+                    {/* And "Mixed seed" / "Part F2" beside it, off the jar's parent set (LotChips). */}
                     <LotChips item={item} />
-                    {/* V5-SEEDCOUNTCARD-001 — how much seed is in the jar, on the surface that
+                    {/* How much seed is in the jar, on the surface that
                         holds the jar. See lotMeasure() for what is on this line and why the
                         packet count is not. Rendered ONLY when something has been measured: an
-                        uncounted lot gets no line rather than a "0 seeds" nobody established, and
-                        the card looks exactly as it does today until a measurement exists.
+                        uncounted lot gets no line rather than a "0 seeds" nobody established.
                         POSITION. Below the ferment badge and above the parent, so the stage
                         warnings stay contiguous with the stage line they qualify and the two
-                        lot-level facts — what is in it, where it came from — read together. On
-                        Dave's lots, which are all `stored` and carry no warnings, that puts it
-                        directly under the elapsed line.
+                        lot-level facts (what is in it, where it came from) read together.
                         P.mid rather than the P.light of the provenance line below: this is a
-                        number he typed and could not see afterwards, which makes it the reason
-                        this row exists rather than a footnote to it. Both clear AA since
-                        V4-INKCONTRAST-001 (P.light is #707070 at 4.952:1), so this is emphasis,
-                        not contrast.
+                        number the owner typed and could not see afterwards, so emphasis, not contrast.
                         `lot-seed-measure` matches the `lot-source-plant` naming below; the layout
                         gate's card census reads it by that id. */}
                     {measure && (
@@ -1320,29 +1295,27 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
                         {measure}
                       </div>
                     )}
-                    {/* V4-SEEDLINK-001 — the parent, retroactively. Two states and no third: the
+                    {/* The parent, retroactively. Two states and no third: the
                         name when it is known, and a way in when it is not. Rendered only once the
-                        name RESOLVES rather than falling back to "a plant" — a row that names
+                        name RESOLVES rather than falling back to "a plant": a row that names
                         nothing is worse than no row, and the lookup is a cache read that lands in
                         the same paint on a warm entry. Setting it happens on /inventory/:id rather
                         than in a fourth sheet here: that page owns this column, is one tap away,
                         and is the only surface that reaches an UNTRACKED lot (which is every lot
-                        that never gets a stage).
-                        V5-SEEDSTAB-001 slice 2 — the name is now a door to that planting
-                        (ParentPlantLink); it was text, a dead end.
-                        BUG-SAVEDSEEDPARENTONPRODUCE-001 — and no way in on a lot the database refuses
-                        a parent for: seed out of produce (a farm stand, a gift, a shop) can only fail
-                        chk_inventory_seed_source_plant. kindAllowsParentPlant is that CHECK; an
-                        own_garden lot still admits a parent and keeps the link. */}
+                        that never gets a stage). The name is a door to that planting
+                        (ParentPlantLink).
+                        No way in on a lot the database refuses a parent for: seed out of produce
+                        (a farm stand, a gift, a shop) can only fail chk_inventory_seed_source_plant.
+                        kindAllowsParentPlant is that CHECK; an own_garden lot still admits a parent
+                        and keeps the link. */}
                     {(lotParents(item) || item.source_plant_id)
                       ? <LotParentLine item={item} parents={lotParents(item)} plantNameById={plantNameById} />
                       : kindAllowsParentPlant(item.source_kind) && (
-                        // BUG-SEEDTAPTARGET-001 — 44px, measured not assumed. The layout gate's tap
-                        // census reported this anchor at FIFTEEN pixels tall at 390x844, four of
-                        // them on a populated list, and it REPORTED rather than ASSERTED because
-                        // WCAG 2.5.8 exempts inline links. That exemption does not apply here: this
-                        // is not a link inside a sentence, it is the card's second action, sitting
-                        // beside a 48px advance button, on a page reached in a shed with wet hands.
+                        // 44px, measured not assumed. The layout gate's tap census reported this
+                        // anchor at FIFTEEN pixels tall at 390x844, and WCAG 2.5.8 exempts inline
+                        // links. That exemption does not apply here: this is not a link inside a
+                        // sentence, it is the card's second action, sitting beside a 48px advance
+                        // button, on a page reached in a shed with wet hands.
                         // inline-flex + minHeight rather than padding alone so the box is the target
                         // and the text stays vertically centred in it.
                         <Link
@@ -1358,14 +1331,13 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
                           Set parent plant →
                         </Link>
                       )}
-                    {/* V5-SEEDSTAGEONEPLACE-001 — the correction door, on EVERY card including a
-                        `stored` one. `stored` is terminal so it gets no advance button, which used
-                        to leave the finished lots — the ones most likely to have been mis-tapped —
-                        with no stage control anywhere in the app once /inventory/:id lost its own.
-                        A quiet text control rather than a second primary button: advancing is the
-                        routine act and keeps the loud one, while changing a stage is by definition
-                        a repair. Sized like `set-source-plant` above and for the same reason
-                        (BUG-SEEDTAPTARGET-001) — a card action, not a link inside a sentence. */}
+                    {/* The correction door, on EVERY card including a
+                        `stored` one. `stored` is terminal so it gets no advance button, which would
+                        leave the finished lots, the ones most likely to have been mis-tapped,
+                        with no stage control anywhere in the app. A quiet text control rather than a
+                        second primary button: advancing is the routine act and keeps the loud one,
+                        while changing a stage is by definition a repair. Sized like `set-source-plant`
+                        above and for the same reason: a card action, not a link inside a sentence. */}
                     <div>
                       <button
                         type="button"
@@ -1402,7 +1374,7 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
         onClick={() => {
           // The facet earns its 56px only when the list is long enough to need narrowing. Same
           // threshold as the truncation cap, so the control appears exactly when the list starts
-          // hiding rows from you — below it, every packet is already on screen and a filter would
+          // hiding rows from you; below it, every packet is already on screen and a filter would
           // be furniture over a list you can simply read.
           setCropFacetOn(untracked.length > MAX_CANDIDATES)
           setStarting(true)
@@ -1418,7 +1390,7 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
       {advancing && (
         <Sheet
           open busy={busy} onClose={() => setAdvancing(null)}
-          // V5-SEEDSTAB-001 — Android Back closes this sheet in place. Unarmed, Back fell through to
+          // Android Back closes this sheet in place. Unarmed, Back fell through to
           // a history pop and, inside the Seeds page, left the page with the form half-filled. Safe
           // to arm: nothing in this sheet navigates.
           armsBack
@@ -1429,16 +1401,15 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
           <p style={{ margin: '0 0 14px', color: P.mid, fontSize: '0.86rem' }}>
             {advancing.item.variety_name || advancing.item.name}
           </p>
-          {/* V5-SEEDSTAGEONEPLACE-001 — ANY stage, not one step right. Offered on the correction
-              door only: on the START door the stage is decided by the process just chosen
-              (BUG-SEEDPROCFORCED-001) and letting it be overridden here would record a `wet`
-              process against a lot filed straight into drying, and on the ADVANCE door the button
-              the user pressed already named the stage.
+          {/* ANY stage, not one step right. Offered on the correction
+              door only: on the START door the stage is decided by the process just chosen and
+              letting it be overridden here would record a `wet` process against a lot filed
+              straight into drying, and on the ADVANCE door the button the user pressed already
+              named the stage.
               The CURRENT stage stays in the list deliberately. Re-selecting it is not a no-op: it
-              appends a correctly-dated entry for a stage that has none, which is the exact repair
-              the three live lots need — their pointer says `stored` and the log has no `stored`
-              row, so the LATERAL that derives stage_entered_at matches nothing and every card
-              renders with no elapsed time at all. */}
+              appends a correctly-dated entry for a stage that has none. A lot whose pointer says
+              `stored` but whose log has no `stored` row matches nothing in the LATERAL that
+              derives stage_entered_at, so its card renders with no elapsed time at all. */}
           {advancing.correction && (
             <label style={fieldLabelStyle}>
               Stage
@@ -1457,8 +1428,8 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
             When
             {/* Backdating is first-class here (see the file header) but FORWARD-dating is never
                 meaningful: a stage cannot have been entered on a day that has not happened. A lot
-                dated 2027 reads "today" forever on a page whose only job is to say what has sat
-                longest, so it does not merely look odd — it silently leaves the list. `max` is the
+                dated in the future reads "today" forever on a page whose only job is to say what has
+                sat longest, so it does not merely look odd, it silently leaves the list. `max` is the
                 native picker's own guard and costs nothing; the server-side half is separate. */}
             <input
               type="date" value={when} max={todayLocalISO()} onChange={(e) => { setWhen(e.target.value); if (dateErr) setDateErr(null) }}
@@ -1493,23 +1464,22 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
           <label style={fieldLabelStyle}>
             Note <span style={{ color: P.light, fontWeight: 400 }}>(optional)</span>
             {/* The placeholder is an EXAMPLE, and on a teaching surface an example is an
-                instruction. It used to read "Dehydrator on low, 95°F" — but most dehydrators' low
-                setting runs 105-125°F, so following the example literally cooks the lot. Seed
-                viability falls off above roughly 95°F, so the example is now the safe surface and
-                the temperature named is one a shed actually holds. */}
+                instruction. Most dehydrators' low setting runs 105-125°F, so an example naming that
+                would cook the lot. Seed viability falls off above roughly 95°F, so the example
+                names a temperature a shed actually holds. */}
             <input
               type="text" value={note} onChange={(e) => setNote(e.target.value)}
               placeholder="Screen in the shed, 75°F, out of sun" data-testid="stage-note" style={inputStyle}
             />
           </label>
-          {/* V4-SEEDLINK-001 — capture the parent at the moment Dave is actually holding the seed.
+          {/* Capture the parent at the moment the owner is actually holding the seed.
               Shown ONLY while the lot has none: once it is recorded this sheet has nothing to ask,
               and re-offering the field here would make the advance form the place provenance gets
-              edited, which it is not — /inventory/:id is. Optional throughout; a lot with no
+              edited, which it is not (/inventory/:id is). Optional throughout; a lot with no
               remembered parent moves stages exactly as before.
-              BUG-SAVEDSEEDPARENTONPRODUCE-001 — nor on a lot the database refuses a parent for (seed
-              out of produce: kindAllowsParentPlant). There it could only fail, and it failed AFTER
-              the stage had landed, as "Stage saved, but the parent plant did not." */}
+              Nor on a lot the database refuses a parent for (seed out of produce:
+              kindAllowsParentPlant). There it could only fail, and it would fail AFTER the stage
+              had landed, as "Stage saved, but the parent plant did not." */}
           {advancing.item.source_plant_id == null && kindAllowsParentPlant(advancing.item.source_kind) && (
             <div data-testid="stage-source-plant" style={{ marginBottom: 14 }}>
               <div style={fieldLabelStyle}>
@@ -1535,19 +1505,18 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
               )}
             </div>
           )}
-          {/* BUG-SEEDZEROSOWABLE-001 — THE COUNT, AT EVERY STAGE. See COUNT_ASK at the top of this
-              file for why this moved off `stored`-only and why `stored` alone refuses a blank. The
-              wording, the optional/required chip and the help line all come from that one table, so
-              the three can never disagree about which stages demand an answer. */}
+          {/* THE COUNT, AT EVERY STAGE. See COUNT_ASK at the top of this
+              file for why the count is asked at every stage and why `stored` alone refuses a blank.
+              The wording, the optional/required chip and the help line all come from that one table,
+              so the three can never disagree about which stages demand an answer. */}
           {(() => {
-            // Pre-promote MIN-1 — the fallback is NOT reachable today and is here anyway. Every
+            // The fallback is NOT reachable today and is here anyway. Every
             // producer of `toStage` is enumerable: nextStage() over SEED_STAGES, and
-            // PROCESS_ENTRY[*].stage, all three of which have a COUNT_ASK entry. But the previous
-            // shape of this block was gated on `=== 'stored'`, so an unknown stage rendered NOTHING;
-            // this one dereferences `ask.label`, so the same unknown stage would throw and
-            // white-screen the whole advance sheet — turning "a fourth stage was added upstream"
-            // from a missing field into a dead page. The generic wording is deliberately answerable
-            // at any stage, and `required` stays pinned to `stored` alone.
+            // PROCESS_ENTRY[*].stage, all three of which have a COUNT_ASK entry. But this block
+            // dereferences `ask.label`, so an unknown stage (a fourth stage added upstream) would
+            // throw and white-screen the whole advance sheet rather than merely omit a field. The
+            // generic wording is deliberately answerable at any stage, and `required` stays pinned
+            // to `stored` alone.
             const ask = COUNT_ASK[advancing.toStage] ?? {
               label: 'How many?',
               help: 'Optional — you can set or change the count at every step.',
@@ -1556,21 +1525,19 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
             return (
               <>
               {/* marginBottom 0 so the basis switch below sits against this field rather than a
-                  field-gap away from it — V5-SEEDESTTOGGLE-001, and the same override on
-                  SaveSeedSheet's count label. */}
+                  field-gap away from it (the same override as SaveSeedSheet's count label). */}
               <label style={{ ...fieldLabelStyle, marginBottom: 0 }} data-testid="seed-count">
                 {ask.label}{' '}
                 {required
                   ? <span data-testid="seed-count-required" style={{ color: P.severityUrgent, fontWeight: 600 }}>(required)</span>
                   : <span style={{ color: P.light, fontWeight: 400 }}>(optional)</span>}
-                {/* V5-SEEDQTY-001 — inputMode `numeric`, not `decimal`. `seed_count` is an integer
+                {/* inputMode `numeric`, not `decimal`. `seed_count` is an integer
                     column and /seed-measure 400s on a fraction, so a decimal point on the Android
-                    keypad advertises an answer the API refuses. Coordinated with the identical
-                    change on SaveSeedSheet's capture field in the same round; no other input's
-                    inputMode is touched. parseCountInput still refuses a pasted fraction — a
-                    keyboard hint is a hint, not a guard.
-                    The example is a number of SEEDS, SaveSeedSheet's "e.g. 20": it used to append
-                    the lot's unit, so a saved lot's count field read "e.g. 2 packet" (2026-09-25). */}
+                    keypad advertises an answer the API refuses. Matches SaveSeedSheet's capture
+                    field. parseCountInput still refuses a pasted fraction: a keyboard hint is a
+                    hint, not a guard.
+                    The example is a number of SEEDS, SaveSeedSheet's "e.g. 20"; it must not append
+                    the lot's unit ("e.g. 2 packet"). */}
                 <input
                   type="number" inputMode="numeric" min="0" step="1" value={qtyInput}
                   onChange={(e) => { setQtyInput(e.target.value); if (qtyErr) setQtyErr(null) }}
@@ -1601,7 +1568,7 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
                     </span>
                   )}
               </label>
-              {/* V5-SEEDESTTOGGLE-001 — the same control, the same words, as the create sheet's;
+              {/* The same control, the same words, as the create sheet's;
                   imported from it rather than re-spelled, so the two doors into these columns cannot
                   start describing the same fact differently. OUTSIDE the <label> above: a <button>
                   nested in one is interactive content whose click the label is meant to ignore, and
@@ -1619,15 +1586,15 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
         </Sheet>
       )}
 
-      {/* BUG-SEEDPROCFORCED-001 — two steps in one sheet: pick the packet, then say how it was
+      {/* Two steps in one sheet: pick the packet, then say how it was
           processed. Two steps rather than a process control beside every row, because the question
           is asked once per lot and a per-row control would ask it 260 times on a list whose job is
           to be scanned. Closing the sheet clears both, so re-opening never lands mid-flow. */}
       {starting && (
         <Sheet
           open
-          // V5-SEEDSTAB-001 — armed like the advance sheet. Its one navigating link ("Add the packet")
-          // is a SheetRowLink, which consumes the marker on the way out (backNav.js:57-58 — the only
+          // Armed like the advance sheet. Its one navigating link ("Add the packet")
+          // is a SheetRowLink, which consumes the marker on the way out (see backNav.js: the only
           // two safe options are that or leaving the sheet unarmed).
           armsBack
           onClose={() => {
@@ -1683,11 +1650,11 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
               />
               {/* Search first, chips second, deliberately: the common case is that you are holding a
                   packet and know its cultivar, and the box answers that in one gesture. The chips are
-                  the browse fallback — and sitting directly above the list, the row reads as a visible
+                  the browse fallback, and sitting directly above the list, the row reads as a visible
                   qualifier on what is beneath it rather than as a separate mode. Pinning is by
-                  measured share, not taste: pepper and tomato are 51% of the collection, so they stay
-                  on the collapsed row and the other ~24 crops expand IN PLACE via `More ▾` (no nested
-                  sheet — FilterChipRow's contract forbids a third modal layer, which is also why the
+                  measured share, not taste: pepper and tomato are about half the collection, so they
+                  stay on the collapsed row and the other crops expand IN PLACE via `More ▾` (no nested
+                  sheet; FilterChipRow's contract forbids a third modal layer, which is also why the
                   Harvests FilterPill+PickerSheet pattern was not reused here). */}
               {cropFacetOn && cropOptions.length > 1 && (
                 <FilterChipRow
@@ -1712,11 +1679,9 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
                 )}
                 {/* Two different emptinesses, and conflating them is how a filter teaches the wrong
                     thing: "you have none" and "none match what you typed" send the user opposite ways.
-                    The crop facet makes it THREE, and adding it naively is a real regression rather
-                    than a missed nicety: before the chips, this branch was unreachable with an empty
-                    box, because a blank query short-circuits to the full set. A chip can empty the
-                    list with nothing typed, and the old copy would then have read the literal
-                    `No packet matches ""` — a sentence naming neither the cause nor the way out. */}
+                    The crop facet makes it THREE: a chip can empty the list with nothing typed, and a
+                    blank query would otherwise read the literal `No packet matches ""`, a sentence
+                    naming neither the cause nor the way out. */}
                 {untracked.length > 0 && matchedCandidates.length === 0 && (
                   <p data-testid="candidate-no-match" style={{ color: P.mid, fontSize: '0.85rem' }}>
                     {(() => {
@@ -1738,8 +1703,7 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
                   >
                     <span style={{ display: 'block', fontWeight: 600 }}>{c.title}</span>
                     {/* P.mid, not P.light, for the reason the elapsed line above gives: this line
-                        is the one the choice turns on, so it takes the stronger ink. Contrast is no
-                        longer the reason — see that comment, post-V4-INKCONTRAST-001. */}
+                        is the one the choice turns on, so it takes the stronger ink. */}
                     {c.detail && (
                       <span data-testid="track-candidate-detail" style={{ display: 'block', color: P.mid, fontSize: '0.78rem', marginTop: 2 }}>
                         {c.detail}
@@ -1755,11 +1719,11 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
                   </p>
                 )}
               </div>
-              {/* V4-SEEDNOPLANTING-001 — the way out of this list when the packet is not in it.
+              {/* The way out of this list when the packet is not in it.
                   BELOW the scrollport, not inside it: a row appended to a 25-item scrolling list is
                   a row nobody reaches, and this is the answer to "none of these are mine", which is
                   exactly the moment the list has failed to help. Always present rather than shown
-                  only on an empty result — the seed in hand is new, so the packet is missing on the
+                  only on an empty result: the seed in hand is new, so the packet is missing on the
                   FIRST visit too, before any search has been typed. */}
               <SheetRowLink
                 to={ADD_PACKET_HREF}
@@ -1782,10 +1746,10 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
   )
 }
 
-// V5-SEEDSTAB-001 slice 2 — "Saved from <planting>" is a door to that planting (design V102 §8). A plain
+// "Saved from <planting>" is a door to that planting. A plain
 // PUSH to the canonical planting route, so Back pops straight back to this view, which restores its
 // own scroll; the state is the one every page this view pushes carries. The whole line is the target,
-// 44px tall, for the reason `set-source-plant` gives (BUG-SEEDTAPTARGET-001): a card action on a page
+// 44px tall, for the reason `set-source-plant` gives: a card action on a page
 // reached with wet hands, not a link inside a sentence.
 function ParentPlantLink({ plantId, name }) {
   return (
@@ -1795,7 +1759,7 @@ function ParentPlantLink({ plantId, name }) {
   )
 }
 
-// V5-SEEDMULTIPARENT-001 release 2b — the jar's parent set as the list row serves it, or null when
+// The jar's parent set as the list row serves it, or null when
 // there is none to read: the flag is off, the row predates the key (undefined), the read failed (null)
 // or the set is empty. Null means "render from source_plant_id, as before".
 function lotParents(item) {
@@ -1805,8 +1769,8 @@ function lotParents(item) {
 }
 
 // Where the jar came from. One planting: its name, a door to that planting, and the name is the one
-// the row carries, so an ARCHIVED parent is named too (the picker cache leaves archived plantings out,
-// which is why that card used to show nothing). Two or more: always the count, never the names (they
+// the row carries, so an ARCHIVED parent is named too (the picker cache leaves archived plantings out).
+// Two or more: always the count, never the names (they
 // repeat the title above and run to two lines), and the door is the jar's own page, arriving at its
 // "Saved from" card where every planting is listed. A planting that has been DELETED is named but is
 // not a door: its page is gone.
@@ -1866,15 +1830,13 @@ function Shell({ children }) {
   )
 }
 
-// 48px floors throughout, matching the V4-LOGMANYUXREFRESH-001 S2 pass — this is a shed-and-counter
-// surface reached with wet or dirty hands, which is the same argument that raised the Log Many
+// 48px floors throughout: this is a shed-and-counter
+// surface reached with wet or dirty hands, the same argument that raised the Log Many
 // selection controls.
 const sectionHeadStyle = { margin: '0 0 2px', color: P.green, fontSize: '0.95rem', fontWeight: 700 }
-// P.mid, not P.light: this line now carries "keep below 95F", which is the difference between a
+// P.mid, not P.light: this line carries "keep below 95F", which is the difference between a
 // dried lot and a dead one, so safety-critical copy takes the strongest ink available.
-// (The original reason — P.light was #777, 4.478:1 on the white card, a WCAG 2.1 AA 1.4.3 failure —
-// was retired by V4-INKCONTRAST-001, which repainted P.light to #707070 at 4.952:1. It passes now.
-// P.mid stays here because of what this line says, not because P.light fails.)
+// P.mid stays here because of what this line says, not because P.light fails contrast.
 const sectionSubStyle  = { margin: '0 0 10px', color: P.mid, fontSize: '0.78rem' }
 const cardStyle = {
   display: 'flex', alignItems: 'center', gap: 12, minHeight: 56,
@@ -1886,7 +1848,7 @@ const advanceBtnStyle = {
   backgroundColor: P.white, color: P.green, fontWeight: 600, fontSize: '0.84rem', cursor: 'pointer',
   flexShrink: 0,
 }
-// V5-SEEDSTAGEONEPLACE-001 — the correction door. inline-flex + minHeight rather than padding so
+// The correction door. inline-flex + minHeight rather than padding so
 // the 44px box IS the tap target and the label stays centred in it, exactly as `set-source-plant`
 // above it does. Wrapped in a plain <div> at the call site so it starts its own line: the
 // `set-source-plant` link is inline-flex too, and the two would otherwise sit side by side.
