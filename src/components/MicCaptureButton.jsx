@@ -6,32 +6,27 @@ import { startLiveTranscription, isTranscriptionSupported } from '../lib/transcr
 /**
  * src/components/MicCaptureButton.jsx
  *
- * Bite 4: REAL audio capture wired in.
- * Bite 7 (one-pass capture): Web Speech live transcription fires ALONGSIDE the
- *   MediaRecorder, in the SAME user-activation frame as the tap. The user speaks
- *   ONCE — audio blob AND transcript are captured together (Dave 2026-05-31:
- *   "There is no reason to record twice.").
+ * One-pass capture: Web Speech live transcription fires ALONGSIDE the MediaRecorder, in the SAME
+ * user-activation frame as the tap. The user speaks ONCE — audio blob AND transcript are captured
+ * together.
  *
- * Bite 7.1 race fix: MediaRecorder.stop() resolves on the next tick, but Web
- *   Speech flushes its final result + onend asynchronously (cloud round-trip).
- *   Reading the transcript at recorder-stop time loses the final → empty
- *   transcript every time. We instead (a) accumulate interim+final continuously
- *   so liveTranscriptRef always holds the latest text, and (b) gate the emit on
- *   BOTH the blob being ready AND the recognizer being done (onEnd/onError),
- *   with a 1.5s safety cap so a hung recognizer never blocks the capture.
+ * Race: MediaRecorder.stop() resolves on the next tick, but Web Speech flushes its final result +
+ * onend asynchronously (cloud round-trip), so reading the transcript at recorder-stop time loses the
+ * final. Instead (a) interim+final accumulate continuously so liveTranscriptRef always holds the
+ * latest text, and (b) the emit is gated on BOTH the blob being ready AND the recognizer being done
+ * (onEnd/onError), with a 1.5s safety cap so a hung recognizer never blocks the capture.
  *
- * iOS landmine: BOTH getUserMedia (inside startRecording) AND
- * webkitSpeechRecognition.start() (inside startLiveTranscription) require the
- * user-activation gesture. We invoke BOTH synchronously in the click handler
- * with NO awaited boundary between them. If Web Speech fails (silent-failure,
- * denied, no-speech, unavailable), recording STILL succeeds; the entry queues
- * without a transcript and TranscriptReview's "Speak it now" stays the redo path.
+ * iOS landmine: BOTH getUserMedia (inside startRecording) AND webkitSpeechRecognition.start() (inside
+ * startLiveTranscription) require the user-activation gesture. We invoke BOTH synchronously in the
+ * click handler with NO awaited boundary between them. If Web Speech fails (silent-failure, denied,
+ * no-speech, unavailable), recording STILL succeeds; the entry queues without a transcript and
+ * TranscriptReview's "Speak it now" stays the redo path.
  *
  * Two-tap model (glove tolerance):
  *   tap 1 → start recording + start live transcription
  *   tap 2 → stop both → { blob, mime, durationMs, transcript, transcriptSource }
  *
- * Color-independent state per V100 §7.
+ * Color-independent state.
  * States: idle | recording | unsupported | denied | no-device | failed.
  *
  * Props:
@@ -76,13 +71,13 @@ export default function MicCaptureButton({
   const tickRef                 = useRef(null)
   const startedAtRef            = useRef(0)
 
-  // Bite 7: live-transcription handle + accumulators for the current capture.
+  // Live-transcription handle + accumulators for the current capture.
   const liveHandleRef     = useRef(null)
   const liveTranscriptRef = useRef('')   // best-so-far transcript (never shrinks)
   const finalTextRef      = useRef('')   // confirmed final segments only
   const interimRef        = useRef('')   // latest interim (in-progress) segment
 
-  // Bite 7.1: emit coordination — emit only when blob ready AND recognizer done.
+  // Emit coordination — emit only when blob ready AND recognizer done.
   const blobRef        = useRef(null)
   const blobReadyRef   = useRef(false)
   const recogDoneRef   = useRef(true)    // true when no recognizer is running
@@ -95,11 +90,10 @@ export default function MicCaptureButton({
   }, [])
 
   // V4-DIRTYGUARDSWEEP-001 — report idle↔recording out to the page. A live recording exists ONLY
-  // inside this component: nothing reaches captureQueue until maybeEmit fires onRecorded, so the
-  // hosting page cannot hold the SW reload gate over it without being told. Reported rather than
-  // derived because `state` is internal — the alternative is the page reading data-state off the
-  // DOM. No cleanup-to-false: FieldCapture renders this unconditionally, so the only unmount is the
-  // page's own, and its gate effect releases the key there anyway.
+  // inside this component (nothing reaches captureQueue until maybeEmit fires onRecorded), so the
+  // hosting page cannot hold the SW reload gate over it without being told. No cleanup-to-false:
+  // FieldCapture renders this unconditionally, so the only unmount is the page's own, and its gate
+  // effect releases the key there anyway.
   useEffect(() => {
     if (onRecordingChange) onRecordingChange(state === 'recording')
   }, [state, onRecordingChange])
@@ -155,9 +149,9 @@ export default function MicCaptureButton({
     if (onRecorded) onRecorded(enriched)
   }
 
-  // Bite 7: start live transcription in the SAME synchronous frame as the tap.
-  // Best-effort — failures are swallowed; the recorded audio remains source of
-  // truth and the review-time "Speak it now" redo covers misses.
+  // Start live transcription in the SAME synchronous frame as the tap. Best-effort — failures are
+  // swallowed; the recorded audio remains source of truth and the review-time "Speak it now" redo
+  // covers misses.
   function startLiveCapture() {
     liveTranscriptRef.current = ''
     finalTextRef.current = ''
@@ -191,10 +185,8 @@ export default function MicCaptureButton({
           maybeEmit()
         },
         onEnd: ({ finalTranscript }) => {
-          // BUG-VOICEDUPE-003: adopt transcribe.js's finalTranscript whenever it is non-empty. It
-          // is now the slot-joined canonical text, so it is right even when it is SHORTER than what
-          // we appended — precisely the case the old `ft.length > ours` compare could not reach,
-          // because both accumulators consumed the same stream and ours was never shorter.
+          // BUG-VOICEDUPE-003: adopt transcribe.js's finalTranscript whenever it is non-empty. It is
+          // the slot-joined canonical text, so it is right even when SHORTER than what we appended.
           // Non-empty is the only guard needed: a trailing interim that never finalized still lives
           // in interimRef and is re-attached on the next line, so nothing unfinalized is lost.
           const ft = (finalTranscript || '').trim()
@@ -341,7 +333,7 @@ export default function MicCaptureButton({
         <span aria-hidden="true">{icon}</span>
       </button>
 
-      {/* Always-visible label — color-independent state per V100 §7. */}
+      {/* Always-visible label — color-independent state. */}
       <div
         data-testid="mic-capture-label"
         style={{
@@ -396,9 +388,8 @@ export default function MicCaptureButton({
       {hasQueue && (
         <div
           data-testid="mic-queued-count"
-          // role="img" (V4-A11YGATE-001) — a role-less div is role=generic and drops the label, so
-          // this badge announced the bare count. Deliberately NOT role="status": a live region here
-          // would interrupt on every queue change, which is the opposite of what this UI wants.
+          // role="img" (V4-A11YGATE-001): a role-less div is role=generic and drops the label.
+          // Deliberately NOT role="status": a live region would interrupt on every queue change.
           role="img"
           aria-label={`${queuedCount} ${queuedCount === 1 ? 'capture' : 'captures'} queued`}
           style={{

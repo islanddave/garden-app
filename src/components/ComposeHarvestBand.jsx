@@ -1,28 +1,23 @@
 // src/components/ComposeHarvestBand.jsx
 // V4-COMPOSEPOST-001 — compose tonight's harvest post from what you just logged, on Today.
 //
-// WHY THIS EXISTS: the harvest list is the one thing Dave hand-types every night, and it is
-// reconstructible from data he has already entered — the 2026-08-05 post reconciles 19/19 against
-// rows logged 23:08–23:14. This surface removes the transcription and the arithmetic. It does NOT
-// write the post: the lead paragraph, the annotations, and the final wording stay his.
+// It removes the transcription and the arithmetic of the nightly harvest list, which is
+// reconstructible from rows already logged. It does NOT write the post: the lead paragraph, the
+// annotations, and the final wording stay the user's.
 //
-// WHY ON-DEMAND AND NOT A NIGHTLY JOB (crucible 2026-08-10): a scheduled draft fires ~30 min after
-// the last pick — while he is still holding the phone — and a nightly queue with something waiting
-// in it turns a hobby into a chore, which is the likeliest form of "automation making the posting
-// worse". Posting stays a PULL.
+// ON-DEMAND, NOT A NIGHTLY JOB: a scheduled draft would fire while the user is still holding the
+// phone, and a nightly queue with something waiting turns a hobby into a chore. Posting stays a PULL.
 //
-// Reward-UX V102: ambient. Self-fetching, error swallowed, renders NOTHING when there is no recent
-// batch — no push, no modal, no toast, no badge, no count chip, no streak, no urgency colour.
+// Reward-UX: ambient. Self-fetching, error swallowed, renders NOTHING when there is no recent batch
+// — no push, no modal, no toast, no badge, no count chip, no streak, no urgency colour.
 //
-// AUDIT FIXES 2026-08-10 (V4-COMPOSEPOST-002), each one a defect that reached dev:
-//   BUG-COMPOSETOTALS-001 — season chips summed a 50-row paginated page and published it as a season
-//     total (36 vs a true 132). Now read from the aggregates block, which the endpoint computes over
-//     the full range with no cursor.
-//   BUG-COMPOSEOWNER-001 — detectLastBatch ran unscoped against a HOUSEHOLD-scoped read model, so the
-//     second household member was offered the first one's harvest in his first person. Now scoped to
-//     the viewer's own Clerk subject.
-//   Plus: a "1st" chip that could not be un-checked, a band that vanished irrecoverably when every
-//     line was excluded, and no floor on a one-item batch.
+// Traps kept from the V4-COMPOSEPOST-002 audit:
+//   BUG-COMPOSETOTALS-001 — season chips must read the aggregates block (computed over the full
+//     range with no cursor), never sum a paginated 50-row page.
+//   BUG-COMPOSEOWNER-001 — detectLastBatch must be scoped to the viewer's own Clerk subject; the
+//     read model is HOUSEHOLD-scoped, so unscoped it offers one member the other's harvest.
+//   The "1st" chip must be un-checkable, the band must not vanish irrecoverably when every line is
+//   excluded, and a one-item batch needs a floor.
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useApiFetch } from '../lib/api.js'
 import { useAuthOptional } from '../context/AuthContext.jsx'
@@ -48,10 +43,9 @@ const MAX_BATCH_AGE_MS = 18 * 60 * 60 * 1000
 // observed logging day (32 picks) sits well inside the endpoint's 50-row page.
 const LOG_WINDOW_MS = 24 * 60 * 60 * 1000
 
-// The ONLY thing this feature says while it works, and it is deliberately a line of grey text under
-// the button rather than a spinner, a modal, a toast, a banner or a buzz (Reward-UX V102: ambient and
-// in-context only). It is also the honesty surface: what will attach, what did not load, and what was
-// left out are all stated BEFORE Dave taps, not discovered afterwards in the Facebook composer.
+// The ONLY thing this feature says while it works: a line of grey text under the button, never a
+// spinner, modal, toast, banner or buzz. It is also the honesty surface: what will attach, what did
+// not load, and what was left out are stated BEFORE the tap, not discovered in the Facebook composer.
 export function photoNote(photos, attachCount, canAttach) {
   if (!photos.total || photos.status === 'idle' || photos.status === 'none') return ''
   if (photos.status === 'loading') {
@@ -76,10 +70,10 @@ function ageLabel(iso, now = Date.now()) {
   return hrs === 1 ? 'an hour ago' : `${hrs} hours ago`
 }
 
-// V5-TODAYREDESIGN-001 S6 — THE DATA HOOK, split out of the band: the redesigned Today fetches at the PAGE (its
-// Harvest section's presence and header summary are read while the section's body — this band — is unmounted)
-// and hands the result in as `data`. Without `data` the band calls it itself. `settled` turns true once the
-// first request has answered or failed (the page's ready point waits on it, §6.4); nothing here renders it.
+// THE DATA HOOK, split out of the band: Today fetches at the PAGE (its Harvest section's presence and
+// header summary are read while the section's body, this band, is unmounted) and hands the result in
+// as `data`. Without `data` the band calls it itself. `settled` turns true once the first request has
+// answered or failed (the page's ready point waits on it); nothing here renders it.
 export function useComposeHarvestFeed() {
   const { fetch } = useApiFetch()
   const [data, setData] = useState(null)
@@ -93,8 +87,8 @@ export function useComposeHarvestFeed() {
     // entries are narrowed to recent LOGGING activity; aggregates deliberately are not, so the season
     // chips come from the full-range totals rather than from whatever fits on one page of entries.
     // The year is REQUIRED: parseTimeframe only matches /^season:(\d{4})$/, so a bare `season` returns
-    // null and the endpoint 400s — which the catch below swallowed, so the band silently never
-    // rendered from ~v4.10.0 until this line was fixed.
+    // null and the endpoint 400s, which the catch below would swallow and the band would silently
+    // never render.
     const qs = `?include=entries,aggregates&timeframe=season:${currentGrowYear(new Date())}&created_since=${encodeURIComponent(since)}`
     fetch('/api/harvests' + qs)
       .then((d) => setData({
@@ -111,9 +105,9 @@ export function useComposeHarvestFeed() {
 }
 
 // The band's own "is there a post to compose?" — the three gates at the foot of the band (a batch of the
-// viewer's, logged within MAX_BATCH_AGE_MS, with at least MIN_POST_LINES postable lines), as one pure read for a
-// header that must agree with the band (plan-v2 §8 S6). null = the band renders nothing. todayV2Bands.test pins
-// it to the band's render.
+// viewer's, logged within MAX_BATCH_AGE_MS, with at least MIN_POST_LINES postable lines), as one pure
+// read for a header that must agree with the band. null = the band renders nothing. todayV2Bands.test
+// pins it to the band's render.
 export function composeBatchState(data, viewerId, now = Date.now()) {
   const entries = data?.entries ?? null
   const batch = entries && viewerId ? detectLastBatch(entries, { createdBy: viewerId }) : null
@@ -124,8 +118,8 @@ export function composeBatchState(data, viewerId, now = Date.now()) {
   return { batch, postableCount, logged: ageLabel(batch.endedAt, now) }
 }
 
-// `data` = useComposeHarvestFeed()'s result, fetched by the caller; `bare` = no card and no title — the section
-// holding it is the heading (Today V2's Harvest). With neither, the band as it always was.
+// `data` = useComposeHarvestFeed()'s result, fetched by the caller; `bare` = no card and no title (the
+// section holding it is the heading). With neither, the band fetches for itself.
 export default function ComposeHarvestBand({ data, bare = false }) {
   return data ? <ComposeBand feed={data} bare={bare} /> : <OwnComposeBand bare={bare} />
 }
@@ -153,11 +147,10 @@ function ComposeBand({ feed, bare }) {
   const baseLines = useMemo(() => (batch ? toLines(batch.items) : []), [batch])
   const seasonCounts = useMemo(() => seasonCountsByCrop(data?.aggregates), [data])
 
-  // Per-line state, keyed by event id, so a refetch never clobbers Dave's choices.
+  // Per-line state, keyed by event id, so a refetch never clobbers the user's choices.
   const [excluded, setExcluded] = useState(() => new Set())
-  // Tri-state, NOT a Set: a Set can only ADD a first-harvest. Rows pre-checked from Dave's own
-  // first_harvest event type could never be turned off, which broke the one promise the design makes
-  // about this annotation — that it is a suggestion he ratifies rather than an emission.
+  // Tri-state, NOT a Set: a Set can only ADD a first-harvest, so rows pre-checked from a first_harvest
+  // event type could never be turned off. The annotation is a suggestion the user ratifies.
   const [firstOverride, setFirstOverride] = useState(() => new Map())
   const [annotations, setAnnotations] = useState({})
   const [lead, setLead] = useState('')
@@ -174,17 +167,17 @@ function ComposeBand({ feed, bare }) {
   const model = useMemo(() => buildPostModel(lines), [lines])
   const batchText = useMemo(() => renderPost(model, { lead, annotations }), [model, lead, annotations])
 
-  // V4-SEASONRETRO-001 (B13). The season draft is free here: this component ALREADY fetches
+  // V4-SEASONRETRO-001. The season draft is free: this component ALREADY fetches
   // `timeframe=season:<growYear>&include=aggregates` for the per-crop totals in the lead facts, and
-  // the aggregates block is unpaginated over the full range. So the retrospective is a second render
-  // of data already in state — no extra request, no new endpoint, no Lambda change.
+  // the aggregates block is unpaginated over the full range, so the retrospective is a second render
+  // of data already in state.
   const retroText = useMemo(() => {
     const m = summarizeSeason(data?.aggregates)
     return m ? renderSeasonRetro(m) : ''
   }, [data])
 
-  // 'batch' = what was picked tonight; 'season' = the year so far. Same textarea, same share and
-  // copy paths — the retrospective is a different DRAFT, not a different feature.
+  // 'batch' = what was picked tonight; 'season' = the year so far. Same textarea, same share and copy
+  // paths: the retrospective is a different DRAFT, not a different feature.
   const [mode, setMode] = useState('batch')
   const generated = mode === 'season' ? retroText : batchText
   const facts = useMemo(
@@ -192,36 +185,27 @@ function ComposeBand({ feed, bare }) {
     [batch, seasonCounts],
   )
 
-  // The textarea starts from the generated text and stops tracking it once Dave edits — his words are
-  // never overwritten by a toggle. "Rebuild" is the explicit way back.
+  // The textarea starts from the generated text and stops tracking it once the user edits, so their
+  // words are never overwritten by a toggle. "Rebuild" is the explicit way back.
   useEffect(() => { if (!dirty) setDraft(generated) }, [generated, dirty])
 
   // ── V4-COMPOSEDRAFT-001: the caption survives closing the composer ──────────────────────────────
   //
-  // It did not. Every open rebuilt from `generated` and Dave's edits were gone — and Business Suite,
-  // which this replaces, keeps drafts. So this was a REGRESSION against the tool it is meant to beat,
-  // not a missing nicety, which is why the IG crucible ranked it second of five.
+  // Reuses src/lib/draftStash.js rather than adding a second persistence mechanism. Its
+  // sessionStorage scope is right on purpose: a harvest caption is for tonight, and a localStorage
+  // draft would resurface weeks later against a batch that no longer exists, or in another
+  // household member's session on a shared device (the V4-RANKCLEAR-001 shape).
   //
-  // Reuses src/lib/draftStash.js rather than adding a second persistence mechanism. That is the whole
-  // point: this repo has already paid for two implementations of one job drifting apart (the metadata
-  // strippers), and a bespoke localStorage key here would be the same bet.
-  //
-  // sessionStorage, inherited from that module, is the right scope by accident of being right on
-  // purpose: a harvest caption is for tonight. A localStorage draft would resurface weeks later
-  // against a batch that no longer exists, and on a shared device it would surface Dave's words in
-  // Jen's session — the shape V4-RANKCLEAR-001 already had to fix once for crop ordering.
-  //
-  // KEYED ON startedAt, NOT endedAt, and that is load-bearing. Crucible B2 measured that 6 of 66
-  // batch boundaries sit in the 90-180 min window, so one later-logged event BRIDGES two batches into
-  // one — under `endedAt` the key moves and the draft orphans; under `startedAt` the merged batch
-  // keeps the earlier value and the draft still resolves. `createdBy` is in the key so Dave's and
-  // Jen's drafts cannot collide on the shared tablet.
+  // KEYED ON startedAt, NOT endedAt, and that is load-bearing: a later-logged event can BRIDGE two
+  // batches into one, so under `endedAt` the key moves and the draft orphans; under `startedAt` the
+  // merged batch keeps the earlier value and the draft still resolves. `createdBy` is in the key so
+  // household members' drafts cannot collide on a shared tablet.
   const draftKeyRef = batch ? `compose.${batch.createdBy ?? 'anon'}.${batch.startedAt}` : null
 
   // Restore runs ONCE per batch key, guarded by a ref rather than by `dirty`: an effect that reran on
   // every keystroke would keep re-seeding the textarea from the stash and fight the user for the
-  // caret. Excluded lines ride along because unchecking six rows and losing that on a close is the
-  // same loss as losing the words — a Set is stored as an array since Sets do not serialise.
+  // caret. Excluded lines ride along (losing them on a close is the same loss as losing the words);
+  // a Set is stored as an array since Sets do not serialise.
   const restoredKeyRef = useRef(null)
   useEffect(() => {
     if (!draftKeyRef || restoredKeyRef.current === draftKeyRef) return
@@ -245,9 +229,9 @@ function ComposeBand({ feed, bare }) {
 
   // ── Photos (V4-HARVPOSTPHOTOS-001) ──────────────────────────────────────────────────────────────
   // Fetched when the composer OPENS, never inside the share handler: navigator.share needs transient
-  // user activation, Chrome Android drops it across an await, and a handler that fetched five photos
-  // first would find the activation gone. The minutes Dave spends writing his lead ARE the prefetch
-  // window. Nothing runs until he taps "Compose post" — the band stays ambient on Today, and a batch
+  // user activation, which Chrome Android drops across an await. The time spent writing the lead IS
+  // the prefetch window. Nothing runs until "Compose post" is tapped, so the band stays ambient on
+  // Today and a batch with no photos costs no requests.
   // with no photos costs no requests at all.
   const [photos, setPhotos] = useState(() => ({ status: 'idle', items: [], failed: 0, skipped: 0, total: 0 }))
   const photoRunRef = useRef(null)
@@ -276,8 +260,7 @@ function ComposeBand({ feed, bare }) {
       .catch(() => setPhotos({ status: 'ready', items: [], failed: refs.length, skipped: dropped, total: refs.length }))
   }, [open, batch, fetch])
 
-  // Photos follow the SAME exclusion the lines do — one control, not two. Leaving the cucumbers out
-  // of the words leaves the picture of them out too.
+  // Photos follow the SAME exclusion the lines do — one control, not two.
   const attachFiles = useMemo(
     () => photos.items.filter((p) => !excluded.has(p.eventId)).map((p) => p.file),
     [photos.items, excluded],
@@ -285,18 +268,17 @@ function ComposeBand({ feed, bare }) {
   const canAttach = useMemo(() => canShareFiles(attachFiles), [attachFiles])
 
   const onShare = useCallback(async () => {
-    // Held in a local const BEFORE any await: Chrome Android drops transient user activation across
-    // an await, and both navigator.share and the clipboard fallback then reject silently. `files` is
-    // read here for the same reason — and it is already bytes, so nothing is fetched on this path.
+    // Held in a local const BEFORE any await: Chrome Android drops transient user activation across an
+    // await, and both navigator.share and the clipboard fallback then reject silently. `files` is read
+    // here for the same reason; it is already bytes, so nothing is fetched on this path.
     const text = postText
     if (!text.trim()) return
     const files = attachFiles
     const n = canShareFiles(files) ? files.length : 0
     const result = await shareEntity({ text, files })
-    // V4-COMPOSEDRAFT-001: a draft that reached the share sheet has done its job — keeping it would
-    // re-seed tonight's caption on the next open, over a batch he has already posted. Cleared ONLY
-    // on 'shared'/'copied'; the fallback branch means the text never left the textarea, which is
-    // precisely when it is most important not to throw it away.
+    // V4-COMPOSEDRAFT-001: a draft that reached the share sheet has done its job; keeping it would
+    // re-seed tonight's caption over an already-posted batch. Cleared ONLY on 'shared'/'copied': the
+    // fallback branch means the text never left the textarea, so it must not be thrown away.
     if (draftKeyRef && (result === 'shared' || result === 'copied')) clearDraft(draftKeyRef)
     setStatus(result === 'shared'
       ? (n ? `Sent to your share sheet with ${n} ${n === 1 ? 'photo' : 'photos'}.` : 'Sent to your share sheet.')
@@ -307,7 +289,7 @@ function ComposeBand({ feed, bare }) {
   // Straight to the clipboard, never through shareEntity: on Chrome Android shareEntity always takes
   // the navigator.share leg and its clipboard branch is unreachable, so a Copy wired through it opens
   // the share sheet and never copies (HarvestExportSheet header, landmine 1). This is the recovery for
-  // an Android share target that keeps the images and discards EXTRA_TEXT — the words stay one tap away.
+  // an Android share target that keeps the images and discards EXTRA_TEXT.
   const onCopyText = useCallback(() => {
     const text = postText
     if (!text.trim()) return
@@ -320,9 +302,9 @@ function ComposeBand({ feed, bare }) {
 
   if (!batch) return null
   if (Date.now() - new Date(batch.endedAt).getTime() > MAX_BATCH_AGE_MS) return null
-  // Gate on what the BATCH contains, never on the current model: gating on model.lineCount let Dave
-  // exclude every line and delete the surface holding the un-exclude buttons, with no way back short
-  // of a reload that discarded his lead, annotations and draft.
+  // Gate on what the BATCH contains, never on the current model: gating on model.lineCount let the
+  // user exclude every line and delete the surface holding the un-exclude buttons, with no way back
+  // short of a reload that discarded their lead, annotations and draft.
   const postableCount = baseLines.filter((l) => l.postable).length
   if (postableCount < MIN_POST_LINES) return null
 
@@ -355,7 +337,7 @@ function ComposeBand({ feed, bare }) {
       {open && (
         <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 12 }}>
           {/* Material for the lead, never a written lead. Tapping a fact appends it; the sentence
-              stays Dave's. A generated sentence in his voice is worse than no lead at all. */}
+              stays the user's. A generated sentence in their voice is worse than no lead at all. */}
           {facts.length > 0 && (
             <div>
               <div style={{ fontSize: '0.72rem', color: P.light, marginBottom: 5 }}>Numbers you might want</div>
@@ -379,10 +361,9 @@ function ComposeBand({ feed, bare }) {
             aria-label="Opening line"
           />
 
-          {/* Collapsed by default on a long batch. Found by rendering at 390px: 17 lines of picker
-              push "Send to Facebook" 1.8 screens down, so the post — the thing this surface exists to
-              produce — and its only action both land below the fold. The picker is the exception
-              path; the post is the point. */}
+          {/* Collapsed by default on a long batch: at 390px a 17-line picker pushes "Send to Facebook"
+              1.8 screens down, below the fold. The picker is the exception path; the post is the
+              point. */}
           <div>
             <button
               type="button"
@@ -419,8 +400,8 @@ function ComposeBand({ feed, bare }) {
             })}
           </div>
 
-          {/* The logged note is offered, never published as-is: Dave rewrites these ("Fell off plant
-              with major blotch" -> "(fell from plant w/ deformity, not 1st harvest)"). */}
+          {/* The logged note is offered, never published as-is: the user rewrites these ("Fell off
+              plant with major blotch" -> "(fell from plant w/ deformity, not 1st harvest)"). */}
           {baseLines.filter((l) => l.noteSuggestion && l.postable).map((l) => (
             <div key={`n-${l.id}`}>
               <div style={{ fontSize: '0.72rem', color: P.light, marginBottom: 4 }}>
@@ -474,16 +455,15 @@ function ComposeBand({ feed, bare }) {
               <Icon name="action.share" size={14} decorative surface="inverse" style={{ marginRight: 5, verticalAlign: '-0.1em' }} />
               Send to Facebook
             </button>
-            {/* Never disabled while photos load: a share tapped early sends the words, which is
-                exactly today's behaviour, and the note below says so before he taps. */}
+            {/* Never disabled while photos load: a share tapped early sends the words, and the note
+                below says so before the tap. */}
             <button type="button" style={S.ghost} onClick={onCopyText} data-testid="compose-copy"
               disabled={!postText.trim()}>
               Copy the words
             </button>
             {/* V4-SEASONRETRO-001. Switching mode is an EXPLICIT act, like Rebuild, so it clears
-                `dirty` and loads the other draft. Without that, a mode switch after any edit would
-                silently do nothing — the effect above only tracks `generated` while undirty — and
-                the button would look broken rather than declining to overwrite his words. */}
+                `dirty` and loads the other draft. Otherwise a mode switch after any edit would do
+                nothing (the effect above only tracks `generated` while undirty) and look broken. */}
             {retroText && (
               <button type="button" style={S.ghost} data-testid="compose-mode"
                 aria-pressed={mode === 'season'}
