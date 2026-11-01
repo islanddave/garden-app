@@ -1,64 +1,35 @@
 // src/lib/voiceHarvestGrammar.js
 //
-// V5-HARVESTVOICEFLOW-001 (BD-068) — INVESTIGATION ARTIFACT, NOT A SHIPPED FEATURE.
+// Spoken harvest grammar (BD-068 investigation, V5-HARVESTVOICEFLOW-001). Deliberately UNWIRED: only its
+// test file and the /admin/voice-debug probe import it. The tests are the finding on whether a spoken
+// value-plus-unit ("three count", "231 grams") maps reliably onto the existing fields.
 //
-// Dave's row is explicit that BD-068 is an investigation and that nothing may ship a half-flow off
-// it. This module is therefore deliberately UNWIRED: nothing in src/ imports it except its own test
-// file and the /admin/voice-debug probe. It exists because investigation question (2) — "can a
-// spoken value-plus-unit like 'three count' or '231 grams' be split and mapped to the existing
-// fields reliably, including homophones and to/two/too?" — cannot be answered by opinion. You answer
-// it by writing the parser and running real utterances at it. The test file IS the finding.
+// Flow under test: say a crop name, pause while the picker searches, then (mic still on) a count, a
+// weight, and "next", which saves and opens the next planting chooser.
 //
-// THE FLOW UNDER TEST (Dave's words, quoted in the ledger row because the shape is the requirement):
-// say "cucumber" → pause while the input is searched → with the mic STILL ON say "three count" →
-// "231 grams" → "next", where "next" saves and launches into the next planting chooser.
-//
-// WHAT THIS MODULE DECIDES, and the ONE hard rule behind all of it:
-// A COMMAND MUST NEVER BE INFERRED FROM A PHRASE THAT COULD BE DATA. Dave's own stated worst case
-// is "a silent wrong save is worse than a slow form", and `next` is a SAVE. So classification is
-// deliberately asymmetric and conservative:
+// Hard rule: A COMMAND MUST NEVER BE INFERRED FROM A PHRASE THAT COULD BE DATA, because `next` is a SAVE
+// and a silent wrong save is worse than a slow form. So:
 //   - a command matches only on an EXACT whole-utterance token match after normalisation;
-//   - anything else falls through to data, and data that does not parse cleanly returns `unparsed`
-//     rather than a guess.
-// The cost of that asymmetry is that a mumbled "next" does nothing and Dave repeats himself. The
-// cost of the opposite asymmetry is a harvest committed against the wrong planting with no one
-// watching. Those are not comparable, so this does not treat them as a tunable.
+//   - anything else is data, and data that does not parse cleanly returns `unparsed`, never a guess.
+// A mumbled "next" then does nothing and is repeated; the opposite asymmetry commits a harvest against
+// the wrong planting with no one watching.
 //
-// UNITS ARE NOT INVENTED HERE. Every unit this returns is a member of HARVEST_UNITS / WEIGHT_UNITS,
-// which is a genuinely load-bearing feasibility finding rather than a convenience: the units Dave
-// speaks out loud ("count", "grams") are already literally the app's own vocabulary, so the mapping
-// is a rename, not a new taxonomy.
+// Units are not invented here: every unit returned is a member of HARVEST_UNITS / WEIGHT_UNITS.
 import { HARVEST_UNITS, WEIGHT_UNITS, MAX_PLAUSIBLE, MAX_PLAUSIBLE_WEIGHT_G } from './harvest-constants.js'
 
-// Exact-match command vocabulary. Kept SMALL on purpose: every token added here is a word that can
-// no longer be the whole of a search utterance.
+// Exact-match command vocabulary. Kept SMALL on purpose: every token here can no longer be the whole of
+// a search utterance.
 //
-// DISJOINTNESS — what is actually checked, corrected 2026-08-27. This previously claimed the set is
-// "checked against the live crop and variety vocabulary by the test file". It is not: the test
-// checks a hardcoded 28-name array. A crucible seat swept 2,742 distinct tokens across four bundled
-// corpora and found no true collision (its one apparent hit, `repeat`, is a `harvest_habit` enum
-// value, not a crop name), so disjointness HOLDS today — but it holds by luck of the current data,
-// not by a guard. It cannot cover the uncoverable case at all: a PLANTING NAME is free text with no
-// vocabulary file, so a planting Dave names "next" would collide with a save.
-// The guard that would actually cover it belongs at the call site, not here: do not treat a
-// whole-utterance command match as a command while the chooser's live result set contains an exact
-// name match for that same text.
-// FOUR VERBS WERE REMOVED 2026-08-27, not deferred. `undo`, `cancel`, `scratch that` and `repeat`
-// all shipped classified-but-unwired, and two of them were actively dangerous:
+// Disjointness from crop and variety names holds today only because of the current data; nothing
+// checks it against the live vocabulary. A PLANTING NAME is free text, so one named "next" would
+// collide with a save. The real guard belongs at the call site: do not treat a whole-utterance command
+// match as a command while the chooser's live results contain an exact name match for the same text.
 //
-//   `undo`/`cancel` -> `discard` is a SEMANTIC TRAP. After a save the row is committed server-side
-//   and the form has reset, so the moment anyone says "undo" is the moment they just noticed a bad
-//   save — and this would have discarded the NEXT, BLANK record while the mistake stayed saved.
-//   The word that means "fix my mistake" did the opposite of the user's intent at the only moment
-//   they would ever say it, and produced no error. The app already has the right mechanism
-//   (`undoSessionRow`, a per-row undo on the harvest session ledger); when undo returns it must
-//   point THERE, as its own slice with its own test.
-//
-//   `repeat` -> `read_back` contradicted the design's own non-goal: spoken read-back was explicitly
-//   ruled out, yet saying "read it back" still classified as a command and did nothing.
-//
-// Removing them also widens the search vocabulary back — every token here is a word that can no
-// longer be the whole of a spoken crop name.
+// `undo`, `cancel`, `scratch that` and `repeat` are deliberately absent:
+//   - `undo`/`cancel` -> `discard` is a semantic trap. After a save the row is committed and the form
+//     has reset, so "undo" would discard the NEXT, BLANK record while the mistake stayed saved. Undo
+//     must point at `undoSessionRow` (per-row undo on the session ledger), as its own slice.
+//   - `repeat` -> `read_back` contradicted the design's non-goal of spoken read-back.
 export const COMMANDS = {
   next: 'save_and_advance',
   save: 'save',
@@ -67,45 +38,30 @@ export const COMMANDS = {
   clear: 'clear_field',
 }
 
-// Multi-word command phrases, matched exactly like the single tokens above. "scratch that" earns its
-// place because it is what people actually say mid-dictation; it is not a synonym anyone would utter
-// as a crop name.
+// Multi-word command phrases, matched exactly like the single tokens above.
 export const COMMAND_PHRASES = {
   'start over': 'clear_field',
   'next one': 'save_and_advance',
   'save and next': 'save_and_advance',
 }
 
-// V5-HARVESTVOICEFLOW-001 — recogniser mishears of a COMMAND word, routed to `unparsed` rather than
-// falling through to the search branch.
+// Recogniser mishears of a COMMAND word, routed to `unparsed` instead of falling through to search.
+// A mishear that fell to search performed a DIFFERENT action (it committed) and looked like it worked,
+// unlike a dropped word, which does nothing and is repeated.
 //
-// MEASURED, not anticipated. Dave ran the continuous probe on his Android 2026-08-28 (round-trip
-// simulation OFF, so the timings are clean): he spoke "next" nine times, eight were heard correctly
-// and committed as save_and_advance via tick, and ONE came back as "text" — which is not a command,
-// so classify() returned `search "text"` and it committed via sessionEnd. That is an ~11% rate on
-// the only device that matters, and the failure is worse than a dropped word: a dropped command does
-// nothing and you repeat it, whereas this performs a DIFFERENT action and looks like it worked.
+// `unparsed` and not save_and_advance: mapping a mishear onto a write is the dangerous direction, and a
+// near-miss is where confidence is lowest.
 //
-// WHY unparsed AND NOT save_and_advance. Mapping a mishear onto a write is the dangerous direction,
-// and this file already says so at the search branch: "a wrong search shows the wrong list, which
-// Dave sees and corrects, whereas a wrong command or a wrong number is committed silently." A
-// near-miss is exactly the case where confidence is lowest, so it must not commit a row. `unparsed`
-// is the honest "didn't catch that" and costs one repeated word.
-//
-// WHY NOT AN EDIT-DISTANCE RULE, which is the obvious general fix and is UNSAFE HERE:
-//   save ←1→ SAGE  — a crop type Dave grows (2 cultivars, 2 live plantings on prod).
-//   stop ←1→ top,  done ←1→ bone/dose/dune,  next ←1→ nest/neat.
-// A distance-1 rule would swallow a legitimate search for sage. So this is a curated list of
-// OBSERVED mishears, exactly the pattern NUMBER_WORDS below already follows and for the same stated
-// reason — "these are NOT general-purpose homophone handling". Add an entry only when a device log
-// shows it, and never add a word that could be a crop, a variety or a unit.
+// Not an edit-distance rule, which would swallow legitimate searches (save/sage, a crop type;
+// stop/top; done/bone/dose/dune; next/nest/neat). This is a curated list of OBSERVED mishears, like
+// NUMBER_WORDS below. Add an entry only when a device log shows it, and never a word that could be a
+// crop, a variety or a unit.
 export const COMMAND_NEAR_MISSES = new Set([
-  'text', // "next", observed 1/9 on Android Chrome, 2026-08-28 probe run
+  'text', // mishear of "next" (Android Chrome)
 ])
 
-// Spoken-unit → canonical unit. Both directions of the harvest vocabulary live here: HARVEST_UNITS
-// (the quantity axis) and WEIGHT_UNITS (the measured-weight axis) overlap on the mass units, and
-// which axis an utterance lands on is decided by the unit, not by field order — see classify().
+// Spoken unit -> canonical unit. HARVEST_UNITS (quantity axis) and WEIGHT_UNITS (weight axis) overlap
+// on the mass units; the unit, not field order, decides the axis (see buildValue).
 export const UNIT_ALIASES = {
   gram: 'g', grams: 'g', gramme: 'g', grammes: 'g', g: 'g',
   kilogram: 'kg', kilograms: 'kg', kilo: 'kg', kilos: 'kg', kg: 'kg', kgs: 'kg',
@@ -117,11 +73,9 @@ export const UNIT_ALIASES = {
   head: 'head', heads: 'head',
 }
 
-// Number words 0-20 + tens, plus the homophones Dave named explicitly ("to/two/too") and the ones
-// that recur in the same position. These are NOT general-purpose homophone handling: each entry is a
-// word that a recogniser plausibly emits where a NUMBER was spoken, in a slot where the following
-// token is a unit. "for 4" is safe here for the same reason it would be reckless in free text — it
-// only ever fires immediately before a unit word.
+// Number words 0-20 plus tens, plus recogniser homophones of numbers (to/too, for, tree...). These are
+// NOT general homophone handling: each entry fires only where a number was spoken and the next token
+// is a unit, which is why "for 4" is safe here and reckless in free text.
 const NUMBER_WORDS = {
   zero: 0, oh: 0,
   one: 1, won: 1,
@@ -142,25 +96,19 @@ const NUMBER_WORDS = {
 
 const SCALES = { hundred: 100, thousand: 1000 }
 
-// Fractional words, for "half a pound" / "a quarter pound". Deliberately only the two that occur in
-// kitchen/garden speech; anything else falls through to unparsed rather than being approximated.
+// Fractional words, for "half a pound" / "a quarter pound". Anything else falls through to unparsed
+// rather than being approximated.
 const FRACTIONS = { half: 0.5, quarter: 0.25, third: 1 / 3 }
 
-// Filler that carries no value and would otherwise break an otherwise-clean parse. "a" and "an" are
-// the load-bearing ones ("a dozen", "half a pound").
+// Filler that carries no value and would otherwise break a clean parse. "a" and "an" are load-bearing
+// ("a dozen", "half a pound").
 const FILLER = new Set(['a', 'an', 'and', 'of', 'the', 'about', 'roughly', 'like', 'um', 'uh'])
 
-// Lowercase, strip punctuation, collapse whitespace. Punctuation matters because Chrome's recogniser
-// inserts commas and full stops into dictated numbers ("231, grams") and a naive split would then
-// see "231," as a non-number.
+// Lowercase, strip punctuation, collapse whitespace. Chrome inserts commas and full stops into
+// dictated numbers ("231, grams"), which a naive split would read as a non-number.
 //
-// A FULL STOP BETWEEN TWO DIGITS IS A DECIMAL POINT AND IS PRESERVED. Found by the test suite, not
-// by inspection: the first version of this function stripped it unconditionally, so "1.2 kilograms"
-// normalised to "1 2 kilograms", parseNumber summed the pair, and the utterance came back as THREE
-// kilograms — a silently wrong weight, off by 2.5x, with every field looking filled and plausible.
-// That is precisely the failure mode this grammar exists to make impossible, reached through the
-// most innocuous line in the file. The same guard covers the comma as a decimal separator, which the
-// recogniser also emits.
+// A full stop or comma BETWEEN TWO DIGITS is a decimal point and is preserved. Stripping it turned
+// "1.2 kilograms" into "1 2 kilograms", which parseNumber summed to 3 kg: a silently wrong weight.
 export function normalise(raw) {
   return String(raw ?? '')
     .toLowerCase()
@@ -171,33 +119,27 @@ export function normalise(raw) {
     .trim()
 }
 
-// BUG-VOICEDUPE-00x class: the recogniser has three times shipped a single spoken word DOUBLED
-// ("Chinese" -> "Chinese Chinese"). The fix landed in the transcript layer, but continuous mode
-// re-runs that machinery per utterance for a whole session, so this parser refuses to depend on the
-// transcript being clean. Collapsing an IMMEDIATE whole-token repeat is safe in this grammar
-// specifically because no legal utterance here repeats a token adjacently: no unit doubles, no
-// command doubles, and no crop in the vocabulary is a doubled word. It is NOT safe as a general
-// text transform and is not exported as one.
+// The recogniser has shipped a single spoken word DOUBLED ("Chinese Chinese", BUG-VOICEDUPE-00x), and
+// continuous mode re-runs the transcript layer per utterance, so this parser does not trust the
+// transcript to be clean. Collapsing an immediate token repeat is safe only because no legal utterance
+// here repeats a token adjacently. Do not reuse it as a general text transform.
 export function collapseAdjacentDupes(tokens) {
   const out = []
   for (const t of tokens) if (out[out.length - 1] !== t) out.push(t)
   return out
 }
 
-// Word-sequence → number. Handles "two hundred thirty one", "twelve", "1.2", "231".
-// Returns null when the sequence is not cleanly a number — never a partial or best-guess value,
-// because a wrong quantity that looks right is the failure this whole flow has to avoid.
+// Word-sequence -> number ("two hundred thirty one", "twelve", "1.2", "231"). Returns null unless the
+// sequence is cleanly ONE number, never a partial or best-guess value: a wrong quantity that looks
+// right is the failure this flow must avoid.
 export function parseNumber(tokens) {
   if (tokens.length === 0) return null
 
   // Digit form, including decimals, is taken verbatim when the WHOLE sequence is one digit token.
   if (tokens.length === 1 && /^\d+(\.\d+)?$/.test(tokens[0])) return Number(tokens[0])
 
-  // SPOKEN DECIMAL — "one point two kilos". Handled explicitly rather than left to fall through to
-  // null: it is a natural way to say a weight and the recogniser emits the word "point" rather than
-  // a separator, so without this the utterance is refused and Dave has to rephrase mid-flow. The
-  // fractional side is read DIGIT BY DIGIT ("one point two five" -> 1.25), which is how the number
-  // is actually spoken; summing those tokens the way the integer side does would give 1.7.
+  // Spoken decimal ("one point two kilos"): the recogniser emits the word "point". The fractional side
+  // is read digit by digit ("one point two five" -> 1.25); summing it like the integer side gives 1.7.
   const pointAt = tokens.findIndex(t => t === 'point' || t === 'decimal')
   if (pointAt >= 0) {
     const whole = parseNumber(tokens.slice(0, pointAt))
@@ -207,8 +149,8 @@ export function parseNumber(tokens) {
     for (const t of fracToks) {
       if (/^\d+$/.test(t)) { digits += t; continue }
       const n = NUMBER_WORDS[t]
-      // Only single digits are legal after the point; "one point twenty" is not a number anyone
-      // means, so refuse rather than invent an interpretation.
+      // Only single digits are legal after the point; refuse "one point twenty" rather than invent a
+      // reading.
       if (n == null || n > 9) return null
       digits += String(n)
     }
@@ -216,17 +158,12 @@ export function parseNumber(tokens) {
     return Number.isFinite(value) ? value : null
   }
 
-  // BUG-VOICENUMSUM-001, GUARD 1 OF 2 — A DIGIT LITERAL IS ATOMIC.
-  // Dave has plantings NAMED after numbers (one is literally "1884"), and the utterance that reaches
-  // here is everything before the trailing unit — so the NAME arrives as a number token sitting in
-  // front of the quantity. "1884 two count" parsed as 1884 + 2 and SAVED 1886 count, reporting
-  // success; "1884 165 grams" saved 2049 g. Neither trips MAX_PLAUSIBLE, so nothing downstream
-  // catches it. A silent wrong save is the one outcome this grammar exists to prevent.
-  // A spoken digit run like "231" is a COMPLETE number, and English never composes two of them
-  // additively — "1884 two" is two numbers, not one. So a digit literal may be the whole sequence and
-  // nothing else. The cost is that a mixed form like "5 hundred" is now refused rather than read as
-  // 500; that is the safe direction (an `unparsed` costs one repeated phrase) and it is speculative
-  // anyway, whereas the four failures above were MEASURED against Dave's real plantings.
+  // BUG-VOICENUMSUM-001, GUARD 1 OF 2: A DIGIT LITERAL IS ATOMIC.
+  // Plantings can be NAMED with numbers (e.g. "1884"), and the name arrives as a number token in front
+  // of the quantity: "1884 two count" would sum to 1886 and save. That is below MAX_PLAUSIBLE, so
+  // nothing downstream catches it. English never composes two numbers additively, so a digit literal
+  // may be the whole sequence and nothing else. A mixed form like "5 hundred" is refused, the safe
+  // direction (an `unparsed` costs one repeated phrase).
   const valueToks = tokens.filter((t) => !FILLER.has(t))
   if (valueToks.length > 1 && valueToks.some((t) => /^\d+(\.\d+)?$/.test(t))) return null
 
@@ -234,9 +171,9 @@ export function parseNumber(tokens) {
   let current = 0
   let seenAny = false
   let fraction = 0
-  // BUG-VOICENUMSUM-001, GUARD 2 OF 2 — magnitude of the previous ADDITIVE component. See below.
+  // Guard 2 state: magnitude of the previous ADDITIVE component.
   let lastAdd = null
-  // V5-VOICEVOCAB-001, GUARD 3 — the previous token when it was itself a number WORD, else null.
+  // V5-VOICEVOCAB-001, GUARD 3 state: the previous token when it was itself a number WORD, else null.
   let prevWord = null
 
   for (const tok of tokens) {
@@ -255,8 +192,8 @@ export function parseNumber(tokens) {
       // "hundred" with nothing before it means one hundred ("a hundred grams").
       current = (current === 0 ? 1 : current) * SCALES[tok]
       if (SCALES[tok] >= 1000) { total += current; current = 0 }
-      // A scale MULTIPLIES rather than adds, so it is not itself subject to the descent rule — but it
-      // resets the ceiling for what may follow it: "two hundred thirty one" is 200 then 30 then 1.
+      // A scale multiplies, so the descent rule does not apply to it, but it resets the ceiling for what
+      // follows ("two hundred thirty one" is 200, then 30, then 1).
       lastAdd = SCALES[tok]
       prevWord = null
       seenAny = true
@@ -264,22 +201,18 @@ export function parseNumber(tokens) {
     }
     if (Object.prototype.hasOwnProperty.call(NUMBER_WORDS, tok)) {
       const v = NUMBER_WORDS[tok]
-      // BUG-VOICENUMSUM-001, GUARD 2 OF 2 — COMPONENTS MUST STRICTLY DESCEND.
-      // A well-formed English cardinal falls monotonically: "twenty three" (20>3), "two hundred
-      // thirty one" (200>30>1). "eighteen eighty four" does NOT — 18 then 80 ascends — because it is
-      // a NAME read in year-form, not a cardinal. Summing it gave 18+80+4+2 = 104 count for
-      // "eighteen eighty four two count", and 267 g for the weight form. Guard 1 cannot catch these:
-      // there is no digit literal in the utterance at all, every token is a legitimate number word,
-      // and only the ORDER reveals that two separate numbers were spoken.
+      // BUG-VOICENUMSUM-001, GUARD 2 OF 2: COMPONENTS MUST STRICTLY DESCEND.
+      // A well-formed cardinal falls monotonically ("twenty three", "two hundred thirty one").
+      // "eighteen eighty four" ascends (18 then 80): it is a NAME read in year-form, and summing it
+      // saved 104 count. Guard 1 cannot catch it (no digit literal, every token a real number word);
+      // only the ORDER shows that two numbers were spoken.
       if (lastAdd !== null && v >= lastAdd) return null
-      // V5-VOICEVOCAB-001, GUARD 3 — TWO NUMBER WORDS IN A ROW ADD ONLY AS TENS + UNITS.
-      // Descending is necessary, not sufficient. "ten five", "five two" and "three two hundred thirty
-      // one" all descend, so guard 2 summed them — and once a bare number became an amount on its own
-      // (e142054), that sum was SAVED: on cb32814 "ten five" then "next" wrote 15 count, and the last
-      // one wrote 531 count. English composes two adjacent number words in exactly one way, a tens
-      // word followed by a units word ("twenty five"); every other adjacent pair is two numbers said
-      // together, and this parser returns one number or nothing. A scale ("hundred", "thousand") is
-      // not a word in this sense — it multiplies, and what follows it starts a fresh group.
+      // V5-VOICEVOCAB-001, GUARD 3: TWO NUMBER WORDS IN A ROW ADD ONLY AS TENS + UNITS.
+      // Descending is necessary, not sufficient: "ten five" and "five two" descend, so guard 2 summed
+      // them, and a bare number now saves as an amount ("ten five" then "next" wrote 15 count). English
+      // composes two adjacent number words one way, tens then units ("twenty five"); any other pair is
+      // two numbers said together, and this parser returns one number or nothing. A scale multiplies and
+      // starts a fresh group.
       if (prevWord !== null && !(prevWord >= 20 && prevWord <= 90 && prevWord % 10 === 0 && v >= 1 && v <= 9)) {
         return null
       }
@@ -306,13 +239,11 @@ export function parseNumber(tokens) {
   return Number.isFinite(value) ? value : null
 }
 
-// BUG-VOICENUMWORD-001 — the number words a NAME is spoken with, and ONLY the canonical spellings.
+// BUG-VOICENUMWORD-001: the number words a NAME is spoken with, canonical spellings ONLY.
 //
-// Deliberately NOT NUMBER_WORDS. That map carries recogniser homophones (to/too/won/for/fore/ate/
-// tree/oh) and its own comment scopes them explicitly: "it only ever fires immediately before a unit
-// word". A planting name is not that slot. Folding them here would rewrite "tomato to table" into
-// "tomato 2 table" and, worse, would do it in the branch where the chooser is already lost — so the
-// homophones stay out, and `dozen` with them (nobody names a bed "dozen" and means 12).
+// Deliberately NOT NUMBER_WORDS: its homophones (to/too/won/for/fore/ate/tree/oh) only fire before a
+// unit, and a planting name is not that slot. Folding them would rewrite "tomato to table" into
+// "tomato 2 table". `dozen` stays out too (nobody names a bed "dozen" and means 12).
 const NAME_NUMBER_WORDS = {
   zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9,
   ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16,
@@ -321,28 +252,18 @@ const NAME_NUMBER_WORDS = {
 }
 
 /**
- * BUG-VOICENUMWORD-001 — spoken number WORDS → the digit string a planting is actually named with.
+ * BUG-VOICENUMWORD-001: spoken number WORDS -> the digit string a planting is named with. Chrome
+ * dictates name digits as words ("eighteen eighty four" for a planting named "1884"), so the name was
+ * unreachable.
  *
- * Nine of Dave's live plantings carry digits in their name (1884, Super Sweet 100, Super Sweet 100
- * Rescue, Danvers 126 Carrot, Clemson Spineless 80, Chinese 5-Color, Alaska Mix Nasturtium 1, Cherry
- * Rescue 1, Fairway Orange Coleus Clone 1). Chrome dictates those digits as WORDS, so "eighteen
- * eighty four" reached a name stored as "1884" not at all — zero hits, and saying it again more
- * clearly never helps, because the recogniser was never wrong.
+ * NOT parseNumber, AND MUST NOT BE MERGED INTO IT. A name is read like a YEAR: in groups,
+ * CONCATENATED ("eighteen eighty four" = 18|84 = "1884"). A cardinal is SUMMED (231), and running the
+ * cardinal parser over a name gives 102. The grammars share one rule, the group boundary: a group ends
+ * when the next word is NOT strictly smaller than the last one added ("eighty four" is one group,
+ * "eighteen eighty" splits).
  *
- * THIS IS NOT parseNumber AND MUST NOT BE MERGED INTO IT. A name is read the way a YEAR is read: in
- * groups, CONCATENATED — "eighteen eighty four" is 18|84 = "1884", "one twenty six" is 1|26 = "126".
- * A cardinal is SUMMED — "two hundred thirty one" is 231. Running the cardinal parser over a name
- * yields 18+80+4 = 102, which is exactly how BUG-VOICENUMSUM-001 read it and is wrong in a different
- * direction. The two grammars share ONE rule and nothing else: the group boundary below.
- *
- * GROUP BOUNDARY: a group ends when the next word is NOT strictly smaller than the last one added to
- * it — the same monotonic property parseNumber now uses to reject an ascending sequence. That is why
- * "eighty four" stays one group (4 < 80) while "eighteen eighty" splits (80 >= 18).
- *
- * Edit distance cannot substitute for this. Session gardening-c2 measured its fuzzy scorer over these
- * exact cases against Dave's real 239 plantings: "eighteen eighty four" scores 0.353 against
- * *helichrysum*, nowhere near 1884. A bare digit name is unreachable from number words by any string
- * metric, because they share no characters — folding is the only mechanism that spans the gap.
+ * Edit distance cannot substitute: a bare digit name shares no characters with its number words, so
+ * folding is the only mechanism that spans the gap.
  *
  * Returns the text with number-word runs folded; unchanged when there is nothing to fold.
  */
@@ -384,14 +305,11 @@ export function foldNumberWords(text) {
 }
 
 /**
- * V5-VOICEVOCAB-001 (lane D4) — is this phrase made of NOTHING BUT numbers?
- *
- * Digit literals and the canonical number words a name is spoken with (NAME_NUMBER_WORDS plus the
- * scales). A phrase like that — "2", "1884", "eighteen eighty four" — can only ever be a planting's
- * name by EXACT equality, never by the substring or fuzzy layers: "2" is a substring of Danvers 1*2*6,
- * "18" of 1884, and the one-breath reader offering "2" as a name is how "2 165 grams" switched the crop
- * to Danvers 126 Carrot (measured on cb32814 against the 244 real plantings). The homophones in
- * NUMBER_WORDS (to/for/tree/…) are deliberately not numbers here: "peach tree" is a name.
+ * V5-VOICEVOCAB-001: is this phrase made of NOTHING BUT numbers (digit literals, NAME_NUMBER_WORDS,
+ * scales)? Such a phrase ("2", "1884", "eighteen eighty four") may match a planting name by EXACT
+ * equality only, never by the substring or fuzzy layers: "2" is a substring of Danvers 126, and
+ * offering it as a name switched the crop in a one-breath utterance. The NUMBER_WORDS homophones
+ * (to/for/tree) are not numbers here: "peach tree" is a name.
  */
 export function isNumberPhrase(raw) {
   const toks = normalise(raw).split(' ').filter(Boolean)
@@ -401,32 +319,12 @@ export function isNumberPhrase(raw) {
 }
 
 /**
- * Classify one utterance from a continuous recognition session.
+ * A value and a canonical unit -> the quantity/weight result the caller stores.
  *
- * Returns one of:
- *   { kind: 'command',  command, transcript }
- *   { kind: 'quantity', value, unit, transcript }        unit ∈ HARVEST_UNITS
- *   { kind: 'weight',   value, unit, grams, transcript } unit ∈ WEIGHT_UNITS
- *   { kind: 'search',   text, transcript }               free text for the picker
- *   { kind: 'unparsed', reason, transcript }
- *
- * `implausible` is set (rather than the result being rejected) when the value parses but exceeds the
- * server's own CHECK bound: the caller should confirm rather than discard, because the likeliest
- * cause is a misheard digit and the user is standing right there able to say it again.
- */
-/**
- * A value and a canonical unit → the quantity/weight result the caller stores.
- *
- * WHICH AXIS. A mass unit is ambiguous by construction — 'g','kg','lb','oz' are in BOTH lists, and
- * Dave's flow says "three count" then "231 grams", i.e. the quantity axis takes the counting unit
- * and the weight axis takes the mass unit. So: mass unit -> weight, everything else -> quantity.
- * This resolves the ambiguity by VOCABULARY rather than by field order, which matters because a
- * continuous session cannot rely on the two utterances arriving in order.
- *
- * EXTRACTED FROM classify() rather than copied, and that is the point. BUG-VOICECOUNTSPLIT-001 adds
- * a SECOND way to reach a value — a number and a unit that arrived as two separate utterances —
- * and a second copy of the axis rule is a second place for `lb` to drift onto the wrong field.
- * There is one implementation and both callers reach it.
+ * The axis is decided by VOCABULARY, not field order: mass units ('g', 'kg', 'lb', 'oz') are in BOTH
+ * lists, and a continuous session cannot rely on utterances arriving in order. Mass unit -> weight,
+ * everything else -> quantity. One implementation shared by classify() and the split-utterance paths,
+ * so the axis rule cannot drift.
  *
  * Returns null for a unit in neither list, which classify() then falls through to `search`.
  */
@@ -445,45 +343,34 @@ export function buildValue(value, unit, transcript = '') {
 }
 
 /**
- * BUG-VOICECOUNTSPLIT-001 — the two HALVES of a value that arrived as separate utterances.
+ * BUG-VOICECOUNTSPLIT-001: the two HALVES of a value that arrived as separate utterances.
  *
- * THE DEFECT, measured on 2026-08-31 by replaying the real debouncer. Chrome sometimes ends the
- * recogniser session BETWEEN the number and the unit, and VoiceHarvest's `onend` flushes data
- * immediately (that asymmetry is deliberate and correct — see voiceCommitDebounce sessionEnd). So
- * "three count" arrives as "three" then "count", and each half is separately useless:
+ * Chrome sometimes ends the recogniser session BETWEEN number and unit, and VoiceHarvest's `onend`
+ * flushes data immediately (deliberate; see voiceCommitDebounce sessionEnd), so "three count" arrives
+ * as "three" then "count". "three" alone is a `search`, and the search branch is substring-permissive
+ * ("two" matches Brentwood Leaf Lettuce, "2" matches Danvers 126), so the count is lost AND the chosen
+ * planting is silently replaced, and the following "next" saves against the wrong plant. "count" alone
+ * is `unparsed`.
  *
- *   "three" -> classify() says `search`, because a bare number carries no unit. Against Dave's real
- *              239 live plantings the search branch is SUBSTRING-permissive, so "two" selects
- *              *Brentwood* Leaf Lettuce, "four" selects Marvel of *Four* Seasons, "2" selects
- *              Danvers 1*2*6 Carrot — the count is lost AND the chosen planting is silently
- *              replaced, so the following "next" saves against the wrong plant. v4.83.0's
- *              foldNumberWords widened this from 5 to 8 of 19 tested numbers (five -> Chinese
- *              5-Color, six and twelve -> Danvers 126).
- *   "count" -> `unparsed`/unit-without-number. Nothing at all.
+ * A separate function, not a classify() kind: classify() is whole-utterance and stateless, which is
+ * what makes a command match provable. Pairing halves needs memory across utterances, which is host
+ * state, so the grammar answers only the stateless question (nothing but a number, or nothing but a
+ * unit) and the host owns the holding.
  *
- * WHY A SEPARATE FUNCTION AND NOT A NEW classify() KIND. classify() is whole-utterance and
- * stateless, and it must stay that way — it is what makes a command match provable. Pairing halves
- * needs memory ACROSS utterances, which is host state. So the grammar answers only the stateless
- * question ("is this utterance nothing but a number, or nothing but a unit?") and the host owns the
- * holding. classify()'s contract is untouched.
+ * THE HOST MUST GATE THE NUMBER ON A PLANTING BEING SELECTED: before a plant is chosen a bare number
+ * can legitimately be a search. This function cannot see that gate.
  *
- * THE HOST MUST GATE THE NUMBER ON A PLANTING BEING SELECTED. Before a plant is chosen a bare
- * number can legitimately be a search; after one is chosen it can only be an amount. That gate is
- * what makes suppressing the search safe, and it is the caller's to enforce — stated here because
- * this function cannot see it.
- *
- * A MULTI-WORD NAME-SHAPED NUMBER IS DELIBERATELY NOT A NUMBER HERE. "eighteen eighty four" (the
- * planting named 1884) fails parseNumber's monotonic rule and so returns null from this function
- * too, falling through to the search branch where foldNumberWords already resolves it. The two
- * mechanisms do not overlap and must not.
+ * A multi-word name-shaped number ("eighteen eighty four") is deliberately NOT a number here: it fails
+ * parseNumber's monotonic rule and falls through to the search branch, where foldNumberWords resolves
+ * it. The two mechanisms must not overlap.
  *
  * Returns { kind: 'number', value } | { kind: 'unit', unit } | null.
  */
 export function classifyPartial(raw) {
   const text = normalise(raw)
   if (!text) return null
-  // A command is a command. Checked first so a hold can never eat "next", "save" or "stop" — the
-  // one class of utterance where being swallowed costs a save rather than a repeated word.
+  // Commands first, so a hold can never swallow "next", "save" or "stop" (that costs a save, not a
+  // repeated word).
   if (Object.prototype.hasOwnProperty.call(COMMAND_PHRASES, text)) return null
   if (Object.prototype.hasOwnProperty.call(COMMANDS, text)) return null
   if (COMMAND_NEAR_MISSES.has(text)) return null
@@ -507,34 +394,28 @@ export function classifyPartial(raw) {
 }
 
 /**
- * V5-VOICEONEBREATH-001 — "Big Boy, two count, fifteen grams" as ONE utterance.
+ * V5-VOICEONEBREATH-001: "Big Boy, two count, fifteen grams" as ONE utterance. classify() anchors on
+ * the LAST token being a unit and requires everything before it to be a number, so a leading NAME made
+ * it `unparsed`/ambiguous-number.
  *
- * Dave's flow was specified as separate utterances with pauses and he speaks it as a sentence. Today
- * that returns `unparsed`/ambiguous-number: classify() anchors on the LAST token being a unit and
- * requires everything before it to be a number, so a leading NAME disqualifies the whole phrase.
- *
- * THE REASON THIS IS NOT JUST "SPLIT ON THE UNITS", and the trap the ledger row names ("one-breath
- * parsing is exactly where a leading name-number does the most damage"): nine of Dave's live
- * plantings are NAMED with digits, and Chrome dictates those digits as words. In
+ * NOT JUST "SPLIT ON THE UNITS". Plantings named with digits are dictated as number words, so in
  *
  *     eighteen eighty four | two | count | one sixty five | grams
  *
- * every token before "count" is a number word, so a backward walk cannot see where the NAME ends and
- * the COUNT begins. Taking the longest run that parses gives "eighty four two" = 86; taking the
- * shortest gives 2. Both are defensible from the string alone, and one of them is a silently wrong
- * harvest — which is precisely BUG-VOICENUMSUM-001 re-entered through a new door.
+ * a backward walk cannot see where the NAME ends and the COUNT begins. The longest parsing run gives
+ * "eighty four two" = 86, the shortest gives 2, and one of them is a silently wrong harvest
+ * (BUG-VOICENUMSUM-001 through a new door).
  *
- * SO THE STRING IS NOT ASKED TO DECIDE. This returns every split the grammar considers legal, in
- * NAME-LONGEST-FIRST order, and the caller resolves them against the live planting vocabulary —
- * closed-set selection, the same reframe that fixed V5-VOICEFUZZYMATCH-001. A candidate whose name
- * half matches exactly one planting is the answer; if none does, or if two disagree, the caller
- * refuses and asks for the parts separately. The grammar has no vocabulary and must not pretend to.
+ * So the string is not asked to decide. This returns every split the grammar considers legal, in
+ * NAME-LONGEST-FIRST order, and the caller resolves them against the live planting vocabulary
+ * (closed-set selection, as in V5-VOICEFUZZYMATCH-001). A candidate whose name half matches exactly one
+ * planting is the answer; if none does, or two disagree, the caller refuses and asks for the parts
+ * separately. The grammar has no vocabulary and must not pretend to.
  *
- * Every candidate is `{ name, values }` where `values` are already built quantity/weight results.
- * A candidate is legal only when: the name is non-empty (a nameless phrase is classify()'s job and
- * is left alone), every number group parses cleanly on its own, and every unit resolves. One bad
- * group refuses the WHOLE utterance rather than yielding a partial record — a half-applied one-breath
- * sentence is a record that looks complete and is not.
+ * Every candidate is `{ name, values }` with `values` already built quantity/weight results. A
+ * candidate is legal only when the name is non-empty (a nameless phrase is classify()'s job), every
+ * number group parses cleanly on its own, and every unit resolves. One bad group refuses the WHOLE
+ * utterance: a half-applied sentence is a record that looks complete and is not.
  *
  * Returns [] for anything that is not a multi-part utterance, which is the overwhelming majority.
  */
@@ -556,9 +437,8 @@ export function segmentCandidates(raw) {
   // prose, not a record ("three count of cucumber" is not a shape anyone dictates).
   if (unitAt[unitAt.length - 1] !== tokens.length - 1) return []
 
-  // GROUPS AFTER THE FIRST are fully determined — their number tokens are exactly what lies between
-  // the previous unit and this one, with no choice to make. Any that fails to parse refuses the
-  // whole utterance, because a partially-understood sentence must not become a partial record.
+  // GROUPS AFTER THE FIRST are fully determined: their number tokens are exactly what lies between the
+  // previous unit and this one. Any that fails to parse refuses the whole utterance.
   const tailValues = []
   for (let g = 1; g < unitAt.length; g++) {
     const from = unitAt[g - 1] + 1
@@ -570,16 +450,13 @@ export function segmentCandidates(raw) {
     tailValues.push(built)
   }
 
-  // THE FIRST GROUP is the only ambiguous one, because the name sits in front of it. Split points
-  // are enumerated NAME-LONGEST-FIRST: the prior is that a speaker says as much of the name as they
-  // can, so the shortest number run is the likeliest reading — but the caller, not this order,
-  // decides, and it decides by asking the vocabulary.
+  // THE FIRST GROUP is the only ambiguous one, because the name sits in front of it. Split points are
+  // enumerated NAME-LONGEST-FIRST (a speaker says as much of the name as they can), but the caller
+  // decides, by asking the vocabulary.
   const u0 = unitAt[0]
-  // NO NAME, NOTHING TO DISAMBIGUATE. If the entire run before the first unit parses as one clean
-  // cardinal then there is no name in front of it — "two hundred thirty one grams" — and classify()
-  // already reads it correctly. Without this guard the split enumeration happily offers a name of
-  // "two hundred thirty" carrying a weight of 1 g, which is a wrong reading of a phrase that was
-  // never ambiguous. Measured: it produced exactly that.
+  // NO NAME, NOTHING TO DISAMBIGUATE. If everything before the first unit parses as one clean cardinal
+  // ("two hundred thirty one grams"), there is no name and classify() already reads it correctly.
+  // Without this guard the enumeration offers a name of "two hundred thirty" carrying 1 g.
   if (parseNumber(tokens.slice(0, u0)) != null) return []
 
   const firstUnit = UNIT_ALIASES[tokens[u0]]
@@ -595,14 +472,28 @@ export function segmentCandidates(raw) {
   return out
 }
 
+/**
+ * Classify one utterance from a continuous recognition session. Whole-utterance and stateless.
+ *
+ * Returns one of:
+ *   { kind: 'command',  command, transcript }
+ *   { kind: 'quantity', value, unit, transcript }        unit ∈ HARVEST_UNITS
+ *   { kind: 'weight',   value, unit, grams, transcript } unit ∈ WEIGHT_UNITS
+ *   { kind: 'search',   text, transcript }               free text for the picker
+ *   { kind: 'unparsed', reason, transcript }
+ *
+ * `implausible` is set (rather than the result being rejected) when the value parses but exceeds the
+ * server's own CHECK bound: the caller should confirm rather than discard, because the likeliest
+ * cause is a misheard digit.
+ */
 export function classify(raw) {
   const transcript = String(raw ?? '')
   const text = normalise(transcript)
   if (!text) return { kind: 'unparsed', reason: 'empty', transcript }
 
   // COMMANDS FIRST, EXACT WHOLE-UTTERANCE ONLY. A phrase is a command iff the entire normalised
-  // utterance is a command token/phrase — "next" fires, "next to the fence" does not, and neither
-  // does "cucumber next". This is the rule that keeps a save from being triggered by a search term.
+  // utterance is a command token/phrase: "next" fires, "next to the fence" and "cucumber next" do not.
+  // This keeps a save from being triggered by a search term.
   if (Object.prototype.hasOwnProperty.call(COMMAND_PHRASES, text)) {
     return { kind: 'command', command: COMMAND_PHRASES[text], transcript }
   }
@@ -610,10 +501,9 @@ export function classify(raw) {
     return { kind: 'command', command: COMMANDS[text], transcript }
   }
 
-  // NEAR-MISS OF A COMMAND — refuse rather than search. Placed immediately after the exact command
-  // checks so a real command can never be intercepted, and before everything else so the mishear
-  // cannot be re-read as a search term. See COMMAND_NEAR_MISSES for the device measurement and for
-  // why this is a curated list rather than an edit-distance rule (save ←1→ sage, a crop Dave grows).
+  // NEAR-MISS OF A COMMAND: refuse rather than search. Checked right after the exact command checks (a
+  // real command can never be intercepted) and before everything else (the mishear cannot be re-read
+  // as a search term). See COMMAND_NEAR_MISSES for why this is a curated list.
   if (COMMAND_NEAR_MISSES.has(text)) {
     return { kind: 'unparsed', reason: 'near-command', transcript }
   }
@@ -631,13 +521,10 @@ export function classify(raw) {
     const numToks = tokens.slice(0, lastIdx)
     const value = parseNumber(numToks)
     if (value == null) {
-      // WHICH failure this was matters to the caller, because the two need opposite advice.
-      // "grams" alone is a bare unit — the user says it when correcting a unit and the fix is to say
-      // a number. "1884 two count" is the BUG-VOICENUMSUM-001 shape — the user said a planting NAME
-      // and a quantity in one breath, and the fix is to split them. Reporting the second as
-      // "unit-without-number" would be actively false: there were two numbers, not none. Without the
-      // distinction the UI can only say "didn't catch that", and Dave repeats the same phrase forever
-      // because nothing tells him the name is being read as part of the count.
+      // The two failures need opposite advice. "grams" alone is a bare unit: say a number. "1884 two
+      // count" is the BUG-VOICENUMSUM-001 shape, a planting NAME plus a quantity in one breath: split
+      // them. Calling it "unit-without-number" would be false (there were two numbers), and the UI could
+      // only say "didn't catch that".
       const numeric = (t) => /^\d/.test(t)
         || Object.prototype.hasOwnProperty.call(NUMBER_WORDS, t)
         || Object.prototype.hasOwnProperty.call(SCALES, t)
@@ -663,33 +550,21 @@ export function classify(raw) {
 
 // ── V5-VOICEONEBREATH-002 / BUG-VOICETRAILCMD-001 ────────────────────────────────────────────────
 //
-// SPLIT A TRAILING COMMAND OFF A COMPLETE RECORD. Dave's actual cadence is one breath —
-// "cucumber, three count, two thirty one grams, next" — and until now that sentence did not merely
-// fail to save, it was DESTRUCTIVE. Measured on this file before the fix:
+// SPLIT A TRAILING COMMAND OFF A COMPLETE RECORD. One-breath speech ("cucumber, three count, two
+// thirty one grams, next") used to be DESTRUCTIVE: appending "next" made classify() return SEARCH
+// instead of `unparsed`, which skipped the one-breath reader and ran a planting search for the whole
+// string, silently discarding the count and weight. Re-speaking never helped.
 //
-//   "cucumber three count 231 grams"       -> segmentCandidates: name=cucumber, 3 count, 231 g  ✓
-//   "cucumber three count 231 grams next"  -> classify: SEARCH, segmentCandidates: NONE          ✗
-//   "231 grams next"                       -> classify: SEARCH                                   ✗
-//
-// The one-breath reader in VoiceHarvest is hooked on `unparsed`, so appending "next" flipped the
-// classification to `search`, skipped the reader entirely, and ran a planting search for the literal
-// string "cucumber three count 231 grams next". The count and the weight were silently discarded.
-// That is why "next" reads as "not heard at all" — it is not a recogniser problem in that case, and
-// no amount of re-speaking it helps, because the phrase is being consumed by the search branch.
-//
-// WHY THIS DOES NOT REOPEN THE HOLE classify() CLOSES. classify()'s whole-utterance rule exists so a
-// SEARCH TERM can never trigger a save — its examples are "next to the fence" and "cucumber next".
-// Both still refuse here, because the split is gated on the HEAD ALREADY BEING A RECORD:
-//   - "next to the fence" — trailing token is "fence", not a command. No split.
-//   - "cucumber next"     — head "cucumber" carries no value, so it is a search, not a record. No split.
+// This does not reopen the hole classify()'s whole-utterance rule closes (a SEARCH TERM must never
+// trigger a save), because the split is gated on the HEAD ALREADY BEING A RECORD:
+//   - "next to the fence": trailing token is "fence", not a command. No split.
+//   - "cucumber next": head carries no value, so it is a search. No split.
 // Only a head that independently parses as name+values or as a bare quantity/weight may carry a
-// trailing command. A save still cannot be conjured out of prose.
+// trailing command.
 //
-// A TRAILING NEAR-MISS APPLIES THE RECORD AND REFUSES THE COMMAND. "231 grams text" (the measured
-// 1-in-9 Android mishear of "next") returns the head with `command: null`. The values are kept —
-// they were spoken clearly and throwing them away is the lost-log failure this page exists to
-// prevent — while the save is refused, which is the same asymmetry COMMAND_NEAR_MISSES already
-// encodes: a wrong search is visible and correctable, a wrong commit is silent.
+// A trailing NEAR-MISS applies the record and refuses the command ("231 grams text" returns the head
+// with `command: null`): spoken values are kept, the save is refused, the same asymmetry as
+// COMMAND_NEAR_MISSES.
 // The command a final ENDS with, if any, and how many tokens it takes. Longest trailing phrase first,
 // so "save and next" is not read as a bare trailing "next". A command that is the whole utterance is
 // not a trailing one (`take` must leave a head), because classify() owns that case.
@@ -731,47 +606,41 @@ export function splitTrailingCommand(raw) {
   const isRecord = headKind === 'quantity' || headKind === 'weight'
     || segmentCandidates(head).length > 0
     || parseValueSequence(head) != null
-  // V5-VOICEVOCAB-001 (lane D4) — OR A RECORD SAID WITHOUT (ALL OF) ITS UNITS: "165 next", "2 165 next",
-  // "suyo long 2 165 next", "cucumber 3 231 grams next". Marked `bare`, because whether such a head IS
-  // a record depends on state this function cannot see (is a planting selected? which of the readings
-  // does the vocabulary support?) — so the page routes a bare head ONLY through its one-breath reader
-  // and never down the old split path, which would search the head and then save whatever record was
-  // standing. The mark is also what the commit debouncer reads: a one-breath final that writes claims
-  // the same one-write cooldown a bare "next" does, so a re-delivered final (BUG-VOICEDUPE-001..005)
-  // cannot save the same harvest twice. "cucumber next" and "next to the fence" still refuse: a head
-  // with no number in it has no reading at all.
+  // OR A RECORD SAID WITHOUT (ALL OF) ITS UNITS: "165 next", "suyo long 2 165 next" (V5-VOICEVOCAB-001).
+  // Marked `bare`: whether such a head IS a record depends on state this function cannot see (is a
+  // planting selected? which reading does the vocabulary support?), so the page routes a bare head ONLY
+  // through its one-breath reader, never down the old split path (which would search the head and then
+  // save whatever record was standing). The mark is also what the commit debouncer reads: a one-breath
+  // final that writes claims the same one-write cooldown as a bare "next", so a re-delivered final
+  // (BUG-VOICEDUPE-001..005) cannot save twice. "cucumber next" and "next to the fence" still refuse: a
+  // head with no number has no reading.
   const bare = !isRecord && (oneBreathReadings(raw)?.readings.length ?? 0) > 0
   if (!isRecord && !bare) return null
 
   return { head, command, nearCommand, transcript: String(raw ?? ''), ...(bare ? { bare: true } : {}) }
 }
 
-// ── V5-VOICEVOCAB-001 (lane D4) — a one-breath record said WITHOUT (all of) its units ────────────────
+// ── V5-VOICEVOCAB-001 (lane D4): a one-breath record said WITHOUT (all of) its units ───────────────
 //
-// Dave, 2026-09-13: "assume the unit and assume grams, so 'planting 2 165' replaces 'planting 2 count
-// 165 grams'". BUG-VOICETWOBARENUM-001 made that work when the parts arrive as separate finals, and it
-// still failed when they arrive as ONE — which is how his own example reads. Measured on cb32814:
-// "165 next", "2 165" and "Suyo Long 2 165 next" were each a planting SEARCH that matched nothing,
-// cleared the crop and dropped the numbers; "ten five" was held as 15 and saved.
+// "planting 2 165" for "planting 2 count 165 grams". BUG-VOICETWOBARENUM-001 handles it when the parts
+// arrive as separate finals; this handles one final. Without it such a final was a planting SEARCH that
+// matched nothing, cleared the crop and dropped the numbers, and "ten five" was held as 15 and saved.
 //
-// WHAT THIS RETURNS, and what it deliberately does not decide. A final is `[name] values [command]`,
-// where values are one or two GROUPS — a number with or without a unit ("2", "twenty five",
-// "165 grams") — at least one WITHOUT a unit (an all-unit final belongs to segmentCandidates /
-// parseValueSequence / classify, unchanged). The boundary between name and values is the hazard:
-// thirteen of Dave's 244 plantings carry a digit or a number word in some alias (1884, Super Sweet
-// 100, Danvers 126, Cherry Rescue 1, Marvel of Four Seasons …), so "super sweet 100 3 200" is either
-// "super sweet 100" + 3, 200 or "super sweet" + 100, 3, 200. The string cannot say, so — exactly as
-// segmentCandidates does for the unit form — every split point is returned and the CALLER decides
-// against the vocabulary and the current selection. This function has neither.
+// A final is `[name] values [command]`, values being one or two GROUPS (a number with or without a
+// unit), at least one WITHOUT a unit (an all-unit final belongs to segmentCandidates /
+// parseValueSequence / classify). The name/values boundary is the hazard: some plantings carry a digit
+// or number word in an alias (1884, Super Sweet 100, Danvers 126), so "super sweet 100 3 200" is either
+// "super sweet 100" + 3, 200 or "super sweet" + 100, 3, 200. As in segmentCandidates, every split point
+// is returned and the CALLER decides against the vocabulary and the current selection; this function
+// has neither.
 //
-// Returns null when the final is not this shape at all (no number at its end; an all-unit record; a
-// lone number with no name and no command, which classifyPartial owns). Otherwise:
+// Returns null when the final is not this shape (no number at its end; an all-unit record; a lone
+// number with no name and no command, which classifyPartial owns). Otherwise:
 //   { head, nameless, command, nearCommand, readings: [{ name, groups: [{ value, unit, text }] }],
 //     badRun, overfull }
-// where `nameless` says the whole head is numbers (so a refusal must not clear the crop), `badRun`
-// flags a number-word run that is not ONE cardinal ("ten five", "three twenty five") — refused by the
-// caller rather than summed, because guard 3 makes parseNumber answer null for it — and `overfull`
-// flags a nameless head carrying more amounts than a record has slots ("2 165 7").
+// `nameless`: the whole head is numbers (a refusal must not clear the crop). `badRun`: a number-word
+// run that is not ONE cardinal ("ten five"), refused by the caller rather than summed. `overfull`: a
+// nameless head with more amounts than a record has slots ("2 165 7").
 const RUN_WORD = (t) => Object.prototype.hasOwnProperty.call(NAME_NUMBER_WORDS, t)
   || Object.prototype.hasOwnProperty.call(SCALES, t)
 const DIGIT_TOKEN = (t) => /^\d+(\.\d+)?$/.test(t)
@@ -850,8 +719,8 @@ export function oneBreathReadings(raw) {
     const run = parseValueRun(toks.slice(k))
     if (!run) continue
     if (run.bad) { badRun = true; continue }
-    // The same bare number twice in a row is ONE number — BUG-VOICETWOBARENUM-001's equality rule for
-    // separate finals, applied inside one: a doubled "165" is not a count and a weight.
+    // The same bare number twice in a row is ONE number (BUG-VOICETWOBARENUM-001's equality rule for
+    // separate finals, applied inside one final): a doubled "165" is not a count and a weight.
     const groups = []
     for (const g of run.groups) {
       const prev = groups[groups.length - 1]
@@ -879,21 +748,16 @@ export function oneBreathReadings(raw) {
 // counts them as numbers; the caller uses this to notice when one sits where a number could have been.
 export const NUMBER_HOMOPHONES = { won: 1, to: 2, too: 2, tree: 3, for: 4, fore: 4, ate: 8 }
 
-// ── V5-VOICEONEBREATH-002 — the NAMELESS value sequence ──────────────────────────────────────────
+// ── V5-VOICEONEBREATH-002: the NAMELESS value sequence ───────────────────────────────────────────
 //
-// "three count, two thirty one grams" with a planting ALREADY SELECTED. This is the exact complement
-// of segmentCandidates(): that function refuses a run with no name in front of it, deliberately and
-// for a measured reason (without the guard it offered a name of "two hundred thirty" carrying 1 g).
-// So the nameless case had no reader at all and classify() returned `unparsed: ambiguous-number` —
-// meaning that even WITHOUT a trailing "next", saying the count and the weight in one breath lost
-// both. Dave's cadence makes this the common case, not the edge one: he says the crop, pauses, then
-// says the two numbers together, and Chrome ends the session at the pause — so the utterance that
-// reaches us is routinely the nameless one.
+// "three count, two thirty one grams" with a planting ALREADY SELECTED: the complement of
+// segmentCandidates(), which refuses a run with no name in front of it. Without this reader classify()
+// returned `unparsed: ambiguous-number`, losing both values when count and weight are said in one
+// breath (the common case: Chrome ends the session at the pause after the crop name).
 //
-// The parse is unambiguous precisely BECAUSE there is no name: every unit closes a group, and every
-// group's number run is exactly what lies between the previous unit and this one. Nothing is being
-// guessed. Refuse the whole utterance if any group fails, for the same reason segmentCandidates
-// does — a partially-understood sentence must not become a partial record.
+// The parse is unambiguous precisely BECAUSE there is no name: every unit closes a group, and each
+// group's number run is what lies between the previous unit and this one. Any failing group refuses
+// the whole utterance, as in segmentCandidates.
 export function parseValueSequence(raw) {
   const text = normalise(raw)
   if (!text) return null
