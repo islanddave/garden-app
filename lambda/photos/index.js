@@ -135,11 +135,14 @@ async function getViewUrl(storagePath) {
 // V4-SPACEPHOTO-001 adds a FIFTH arm (spaces), gated on opts.spaceEnabled. The gate is a prod-safety
 // control, not a feature toggle: prod has no spaces.featured_photo_id column, so an ungated arm would
 // 42703 straight into the swallowed catch below and nothing would ever be visibly wrong — the space
-// would just silently never get a hero. `opts` is optional; the PUT/PATCH call passes none.
+// would just silently never get a hero. `opts` is optional so a 3-arg call keeps the spaces arm inert.
 //
 // The garden_node and spaces arms go through withActor because their audit triggers read the actor GUC
 // (lambda/audit-actor-guc.test.js); container, locations and inventory_items have no actor trigger and stay bare.
-async function autoPromoteFeatured(sql, photo, householdIds, userId, opts) {
+// The actor rides in opts ({ spaceEnabled, userId }) so the 4-arg flag calls keep their meaning; with no actor,
+// withActor refuses before building anything and the refusal lands in the non-fatal catch below.
+async function autoPromoteFeatured(sql, photo, householdIds, opts) {
+  const userId = opts?.userId;
   try {
     if (photo.project_id) {
       await sql`
@@ -1538,7 +1541,7 @@ export const handler = async (event) => {
         return resp(200, { ...inserted, duplicate: true, unhonored_parents: unhonored });
       }
 
-      await autoPromoteFeatured(sql, inserted, householdIds, userId, { spaceEnabled: spacePhotosEnabled });
+      await autoPromoteFeatured(sql, inserted, householdIds, { spaceEnabled: spacePhotosEnabled, userId });
 
       // DRG-ENGINE-003 V1.1 — auto-capture on photo log (Dave 2026-06-21): a photo logged against a
       // planting is first-party observational evidence. Resolve the canonical entity_id (entity registry,
@@ -1702,7 +1705,7 @@ export const handler = async (event) => {
         console.error('evidence caption sync non-fatal failure', evErr?.message ?? evErr);
       }
       if (prevIntakeStatus === 'pending_tag') {
-        await autoPromoteFeatured(sql, updated, householdIds, userId);
+        await autoPromoteFeatured(sql, updated, householdIds, { userId });
       }
       return resp(200, updated);
     }
