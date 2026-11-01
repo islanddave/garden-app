@@ -1,9 +1,6 @@
 /**
- * src/lib/captureQueue.js
- *
- * Bite 4 of Post-V2 UX overhaul Increment 2: Field capture durable queue.
- * Bite 5 extension: transcript columns + setTranscript / incrementTranscribeAttempt
- * for the Web Speech / manual-fallback transcription flow.
+ * src/lib/captureQueue.js: durable IndexedDB queue for field captures (audio blobs and text), plus the
+ * transcript columns the Web Speech / manual-fallback transcription flow writes.
  *
  * Record schema:
  *   {
@@ -18,17 +15,16 @@
  *     status:               'queued' | 'recorded' | 'transcribed' | 'handed_off',
  *     attemptCount:         number,
  *
- *     // Bite 5 (transcription) — additive; legacy records read with these fields
- *     // absent are tolerated (undefined treated as null / 0):
+ *     // Transcription fields are additive; legacy records without them are tolerated (undefined is
+ *     // treated as null / 0):
  *     transcript:           string | null,        // the user-confirmed (or Web Speech) transcript
  *     transcribedAt:        ISO 8601 string | null,
  *     transcribeAttempts:   number,                // total attempts (manual or web-speech)
  *     transcriptSource:     'manual' | 'web-speech' | null,
  *   }
  *
- * Retention policy (Dave-call from Bite 4): blobs persist indefinitely. No
- * delete / clear / prune. User-initiated cleanup arrives post-Bite 6 once an
- * audit surface exists.
+ * Retention: blobs persist indefinitely. There is no delete / clear / prune; user-initiated cleanup waits
+ * for an audit surface.
  *
  * iOS quota landmine: navigator.storage.persist() is requested from
  * durableStorage.js on FieldCapture first-mount. captureQueue itself surfaces
@@ -135,11 +131,9 @@ function reqToPromise(req) {
  */
 export async function enqueueRecording({ blob, mime, durationMs, mode = 'field', transcript, transcriptSource } = {}) {
   if (!blob) throw new Error('enqueueRecording: blob required')
-  // Bite 7 (one-pass capture): a transcript may arrive AT creation time when
-  // Web Speech ran alongside the MediaRecorder. When present, the record is
-  // born 'transcribed' — skipping the separate review-time Save step entirely.
-  // Additive + backward-compatible: callers that omit transcript get the
-  // original Bite 4 behavior (status='recorded', no transcript).
+  // A transcript may arrive AT creation time when Web Speech ran alongside the MediaRecorder; the record is
+  // then born 'transcribed', skipping the review-time Save step. Callers that omit it get
+  // status='recorded' and no transcript.
   const hasTranscript = typeof transcript === 'string' && transcript.trim().length > 0
   const t = hasTranscript ? transcript.trim() : null
   const src = hasTranscript
@@ -156,8 +150,7 @@ export async function enqueueRecording({ blob, mime, durationMs, mode = 'field',
       blob,
       mime:               mime || null,
       durationMs:         typeof durationMs === 'number' ? durationMs : null,
-      // Mirror transcript -> text for Bite 4 callers reading `text` (same
-      // mirroring setTranscript() does post-hoc).
+      // Mirror transcript -> text for callers reading `text` (as setTranscript() does post-hoc).
       text:               t,
       capturedAt:         nowIso(),
       status:             hasTranscript ? STATUS.TRANSCRIBED : STATUS.RECORDED,
@@ -175,10 +168,8 @@ export async function enqueueRecording({ blob, mime, durationMs, mode = 'field',
 }
 
 /**
- * Enqueue a text-only entry. Returns the stored record (with id).
- * Text entries are persisted with status='queued' and no transcript fields —
- * the text itself IS the content, and Bite 6 can decide whether to treat
- * the text as a transcript-equivalent at handoff time.
+ * Enqueue a text-only entry. Text entries are persisted with status='queued' and no transcript fields:
+ * the text itself IS the content, and handoff decides whether to treat it as a transcript-equivalent.
  */
 export async function enqueueText({ text, mode = 'field' } = {}) {
   if (!text || typeof text !== 'string') throw new Error('enqueueText: text required')
@@ -220,9 +211,6 @@ export async function list() {
   }
 }
 
-/**
- * Get a single record by id, or null if not found.
- */
 export async function get(id) {
   const db = await openDb()
   try {
@@ -255,11 +243,8 @@ export async function update(id, patch) {
 }
 
 /**
- * Set the transcript for a record. Marks status='transcribed', records
- * transcribedAt + transcriptSource, and increments transcribeAttempts.
- *
- * Backward-compat: legacy records (Bite 4 era) without transcribeAttempts read
- * undefined; we initialize to 0 before incrementing.
+ * Set the transcript for a record. Marks status='transcribed', records transcribedAt + transcriptSource,
+ * and increments transcribeAttempts (legacy records without transcribeAttempts start from 0).
  */
 export async function setTranscript({ id, transcript, source = TRANSCRIPT_SOURCE.MANUAL } = {}) {
   if (!id) throw new Error('setTranscript: id required')
@@ -277,8 +262,7 @@ export async function setTranscript({ id, transcript, source = TRANSCRIPT_SOURCE
       const next = {
         ...cur,
         id:                 cur.id,
-        // Bite 5: transcript is the canonical field; also mirror into `text`
-        // so Bite 4 callers reading `text` post-transcription still see content.
+        // transcript is the canonical field; also mirror into `text` so callers reading `text` still see content.
         transcript,
         text:               transcript,
         transcribedAt:      nowIso(),
@@ -315,43 +299,30 @@ export async function incrementTranscribeAttempt(id) {
   }
 }
 
-/**
- * LEGACY shim — Bite 4 callers used markTranscribed(id, text). Now delegates
- * to setTranscript with source='manual'. Kept to avoid a flag-day rename.
- */
+/** LEGACY shim: delegates to setTranscript with source='manual'. Kept to avoid a flag-day rename. */
 export async function markTranscribed(id, text) {
   return setTranscript({ id, transcript: text, source: TRANSCRIPT_SOURCE.MANUAL })
 }
 
-/**
- * Mark a record as handed off; convenience over update().
- */
 export async function markHandedOff(id) {
   return update(id, { status: STATUS.HANDED_OFF })
 }
 
-/**
- * Count of records NOT in the handed_off state (the "unprocessed" depth).
- */
 export async function getUnprocessedDepth() {
   const all = await list()
   return all.filter((r) => r.status !== STATUS.HANDED_OFF).length
 }
 
-/**
- * Total count of records (all statuses).
- */
 export async function getTotalCount() {
   const all = await list()
   return all.length
 }
 
 /**
- * Age (ms) of the oldest unprocessed record (status !== handed_off). Returns
- * null if no unprocessed records.
+ * Age (ms) of the oldest unprocessed record (status !== handed_off), or null if there are none.
  *
- * `now` is an injectable clock (defaults to Date.now) so tests can assert an
- * exact age without a wall-clock sleep. Callers pass nothing (OPS-CAPTUREQUEUEFLAKE-001).
+ * `now` is an injectable clock so tests can assert an exact age without a wall-clock sleep
+ * (OPS-CAPTUREQUEUEFLAKE-001).
  */
 export async function getOldestUnprocessedAgeMs({ now = Date.now } = {}) {
   const all = await list()
