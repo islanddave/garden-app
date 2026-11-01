@@ -24,6 +24,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { withActor } from './audit-actor.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // A construct NAMED IN A COMMENT is not that construct: deleting live code and leaving
@@ -55,6 +56,7 @@ function makeSql() {
     return Promise.resolve([]);
   };
   sql.calls = calls;
+  sql.transaction = async (stmts) => Promise.all(stmts);
   return sql;
 }
 
@@ -71,7 +73,9 @@ const buildSrc = extractFunction(SRC, 'function buildPhotoInsert');
 const promoteSrc = extractFunction(SRC, 'async function autoPromoteFeatured');
 const heroSrc = extractFunction(SRC, 'async function fetchSpaceHero');
 const resolveSrc = extractFunction(SRC, 'async function resolveHouseholdSpace');
-const instantiate = (fnSrc) => new Function(`return (${fnSrc});`)();
+// autoPromoteFeatured's audited arms call the dir's withActor (OPS-AUDITGUCTABLES-001), an import the extracted
+// source cannot see, so the real helper is passed in.
+const instantiate = (fnSrc) => new Function('withActor', `return (${fnSrc});`)(withActor);
 
 describe('V4-SPACEPHOTO-001 — flag-OFF inertness (AC-5)', () => {
   it('all four functions were extracted (guard for the extraction itself)', () => {
@@ -127,11 +131,13 @@ describe('V4-SPACEPHOTO-001 — flag-OFF inertness (AC-5)', () => {
   });
 
   it('the spaces arm stays inert for a legacy 3-arg call (opts undefined)', async () => {
-    // The PUT re-tag path still calls autoPromoteFeatured with three args; it cannot set space_id,
-    // and an `opts?.` that threw or defaulted open would emit spaces SQL from that path.
+    // The PUT re-tag path passes only { userId } (no spaceEnabled); it cannot set space_id, and an
+    // `opts?.` that threw or defaulted open would emit spaces SQL from that path.
     const autoPromoteFeatured = instantiate(promoteSrc);
     const sql = makeSql();
     await autoPromoteFeatured(sql, { id: 'photo-1', space_id: 'space-1' }, ['user_dave']);
+    expect(sql.calls).toHaveLength(0);
+    await autoPromoteFeatured(sql, { id: 'photo-1', space_id: 'space-1' }, ['user_dave'], { userId: 'user_dave' });
     expect(sql.calls).toHaveLength(0);
   });
 
@@ -168,7 +174,7 @@ describe('V4-SPACEPHOTO-001 — flag-OFF inertness (AC-5)', () => {
       /if \(spacePhotosEnabled && spaceFeaturedMatch && method === 'PUT'\)/,
       /if \(spacePhotosEnabled && body\.space_id != null\)/,
       /buildPhotoInsert\(sql, body, userId, spacePhotosEnabled\)/,
-      /autoPromoteFeatured\(sql, inserted, householdIds, \{ spaceEnabled: spacePhotosEnabled \}\)/,
+      /autoPromoteFeatured\(sql, inserted, householdIds, \{ spaceEnabled: spacePhotosEnabled, userId \}\)/,
       /opts\?\.spaceEnabled && photo\.space_id/,
       /resolveHouseholdSpace\(sql, householdIds, spacePhotosEnabled\)/,
       // PUT /api/photos/:id/space — the attach route (crucible 2026-08-02). Deliberately a separate
@@ -232,7 +238,7 @@ describe('V4-SPACEPHOTO-001 — flag-ON shapes', () => {
     const autoPromoteFeatured = instantiate(promoteSrc);
     const sql = makeSql();
     const householdIds = ['user_dave', 'user_jen'];
-    await autoPromoteFeatured(sql, { id: 'photo-1', space_id: 'space-1' }, householdIds, { spaceEnabled: true });
+    await autoPromoteFeatured(sql, { id: 'photo-1', space_id: 'space-1' }, householdIds, { spaceEnabled: true, userId: 'user_dave' });
     const spaceCalls = sql.calls.filter((c) => c.text.includes('UPDATE spaces'));
     expect(spaceCalls).toHaveLength(1);
     expect(spaceCalls[0].text).toMatch(/created_by = ANY\(/);
@@ -246,9 +252,12 @@ describe('V4-SPACEPHOTO-001 — flag-ON shapes', () => {
   it('a space-only photo fires ONLY the spaces arm (no cross-arm writes)', async () => {
     const autoPromoteFeatured = instantiate(promoteSrc);
     const sql = makeSql();
-    await autoPromoteFeatured(sql, { id: 'photo-2', space_id: 'space-9' }, ['user_dave'], { spaceEnabled: true });
-    expect(sql.calls).toHaveLength(1);
-    expect(sql.calls[0].text).toContain('UPDATE spaces');
+    await autoPromoteFeatured(sql, { id: 'photo-2', space_id: 'space-9' }, ['user_dave'], { spaceEnabled: true, userId: 'user_dave' });
+    // Exactly the spaces arm and the actor GUC its withActor batch leads with (OPS-AUDITGUCTABLES-001).
+    expect(sql.calls).toHaveLength(2);
+    expect(sql.calls[0].text).toContain("set_config('app.actor_clerk_sub'");
+    expect(sql.calls[0].values).toEqual(['user_dave']);
+    expect(sql.calls[1].text).toContain('UPDATE spaces');
   });
 
   it('the ?space_id gallery is an EXACT match — never the loc_subtree recursive walk', () => {
