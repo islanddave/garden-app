@@ -5,8 +5,7 @@
 // /locations under another name.
 //
 // Whole file is gated by SPACE_PHOTOS_ENABLED: App.jsx does not register the routes when it is false,
-// so nothing here mounts and no space request is ever issued (photos.space_id and
-// spaces.featured_photo_id do not exist in prod yet).
+// so nothing here mounts and no space request is ever issued.
 //
 // The space id is DISCOVERED, not configured: /space mounts with no route param and the id-free
 // GET /api/photos/space-hero resolves the caller's own household space server-side, returning the id
