@@ -1,9 +1,9 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { useApiFetch } from '../lib/api.js'
 
-// useHarvests — V4-HARVESTVIEW-001 S2a/S2b. Reads the Harvests model (GET /api/harvests): keyset-
-// paginated entries (opaque `cursor`) + live aggregates. loadMore APPENDS the next page. Filters
-// (timeframe/crop/project — S2b) narrow the query; a filter change cancels the in-flight request
+// useHarvests — reads the Harvests model (GET /api/harvests): keyset-paginated entries (opaque
+// `cursor`) + live aggregates. loadMore APPENDS the next page. Filters
+// (timeframe/crop/project) narrow the query; a filter change cancels the in-flight request
 // (AbortController) and a stale load-more is dropped (reqRef guard) so results never interleave.
 export function useHarvests({ timeframe, crop, project } = {}) {
   const { fetch: apiFetch } = useApiFetch()
@@ -57,9 +57,8 @@ export function useHarvests({ timeframe, crop, project } = {}) {
     try {
       const data = await apiFetch('/api/harvests' + buildQs(cursor))
       if (reqRef.current !== rid) return // filter changed under us — the appended page would be wrong
-      // BUG-HARVCURSORDUPE-001. A cursor minted by one deploy can be re-walked by the next, so a
-      // page may repeat rows already appended — duplicate event_id, and event_id IS the React key
-      // (Harvests.jsx:519). Dedupe on append rather than at the cursor: it also covers any other
+      // A cursor minted by one deploy can be re-walked by the next, so a page may repeat rows
+      // already appended — duplicate event_id, and event_id IS the React key in Harvests.jsx. Dedupe on append rather than at the cursor: it also covers any other
       // duplicate source, and it is a no-op when the page is clean.
       setEntries((prev) => {
         const page = Array.isArray(data?.entries) ? data.entries : []

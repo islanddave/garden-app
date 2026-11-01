@@ -1,4 +1,4 @@
-// useCritterCollection — fetch hook for /api/critters/collection (Stickerbook Phase 2).
+// useCritterCollection — fetch hook for /api/critters/collection.
 //
 // Contract:
 //   { collected, loading, error, reload }

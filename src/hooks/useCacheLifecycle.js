@@ -137,7 +137,7 @@ export function useCacheLifecycle(sub) {
 //   G3 host frame:  `grep -rl PageShell src/pages | wc -l` ≥ 35 of 44
 //   G4 primitive:   refreshAll contains no _store.delete (done) AND an outcome-reporting variant
 //                   exists whose result distinguishes all-success from all-failure.
-//   G5 demand:      Dave asked, or a reach-for-refresh behavior is documented. G1–G4 are necessary,
+//   G5 demand:      the owner asked, or a reach-for-refresh behavior is documented. G1–G4 are necessary,
 //                   never sufficient.
 //
 // Also rejected: making this promise-returning. revalidate()'s exec attaches both handlers inline so

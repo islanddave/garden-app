@@ -1,6 +1,6 @@
-// usePrefersReducedMotion — the OS "reduce motion" setting, live (plan-v2 §5.11). Until now the app had only
-// a one-shot read (critterArt.js prefersReducedMotion); the redesigned Today scrolls on a chip tap and must
-// switch smooth → instant the moment the setting changes, not at the next mount. No matchMedia (jsdom, an
+// usePrefersReducedMotion — the OS "reduce motion" setting, live. critterArt.js prefersReducedMotion is
+// only a one-shot read; Today scrolls on a chip tap and must switch smooth → instant the moment the
+// setting changes, not at the next mount. No matchMedia (jsdom, an
 // old WebView) reads as "no preference", the same default as the one-shot read.
 import { useEffect, useState } from 'react'
 

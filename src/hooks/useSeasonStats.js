@@ -1,4 +1,4 @@
-// useSeasonStats — the Season stats envelope for one grow-year (plan D4/D5), read through the app's
+// useSeasonStats — the Season stats envelope for one grow-year, read through the app's
 // SWR cache (useCachedFetch). Default season = the grow-year today falls in (Nov 1 – Oct 31, ET).
 //
 // Fail closed on a shape this page did not ask for: an envelope that is not version 1 with a sections
