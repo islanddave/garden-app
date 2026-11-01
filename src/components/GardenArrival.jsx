@@ -2,25 +2,20 @@
 // newly-earned critter is witnessed (scrolled fully into view or tapped). Mirrors the log-event
 // CritterArrival flight language, scaled to the card:
 //   • a sun arcs up from the top-left and rests above the top edge (soft glow),
-//   • plant-family flowers grow OUT from the L/R edges (each its own bloom — tomato star, pepper
-//     star, cucurbit trumpet, allium globe, herb spike, marigold, nasturtium, strawberry, brassica,
-//     dianthus, bean), every bloom slow-pulsing,
+//   • plant-family flowers grow OUT from the L/R edges (one bloom per plant family), every bloom
+//     slow-pulsing,
 //   • grass grows up the whole bottom edge and stands until the end,
 //   • the critter flies in on a smooth eased arc and settles, staying,
 //   • then the garden lingers several seconds and fades slowly.
 // ~6s. Ambient/in-context (no modal/sound/haptic).
 //
-// BUG-GARDENARRIVALMOTION-001: this comment used to say the CALLER skips the whole thing under
-// prefers-reduced-motion, and treat that as the component's compliance story. Collection.jsx does
-// hold a REDUCE_MOTION check, but it is a module-eval const on ONE call site — it made the claim
-// true of a caller, never of this component, and eight concurrent animations (several 6000ms
-// infinite, none pausable) shipped behind an assertion that nothing here enforced. It honours the
-// preference itself now: same garden, settled, with zero motion. Reducing is the only compliant
-// move here — this is a reward surface, so the Reward UX rule bars adding any signalling channel
-// (no modal, no interrupt, no sound, no haptic) to compensate.
+// BUG-GARDENARRIVALMOTION-001: THIS COMPONENT honours prefers-reduced-motion itself (the caller's
+// module-eval check in Collection.jsx does not make that true of this component): same garden,
+// settled, with zero motion. Reducing is the only compliant move because this is a reward surface,
+// so the Reward UX rule bars adding any signalling channel (no modal, no interrupt, no sound, no
+// haptic) to compensate.
 //
-// `flowers` is best-effort drawn from the user's live plantings; falls back to a curated family mix
-// (V?-PLANTSOURCE follow-up to wire plantings precisely).
+// `flowers` is best-effort drawn from the user's live plantings; falls back to a curated family mix.
 
 import React from 'react'
 import { prefersReducedMotion as detectReducedMotion } from '../lib/critterArt.js'
@@ -64,12 +59,12 @@ function GardenSprite() {
   )
 }
 
-// BUG-GARDENARRIVALMOTION-001 — every animated class, listed ONCE. Two overrides are emitted from
-// it: a `.ga-reduced` descendant block (the JS-detected path, and what a test can assert) and a
+// BUG-GARDENARRIVALMOTION-001 — every animated class, listed ONCE. Two overrides are emitted from it:
+// a `.ga-reduced` descendant block (the JS-detected path, and what a test can assert) and a
 // `@media (prefers-reduced-motion: reduce)` block (reactive, and the mechanism when nothing
-// detected). Neutralising by animation:none + opacity:1 lands every element on its animation's
-// 100% frame — the settled garden — because each keyframe set ends at opacity 1 and an identity
-// transform, so the reduced rendering is the arrival's own resting state and not a second design.
+// detected). Neutralising by animation:none + opacity:1 lands every element on its animation's 100%
+// frame, the settled garden, because each keyframe set ends at opacity 1 and an identity transform.
+// The reduced rendering is the arrival's own resting state, not a second design.
 const ANIMATED = ['.ga-flier', '.ga-sun', '.ga-glow', '.ga-flourish', '.ga-veg', '.ga-pz', '.ga-grass', '.ga-blade']
 const STILL = 'animation:none!important;opacity:1!important'
 const REDUCED_RULES =
@@ -100,10 +95,9 @@ ${REDUCED_RULES}
 export default function GardenArrival({ imageUrl, viewScale = 1, flowers, prefersReducedMotion = null }) {
   const picks = (flowers && flowers.length ? flowers : DEFAULT_FLOWERS)
   const placed = SLOTS.map((s, i) => ({ ...s, sym: picks[i % picks.length] }))
-  // Prop first as a test seam, matching CritterSprite. Render-time detection is enough for a
-  // one-shot ~6s reveal; the media query in REDUCED_RULES is what covers a preference that flips
-  // while the arrival is on screen, and it is also the whole mechanism when this renders with no
-  // JS-side detection at all.
+  // Prop first as a test seam, matching CritterSprite. Render-time detection is enough for a one-shot
+  // ~6s reveal; the media query in REDUCED_RULES covers a preference that flips mid-arrival and is the
+  // whole mechanism when this renders with no JS-side detection.
   const reduced = prefersReducedMotion ?? detectReducedMotion()
   return (
     <div className={reduced ? 'ga-root ga-reduced' : 'ga-root'} aria-hidden="true">

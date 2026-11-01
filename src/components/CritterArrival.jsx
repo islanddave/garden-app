@@ -1,19 +1,11 @@
-// CritterArrival — global Stage 1 flash with name + first-sighting badge (Phase B++ celebration upgrade 2026-05-30 late).
+// CritterArrival — global Stage 1 flash with the species name and first-sighting badges. A
+// celebratory moment: the name must be legible and the badges stacked below the 112px sprite.
 //
-// Spec: Dave directives 2026-05-30 evening:
-// - "Make it 2x bigger and allow it to linger 2x longer"
-// - "Animation 20% slower so it lasts a touch longer"
-// - "Include name of the critter, and whether it is a first find"
-// - "Name should be legible and hit dopamine enhancement triggers with style/colors/etc"
-// - "This should be a celebratory moment, not just something happening"
-//
-// Sizing: sprite now 112px (was 56px). Name + badge stacked below.
-//
-// Timing (5000ms total):
-//   0       → 960ms : fly-in arc from bottom-right (FAB origin) to viewport center (38vh), with bounce.
+// Timing (FLASH_TOTAL_MS = 5000ms; keyframe percentages below are fractions of it):
+//   0       → 960ms : fly-in arc from bottom-right to viewport center (38vh), with bounce.
 //   960     → 1500  : settle into hold position (small overshoot recovery).
-//   1500    → 4400  : HOLD (3400ms) — name fade-in, glow ring, optional first-sighting flourish.
-//   4400    → 5000  : fade-out (600ms).
+//   1500    → 4400  : HOLD — name fade-in, glow ring, optional first-sighting flourish.
+//   4400    → 5000  : fade-out.
 //
 // Pointer events: none — taps pass through to underlying UI.
 //
@@ -47,13 +39,12 @@ export default function CritterArrival({ critter, onDone = null }) {
   if (!species) return null
   const spriteSrc = `/critters/${species.sprite_filename}`
   const speciesName = species.name
-  // Stickerbook is per-USER (Dave 2026-05-31): "First sighting!" fires on the user's
-  // personal first-time-seeing-this-species moment.
+  // Stickerbook is per-USER: "First sighting!" fires on the user's personal first-time-seeing-this-
+  // species moment.
   const isFirstSighting = Number.isInteger(critter.species_user_count) && critter.species_user_count === 1
   // Household-first: when this species has NEVER been earned by anyone in the household before.
-  // Strict subset of user-first (if I've never seen X, household may have via someone else;
-  // if household hasn't, I certainly haven't). Surfaces an EXTRA "🌿 New to your garden!"
-  // badge stacked below the personal one. Only fires when both conditions hold.
+  // Strict subset of user-first. Surfaces an EXTRA "New to your garden!" badge stacked below the
+  // personal one. Only fires when both conditions hold.
   const isHouseholdFirst = Number.isInteger(critter.species_household_count) && critter.species_household_count === 1
 
   return (

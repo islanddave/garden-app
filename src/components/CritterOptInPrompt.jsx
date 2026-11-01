@@ -1,16 +1,12 @@
-// Phase B opt-in prompt — MVP-Critter.
-// Canonical spec: revision §3.8 (informational ONLY — NO "Sure" nav button — preserves
-//                 project CLAUDE.md notification-permission discipline rule),
-//                 §3.9 step 4 (renders after 3+ earned critters AND coachmark dismissed).
-// V100 binding: §6 system-notification opt-in is user-initiated nav only;
-//               project CLAUDE.md: "Notification permission discipline:
-//               NEVER auto-call Notification.requestPermission() from a reward flow."
+// Opt-in prompt — MVP-Critter. Informational ONLY: NO "Sure" nav button, preserving the
+// notification-permission discipline rule (system-notification opt-in is user-initiated nav only;
+// NEVER auto-call Notification.requestPermission() from a reward flow).
 //
-// SUPPRESSION-FLAG FIX (§3.8): opt_in_prompt_seen_at is ONLY set after prompt ACTUALLY rendered.
+// SUPPRESSION-FLAG FIX: opt_in_prompt_seen_at is ONLY set after the prompt ACTUALLY rendered.
 // Parent computes `eligible` strictly:
 //   eligible = (
-//     SYSTEM_NOTIFICATIONS_ENABLED === true     // §6 feature flag (currently FALSE in V2.x)
-//     AND earned_critter_count >= OPT_IN_CRITTER_THRESHOLD  // V101: all species count (no baselines)
+//     SYSTEM_NOTIFICATIONS_ENABLED === true     // feature flag
+//     AND earned_critter_count >= OPT_IN_CRITTER_THRESHOLD  // all species count (no baselines)
 //     AND coachmark_seen_at IS NOT NULL
 //     AND opt_in_prompt_seen_at IS NULL
 //   )
@@ -18,12 +14,12 @@
 // Dismissal contract:
 //   • Informational text only — NO button, NO link to /settings, NO "Sure" navigation.
 //   • Renders inline at top of Garden (sibling to coachmark).
-//   • On unmount (route change out): fire onDismiss() → parent posts Route 10 only
-//     because the prompt actually rendered (suppression-flag fix).
+//   • On unmount (route change out): fire onDismiss() → parent posts Route 10 only because the
+//     prompt actually rendered (suppression-flag fix).
 //   • NEVER calls Notification.requestPermission() — that's user-initiated from Settings only.
 //
 // Props:
-//   eligible       — boolean; parent computes per spec including SYSTEM_NOTIFICATIONS_ENABLED gate
+//   eligible       — boolean; parent computes it including the SYSTEM_NOTIFICATIONS_ENABLED gate
 //   copy           — string; defaults to DEFAULT_OPT_IN_COPY
 //   onDismiss      — () => void; called on unmount IFF prompt actually rendered (eligible was true)
 //
@@ -44,7 +40,7 @@ export default function CritterOptInPrompt({
     if (!eligible) return undefined
     renderedRef.current = true
     return () => {
-      // Suppression-flag fix (§3.8): fire ONLY if the prompt actually rendered.
+      // Suppression-flag fix: fire ONLY if the prompt actually rendered.
       if (renderedRef.current && typeof onDismiss === 'function') {
         onDismiss()
       }

@@ -1,21 +1,20 @@
 // V4-PERFCLERK-001 C — the shapes that stand in for the app while Clerk is still resolving.
 //
-// THE ONE INVARIANT, and the reason this file has no imports beyond React + the palette:
-// nothing here may take a prop, read a context, call a hook that touches identity, or issue a
-// request. These render during the window where the app does not yet know WHO the user is — Dave
-// and Jen share one installed PWA, so anything identity-derived painted here is a cross-user leak.
-// Keeping them prop-less and context-free makes that structural rather than a review promise: there
-// is no channel through which user data could reach them.
+// THE ONE INVARIANT, and the reason this file has no imports beyond React + the palette: nothing here
+// may take a prop, read a context, call a hook that touches identity, or issue a request. These
+// render while the app does not yet know WHO the user is, and household members share one installed
+// PWA, so anything identity-derived painted here is a cross-user leak. Keeping them prop-less and
+// context-free makes that structural: there is no channel through which user data could reach them.
+// authRenderGate.test.jsx scans this file's code for exactly that.
 //
 // They are also deliberately UNLABELLED. A skeleton that spelled out "Today · Garden · Harvests"
-// would be the signed-IN navigation shown to someone who may turn out to be signed out — the same
-// wrong-identity flash the 'pending' header class exists to kill, one layer down. Shapes read as
-// "loading"; words read as "you are in".
+// would be the signed-IN navigation shown to someone who may turn out to be signed out, the same
+// wrong-identity flash the 'pending' header class exists to kill. Shapes read as "loading"; words
+// read as "you are in".
 //
-// V4-COLDSTART-001 adds IdentityUnavailable to this file rather than to a new one, ON PURPOSE: it
-// renders in the same "we do not know who this is" window and is bound by the same invariant, and
-// authRenderGate's structural scan reads THIS file — so the new terminal screen inherits that proof
-// instead of needing a parallel one. The single added import (reloadApp) touches window.location and
+// IdentityUnavailable (V4-COLDSTART-001) lives here ON PURPOSE: it renders in the same "we do not
+// know who this is" window, is bound by the same invariant, and authRenderGate's structural scan
+// reads THIS file, so it inherits that proof. The single added import (reloadApp) touches
 // nothing else. Keep the invariant true for anything else added here.
 import React from 'react'
 import { P, BOTTOM_NAV_HEIGHT_PX } from '../lib/constants.js'
@@ -50,10 +49,10 @@ export function RouteSkeleton() {
   )
 }
 
-// The bottom-nav slot. Five bones on the real nav's geometry so the frame is complete and the
-// content area does not jump when the real <BottomNav> replaces it. Not interactive, not focusable,
-// and it does NOT write --bottom-nav-height: BottomNav owns that variable, and two writers for one
-// value is how the two silently disagree. App.jsx reserves the space for this state explicitly.
+// The bottom-nav slot. Five bones on the real nav's geometry so the content area does not jump when
+// the real BottomNav replaces it. Not interactive, not focusable, and it does NOT write
+// --bottom-nav-height: BottomNav owns that variable (two writers for one value silently disagree).
+// App.jsx reserves the space for this state explicitly.
 export function NavSkeleton() {
   return (
     <nav
@@ -71,25 +70,25 @@ export function NavSkeleton() {
   )
 }
 
-// The heading is branched rather than fixed because BOTH causes are real and they want different
-// next actions. `navigator.onLine === false` is the airplane-mode/dead-zone case (walk into signal,
-// retry); a false reading with the radio up is Clerk being unreachable or down (wait, retry). Saying
-// "you're offline" to someone holding five bars sends them debugging their phone. Wrapped because
-// navigator is absent in a non-browser render.
+// The heading is branched because BOTH causes are real and want different next actions:
+// `navigator.onLine === false` is the airplane-mode/dead-zone case (find signal, retry); a false
+// reading with the radio up is Clerk being unreachable (wait, retry). Saying "you're offline" to
+// someone holding five bars sends them debugging their phone. Wrapped because navigator is absent
+// in a non-browser render.
 function isOffline() {
   try { return typeof navigator !== 'undefined' && navigator.onLine === false } catch { return false }
 }
 
-// V4-COLDSTART-001 — the terminal state of an offline cold start, and the whole point of this lane.
+// V4-COLDSTART-001 — the terminal state of an offline cold start.
 //
-// WHAT IT DELIBERATELY IS NOT, since each rejected option is the one a later change will be tempted
-// by. Not a read-only shell of cached content: rendering ANY data before identity resolves is
-// precisely the two-household-members leak authRenderGate exists to prevent, and the SW's per-subject
-// partitions cannot be keyed without a subject. Not a guessed or remembered identity: that is offline
-// sign-in, a larger design, out of scope. Not a redirect to /login: it cannot work offline and it
-// reads as "you got signed out", which is false and alarming.
+// WHAT IT DELIBERATELY IS NOT (each rejected option is one a later change will be tempted by):
+// not a read-only shell of cached content (rendering ANY data before identity resolves is the
+// cross-household leak authRenderGate exists to prevent, and the SW's per-subject partitions cannot
+// be keyed without a subject); not a guessed or remembered identity (that is offline sign-in, a
+// larger design); not a redirect to /login (it cannot work offline and reads as "you got signed
+// out", which is false and alarming).
 //
-// So: a statement of fact and a way out. No data of any kind, and — like its siblings above — no
+// So: a statement of fact and a way out. No data of any kind, and, like its siblings above, no
 // props, no context, no hooks that touch identity, no request.
 export function IdentityUnavailable() {
   const offline = isOffline()

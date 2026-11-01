@@ -4,42 +4,35 @@ import { readDraft, writeDraft, clearDraft } from '../lib/draftStash.js'
 import { useReportOverlayDirty } from '../context/OverlayContext.jsx'
 import { setReloadBlocked } from '../lib/reloadGate.js'
 
-// V4-DIRTYGUARDSWEEP-001 — draft-stash route key (siblings: 'logone', 'logmany').
+// Draft-stash route key (siblings: 'logone', 'logmany').
 const DRAFT_KEY = 'fieldnote'
 
 /**
  * src/components/TapCaptureFallback.jsx
  *
- * Bite 3 of Post-V2 UX overhaul Increment 2: Field capture surface MVP.
+ * Tap-to-type fallback for the Field capture surface, used when the user either cannot use the mic
+ * (no permission, no mic, silent failure) OR prefers to type. Typed content goes through the same
+ * Garden Helper prompt assembly as the transcribed captures, so this fallback IS the Rung-1 happy
+ * path for non-mic users.
  *
- * Tap-to-type fallback for the Field capture surface. Used when the user
- * either cannot use the mic (no permission, no mic, silent failure) OR
- * prefers to type. Bite 6 (Rung-1 handoff) will route the typed content
- * through the same Garden Helper prompt assembly as the transcribed
- * captures, so this fallback IS the Rung-1 happy path for non-mic users.
- *
- * Surface only — no DB writes, no Lambda. Submitting calls `onSubmit(text)`
- * and clears the textarea. The parent (FieldCapture) decides what to do
- * with the text (Bite 3: push onto an in-memory stub queue; Bite 6: pipe
- * to helperPrompt.js).
+ * Surface only — no DB writes, no Lambda. Submitting calls `onSubmit(text)` and clears the textarea.
+ * The parent (FieldCapture) decides what to do with the text.
  *
  * Props:
  *   - onSubmit: (text: string) => void
  *
- * Operational surface — not a reward. No celebration on submit, no streak,
- * no badge. The "Saved to queue" inline confirmation is functional ACK
- * (per CLAUDE.md Reward UX §interrupt-exception: functional confirmation
- * after a user-initiated action, not a celebration).
+ * Operational surface — not a reward. No celebration on submit, no streak, no badge. The "Saved to
+ * queue" inline confirmation is functional ACK (Reward UX interrupt-exception: functional
+ * confirmation after a user-initiated action, not a celebration).
  */
 export default function TapCaptureFallback({ onSubmit }) {
   const [text, setText] = useState('')
   const [justSubmitted, setJustSubmitted] = useState(false)
 
   // V4-DIRTYGUARDSWEEP-001 — the dirty-guard contract lives HERE rather than on FieldCapture, which
-  // holds no user-authored state of its own: its queue is already durable in IndexedDB and the rest
-  // (depth, expandedId, tileSend) is view state. This textarea is the one place on that surface
-  // where typed content exists with no other home until Save to queue. Wiring the page instead would
-  // have meant inventing an onDirty prop and mirroring this string into a second copy upstream.
+  // holds no user-authored state of its own (its queue is durable in IndexedDB; the rest is view
+  // state). This textarea is the one place on that surface where typed content exists with no other
+  // home until Save to queue.
   useEffect(() => {
     const draft = readDraft(DRAFT_KEY)
     if (typeof draft?.text === 'string') setText(draft.text)
@@ -57,9 +50,8 @@ export default function TapCaptureFallback({ onSubmit }) {
 
   useReportOverlayDirty(hasUnsavedInput)
 
-  // /field-capture is not an overlayable route today, so the hook above is a strict no-op and the
-  // reload gate below is what actually protects this textarea. Per-instance key + BOOLEAN dep for
-  // the reasons EventNew.jsx:933-941 records.
+  // /field-capture is not an overlayable route, so the hook above is a strict no-op and the reload
+  // gate below is what actually protects this textarea. Per-instance key + BOOLEAN dep, as in EventNew.
   const reloadGateKey = `field-note:${useId()}`
   useEffect(() => {
     setReloadBlocked(reloadGateKey, hasUnsavedInput)
@@ -74,8 +66,7 @@ export default function TapCaptureFallback({ onSubmit }) {
     setText('')
     clearDraft(DRAFT_KEY)   // the note is on the queue — the working draft is spent
     setJustSubmitted(true)
-    // Inline ACK auto-clears after a short window. Not a celebration —
-    // a functional confirmation that the queue accepted the entry.
+    // Inline ACK auto-clears after a short window: a functional confirmation, not a celebration.
     setTimeout(() => setJustSubmitted(false), 1500)
   }
 
