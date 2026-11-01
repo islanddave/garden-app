@@ -1,62 +1,50 @@
-// /api/harvests — V4-HARVESTVIEW-001 (Harvests page) READ MODEL. GET-only, Clerk-authed,
-// HOUSEHOLD-scoped, soft-delete filtered. Retrospective record of "what you got": the Log feed
-// (day-grouped entries) + Totals (live-computed aggregates). Mutates NOTHING (S1 is read-only).
+// /api/harvests (V4-HARVESTVIEW-001): the Harvests page READ MODEL. GET-only, Clerk-authed,
+// household-scoped, soft-delete filtered. The Log feed (day-grouped entries) plus Totals (live-computed
+// aggregates). Mutates nothing. The Today watch list and season stats ride this prefix in watch-route.js
+// and season-stats.js.
 //
-// Mirrors lambda/daily-plan-read/index.js (auth/secrets/CORS/Function-URL handler seam) and
-// lambda/preservation/index.js (the crop-key join garden_node.cultivar_id -> cultivar.crop_type_slug
-// -> crop_types, and household scope via the project owner). Per-dir household.js copy (B2).
+// Mirrors lambda/daily-plan-read/index.js (auth/secrets/CORS/handler seam) and lambda/preservation/index.js
+// (the crop-key join garden_node.cultivar_id -> cultivar.crop_type_slug -> crop_types).
 //
-// CORRECTNESS INVARIANTS (live-Neon verified 2026-07-22 + coordinator schema correction 2026-07-23):
-//   * Household scope anchors on event_log.project_id -> plant_projects.created_by. NEVER on the
-//     nullable event_log.plant_id join (that would leak/partition on unattributed rows).
-//     BUG-HARVESTSNOPROJECTPICKS-001: project_id has been nullable since care-rekey-001 (plant-only
-//     events on project-less plantings), and the old INNER JOIN silently dropped those picks — 6 of
-//     1,761 grow-year-2026 picks on prod 2026-09-29, which Season stats (stat_pick) did count. So the
-//     join is LEFT and scope has two arms: through the project when there is one, through the
-//     event's own created_by (the LOGGER) when there is none. The precedent is stat_pick's owner,
-//     coalesce(pj.created_by, e.created_by) (migrations/v5-seasonstats-001/0a-additive-ddl.sql).
-//     It is NOT the house rule for a project-less row (watch-route.js: gn.container_id IS NULL AND
-//     gn.created_by = ANY(...)), which scopes through the PLANTING's owner; the two can admit
-//     different rows when the logger is not the planting's owner. The
-//     second arm is gated on `e.project_id IS NULL`, not a bare COALESCE, so a project_id that
-//     points at a missing row can never fall through to the logger's id. Soft-deleted projects are
-//     unchanged: pj still joins and still scopes by its owner, as it always did.
+// INVARIANTS
+//   * Household scope anchors on event_log.project_id -> plant_projects.created_by, NEVER on the nullable
+//     event_log.plant_id join. project_id is nullable (plant-only events on project-less plantings), so
+//     the join is LEFT and scope has two arms: through the project when there is one, else through the
+//     event's own created_by. The second arm is gated on `e.project_id IS NULL`, not a bare COALESCE, so a
+//     project_id pointing at a missing row can never fall through to the logger's id. This matches
+//     stat_pick's owner, coalesce(pj.created_by, e.created_by), and differs from watch-route.js, which
+//     scopes a project-less row through the PLANTING's owner; the two admit different rows when the
+//     logger is not the planting's owner.
 //   * Entry set = event_log rows with event_type IN ('harvest','first_harvest'), deleted_at IS NULL.
-//   * LEFT JOIN harvest_log/garden_node/cultivar/crop_types with EVERY soft-delete predicate in the
-//     JOIN ON clause, never WHERE — a WHERE placement re-inner-joins and silently drops the
-//     quantity-less / orphan (no harvest_log row) events the design REQUIRES to render.
-//   * plant_id + variety_id are nullable -> LEFT JOIN everything + an "Other" fallback bucket for
-//     unattributed rows so Log and Totals always reconcile (quantities never silently vanish).
-//   * Photos via LATERAL json_agg — a plain join fan-out multiplies event rows and corrupts the
-//     (event_date,id) keyset page.
-//   * day_key = YYYY-MM-DD in HARVEST_TZ, computed SERVER-SIDE so the client groups on the string
-//     with zero timezone math.
-//   * I7 photo thumbnails: this Lambda returns photo IDs only (no S3 presign, no S3_PHOTOS/PHOTO_CDN
-//     env). The client resolves each thumbnail lazily against the EXISTING household-scoped
-//     GET /api/photos/view-url/:id (the PutUpPhotoThumb precedent) — one canonical photo-URL path.
-//     V4-HARVCROPPHOTO-001 adds a SECOND id-bearing field (aggregates.crops[].hero_photo_id) under
-//     the same rule, and the rule is now load-bearing rather than incidental: 31 crop heroes measured
-//     134 MB as originals against 5.6 MB as thumbs (live S3, 2026-08-24), so the tier the client
-//     asks for is worth ~24x the payload. Reversing the decline — copying photo-access.js in and
-//     granting the photos bucket — would let this response carry both derivative URLs and cost zero
-//     extra round trips, which is exactly what it buys and why it stays Dave's call, not a lane's.
+//   * LEFT JOIN harvest_log/garden_node/cultivar/crop_types with EVERY soft-delete predicate in the JOIN
+//     ON clause, never WHERE: a WHERE re-inner-joins and drops the quantity-less and orphan events the
+//     page must render.
+//   * plant_id and variety_id are nullable, so everything is LEFT JOINed with an "Other" bucket for
+//     unattributed rows, so Log and Totals always reconcile.
+//   * Photos via LATERAL json_agg: a plain join fan-out multiplies event rows and corrupts the keyset page.
+//   * day_key = YYYY-MM-DD in HARVEST_TZ, computed SERVER-SIDE so the client groups on the string with no
+//     timezone math.
+//   * Photo thumbnails (I7): this Lambda returns photo IDs only, with no S3 presign and no S3_PHOTOS/PHOTO_CDN
+//     env, for both the entries and aggregates.crops[].hero_photo_id. The client resolves each id lazily
+//     against the household-scoped GET /api/photos/view-url/:id. The tier the client asks for matters (crop
+//     heroes were ~24x smaller as thumbs than originals). Giving this Lambda the photos bucket would
+//     save round trips but is Dave's call, not a lane's.
 import { neon } from '@neondatabase/serverless';
 import { householdScope } from './household.js';
 import { requestContext } from './request-context.js';
-// Pure, DB-free helpers live in ./aggregate.js so they unit-test without this file's runtime deps
-// (neon/clerk/aws — absent from root package.json under CI `npm ci`). See lambda/preservation/attribution.js.
+// Pure, DB-free helpers live in ./aggregate.js so they unit-test without this file's runtime deps.
 import { parseTimeframe, encodeCursor, decodeCursor, projectEntry, computeAggregates, applyWeights, applyCropHeroPhotos } from './aggregate.js';
-// V4-HARVSURFACE-001 — Today watch list + "not yet" dismissal. Same DB-free-pure / DB-touching split:
-// watch.js holds the candidate logic, watch-route.js the SQL and request contract.
+// Today watch list and "not yet" dismissal: watch.js holds the candidate logic, watch-route.js the SQL
+// and request contract.
 import {
   matchWatchRoute, handleWatchGet, handleDismissToggle, handleDismissalPost, handleDismissalUndo,
 } from './watch-route.js';
-// V5-SEASONSTATS-001 — Season stats read route, same prefix seam; numbers live in the stat_* views.
+// Season stats read route, same prefix seam; the numbers live in the stat_* views.
 import { matchSeasonStatsRoute, handleSeasonStatsGet } from './season-stats.js';
 export { parseTimeframe, encodeCursor, decodeCursor, isoWeekStart, projectEntry, computeAggregates, shapeWeightRow, applyWeights, applyCropHeroPhotos } from './aggregate.js';
 
-// Season = grow-year Nov 1 - Oct 31; day bucketing + season boundaries share this ONE zone (design §4).
-// The same constant the shipped harvest surfaces use (events lambda HARVEST_TZ) — not per-user in V1.
+// Season = grow-year Nov 1 - Oct 31; day bucketing and season boundaries share this ONE zone, the same
+// constant as the events lambda's HARVEST_TZ. Not per-user.
 const HARVEST_TZ = 'America/New_York';
 const PAGE_LIMIT = 50;
 
@@ -65,37 +53,26 @@ function resp(statusCode, body) {
   return { statusCode, headers: { 'Content-Type': 'application/json', ...CORS }, body: JSON.stringify(body) };
 }
 
-// BUG-HARVWEIGHTWIRE-001 (found reading slice 1 back, SHIPPED in v4.0.0). Slice 1 added
-// weight_grams/weight_estimated/weight_basis to both SELECTs, but the wire projection is
-// projectEntry() in aggregate.js — which predates the columns and lists its output fields
-// EXPLICITLY. All three were fetched from Postgres and then dropped on the floor, so every row on
-// the shipped Harvests log rendered the "no weight yet" ratchet copy no matter what the database
-// held. A SELECT with no matching projection is invisible: nothing 500s, nothing logs, the page
-// just quietly says the wrong thing. The fix belongs in projectEntry itself — see the comment there
-// for why a wrapper at this call site would have widened the same gap instead of closing it.
-//
-// V4-HARVGRAIN-001: shapeWeightRow() and the weight merge moved to aggregate.js. This file cannot be
-// imported under the root vitest run (neon/clerk/aws), so anything living here can only ever be
-// guarded by a regex over its own source text — and the merge's failure mode is a Map key, which no
-// regex can check. See the applyWeights header there.
+// projectEntry() in aggregate.js lists its output fields EXPLICITLY, so a column added to the SELECTs
+// below must also be added there or it is fetched and silently dropped (BUG-HARVWEIGHTWIRE-001). Weight
+// shaping and merging live in aggregate.js because this file cannot be imported under the root vitest
+// run (neon/clerk/aws), and a Map-key bug there is invisible to a regex over source.
 
 // ── Handler ──────────────────────────────────────────────────────────────────────────────────────
 
 export const handler = async (event) => {
-  // The kit answers OPTIONS and every sign-in refusal (401, the household gate's 403) before any statement, and
-  // scopes only after its empty-sub 401.
+  // The kit answers OPTIONS and every sign-in refusal (401, the household gate's 403) before any statement,
+  // and scopes only after its empty-sub 401.
   const ctx = await requestContext(event, { resp, neon, scope: householdScope });
   if (ctx.response) return ctx.response;
   const { userId, sql, householdIds } = ctx;
   const method = event.requestContext?.http?.method ?? 'GET';
   const rawPath = event.rawPath ?? '/api/harvests';
 
-  // V4-HARVSURFACE-001 — the Today watch list rides this Lambda's EXISTING /api/harvests prefix.
-  // src/lib/api.js routes by first-match PREFIX, so /api/harvests/watch resolves here with no new
-  // Function URL, no repo variable, no deploy-lambda.yml matrix entry and no api.js edit. Matched
-  // BEFORE the /api/harvests exact-path guard below, which would otherwise 404 every watch request.
-  // Season stats rides the same seam: its path is disjoint from every watch path, so the matchers
-  // can be tried in either order, and both feed the SAME ctx/JSON-body block below.
+  // The watch list and season stats ride this Lambda's EXISTING /api/harvests prefix: src/lib/api.js
+  // routes by first-match PREFIX, so they need no new Function URL, repo variable or deploy matrix entry.
+  // Matched BEFORE the /api/harvests exact-path guard below, which would otherwise 404 them. The two
+  // matchers' paths are disjoint, so either order works.
   const watchRoute = matchWatchRoute(method, rawPath) ?? matchSeasonStatsRoute(method, rawPath);
   if (watchRoute) {
     if (watchRoute.kind === 'method_not_allowed') return resp(405, { error: 'Method not allowed' });
@@ -129,9 +106,8 @@ export const handler = async (event) => {
     }
   }
 
-  // An unknown path is a 404, not a 405: an installed app older than a route's removal still calls
-  // it (POST /api/harvests/ready-impressions), and must be told the route is gone. Guarded in
-  // index.test.js.
+  // An unknown path is a 404, not a 405: an installed app older than a route's removal still calls it
+  // (POST /api/harvests/ready-impressions) and must be told the route is gone. Guarded in index.test.js.
   if (rawPath !== '/api/harvests') return resp(404, { error: 'Not found' });
   if (method !== 'GET') return resp(405, { error: 'Method not allowed' });
 
@@ -140,22 +116,16 @@ export const handler = async (event) => {
   if (!tf) return resp(400, { error: 'timeframe must be one of: 7d, month, season:<year>, all' });
   const crop = qp.crop || null;
   const project = qp.project || null;
-  // V4-HARVWEIGHTREAD-001 slice 2: ?plant=<uuid> scopes the read model to ONE planting, which is what
-  // lets PlantingDetail's timeline show the same weight + provenance the Harvests log shows without a
-  // second read model deriving weight its own way. GET /api/events (the timeline's source) never
-  // joins harvest_log at all, so this endpoint is the only place that already knows a harvest's weight.
-  // Nullable exactly like `project` above — same `IS NULL OR` shape, so an absent param is a no-op.
+  // ?plant=<uuid> scopes the read model to ONE planting, so PlantingDetail's timeline shows the same
+  // weight and provenance as the Harvests log from one read model. GET /api/events never joins
+  // harvest_log. Nullable like `project`: an absent param is a no-op.
   const plant = qp.plant || null;
-  // V4-COMPOSEPOST-002: ?created_since=<ISO> narrows ENTRIES ONLY to rows LOGGED since that instant.
-  // Deliberately not applied to the aggregates or weight queries — the compose surface wants the last
-  // few hours of logging activity for batch detection AND the full-season totals in the same response,
-  // and the two windows are different by design (BUG-COMPOSETOTALS-001: reading season totals off a
-  // 50-row entries page published a per-crop figure ~4x under the true one).
-  //
-  // It filters on created_at, NOT event_date, which is the point: a harvest logged tonight but dated
-  // three days back sorts three days back under the event_date window and drops off the page, so the
-  // composed post silently omits produce that was just picked. 6 of 504 live rows (1.19%) are
-  // backdated. Cheap to support, and it is the only predicate that matches "what did I just log".
+  // ?created_since=<ISO> narrows ENTRIES ONLY to rows LOGGED since that instant. Deliberately not applied
+  // to the aggregates or weight queries: the compose surface wants the last few hours of logging for
+  // batch detection AND full-season totals in one response (BUG-COMPOSETOTALS-001: totals read off a
+  // 50-row entries page came out ~4x low). It filters on created_at, NOT event_date, because a harvest
+  // logged tonight but dated three days back drops off the event_date window and the composed post would
+  // omit produce that was just picked.
   const createdSince = qp.created_since || null;
   const seasonYear = tf.kind === 'season' ? tf.year : 0;
 
@@ -165,52 +135,39 @@ export const handler = async (event) => {
 
   const cur = decodeCursor(qp.cursor);
   const curDate = cur ? cur.eventDate : null;
-  // BD-040: null for a pre-deploy 2-part cursor, which the WHERE clause below branches on.
+  // null for a pre-deploy 2-part cursor, which the WHERE clause below branches on.
   const curCreated = cur ? (cur.createdAt ?? null) : null;
   const curId = cur ? cur.id : null;
 
   try {
-    // V4-ARCHIVEHIDE-001 (L3). The three read models below (entries, aggregates, weight totals) join
-    // garden_node with `deleted_at IS NULL` only, so harvests on ARCHIVED plantings were loaded and
-    // rendered on the Harvests page. Measured on prod 2026-08-13: 4 of 595 live harvest events, and
-    // 424 g of the weight totals, hang off the 19 archived plantings.
+    // ARCHIVED plantings and containers are excluded from the three read models (entries, aggregates,
+    // weight totals). The axis is archived_at, NOT deleted_at: they are orthogonal columns.
     //
-    // AXIS: archived_at, NOT deleted_at — orthogonal columns (lambda/plants/index.js:269-281 archives
-    // a row whose deleted_at is still NULL). Every existing deleted_at predicate is left untouched.
+    // WHY A `NOT EXISTS` IN THE WHERE AND NOT `AND gn.archived_at IS NULL` ON THE JOIN: the join is a LEFT
+    // JOIN (orphan harvests must survive), so an ON predicate would NULL the gn columns and keep the
+    // harvest, still counted in every total but anonymised. The anti-join drops it. `plant_id IS NULL`
+    // rows are unaffected: NOT EXISTS over a NULL id is true.
     //
-    // WHY A `NOT EXISTS` IN THE WHERE AND NOT `AND gn.archived_at IS NULL` ON THE JOIN: the join is a
-    // LEFT JOIN (orphan/plant-less harvests are legitimate rows and must survive), so a predicate in
-    // its ON clause NULLs the gn columns and keeps the harvest — the row would still be counted in
-    // every total, just anonymised. The anti-join drops it. `plant_id IS NULL` rows are unaffected:
-    // NOT EXISTS over a NULL id is true.
+    // CARVED OUT when ?plant= names one planting: that is PlantingDetail's own harvest list, the
+    // deliberate route to an archived planting (lambda/events/index.js: "Deletion hides; archiving does
+    // not"). No other caller sends ?plant=, so the carve-out cannot re-open the aggregate leak.
     //
-    // CARVED OUT when ?plant= names one planting. That request is PlantingDetail's own harvest list
-    // (src/pages/PlantingDetail.jsx:234) and is the deliberate route to an archived planting, which
-    // lambda/events/index.js:658-661 already establishes as the rule ("Deletion hides; archiving does
-    // not"). No other caller sends ?plant= (useHarvests, useHarvestSnapshot, useHarvestFilterOptions,
-    // HarvestExportSheet, ComposeHarvestBand and EventNew's season totals are all unscoped), so the
-    // carve-out cannot re-open the aggregate leak.
+    // The container axis is its own clause beside the planting anti-join, with the same ?plant= gate;
+    // archiving a container does not cascade to its plantings. The `OR pj.deleted_at IS NOT NULL` arm is
+    // load-bearing: a container archived and LATER soft-deleted keeps its archived_at, and the
+    // Deleted-Planting History Rule (DEC-ARCHIVECARVEOUTS-001) keeps a soft-deleted container's picks in
+    // the log, totals and weights. pj.deleted_at is otherwise never a filter here. NULL-safe for a
+    // project-less pick.
     //
-    // BUG-ARCHIVEHIDE-002 (audit I21) — the CONTAINER archive axis, its own clause beside the
-    // planting anti-join with the same ?plant= gate. Archiving a container does not cascade to its
-    // plantings (lambda/projects' archive PATCH writes the container's own column only), so without
-    // it the picks of a live planting in an archived container stayed in every read model. The
-    // `OR pj.deleted_at IS NOT NULL` arm is load-bearing: a container archived and LATER soft-deleted
-    // keeps its archived_at, and the I20 carve-out (gardening.md, Deleted-Planting History Rule,
-    // DEC-ARCHIVECARVEOUTS-001) keeps a soft-deleted container's picks in the log, totals and weights.
-    // Without the arm, deleting would keep a harvest that archiving hides only if archive came first.
-    // pj.deleted_at is otherwise never a filter here. NULL-safe for a project-less pick (pj all NULL).
-    //
-    // ⚠️ THIS CHANGES SEASON TOTALS by 424 g / 4 events. That is what "must not be loaded at all"
-    // asks for, but R3 recon §2 DAVE-DECISION 1 reads it the other way ("keep harvest/weight
-    // aggregates intact — they are season truth"). If Dave rules that archiving keeps the harvest
-    // record, this predicate is the one to revert, and reverting it is a three-line change.
+    // OPEN: this changes season totals (archived plantings' picks no longer count). R3 recon
+    // DAVE-DECISION 1 reads it the other way ("keep harvest/weight aggregates intact"). If archiving
+    // should keep the harvest record, these predicates are the ones to revert.
     const out = { time_zone: HARVEST_TZ, timeframe: tf };
 
     if (wantEntries) {
-      // Keyset page: ORDER BY (event_date,id) DESC, LIMIT+1 to detect the next page. Soft-delete
-      // predicates live in the JOIN ON (orphan/quantity-less events survive). Photos via LATERAL
-      // json_agg (no keyset-corrupting fan-out). Timeframe boundary math is server-side in HARVEST_TZ.
+      // Keyset page: ORDER BY (event_date, created_at, id) DESC, LIMIT+1 to detect the next page.
+      // Soft-delete predicates live in the JOIN ON; photos come via LATERAL json_agg; timeframe boundary
+      // math is server-side in HARVEST_TZ.
       const rows = await sql`
         SELECT
           e.id AS event_id, e.event_type, e.event_date,
@@ -302,7 +259,7 @@ export const handler = async (event) => {
     }
 
     if (wantAggregates) {
-      // Same filter range as entries (NO cursor, NO limit) — aggregates are always the full range.
+      // Same filter range as entries (NO cursor, NO limit): aggregates are always the full range.
       const aggRows = await sql`
         SELECT
           e.id AS event_id, e.event_type,
@@ -350,42 +307,30 @@ export const handler = async (event) => {
       `;
       out.aggregates = computeAggregates(aggRows);
 
-      // V4-HARVWEIGHTREAD-001 slice 2 — WEIGHT TOTALS, summed in SQL rather than over aggRows in JS.
-      // Two reasons, both load-bearing. (1) weight_grams is `numeric`; the driver returns it as a
-      // string, so a JS reduce over ~400 rows is float arithmetic on parsed decimals and the season
-      // total would not equal the same total computed anywhere else. Postgres sums numeric exactly
-      // and the ONE rounding happens at the ::float8 cast. (2) The provenance split has to be part
-      // of the same pass — measured and estimated grams summed independently in a second traversal
-      // is how the parts stop adding up to the whole.
+      // WEIGHT TOTALS, summed in SQL rather than over aggRows in JS. (1) weight_grams is `numeric` and the
+      // driver returns a string, so a JS reduce would be float arithmetic on parsed decimals; Postgres
+      // sums numeric exactly and the ONE rounding happens at the ::float8 cast. (2) The provenance split
+      // must be part of the same pass, or the parts stop adding up to the whole.
       //
-      // The honesty rule, and it is the point of the query: measured and estimated are NEVER
-      // collapsed into a single number with no label. `grams` is their sum (an estimate IS the best
-      // available value for its row, so omitting it would understate the harvest), but the caller
-      // always receives the split and the counts alongside, so no surface can print a total that
-      // silently implies every gram of it was weighed.
+      // The honesty rule: measured and estimated are NEVER collapsed into one unlabelled number. `grams`
+      // is their sum (an estimate is the best available value for its row), but the caller always gets
+      // the split and counts, so no surface can imply every gram was weighed.
       //
-      // Two predicates mirror src/lib/harvestWeight.js EXACTLY, and a divergence here is a
-      // client/server disagreement about a total:
-      //   * present  = weight_grams > 0. formatGrams() treats <= 0 as missing, because a harvest
-      //     that weighs nothing is not a harvest — 0 is always absent data, never a measurement.
-      //   * measured = weight_estimated IS FALSE. Anything else (true, or a NULL that should not
-      //     exist by construction) counts as estimated: labelling a real weighing as an estimate
-      //     understates harmlessly, the reverse launders a guess into a fact.
-      // GROUPING SETS gets all FOUR grains in ONE pass — grand total, per crop, per variety, per
-      // planting. GROUPING() is required to read the result: the unattributed bucket
-      // (crop_type_slug IS NULL) and the grand total both come back with a NULL crop_slug, and only
-      // the bits tell them apart.
-      //
-      // V4-HARVGRAIN-001 added the variety and planting members. THE COST WAS NOT THE CLAUSE — it
-      // was the merge, which keyed on crop alone and would have let each variety row overwrite its
-      // crop total (see applyWeights in aggregate.js). No new join was needed: gn is already
-      // LEFT JOINed for the archive anti-join, so gn.cultivar_id and gn.id were already in scope,
-      // and gn.cultivar_id is the SAME column the aggregates SELECT aliases to variety_id — so the
-      // two rowsets agree on the merge key by construction rather than by convention.
-      //
-      // ONE bit per NULL-bearing dimension, all three carried on every row. `is_total` alone cannot
-      // do it: a (crop, cultivar) row also has is_total = 0 and a non-null crop_slug, so it is
-      // structurally indistinguishable from a (crop) row at `Number(r.is_total) === 1`.
+      // Two predicates mirror src/lib/harvestWeight.js EXACTLY; a divergence is a client/server
+      // disagreement about a total:
+      //   * present  = weight_grams > 0. formatGrams() treats <= 0 as missing: 0 is absent data, never
+      //     a measurement.
+      //   * measured = weight_estimated IS FALSE. Anything else (true, or an impossible NULL) counts as
+      //     estimated: mislabelling a weighing as an estimate understates harmlessly, the reverse
+      //     launders a guess into a fact.
+      // GROUPING SETS gets all FOUR grains in ONE pass: grand total, per crop, per variety, per planting.
+      // GROUPING() is required to read the result: the unattributed bucket and the grand total both come
+      // back with a NULL crop_slug, and only the bits tell them apart. The merge key must be crop,
+      // cultivar and planting, or each variety row overwrites its crop total (see applyWeights in
+      // aggregate.js). gn.cultivar_id is the same column the aggregates SELECT aliases to variety_id, so
+      // the two rowsets agree on the merge key by construction. ONE bit per NULL-bearing dimension, all
+      // three carried on every row: a (crop, cultivar) row is indistinguishable from a (crop) row at
+      // `Number(r.is_total) === 1`.
       const weightRows = await sql`
         SELECT
           cv.crop_type_slug AS crop_slug,
@@ -440,50 +385,36 @@ export const handler = async (event) => {
           (cv.crop_type_slug, gn.cultivar_id, gn.id)
         )
       `;
-      // Merge + re-order, in the pure helper so it is testable by calling it. ADDITIVE keys only —
-      // varieties[].weight and first_pick[].weight are new fields on shapes that already shipped, so
-      // an older client ignores them, and the crop/grand-total numbers it does read are unchanged
-      // (GROUPING SETS computes each set independently: adding members cannot move an existing one).
+      // Merge + re-order in the pure helper so it is testable by calling it. ADDITIVE keys only
+      // (varieties[].weight, first_pick[].weight): older clients ignore them, and the numbers they read
+      // are unchanged because GROUPING SETS computes each set independently.
       applyWeights(out.aggregates, weightRows);
 
-      // V4-HARVCROPPHOTO-001 — one photo ID per crop, for the planting computeAggregates named as
-      // that crop's most recent pick. IDS ONLY: the I7 note at the top of this file still holds, so
-      // there is no presign, no S3 client and no photos-bucket env here. The client resolves each id
-      // against the household-scoped GET /api/photos/view-url/:id (the PutUpPhotoThumb precedent).
+      // One photo ID per crop, for the planting computeAggregates named as that crop's most recent pick.
+      // IDS ONLY (see the I7 note at the top): no presign, no S3 client, no photos-bucket env.
       //
-      // WHY A SEPARATE QUERY rather than a column on the aggregates SELECT: that rowset is one row
-      // per harvest EVENT (874 live), and this question has ONE answer per crop (31 live). Joining
-      // photos there would pay ~28x the lookups for the same answer, on the query that already
-      // carries the archive anti-join and feeds every total on the page. Here the driving set is the
-      // winners themselves, and when there are none the query does not run at all.
+      // A SEPARATE QUERY rather than a column on the aggregates SELECT: that rowset is one row per
+      // harvest EVENT, and this question has ONE answer per crop, so joining photos there would pay many
+      // times the lookups on the query that carries the archive anti-join and feeds every total. When
+      // there are no winners the query does not run.
       //
-      // The FALLBACK is the whole reason this is not a bare featured_photo_id read: 30 of 31 live
-      // crops resolve through `fph`, and the 31st (blackberry) has four photos hanging off its
-      // HARVEST EVENTS and none on the plant row, so a plant_id-only fallback would still miss it.
-      // The LATERAL therefore reaches both attachment points. `fph` is joined rather than read off
-      // gn directly so a featured pointer at a soft-deleted photo falls through to the fallback
-      // instead of emitting an id that can only 404.
+      // The FALLBACK is the reason this is not a bare featured_photo_id read: a crop can have photos
+      // only on its HARVEST EVENTS and none on the plant row, so the LATERAL reaches both attachment
+      // points. `fph` is joined rather than read off gn so a featured pointer at a soft-deleted photo
+      // falls through to the fallback instead of emitting an id that can only 404.
       //
-      // BUG-HARVHEROMEMBER-001 — `fph` is a LATERAL, and it RE-CHECKS MEMBERSHIP, because alive is
-      // only half of INV-HERO. The other half: the stored pointer survives its photo being RE-PARENTED
-      // away (PhotoLibrary's full-replace PUT, and V4-PHOTOUNTAG-001's return-to-inbox). Nothing is
-      // deleted in either case, so `deleted_at IS NULL` cannot catch it — only a membership re-check
-      // can. Without this the crop rail keeps rendering a photo that now belongs to a different
-      // planting, and the fallback below never gets a chance because COALESCE already had a non-null
-      // id. The other eight hero reads in the fleet resolve this way and are held to it by
-      // lambda/hero-read-derivation.test.js; this one is invisible to that guard (wrong file, and its
-      // `fph` alias does not match the guard's /(?:fp|ph)\.id/ shape), which is how it shipped
-      // half-implemented. See lambda/harvests/crop-hero.test.js for the local guard.
+      // `fph` RE-CHECKS MEMBERSHIP, because alive is only half of INV-HERO: the stored pointer survives
+      // its photo being RE-PARENTED away (PhotoLibrary's full-replace PUT, return-to-inbox). Nothing is
+      // deleted then, so `deleted_at IS NULL` cannot catch it. Without the check the crop rail keeps
+      // rendering a photo that belongs to a different planting, and COALESCE never reaches the fallback.
+      // The fleet-wide guard lambda/hero-read-derivation.test.js cannot see this file (its /(?:fp|ph)\.id/
+      // shape does not match `fph`); the local guard is lambda/harvests/crop-hero.test.js.
       //
-      // Membership is EVENT-INCLUSIVE for the same reason it is on plants: EventNew logs event photos
-      // with {project_id, event_id} and no plant_id, so a plant_id-only check would demote every hero
-      // attached that way. `fe` is deleted-filtered so the explicit arm and the fallback arm below
-      // agree on what "attached to this planting" means — otherwise a photo could be preferred as the
-      // explicit hero while being unselectable as a fallback. Measured on prod 2026-08-31: filtered
-      // and unfiltered both resolve 238 of 251 pointers, so the choice is free today and the
-      // re-check demotes nothing reachable — the 13 it drops are all on SOFT-DELETED plantings, which
-      // computeAggregates already excludes from heroPlantIds (crop-hero.test.js, "ignores a row whose
-      // planting is soft-deleted").
+      // Membership is EVENT-INCLUSIVE: EventNew logs event photos with {project_id, event_id} and no
+      // plant_id, so a plant_id-only check would demote every hero attached that way. `fe` is
+      // deleted-filtered so the explicit arm and the fallback arm agree on what "attached to this
+      // planting" means. Soft-deleted plantings never reach heroPlantIds (crop-hero.test.js, "ignores a
+      // row whose planting is soft-deleted").
       const heroPlantIds = [...new Set((out.aggregates.crops ?? []).map((c) => c.hero_plant_id).filter(Boolean))];
       if (heroPlantIds.length > 0) {
         const heroRows = await sql`
