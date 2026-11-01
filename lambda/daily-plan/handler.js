@@ -1922,30 +1922,18 @@ async function run({ pg, today, dryRun = true,geocodeZip, fetchNWS, fetchPrecip,
 //     secrets/DB/network work).
 // EventBridge scheduled events ({source:'aws.events','detail-type':'Scheduled Event',detail:{},...})
 // carry none of these keys, so the nightly run's behavior is byte-identical to pre-A0.2.
-// V4-WATERMATH-001 F2 (A0.4-FLAG-OVERRIDES) — `event.flagOverrides` lets a replay run the engine
-// under a different flag combo, DRY RUNS ONLY. The fail-safe contract extends A0.2's: the payload
-// can never change what a LIVE run does. When the resolved run is live, flagOverrides is null no
-// matter what the event carried (hard-reject, not best-effort); when dry, only whitelisted flag
-// names with strict-boolean values pass through. NEVER an env-based A/B — an env flip arms the live
-// EventBridge runs (canon landmine).
-// CARE_RAIN_MEASURED_CREDIT_ENABLED added 2026-08-24 (DRG-INTRADAY-002 Track 0). Its read site at
-// :939 already went through `_flag`, so the override was honoured everywhere EXCEPT this list — the
-// one place that decides whether it arrives. The gap made Track 0 unmeasurable on the only day it
-// mattered: the flag flipped live at 13:13Z while the stored plan had been generated 09:30Z, so a
-// replay compared two different engines and could not separate intraday freshness from the flip.
-// Without this entry the instrument silently answers a different question than the one asked.
+// `event.flagOverrides` (A0.4-FLAG-OVERRIDES) lets a replay run the engine under a different flag combo, DRY RUNS ONLY. The fail-safe contract extends A0.2's: the payload can never change what a LIVE
+// run does. When the resolved run is live, flagOverrides is null no matter what the event carried (hard-reject, not best-effort); when dry, only whitelisted flag names with strict-boolean values pass
+// through. NEVER an env-based A/B — an env flip arms the live EventBridge runs.
+// Every flag run() reads through `_flag` must be listed in LEDGER_OVERRIDABLE_FLAGS: that list is the one place that decides whether an override arrives, and a flag missing from it makes a replay
+// silently compare two different engines.
 const LEDGER_OVERRIDABLE_FLAGS = ['CARE_WATER_LEDGER_ENABLED', 'CARE_RAIN_CREDIT_ENABLED',
   'CARE_RAIN_MAXDAYS_ENABLED', 'CARE_TODAY_AWARE_ENABLED', 'CARE_CADENCE_SCOPES_ENABLED',
   'CARE_RAIN_MEASURED_CREDIT_ENABLED',
-  // V4-COVEREDNOTMODELLED-001 phase 2. Listed so the dry-run shadow can A/B the inheritance against
-  // live rows before any env flip — the same seam the water-ledger flip was measured through, and
-  // the only way to re-run the blast-radius count against real data rather than a fixture.
+  // Listed so the dry-run shadow can A/B the inheritance against live rows before any env flip — the only way to re-run the blast-radius count against real data rather than a fixture.
   'CARE_COVER_INHERIT_ENABLED',
-  // Forecast-aware deferral (OPS-PLANHOURLY-001 sequel). Listed for exactly the reason the block above
-  // records: without an entry here `rerun-daily-plan.sh --flag-overrides` cannot shadow these against
-  // live rows, and the only way left to find out what they do would be to flip them in prod and watch.
-  // Both decide whether a THIRSTY planting is skipped, so they are the last two that should ship
-  // unmeasurable — count the sat_kind='incoming_dry'/'soon' rows a dry run produces before any flip.
+  // Forecast-aware deferral. Without an entry here `rerun-daily-plan.sh --flag-overrides` cannot shadow these against live rows, and the only way left to find out what they do would be to flip them
+  // in prod. Both decide whether a THIRSTY planting is skipped — count the sat_kind='incoming_dry'/'soon' rows a dry run produces before any flip.
   'CARE_RAIN_DEFER_DRY_ENABLED', 'CARE_RAIN_SOON_ENABLED'];
 function resolveInvokeOptions(event, { envDryRun, todayDefault }) {
   const envLive = String(envDryRun ?? 'true').toLowerCase() === 'false';

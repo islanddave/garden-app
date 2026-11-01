@@ -277,7 +277,7 @@ const RAIN_TIER_IA_NAMED   = { in_ground: 0.20, intermediate: 0.25, small_fast: 
 const RAIN_TIER_HOLD_NAMED = { in_ground: 3,    intermediate: 2,    small_fast: 1,    fabric_ground: 3     }; // max credit days per tier
 const RAIN_TIER_IA   = { ...RAIN_TIER_IA_NAMED,   unknown: Math.max(...Object.values(RAIN_TIER_IA_NAMED)) };
 const RAIN_TIER_HOLD = { ...RAIN_TIER_HOLD_NAMED, unknown: Math.min(...Object.values(RAIN_TIER_HOLD_NAMED)) };
-// Vessel -> tier. Covers the full DB container_type CHECK vocab (14 values, verified prod 2026-07-08) + the generic
+// Vessel -> tier. Covers the full DB container_type CHECK vocab (14 values) + the generic
 // 'pot' used in fixtures. Rigid pots (plastic/terracotta/ceramic/'pot') are small_fast: generic unknown-size pots dry
 // fast; large rigid pots re-tag to trough.
 // FAIL-SAFE INVARIANT (both resolvers below): an unrecognized/NULL container_type must get the LEAST credit of any row in the
