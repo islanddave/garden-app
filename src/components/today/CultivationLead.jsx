@@ -127,7 +127,7 @@ function Lead({ feed, todayISO, bare }) {
   // listing the packet it is about, which is what a line saying "Sow X by Aug 18" makes you want to
   // do. A separate link underneath would read as a second, unrelated control.
   return (
-    // Seeds › Sow now, the same list /sow used to be.
+    // Seeds › Sow now: the same list as /sow.
     <Link
       to={seedsHref('sow')}
       data-testid="cultivation-lead"

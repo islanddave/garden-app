@@ -1,5 +1,5 @@
-// Unified create/edit plant form: the UNION of the field-sets previously hand-rolled in
-// ProjectDetail (add-plant) and Plants (add + edit): core (name / quantity / variety / notes) +
+// Unified create/edit plant form: the UNION of the field-sets of ProjectDetail (add-plant) and
+// Plants (add + edit): core (name / quantity / variety / notes) +
 // status + an optional project picker + a collapsed "Planting details" block (sown date / initial
 // qty / source / lineage).
 //
@@ -268,10 +268,10 @@ export default function PlantForm({
             </Field>
           )}
 
-          {/* KEPT, relabelled. `plants.source_ref` is the only home for the facts with no column
-              anywhere in this design (order numbers, lot codes, discounts, the day of a gift). The
-              old label ("Source reference") read as a second place to type a vendor name, which is
-              what the picker above is for now. */}
+          {/* `plants.source_ref` is the only home for the facts with no column anywhere in this design
+              (order numbers, lot codes, discounts, the day of a gift). Labelled as an order / lot
+              reference so it does not read as a second place to type a vendor name, which is what
+              the picker above is for. */}
           <Field label="Order / lot reference" htmlFor={`${pid}-sref`} optional
             help="Order number, lot code, discount, date — anything with no field of its own.">
             <Input id={`${pid}-sref`} value={v.source_ref}
