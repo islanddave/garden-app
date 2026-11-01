@@ -1,21 +1,17 @@
 // src/components/putup/goingNow.js
-// V5-INFLIGHTBATCH-001 — the pure half of the "Going now" view (a third segment on /put-up, NOT a
-// new page and NOT a seventh bottom-nav tab: PutUp.jsx:44-46 already records the house pattern for
-// "a thing you are in the middle of" as a mode/view flag on an existing page).
+// The pure half of the "Going now" view (a segment on /put-up, not a page and not a bottom-nav tab) and
+// of the page shell at the foot of this file (its segments, the direction of a mode's Back, recipes as
+// page-search items). Everything here is a pure function of a `v_kitchen_batch_current` row plus an
+// explicit `now`, so every assertion bites on logic rather than on data.
 //
-// Everything here is a pure function of a `v_kitchen_batch_current` row plus an explicit `now`.
-// That is deliberate and is the only way this lane can be tested at all: the migration has not been
-// applied to any database (API-CONTRACT §1), so there is nothing to integration-test against and
-// every assertion has to bite on logic rather than on data.
-//
-// THE RULINGS THIS FILE ENFORCES (crucible DECISION-V100, API-CONTRACT §3) — each one is a thing
-// this module deliberately does NOT compute, so read the absences as hard as the presences:
+// THE RULINGS THIS FILE ENFORCES (crucible DECISION-V100, API-CONTRACT §3, FOODSAFETY-RULING-V101) —
+// each one is a thing this module deliberately does NOT compute, so read the absences as hard as the
+// presences:
 //   1. NO age-derived readiness. No "due", no remaining days, no progress ring, no duration bar, no
 //      "day 12 of 21". A ferment that stalled at pH 4.8 looks normal, smells normal and has no
 //      visible defect, so elapsed time is the one variable that cannot detect it. `describeAge`
-//      returns a DESCRIPTION and nothing in this file turns a description into a verdict.
-//      STRENGTHENED 2026-09-04 by the food-safety adjudication: for a ferment this holds at EVERY
-//      start precision, including exact. See the two gates on `describeExpectedWindow` below.
+//      returns a DESCRIPTION and nothing in this file turns a description into a verdict. For a
+//      ferment this holds at EVERY start precision, including exact (see `describeExpectedWindow`).
 //   3. The timer counts SINCE YOU LAST LOOKED (`current_stage_entered_at`), never toward a finish.
 //   4. NO urgency tone at all, per stage or otherwise. Risk decays across a preservation process —
 //      a 40-day pepper mash is not late, a six-week mash is a better mash — and a card that reddens
@@ -24,17 +20,9 @@
 //      sprouts in the jar) and kitchen batches do not.
 //   6. An unknown start is a PERMANENT, ACCEPTABLE TERMINAL STATE. See `startPromptState`.
 //
-// ⚠ THIS HEADER USED TO END "Nothing here says anything about pH, acidification, safety or shelf
-// stability — that adjudication is running separately and is unlanded." The adjudication has since
-// landed and reversed the first of those four, and only the first: V5-PHRECORD-001 adds a recorded
-// pH, a prompt to measure and a link-out, in the block near the bottom of this file. Everything else
-// in that sentence still holds — nothing here says anything about acidification, safety or shelf
-// stability, and nothing scores, colours, compares or gates on a reading. Read that block before
-// touching anything named ph*.
-//
-// Put-Up UX pass R1 ADDS the page shell's pure half at the foot of this file (its segments, the words and
-// the direction of a mode's Back, recipes as page-search items) and changes no name above it: batch
-// detail, Check on it, the pH field and the Log's edit sheet all import from here.
+// pH: this file records a measured value, prompts the cook to measure and links out to how (block
+// near the middle). It says nothing about acidification, safety or shelf stability, and nothing
+// scores, colours, compares or gates on a reading. Read that block before touching anything named ph*.
 import { readFrom, backLabel } from './origin.js'
 
 // ── start precision ──────────────────────────────────────────────────────────────────────────────
@@ -57,11 +45,11 @@ export function startIsDayOrBetter(batch) {
 }
 
 // ── elapsed ──────────────────────────────────────────────────────────────────────────────────────
-// SavedSeeds.elapsed() floors to days and renders 'today' under 24 h, which reads a dehydrator run
-// started four hours ago as "today" — the one number that decides whether to go and check it. So
-// this carries an hours branch, and the unit is selected by MAGNITUDE while the "about" qualifier is
-// selected by PRECISION (see describeAge). The two are decoupled on purpose: they answer different
-// questions and conflating them is how a coarse grade silently becomes a confident figure.
+// SavedSeeds.elapsed() renders 'today' under 24 h, which reads a dehydrator run started four hours
+// ago as "today" — the number that decides whether to go and check it. So this has an hours branch.
+// The unit is selected by MAGNITUDE and the "about" qualifier by PRECISION (see describeAge); they
+// answer different questions, and conflating them is how a coarse grade silently becomes a
+// confident figure.
 const HOUR_MS = 3600000
 const DAY_MS = 86400000
 const WEEK_UNIT_FROM_DAYS = 21   // 3 weeks reads better than "21 days"
@@ -88,17 +76,14 @@ export function describeElapsed(iso, nowMs) {
 // ── the card's lead line ─────────────────────────────────────────────────────────────────────────
 // Shape, never a string, so the component owns the formatting and the test owns the decision:
 //   { kind: 'elapsed', text, approx }        — a real start, with its grade carried as `approx`
-//   { kind: 'first_recorded', at }           — no start; the HONEST FLOOR, per the 0a DDL comment:
+//   { kind: 'first_recorded', at }           — no start; the HONEST FLOOR, per the DDL comment:
 //                                              "'First recorded Sep 3' is a fact even when the start
 //                                              is not, and it is what the card leads with instead of
 //                                              a blank."
 //
-// DIVERGENCE, recorded rather than smuggled: the brief's illustrative literal for a no-start card is
-// `**Pepper mash** · about 3 weeks · Set a start date →`. "about 3 weeks" cannot be derived from a
-// row whose only instant is first_recorded_at without presenting a FLOOR as an AGE, which is the
-// readiness-computation ruling 1 forbids. The DDL is the schema authority and is explicit about what
-// this card leads with, so the floor is rendered as provenance and the divergence is in the lane
-// report. A `week`-precision batch that DOES carry a started_at renders exactly "about 3 weeks".
+// A no-start card does NOT read "about 3 weeks": that cannot be derived from a row whose only instant
+// is first_recorded_at without presenting a FLOOR as an AGE, which is the readiness computation
+// ruling 1 forbids. A `week`-precision batch that DOES carry a started_at renders "about 3 weeks".
 export function describeAge(batch, nowMs) {
   if (!batch) return null
   if (batch.started_at) {
@@ -113,29 +98,25 @@ export function describeAge(batch, nowMs) {
 // ── expected duration ────────────────────────────────────────────────────────────────────────────
 // TWO GATES, and they close for different reasons. Both must pass.
 //
-// GATE A — KIND. For a ferment, elapsed time supports NO readiness affordance at ANY start
-// precision, including a start known to the second. This is stricter than the contract's original
-// rule and supersedes it; the food-safety adjudication landed 2026-09-04
-// (project-state/_build-inflight-20260904/foodsafety-research.md) and the reason is not uncertainty
-// about the date. It is that elapsed time is not evidence about a ferment at all: BC CDC — "no
-// standard set of time to a required pH drop is provided based on vegetable category"; Snyder et al.
-// — pH is "the only critical control of significance"; and decisively UMN Extension — bubbling can
-// cease while the pH is still above the acid line, so the visible completion proxy and the criterion
-// can and do disagree. A perfectly known start date tells you nothing a guessed one doesn't.
+// GATE A — KIND. For a ferment, elapsed time supports NO readiness affordance at ANY start precision,
+// including a start known to the second. The reason is not uncertainty about the date: elapsed time
+// is not evidence about a ferment at all (project-state/_build-inflight-20260904/foodsafety-research.md).
+// BC CDC — "no standard set of time to a required pH drop is provided based on vegetable category";
+// Snyder et al. — pH is "the only critical control of significance"; and decisively UMN Extension —
+// bubbling can cease while the pH is still above the acid line, so the visible completion proxy and the
+// criterion can and do disagree.
 //
 // FAIL-CLOSED ON AN UNCLASSIFIED BATCH. `kind` is nullable by design (the capture path never asks),
 // and `other` names something the app cannot reason about — so neither may render a window either.
 // The app cannot rule out that an unlabelled crock is a ferment, and an allowlist is the only shape
-// where adding a kind later is a deliberate act rather than an accident. The five named non-ferment
-// kinds keep the behaviour they had; whether any of them should is a separate, unadjudicated
-// question (the research finds no home guidance for candied endpoints at all, and NCHFP's
-// dehydrating endpoint is TEXTURE — "brittle or crisp" — not elapsed time).
+// where adding a kind later is a deliberate act rather than an accident. Whether the five named
+// non-ferment kinds should keep a window is unadjudicated (the research finds no home guidance for
+// candied endpoints, and NCHFP's dehydrating endpoint is TEXTURE — "brittle or crisp" — not time).
 export const DURATION_KINDS = new Set(['dehydrate', 'candy', 'cure', 'infuse', 'age'])
 
-// GATE B — PRECISION. Day-or-better, the original ruling, retained for the kinds that pass gate A:
-// a window is honest on its own but reads as a readiness claim the moment it sits beside a start the
-// app only guessed at. En dash and both bounds, always — a half-rendered range is the assertion bug
-// this repo already shipped once.
+// GATE B — PRECISION. Day-or-better, for the kinds that pass gate A: a window reads as a readiness
+// claim the moment it sits beside a start the app only guessed at. En dash and both bounds, always —
+// a half-rendered range is a known assertion bug.
 export function describeExpectedWindow(batch) {
   if (!batch) return null
   if (!DURATION_KINDS.has(batch.kind)) return null
@@ -152,29 +133,25 @@ export function describeExpectedWindow(batch) {
 // "check the sauerkraut two to three times each week and remove scum if it forms" — which is a
 // SCHEDULE, and a schedule is the one thing a tool that knows only a date can do honestly.
 //
-// It is a prompt to go and look. It is never an assessment of the batch, and it is deliberately NOT
-// accompanied by a list of failure signs: presenting failure signs invites the inference that their
-// absence means success, and that inference is the specific error behind the documented olive
-// botulism outbreak (measured pH 6.5, no sensory alarm recorded). One question, no verdict, no
-// second clause. Nothing about pH, salt, acidification, safety or shelf stability.
+// It is a prompt to go and look, never an assessment of the batch, and deliberately NOT accompanied by
+// a list of failure signs: a list invites the inference that their absence means success, the error
+// behind the documented olive botulism outbreak (measured pH 6.5, no sensory alarm recorded). One
+// question, no verdict, no second clause. Nothing about pH, salt, acidification or shelf stability.
 //
-// KNOWN ferments only — the opposite fail-direction from DURATION_KINDS above, and correctly so:
-// suppressing an affordance for an unclassified batch fails closed, whereas ASKING about brine on
-// what might be a dehydrator run fails open into nonsense.
+// KNOWN ferments only — the opposite fail-direction from DURATION_KINDS, and correctly so: suppressing
+// an affordance for an unclassified batch fails closed, whereas ASKING about brine on what might be a
+// dehydrator run fails open into nonsense.
 export const SUBMERSION_KIND = 'ferment'
 export const SUBMERSION_CHECK_DAYS = 2   // Penn State's "two to three times each week"
 export const SUBMERSION_PROMPT = 'Everything still under the brine?'
 
-// Keyed on when you LAST LOOKED, never on how far along anything is — the same instant the stage
-// line reads. Silent inside the cadence because you have already looked, which is a statement about
-// your attention and not about the jar.
+// Keyed on when you LAST LOOKED, never on how far along anything is. Silent inside the cadence
+// because you have already looked, which is a statement about your attention and not about the jar.
 export function submersionPrompt(batch, nowMs) {
   if (!batch || batch.kind !== SUBMERSION_KIND) return null
   // SILENT ON A PAUSED BATCH. A pause is the cook saying "I have set this down"; asking whether it is
-  // still under the brine is the app questioning an answer it was just given, and the cadence it is
-  // keyed on has no meaning across a suspension anyway — the clock ran while nobody was tending it.
-  // Ruling 3 permits questions, not noise, and noise on this card is what the four retired signalling
-  // surfaces died of. The same gate is on phPrompt below, for the same reason.
+  // still under the brine questions an answer it was just given, and the cadence has no meaning across
+  // a suspension. Ruling 3 permits questions, not noise. phPrompt has the same gate.
   if (isSuspended(batch)) return null
   const since = batch.current_stage_entered_at || batch.first_recorded_at
   if (!since) return null
@@ -185,12 +162,9 @@ export function submersionPrompt(batch, nowMs) {
 }
 
 // ── the recorded pH ──────────────────────────────────────────────────────────────────────────────
-// V5-PHRECORD-001. The header above says "Nothing here says anything about pH" — that was true when
-// it was written and is no longer, and the reversal is deliberate rather than a drift. The
-// adjudication that produced the original silence was re-examined and found to have over-corrected:
-// forbidding the app to mention pH also forbade it to ask the cook to MEASURE, which is the opposite
-// of the thing it was protecting. BC CDC's fermented-vegetables guidance recommends "monitoring and
-// recording pH and time", and this app is a record.
+// Record, prompt, link — nothing else. Silence about pH would also forbid asking the cook to MEASURE,
+// the opposite of what the silence protects. BC CDC's fermented-vegetables guidance recommends
+// "monitoring and recording pH and time", and this app is a record.
 //
 // ⚠ THE LINE, AND EVERY FUNCTION BELOW SITS ON ONE SIDE OF IT:
 //   FORBIDDEN — derive, score, colour, gate, compare to a threshold, or infer from elapsed time.
@@ -199,9 +173,9 @@ export function submersionPrompt(batch, nowMs) {
 // nothing that reads a reading and returns a judgement. The number a cook types is carried to the
 // server and back and rendered as typed, beside the date it was taken, and that is the whole feature.
 // There is no threshold constant in this file and there must never be one; the guard that keeps it
-// out is in src/__tests__/PutUpPhReading.test.jsx and it fails on the literal, not on the intent.
+// out is src/__tests__/PutUpPhReading.test.jsx and it fails on the literal, not on the intent.
 //
-// ⚠ AND IT IS AN ORIGINAL DESIGN CHOICE, NOT A COMPLIANCE POSTURE. No published convention exists for
+// ⚠ THIS IS AN ORIGINAL DESIGN CHOICE, NOT A COMPLIANCE POSTURE. No published convention exists for
 // what home-preservation software should say about any of this — a documented negative result, not a
 // gap in the reading. Nothing here follows a standard and no comment may imply that it does.
 // Adjudication: project-state/_build-inflight-20260904/FOODSAFETY-RULING-V101.md §2 (gardening-docs).
@@ -212,24 +186,23 @@ export function submersionPrompt(batch, nowMs) {
 export const PH_SCALE_MIN = 0
 export const PH_SCALE_MAX = 14
 
-// A reading is recorded by APPENDING a stage row, because that is where an observation about a batch
-// lives and the stage log is append-only: a wrong reading is corrected by recording the next one, and
-// the record keeps both. Stage kinds are started/tended/moved/finished/failed and going to measure
-// something is tending it.
+// A reading is recorded by APPENDING a stage row: the stage log is append-only, so a wrong reading is
+// corrected by recording the next one, and the record keeps both. Going to measure something is
+// tending it (stage kinds: started/tended/moved/finished/failed).
 export const PH_STAGE_KIND = 'tended'
 
 // UMN Extension's published cadence: "continue to ferment and check the pH every 1 to 2 days." It is
 // the ONLY cadence in the evidence base with a sourced number behind it.
 //
-// TWO DAYS, THE OUTER BOUND, chosen so the prompt can never fire before the published window has
-// fully elapsed. The inner bound would be defensible too and this is a judgement rather than a
-// finding: a question asked a day early is answered "yes, this morning", and a card that asks about
-// something already done is how a reader learns that its questions can be ignored — which is the
-// same reasoning ruling 4 uses to refuse urgency tone. Late costs a day; early costs the affordance.
+// TWO DAYS, THE OUTER BOUND, so the prompt can never fire before the published window has fully
+// elapsed. A judgement rather than a finding: a question asked a day early is answered "yes, this
+// morning", and a card that asks about something already done teaches that its questions can be
+// ignored (the reasoning ruling 4 uses to refuse urgency tone). Late costs a day; early costs the
+// affordance.
 //
-// It coincides with SUBMERSION_CHECK_DAYS and the two must NOT be collapsed into one constant. They
-// come from different sources (Penn State's "two to three times each week" vs UMN's "every 1 to 2
-// days") about different acts, and either publisher can revise without the other.
+// It equals SUBMERSION_CHECK_DAYS and the two must NOT be collapsed into one constant: different
+// sources (Penn State's "two to three times each week" vs UMN's "every 1 to 2 days"), different acts,
+// and either publisher can revise without the other.
 export const PH_CHECK_DAYS = 2
 
 // A QUESTION, and it stops. No verdict, no failure-sign checklist, no second clause — the same shape
@@ -280,36 +253,34 @@ export function describeLastPhReading(batch) {
 }
 
 // WHAT THE CADENCE COUNTS FROM, in the order the fallbacks apply:
-//   1. last_ph_read_at — when you last measured. This is the real anchor; the other two only exist
-//      because a batch with no reading yet still has to be asked once.
+//   1. last_ph_read_at — when you last measured. The real anchor; the other two only exist because a
+//      batch with no reading yet still has to be asked once.
 //   2. started_at — the batch's own beginning, when the cook knows it.
 //   3. first_recorded_at — the honest floor, NOT NULL by design, so a ferment whose start was never
 //      asked (start_precision NULL) or is permanently 'unknown' still gets asked. Falling silent on
-//      those two would suppress the prompt on exactly the batches nobody has looked at.
+//      those would suppress the prompt on exactly the batches nobody has looked at.
 //
-// NO PRECISION GATE HERE, unlike describeExpectedWindow above, and the difference is the point. That
-// function pairs a start with an expected DURATION, which licenses "it's been long enough" — a
-// readiness claim, and a guessed start makes it a fabricated one. This one asks a question that makes
-// no claim about the batch at all, so a coarse start can only make the question slightly early or
-// late, and after the first reading the anchor is exact anyway.
+// NO PRECISION GATE HERE, unlike describeExpectedWindow, and the difference is the point. That function
+// pairs a start with an expected DURATION, which licenses "it's been long enough" — a readiness claim,
+// and a guessed start makes it a fabricated one. This asks a question that makes no claim about the
+// batch, so a coarse start can only make it slightly early or late.
 export function phPromptAnchor(batch) {
   return batch?.last_ph_read_at || batch?.started_at || batch?.first_recorded_at || null
 }
 
-// KNOWN ferments only, exactly as submersionPrompt is scoped, and `kind IS NULL` is SILENT. kind is
-// nullable by design — the capture path never asks — so null means "nobody said", and asking for a
-// pH on what might be a dehydrator run fails open into nonsense. 'other' is silent for the same
-// reason. This is the opposite fail-direction from DURATION_KINDS and correctly so: suppressing a
-// question costs a prompt, asking the wrong one costs the surface's credibility.
+// KNOWN ferments only, exactly as submersionPrompt is scoped, and `kind IS NULL` is SILENT: null means
+// "nobody said", and asking for a pH on what might be a dehydrator run fails open into nonsense.
+// 'other' is silent for the same reason. This is the opposite fail-direction from DURATION_KINDS:
+// suppressing a question costs a prompt, asking the wrong one costs the surface's credibility.
 //
-// SUBMERSION_KIND is reused rather than copied, unlike the cadence above. The two cadences come from
-// two publishers who can revise independently; the kind scope is ONE fact — both affordances are
-// about fermentation — and a second constant holding the same string is a place for them to diverge.
+// SUBMERSION_KIND is reused rather than copied, unlike the cadence above: the two cadences come from
+// publishers who can revise independently, but the kind scope is ONE fact (both affordances are about
+// fermentation) and a second constant holding the same string is a place for them to diverge.
 export function phPrompt(batch, nowMs) {
   if (!batch || batch.kind !== SUBMERSION_KIND) return null
-  // Silent on a paused batch — see submersionPrompt. phRecorderVisible is deliberately NOT gated the
-  // same way: the prompt is the app speaking and must not talk over a set-down batch, while the
-  // recorder is a door the cook opens, and a reading taken on a paused ferment is still a fact.
+  // Silent on a paused batch — see submersionPrompt. The pH field in Check on it is not gated the same
+  // way: the prompt is the app speaking and must not talk over a set-down batch, while the field is a door
+  // the cook opens, and a reading taken on a paused ferment is still a fact.
   if (isSuspended(batch)) return null
   const since = phPromptAnchor(batch)
   if (!since) return null
@@ -319,11 +290,7 @@ export function phPrompt(batch, nowMs) {
   return PH_PROMPT
 }
 
-// ⚠ phRecorderVisible WAS HERE, and was RETIRED by Put-Up 1a item 3 (V4 §2.3: "the pH button moves
-// into Check on it"). It gated the card's inline recorder, deliberately wider than the prompt — it
-// admitted a NULL kind because nothing could classify a batch, so a strict gate would have locked the
-// one real ferment out of the feature. The card's one-tap kind question removes that reason, and the
-// pH field now lives in Check on it on kind = 'ferment' only: see checkInFields.
+// The pH field lives in Check on it, on kind = 'ferment' only: see checkInFields.
 
 // The POST body for one reading. `ph_reading` is the trimmed STRING the cook typed, never a Number —
 // see phReadingText. Returns null for anything off the scale or unparseable, so the component can say
@@ -339,34 +306,29 @@ export function phStagePatch(raw, atIso) {
 }
 
 // ── the one-week stall prompt ────────────────────────────────────────────────────────────────────
-// FOODSAFETY-RULING-V101 §4. The corpus's ONE time-keyed rule that tells a cook to throw a batch
-// away, and V100 banned it along with every other elapsed-time affordance — a restrictive ruling
-// producing a permissive outcome, which is the failure §4 exists to correct.
+// FOODSAFETY-RULING-V101 §4. The corpus's ONE time-keyed rule that tells a cook to throw a batch away.
+// V100's ban on elapsed-time affordances had silenced it too — a restrictive ruling producing a
+// permissive outcome, which is the failure §4 exists to correct.
 //
-// ⚠ WHY THIS IS NOT THE THING ELAPSED TIME IS BANNED FOR, and the distinction is the whole ruling:
-// elapsed time is an invalid ACCEPTANCE input and a valid REJECTION input. A readiness claim made
-// from a clock ("it's been long enough") is a fabrication; a question asked because a published
-// deadline has passed is a prompt to go and measure. Every readiness affordance stays banned at every
-// precision — nothing below adds a countdown, a progress figure, a completion or a verdict, and no
-// function here reads a recorded value back.
+// ⚠ WHY THIS IS NOT THE THING ELAPSED TIME IS BANNED FOR: elapsed time is an invalid ACCEPTANCE input
+// and a valid REJECTION input. A readiness claim made from a clock ("it's been long enough") is a
+// fabrication; a question asked because a published deadline has passed is a prompt to go and measure.
+// Every readiness affordance stays banned at every precision — nothing below adds a countdown, a
+// progress figure, a completion or a verdict, and no function here reads a recorded value back.
 //
 // ⚠ NO ACID NUMBER, IN THE COPY OR IN THIS FILE. The ruling's own example sentence names one and it is
-// deliberately not written here. This file is one of fifteen swept by src/__tests__/PutUpPhReading
-// .test.jsx ("the acid line appears nowhere in this lane's source"), which forbids the literal in
-// SOURCE and in the DOM on the stated reasoning that a number on this surface is a threshold whether
-// or not any code compares to it. That census carries a green control and a proven-non-vacuous regex,
-// so it is a decision rather than an oversight, and the ruling's illustrative copy loses to it. What
-// §4 actually REQUIRES is a time-keyed failure prompt carrying its scope condition; both survive
-// without the figure, and the figure keeps its source and its scope at the end of the link-out.
+// deliberately not written here: src/__tests__/PutUpPhReading.test.jsx ("the acid line appears nowhere
+// in this lane's source") forbids the literal in SOURCE and in the DOM, on the reasoning that a number
+// on this surface is a threshold whether or not any code compares to it. What §4 REQUIRES is a
+// time-keyed failure prompt carrying its scope condition; both survive without the figure, and the
+// figure keeps its source and its scope at the end of the link-out.
 //
-// ⚠ IT IS ANSWERED BY THE ACT OF MEASURING, NEVER BY THE VALUE — and that distinction is the whole
-// reason this is allowed to go quiet at all. Silencing on a reading that "looked acceptable" would be
-// the app comparing a number to a threshold, which is the one thing the pH affordance above exists not
-// to do, and it would do it against the cook's own unvalidated typing. Silencing because a reading was
-// TAKEN after the deadline reads nothing: it asks "have you been to look since this came due", the
-// cook answers by going to look, and a question nobody can answer is a nag rather than a prompt. A
-// reading taken BEFORE the deadline does not answer it — that measurement predates the question.
-// Otherwise it stops only on a pause, and on a close (a closed batch is not on this surface).
+// ⚠ IT IS ANSWERED BY THE ACT OF MEASURING, NEVER BY THE VALUE. Silencing on a reading that "looked
+// acceptable" would be the app comparing a number to a threshold, against the cook's own unvalidated
+// typing. Silencing because a reading was TAKEN after the deadline reads nothing: the cook answers by
+// going to look, and a question nobody can answer is a nag rather than a prompt. A reading taken
+// BEFORE the deadline does not answer it — that measurement predates the question. Otherwise it stops
+// only on a pause, and on a close (a closed batch is not on this surface).
 export const FERMENT_STALL_DAYS = 7
 
 // A QUESTION, and it stops — the same shape and the same ink as SUBMERSION_PROMPT and PH_PROMPT. It
@@ -376,23 +338,23 @@ export const FERMENT_STALL_PROMPT = "It's been a week — has the pH come down y
 
 // SAY WHICH, per §4, because the deadline is borrowed and the borrowing is load-bearing: the one-week
 // figure is authored for businesses, and the tighter figures elsewhere in the same corpus would fire
-// sooner on a jar sitting on a counter. Rendered as attribution beneath the question, never as a
-// verdict, and spelled rather than digitised so no numeral on this line can read as a threshold.
+// sooner on a jar on a counter. Rendered as attribution beneath the question, never as a verdict, and
+// spelled rather than digitised so no numeral on this line can read as a threshold.
 export const FERMENT_STALL_NOTE =
   'Snyder et al., writing for small businesses and retail food establishments, treat a ferment that '
   + 'has not come down within a week as a failed one and say to throw it out. BC CDC uses tighter '
   + 'limits for kimchi — three days at room temperature, one week refrigerated.'
 
-// ANCHORED ON THE START, AND GATED ON ITS PRECISION. This is the one affordance in this file where a
-// coarse start silences a question for the OPPOSITE reason to describeExpectedWindow's gate: §4
-// retracted V100's "a perfectly known start date tells you nothing a guessed one doesn't" in terms —
-// a one-week deadline is not evaluable against a start known only to the month. Precision carries
-// information HERE, for the rejection test, which is the test the evidence supports.
+// ANCHORED ON THE START, AND GATED ON ITS PRECISION. Here a coarse start silences a question for the
+// OPPOSITE reason to describeExpectedWindow's gate: §4 retracted V100's "a perfectly known start date
+// tells you nothing a guessed one doesn't" — a one-week deadline is not evaluable against a start known
+// only to the month. Precision carries information HERE, for the rejection test, which is the test
+// the evidence supports.
 //
-// first_recorded_at is deliberately NOT a fallback, unlike phPromptAnchor's chain next door. That
-// column is when the row reached the database, not when the ferment began, and counting a deadline
-// from it would invent one. A ferment whose start nobody knows gets no deadline rather than a
-// fabricated one — and it still gets the cadence prompt, which makes no claim needing a start.
+// first_recorded_at is deliberately NOT a fallback, unlike phPromptAnchor's chain. That column is when
+// the row reached the database, not when the ferment began, and counting a deadline from it would
+// invent one. A ferment whose start nobody knows gets no deadline — and still gets the cadence prompt,
+// which makes no claim needing a start.
 export function fermentStallPrompt(batch, nowMs) {
   if (!batch || batch.kind !== SUBMERSION_KIND) return null
   if (isSuspended(batch)) return null
@@ -412,15 +374,13 @@ export function fermentStallPrompt(batch, nowMs) {
 }
 
 // THE CARD ASKS ONE pH QUESTION, NEVER TWO. Both predicates can be live at once — a fortnight-old
-// ferment nobody has measured satisfies the cadence rule and the deadline rule simultaneously — and
-// two questions about the same act, stacked, is the noise the four retired signalling surfaces died
-// of. The stall prompt WINS because it is the cadence question plus the thing the cook does not
-// already know; suppressing it in favour of the cadence line would drop information.
+// ferment nobody has measured satisfies the cadence rule and the deadline rule — and two questions
+// about the same act, stacked, is noise. The stall prompt WINS because it is the cadence question plus
+// the thing the cook does not already know.
 //
-// The suppression lives HERE and not in the view, for the same seam reason as everything else in this
-// module: the .jsx paints what it is handed and decides nothing. Returning both keys always — rather
-// than one prompt string — keeps the two testids independent, so a future change cannot silently
-// merge them into one line that no assertion distinguishes.
+// The suppression lives HERE and not in the view: the .jsx paints what it is handed and decides
+// nothing. Returning both keys always keeps the two testids independent, so a future change cannot
+// silently merge them into one line that no assertion distinguishes.
 export function fermentPrompts(batch, nowMs) {
   const stall = fermentStallPrompt(batch, nowMs)
   return { stall, cadence: stall ? null : phPrompt(batch, nowMs) }
@@ -429,8 +389,8 @@ export function fermentPrompts(batch, nowMs) {
 // ── the conditioning question ────────────────────────────────────────────────────────────────────
 // FOODSAFETY-RULING-V101 §7. NCHFP publishes a conditioning step for dried fruit — in jars for 7 to 10
 // days, shaken daily — and with it the one failure signal a cook can see: "If condensation develops in
-// the jar, return the fruit to the dehydrator." Check on it already records both answers on a
-// dehydrator batch (CONDITIONING_ANSWERS); until now nothing asked during the window. This asks.
+// the jar, return the fruit to the dehydrator." Check on it records both answers on a dehydrator batch
+// (CONDITIONING_ANSWERS); this asks during the window.
 //
 // ⚠ IT ASKS, IT NEVER ASSESSES. The question is about condensation, the observable sign, and it STOPS:
 // no countdown, no "day N of 10", no progress, and nothing on the card when the window closes — going
@@ -439,14 +399,14 @@ export function fermentPrompts(batch, nowMs) {
 // a jar that sweated and was missed produces the same run of "looked" as one that never sweated.
 //
 // TEN DAYS, THE OUTER BOUND of the published 7–10, so the question never falls silent while the
-// published window is still open. Asking for three days past a cook's own shorter conditioning costs a
-// tap; going quiet on day 7 of a 10-day conditioning would drop the question when it still applies.
+// published window is still open. Asking past a cook's own shorter conditioning costs a tap; going quiet
+// early would drop the question when it still applies.
 //
-// ONE DAY between asks, from NCHFP's "shake the jars daily". Keyed on when you LAST LOOKED — the same
-// instant the stage line reads — exactly as submersionPrompt is, so a check-in today silences it until
-// tomorrow. The window itself counts from conditioning_since, which the Going list derives server-side
-// (kitchenRoutes.js listBatches) from the 'In jars to condition' answer and restarts after a trip back
-// to the dryer. This function reads that date and the stage date and nothing else — never a cue value.
+// ONE DAY between asks, from NCHFP's "shake the jars daily". Keyed on when you LAST LOOKED, exactly as
+// submersionPrompt is, so a check-in today silences it until tomorrow. The window counts from
+// conditioning_since, which the Going list derives server-side (kitchenRoutes.js listBatches) from the
+// 'In jars to condition' answer and restarts after a trip back to the dryer. This function reads that
+// date and the stage date and nothing else — never a cue value.
 export const CONDITIONING_KIND = 'dehydrate'
 export const CONDITIONING_WINDOW_DAYS = 10
 export const CONDITIONING_CHECK_DAYS = 1
@@ -470,24 +430,20 @@ export function conditioningPrompt(batch, nowMs) {
 }
 
 // ── the card's ONE inline question ───────────────────────────────────────────────────────────────
-// Put-Up 1a (V4 §2.3 "Card"): at most three quiet actions plus AT MOST ONE inline question. The card
-// used to be able to stack the submersion question over a pH question, and a NULL-kind card would now
-// add "What kind of batch?" to that — three questions about one crock is the noise the four retired
-// signalling surfaces died of, and the adhd seat's split-attention finding. So the questions share
-// ONE slot and this function picks, in this order:
+// At most three quiet actions plus AT MOST ONE inline question: stacking the submersion question over
+// a pH question, and "What kind of batch?" over both, is noise about one crock. The questions share ONE
+// slot and this function picks, in this order:
 //   1. kind      — a NULL kind. Exclusive with the rest by construction: every ferment question is
 //                  gated on kind = 'ferment', so an unclassified batch cannot be asked any of them.
 //   2. stall     — FOODSAFETY-RULING-V101 §4, the one question that carries information the cook does
 //                  not already have; it already beat the cadence question (fermentPrompts above).
-//   3. submersion— the shipped brine question. It outranks the cadence question because the pH clock
-//                  anchors no later than the stage clock, so whenever this one is due the cadence
-//                  question is too: ranking it second would mean it could NEVER appear. This way all
-//                  three shipped prompts still speak at their shipped timing, one at a time.
-//   4. cadence   — the shipped pH question.
-//   5. conditioning — FOODSAFETY-RULING-V101 §7, dehydrator batches only, so exclusive with 2–4 by kind;
-//                  last only because it is the newest.
-// Each prompt keeps its own predicate unchanged; this only chooses which one is on screen. Returning
-// a SHAPE, not a string, keeps the testids of the shipped prompts independent.
+//   3. submersion— the brine question. It outranks the cadence question because the pH clock anchors
+//                  no later than the stage clock, so whenever this one is due the cadence question is
+//                  too: ranking it second would mean it could NEVER appear.
+//   4. cadence   — the pH question.
+//   5. conditioning — FOODSAFETY-RULING-V101 §7, dehydrator batches only, so exclusive with 2–4 by kind.
+// Each prompt keeps its own predicate; this only chooses which one is on screen. Returning a SHAPE, not
+// a string, keeps the testids of the prompts independent.
 export function cardQuestion(batch, nowMs) {
   if (kindQuestionVisible(batch)) return { kind: 'kind' }
   const { stall, cadence } = fermentPrompts(batch, nowMs)
@@ -520,8 +476,7 @@ export function startPromptState(batch) {
 //   ferment      — also the ruled brine question and the pH field
 //   dehydrate    — also "In jars to condition" / "Condensation → back in the dryer" (Dry, NOT Candy)
 // A NULL kind gets the every-kind set only — the pH field is a ferment observation, and the card's
-// one-tap kind question is the door to it. (The old inline recorder also admitted a NULL kind, but
-// only because nothing could classify a batch; something now can.)
+// one-tap kind question is the door to it.
 export const CHECK_ON_IT_CTA = 'Check on it'
 
 // Stored verbatim in kitchen_stage_log.cue_observed — free text the log reads back as written.
@@ -538,14 +493,14 @@ export const CONDITIONING_ANSWERS = Object.freeze([
 
 export function checkInFields(batch) {
   const kind = batch?.kind ?? null
-  // `acts` (release F, Dave 16:30): what he did — Topped up brine · Pushed it back under · Skimmed the
-  // top — Ferment only, like the submersion question beside it (06 §3.10).
+  // `acts`: what the cook did (Topped up brine · Pushed it back under · Skimmed the top). Ferment
+  // only, like the submersion question beside it.
   return { ph: kind === SUBMERSION_KIND, submersion: kind === SUBMERSION_KIND, conditioning: kind === 'dehydrate', acts: kind === SUBMERSION_KIND }
 }
 
-// Release F (Dave 16:30, binding): a check-in is a note plus THREE action chips. Film, mold, bubbling,
-// taste, smell and temperature go in the note — there is no surface column, no burp act, and no chip
-// for any of them. Stored as the words' keys in kitchen_stage_log.acts (chk_ksl_acts), tended rows only.
+// A check-in is a note plus THREE action chips. Film, mold, bubbling, taste, smell and temperature go
+// in the note — there is no surface column, no burp act, and no chip for any of them. Stored as the
+// words' keys in kitchen_stage_log.acts (chk_ksl_acts), tended rows only.
 export const CHECK_IN_ACTS = Object.freeze([
   { value: 'topped_up', label: 'Topped up brine' },
   { value: 'pushed_under', label: 'Pushed it back under' },
@@ -558,16 +513,15 @@ export const TOP_UP_UNITS = Object.freeze(['ml', 'g', 'cup'])
 export const CHECK_IN_EMPTY = 'Note one thing first — an answer, a reading, a place or a note.'
 
 // THE ONE ROW a check-in writes (V4 §2.3: "A check-in writes ONE tended row (Moved it writes moved)").
-// One Save, one POST, one row — never a row per observation, and never two rows for one visit:
+// One Save, one POST, one row — never a row per observation:
 //   · a place was picked -> stage_kind 'moved', carrying storage_location_id (chk_ksl_moved_needs_location)
 //     and a label naming where, so the card and the log say where it went;
 //   · otherwise           -> stage_kind 'tended'.
 // Whatever else was observed rides on that same row: the chosen answer as cue_observed, the pH as the
 // typed STRING with its read instant (never through a Number — see phReadingText), the note.
-// Returns { body } or { error }; the caller never sends a body this refused.
-// Release F: acts ride ONLY on a tended row (chk_ksl_acts_on_tended), so a visit that did something AND
-// moved the crock is two rows — the tended row with everything observed and done, then the moved row —
-// returned as { body, move }. Every other visit is still ONE row, as before.
+// Acts ride ONLY on a tended row (chk_ksl_acts_on_tended), so a visit that did something AND moved the
+// crock is two rows — the tended row with everything observed and done, then the moved row — returned
+// as { body, move }. Returns { body } or { error }; the caller never sends a body this refused.
 export const TOP_UP_HINT = 'The top-up needs a number more than 0 — or leave it empty.'
 export function checkInBody({ batch, ph = '', submersion = null, conditioning = null, place = null, note = '', atIso,
   acts = [], topUp = '', topUpUnit = 'ml' }) {
@@ -601,9 +555,9 @@ export function checkInBody({ batch, ph = '', submersion = null, conditioning = 
   if (text) body.note = text
   const observed = !!place || !!answer || typed != null || !!text || did.length > 0
   if (!observed) return { error: CHECK_IN_EMPTY }
-  // Every row this writes carries its date AND its word (review I-N1): the instant of the visit, 'exact'.
-  // Without a precision the route takes the pre-1b path and stores it NULL — a legacy-shaped row, and the
-  // shape "Saved · Undo" of a date edit tripped on. The route writes exactly what it is given here.
+  // Every row carries its date AND its word: the instant of the visit, 'exact'. Without a precision the
+  // route takes the legacy path and stores NULL — a legacy-shaped row. The route writes exactly what
+  // it is given here.
   if (atIso != null && !Number.isNaN(new Date(atIso).getTime())) {
     const stamp = { entered_at: atIso, entered_precision: 'exact' }
     Object.assign(body, stamp)
@@ -613,11 +567,10 @@ export function checkInBody({ batch, ph = '', submersion = null, conditioning = 
 }
 
 // ── the kind of batch ────────────────────────────────────────────────────────────────────────────
-// Put-Up 1a (V4 §2.3). A NULL kind shows ONE inline question, answered by the kind chips in one tap
-// through the shipped merge PUT, and NEVER ASKED AGAIN once any kind is stored — including `age`,
-// which is still a valid stored value though no chip offers it, and `other`, which is an answer.
-// NULL is the only unanswered state, the same distinction the start fields draw between "never
-// asked" and "asked, doesn't know". A closed batch is not on the card, and is not asked either.
+// A NULL kind shows ONE inline question, answered by the kind chips in one tap through the merge PUT,
+// and NEVER ASKED AGAIN once any kind is stored — including `age`, which is still a valid stored value
+// though no chip offers it, and `other`, which is an answer. NULL is the only unanswered state. A
+// closed batch is not on the card, and is not asked either.
 //
 // Not gated on a pause: the ferment prompts go silent under suspension because they are the app
 // asking about the batch's state, which a pause answers. This asks what the batch IS, which a pause
@@ -636,17 +589,13 @@ export function kindQuestionVisible(batch) {
 export function isSuspended(batch) { return !!batch?.suspended_at }
 
 // ── pause / resume, and the two doors off the card ───────────────────────────────────────────────
-// V5-BATCHCLOSE-001. `suspended_at` sits on KITCHEN_BATCH_EDITABLE_COLUMNS and the card above already
-// draws the state it produces, and yet NOTHING in the client has ever written it: the app shipped the
-// irreversible give-up and left the reversible one unreachable. That is backwards for an
-// interrupt-sensitive user — the cheapest correct answer to "I am not dealing with this right now"
-// should be the one you can take back.
+// `suspended_at` is on KITCHEN_BATCH_EDITABLE_COLUMNS and the card draws the state it produces. The
+// cheapest correct answer to "I am not dealing with this right now" should be the one you can take back.
 //
-// ONE key reaches the wire. The kitchen-batch PUT is a MERGE (see startChipPatch's note below), so an
-// absent column is left alone; do not copy the preservation route's full-replace payload shape here.
-// The instant is the caller's INJECTED clock and never a Date.now() in this file — everything here is
-// a pure function of a row plus an explicit `now`, which is what lets a test pin the PUT body to a
-// fixed literal instead of to whenever the run happened.
+// ONE key reaches the wire. The kitchen-batch PUT is a MERGE (see startChipPatch), so an absent column
+// is left alone; do not copy the preservation route's full-replace payload shape here. The instant is
+// the caller's INJECTED clock and never a Date.now() in this file, which is what lets a test pin the
+// PUT body to a fixed literal.
 export function pausePatch(paused, nowMs) {
   if (paused) return { suspended_at: null }
   const at = new Date(nowMs)
@@ -666,10 +615,9 @@ export const RESUME_CTA = 'Pick it back up'
 
 // ── ordering ─────────────────────────────────────────────────────────────────────────────────────
 // `started_at DESC NULLS LAST, first_recorded_at DESC`, mirroring the server's ORDER BY. The client
-// re-sorts rather than trusting transport order for two reasons: an unknown start outranking a
-// measured one at the top of a "check this" list is the exact defect SavedSeeds.jsx:594-613 already
-// ruled on, and with no database to integration-test against this is the ONLY layer at which that
-// ruling can be gated by a test at all.
+// re-sorts rather than trusting transport order: an unknown start outranking a measured one at the top
+// of a "check this" list is the defect SavedSeeds already ruled on, and this is the only layer at which
+// that ruling can be gated by a test.
 function descInstant(a, b) {
   const av = a == null ? null : new Date(a).getTime()
   const bv = b == null ? null : new Date(b).getTime()
@@ -732,11 +680,9 @@ export function describeStage(batch, nowMs) {
 export const START_CHIPS = [
   { value: 'today',      label: 'Today',             days: 0,    precision: 'exact',   anchor: 'memory' },
   { value: 'yesterday',  label: 'Yesterday',         days: 1,    precision: 'day',     anchor: 'memory' },
-  // 4, not 3, CORRECTED at integration 2026-09-04: the panel's rule is the MIDPOINT of the window each
-  // chip names (3–5 d → 4, 14–21 d → 18). The Snap-card table this was reconciled against was retired
-  // in Put-Up 1a item 5 (Snap opens the shared Start sheet); src/__tests__/startChipParity.test.js now
-  // binds the labels this table shares with the Start sheet's (Today, Yesterday) and pins the two
-  // midpoints here directly.
+  // 4, not 3: the rule is the MIDPOINT of the window each chip names (3–5 d → 4, 14–21 d → 18).
+  // src/__tests__/startChipParity.test.js binds the labels this table shares with the Start sheet
+  // (Today, Yesterday) and pins the two midpoints here directly.
   { value: 'few_days',   label: 'A few days ago',    days: 4,    precision: 'day',     anchor: 'memory' },
   { value: 'about_week', label: 'About a week',      days: 7,    precision: 'week',    anchor: 'memory' },
   { value: 'few_weeks',  label: '2–3 weeks',         days: 18,   precision: 'week',    anchor: 'memory' },
@@ -787,9 +733,9 @@ export function startPatchViolatesPairing(patch) {
 }
 
 // ── Put-Up UX pass R1 — the page shell: its segments, the way out of a mode, recipes in the search ──
-// The page (PutUp.jsx) takes no new logic in R1: it holds ONE opener and the wiring, and asks here for
-// everything a test can pin without a router. Pure, like the rest of this file: a router state and the
-// router's history index come in as arguments, never off `window`.
+// The page (PutUp.jsx) holds ONE opener and the wiring, and asks here for everything a test can pin
+// without a router. Pure: a router state and the router's history index come in as arguments, never
+// off `window`.
 
 // The door that starts a batch — the page header's filled button on Going now, and the empty card's
 // secondary one. One string, so the two controls cannot drift. No arrow: it opens a sheet.
@@ -807,10 +753,10 @@ export const PUT_UP_SEGMENTS = Object.freeze([
 ])
 export const RECIPES_SEGMENT = 'recipes'
 
-// A SEGMENT THAT IS GONE. Until Put-Up R2b there was a fourth, "Log a put-up" (the retired form), and a mode
-// opened from it stored that label as its origin. history.state outlives a reload and a deploy (origin.js),
-// so an entry on a phone can still say it. It stands for the Pantry: where the Back lands (originSegment)
-// and what the Back says (backWords). Read only where a segment's own label is — with NO kind.
+// A SEGMENT THAT IS GONE: the retired "Log a put-up" form. A mode opened from it stored that label as
+// its origin, and history.state outlives a reload and a deploy (origin.js), so an entry on a phone can
+// still say it. It stands for the Pantry: where the Back lands (originSegment) and what the Back says
+// (backWords). Read only where a segment's own label is — with NO kind.
 const RETIRED_SEGMENT_LABELS = new Map([['Log a put-up', 'pantry']])
 // The segment a kind-less origin label names: its own, or the one a retired label now stands for.
 function labelSegment(label) {
@@ -828,25 +774,23 @@ export function segmentLabel(value) {
   return PUT_UP_SEGMENTS.find(s => s.value === value)?.label ?? null
 }
 
-// THE ORIGIN A SENDER DID NOT NAME: the segment on screen. A Going-now card, the door to the closed list, a
-// Recipes row and a batch just started hand the page no origin, and the entry under their push IS that
+// THE ORIGIN A SENDER DID NOT NAME: the segment on screen. A Going-now card, the door to the closed list,
+// a Recipes row and a batch just started hand the page no origin, and the entry under their push IS that
 // segment — so the page names it, `{ label: <the segment's own label> }`, and the mode's Back pops to it
-// like any other sender's. Left unnamed, each of them was left by a PUSH, and the system's Back after
-// "← Going now" walked back INTO the batch just left (two entries a visit, on the most-used doors).
-// The Back's words do not change by a letter: a pop reads the origin's label, a push the segment's, and
-// they are the same string.
-// null when NO segment is on screen: over the page search's results (the entry under a hit is the results,
-// not a segment) and inside a mode (the entry under it is that mode). Those doors push, as they always did.
+// like any other sender's. Left unnamed, each was left by a PUSH, and the system's Back then walked back
+// INTO the batch just left. The Back's words do not change: a pop reads the origin's label, a push the
+// segment's, and they are the same string.
+// null when NO segment is on screen: over the page search's results (the entry under a hit is the
+// results, not a segment) and inside a mode (the entry under it is that mode). Those doors push.
 export function segmentOrigin(view, { onScreen = true } = {}) {
   const label = onScreen ? segmentLabel(view) : null
   return label ? { label } : null
 }
-// The segment an entry's origin names, or null. Which segment the list shows is the page's own state, not
-// part of the URL, and it can have moved since the door was opened: a page that MOUNTED on the mode entry
-// (a reload, a PWA restored from a discard, a return from another route) holds what a fresh page defaults
-// to, and the bare-open default is decided on the first list answer, whenever that comes. A pop onto the
-// list would then show that segment under a Back that read "← Recipes". So a pop to a segment SELECTS it
-// (the page asks this at the press), and the words stay true however the page came to be holding another.
+// The segment an entry's origin names, or null. Which segment the list shows is the page's own state,
+// not part of the URL, and it can have moved since the door was opened: a page that MOUNTED on the mode
+// entry (a reload, a PWA restored from a discard, a return from another route) holds what a fresh page
+// defaults to. A pop onto the list would then show that segment under a Back that read "← Recipes". So
+// a pop to a segment SELECTS it (the page asks this at the press), and the words stay true.
 // Only a segment's own label with NO kind: a recipe or a batch that happens to be called "Pantry" is a
 // sender like any other. A retired segment's label names the segment that stands for it (labelSegment).
 export function originSegment(state) {
@@ -888,12 +832,12 @@ export function leavePlan({ state, historyIndex, entryKey, started = null, nowMs
 }
 
 // WHEN A TRAVERSAL LANDS (a popstate), with a pop of the page's own under way: 'hop' | 'clear' | 'keep'.
-// The page's latch (`started`, see leavePlan) used to be dropped only when the router's location key
-// changed. A sheet's Back marker is pushed as a COPY of the entry under it — the same router key and index
+// The page's latch (`started`, see leavePlan) cannot be dropped only on a router-key change: a sheet's
+// Back marker is pushed as a COPY of the entry under it — the same router key and index
 // (context/DismissRegistry.jsx `arm`). Reload with a sheet open and boot reconciliation strips the marker
-// off that copy, leaving two identical entries: the Back's pop landed on the twin, nothing on screen moved,
-// the key had not changed so the latch stood, every press for the next 1.5 s was swallowed, and a later
-// one PUSHED while the label still named the origin. So the landing itself settles the latch:
+// off that copy, leaving two identical entries; the Back's pop lands on the twin, nothing on screen
+// moves, the key has not changed so the latch would stand and swallow every press for the next 1.5 s.
+// So the landing itself settles the latch:
 //   clear — the pop landed on another entry (the sender: the press worked), or there was no pop of the
 //           page's to settle, or the one hop below has been spent. The next press is a fresh one.
 //   hop   — it landed on an entry with the key it STARTED from: the twin. Go one entry further, ONCE; the
@@ -903,7 +847,7 @@ export function leavePlan({ state, historyIndex, entryKey, started = null, nowMs
 //           (`started.overMarker`): that is the entry under the marker, where such a pop lands by design,
 //           and the closing sheet's own disarm may have a second traversal queued behind it — a hop would
 //           walk past the sender, and a cleared latch would let a second press do the same. The latch
-//           stands, as it did before, until the location changes or it runs out.
+//           stands until the location changes or it runs out.
 // `started` is `{ key, at, hopped?, overMarker? }`; `landedKey` is history.state.key as the popstate
 // finds it. The same key means the same URL, so the page is still in the mode it pressed Back in.
 export function popLanding({ started, landedKey }) {

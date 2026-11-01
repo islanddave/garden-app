@@ -1,40 +1,33 @@
 // src/components/putup/BatchInputsField.jsx
-// V5-INFLIGHTBATCH-001 item A — "what went into this batch", on the batch detail surface.
+// "What went into this batch", on the batch detail surface.
 //
-// INHERITED RULING 8 IS SATISFIED HERE, AND THIS PARAGRAPH EXISTS SO THE NEXT PANEL DOES NOT
-// RE-LITIGATE IT. The killed harvest→put-up hook pushed FROM a harvest TO an unprompted offer: you
-// logged a pick and the app volunteered a preservation flow you had not asked for. This walks the
-// other way. The user has already opened a batch they started, and has tapped an affordance that
-// says "what went into this?". Nothing here is offered on a harvest surface, nothing fires without a
-// tap, and no pick is ever proposed as a batch input on its own. Same table, opposite direction.
+// INHERITED RULING 8 IS SATISFIED HERE. The killed harvest→put-up hook pushed FROM a harvest TO an
+// unprompted offer: you logged a pick and the app volunteered a preservation flow you had not asked
+// for. This walks the other way. The user has already opened a batch they started, and has tapped an
+// affordance that says "what went into this?". Nothing here is offered on a harvest surface, nothing
+// fires without a tap, and no pick is ever proposed as a batch input on its own.
 //
 // WHAT THIS COMPONENT WILL NOT DO, each for a stated reason:
 //
 //   · NO DATE-RANGE PICKER. The window comes from HarvestTimeframeChips — THE shared timeframe
-//     control — mapped to {from,to} by chipToWindow. src/lib/harvestExport.js:19-21 carries the
-//     standing ruling against minting arbitrary from/to, and there is no two-ended range control in
-//     this app to copy even if there were not.
+//     control — mapped to {from,to} by chipToWindow. src/lib/harvestExport.js carries the standing
+//     ruling against minting arbitrary from/to, and there is no two-ended range control in this app.
 //
-//   · NO 152-ROW SCROLLABLE LIST. Measured on prod 2026-09-04: a five-week pepper window is 152
-//     harvest rows across 31 plantings, and the fan-in is growing. The surface shows a COUNT and a
-//     WINDOW; the rows sit behind a deliberate second tap, on both sides of the add. (The
-//     "139 rows / 30 plantings" in kitchenBatch.js:349-351 is real for 2026-07-28..09-01 — the row
-//     count reproduces exactly — but the planting count for that window measures 28, and the whole
-//     figure has drifted up since. Do not re-cite it as current.)
+//   · NO LONG SCROLLABLE LIST. A five-week pepper window is on the order of 150 harvest rows and
+//     growing. The surface shows a COUNT and a WINDOW; the rows sit behind a deliberate second tap, on
+//     both sides of the add.
 //
-//   · NO VARIETY FILTER. Over 90 days prod carries 117 distinct varieties against 119 distinct
-//     plantings — very nearly one variety per planting — so crop + planting already spans the axis
-//     and a third control would be a second way to say the same thing.
+//   · NO VARIETY FILTER. Varieties and plantings are very nearly one-to-one, so crop + planting already
+//     spans the axis and a third control would be a second way to say the same thing.
 //
-//   · NO CROP LIST FROM crop_types. 159 slugs exist and only 32 have ever produced a harvest, so a
-//     catalogue-sourced <Select> is 127 dead options. The options here are the intersection of
+//   · NO CROP LIST FROM crop_types. Most catalogue slugs have never produced a harvest, so a
+//     catalogue-sourced <Select> is mostly dead options. The options here are the intersection of
 //     useCropTypes() — for the display name — with the crops that actually produced a harvest IN THE
 //     CHOSEN WINDOW, read from the unpaged `aggregates.crop_list` block. The hook's default scope is
 //     'garden' and that is the one wanted here: it drops the 'non_plant_food' classes (bread,
-//     cheese, milk), none of which can appear in harvest_log, so the predicate can never offer one.
-//     The aggregates block is used and the `entries` block is NOT: entries is 50-row paged and
-//     counting it reproduces BUG-COMPOSETOTALS-001 (lambda/harvests/index.js:173, a per-crop figure
-//     ~4x under the true one). aggregates is computed over the full filter range with no cursor.
+//     cheese, milk), none of which can appear in harvest_log. The `entries` block is NOT used: it is
+//     50-row paged, and counting it under-reports per-crop figures (lambda/harvests/index.js);
+//     aggregates is computed over the full filter range with no cursor.
 //
 //   · NO SILENT RETRY ACCOUNTING. ON CONFLICT DO NOTHING makes a re-run safe but silent, so a
 //     failed write re-reads GET /:id and reports the TRUE total, never a delta. And the non-harvest
@@ -77,7 +70,7 @@ const noteText = { margin: '6px 0 0', color: P.light, fontSize: '0.78rem', lineH
 
 // An amount + its unit are TWO controls, and <Field> takes exactly one: it clones the generated id
 // onto its first element child, so wrapping a row div would point `htmlFor` at the div and leave the
-// input unlabelled. Same class as the Fragment trap Field.jsx:70-75 guards. So the label is written
+// input unlabelled (the same class as the Fragment trap Field.jsx guards). So the label is written
 // out here, aimed at the amount, and the unit carries its own aria-label.
 function PairField({ label, htmlFor, help, children }) {
   return (
@@ -98,8 +91,8 @@ const OTHER_KINDS = KITCHEN_INPUT_KINDS.filter((k) => k !== 'harvest')
 
 // The units a pantry or purchased item plausibly arrives in, all drawn from KITCHEN_QTY_UNITS and
 // therefore all inside chk_kbi_qty_unit. Note what is NOT here: preservation_log.quantity_unit holds
-// the plural forms 'quarts' and 'cups' in prod (its own CHECK, chk_preservation_log_quantity_unit, admits them), so a unit copied
-// verbatim off an existing jar would be refused by the database (BUG-PRESERVUNITNOCHECK-001).
+// the plural forms 'quarts' and 'cups' (its own CHECK admits them), so a unit copied verbatim off an
+// existing jar would be refused by the database.
 const OTHER_UNITS = [...WEIGHT_UNITS, 'cup', 'qt', 'gal', 'count']
 
 // `inputs` is OPTIONAL and it is what makes this field mountable on a surface that already fetched.
@@ -108,22 +101,19 @@ const OTHER_UNITS = [...WEIGHT_UNITS, 'cup', 'qt', 'gal', 'count']
 // stands alone and reads for itself. Only the MOUNT read is conditional — every post-write re-read
 // below stays unconditional, because reporting the TRUE count after a write is a different rule
 // (ruling 6) and the host's own refresh lands too late to answer with.
-// `showGardenPicks` — Put-Up 1a item 6 (V4 §10.1: "'Add picks from the garden' → hidden (1a); garden
-// lines replace it (3)"). The door is HIDDEN, NOT DELETED: default false, and no shipped host passes
-// it, so the harvest-pick bulk add is unreachable in the app while its code, its predicate route and
-// its tests stay intact until release 3's garden lines replace it. Why hidden now: the bulk add claims
-// the WHOLE of every pick in a window (qty NULL = "assume the whole thing"), which the planting-level
-// lines of release 3 supersede, and a door Dave taps in 1a writes rows release 3 must then live with.
-// "Add something else" is unaffected.
-// `legacyOnly` — release F (06 §4 item 3: "the count-and-reveal stays only for legacy bulk pick rows").
-// What went in (WhatWentIn.jsx) mounts this field for the shipped predicate path's "whole pick" rows
-// alone: no add doors (lines are added through the release-F line search), and nothing at all when
-// there are none. Default false, so every shipped host and test is unchanged.
+// `showGardenPicks` — the door is HIDDEN, NOT DELETED: default false, and no host passes it, so the
+// harvest-pick bulk add is unreachable in the app while its code, its predicate route and its tests
+// stay intact until planting-level lines replace it. The bulk add claims the WHOLE of every pick in a
+// window (qty NULL = "assume the whole thing"), and a door a cook taps writes rows the replacement
+// must then live with. "Add something else" is unaffected.
+// `legacyOnly` — What went in (WhatWentIn.jsx) mounts this field for the predicate path's "whole pick"
+// rows alone: no add doors (lines are added through the line search), and nothing at all when there
+// are none. Default false.
 export default function BatchInputsField({ batchId, inputs, onChanged, nowMs, showGardenPicks = false, legacyOnly = false }) {
   const { fetch } = useApiFetch()
   // NO OPTIONS, DELIBERATELY. useCropTypes defaults to scope 'garden', which is the scope this
   // surface wants — a harvest_log row cannot be a loaf of bread, so the 'non_plant_food' classes
-  // must never be offerable here — and `putUpFoodClassGating.test.js:110` forbids any call site but
+  // must never be offerable here — and putUpFoodClassGating.test.js forbids any call site but
   // PutUp's crop field from NAMING a scope at all, whatever value it names. Restating the default
   // reds that guard, and the guard is right: the default is the safe one and PutUp is the one
   // surface that opts out of it.
@@ -166,8 +156,8 @@ export default function BatchInputsField({ batchId, inputs, onChanged, nowMs, sh
 
   const win = useMemo(() => chipToWindow(chip, nowMs), [chip, nowMs])
 
-  // HarvestExportSheet's sequence guard (:106,:117,:148). Two chip taps in flight would otherwise
-  // let the first response land after the second and paint a crop list for a window nobody chose.
+  // HarvestExportSheet's sequence guard. Two chip taps in flight would otherwise let the first response
+  // land after the second and paint a crop list for a window nobody chose.
   const runRef = useRef(0)
 
   // THE DOUBLE-SUBMIT GUARD, and it is a REF rather than the `busy` state on purpose. A non-harvest
@@ -199,8 +189,8 @@ export default function BatchInputsField({ batchId, inputs, onChanged, nowMs, sh
   useEffect(() => { if (Array.isArray(inputs)) setRows(inputs) }, [inputs])
 
   // The crop universe for the CHOSEN window, crop-unfiltered. Passing the selected crop back into
-  // this call would collapse crop_list to that one crop and strand the user on it — the trap
-  // useHarvestFilterOptions.js:7-11 documents. null = not established; [] = established and empty.
+  // this call would collapse crop_list to that one crop and strand the user on it (the trap
+  // useHarvestFilterOptions.js documents). null = not established; [] = established and empty.
   useEffect(() => {
     if (mode !== 'picks') return undefined
     let alive = true
@@ -270,8 +260,8 @@ export default function BatchInputsField({ batchId, inputs, onChanged, nowMs, sh
   )
   const committed = useMemo(() => committedIds(matchedIds, decisions), [matchedIds, decisions])
   const skipped = useMemo(() => skippedCount(matchedIds, decisions), [matchedIds, decisions])
-  // Derived from the RESOLVED rows, never from decisions.size — BUG-PHOTOSELSTALE-001 is exactly the
-  // gap between a Map that counts decisions and a button that posts a list.
+  // Derived from the RESOLVED rows, never from decisions.size: a Map that counts decisions and a button
+  // that posts a list can disagree.
   const willAdd = matchedIds.length > 0 ? committed.length : (preview?.matched ?? 0)
   const rollup = useMemo(() => rollUpGrams(preview?.rows), [preview])
 
@@ -370,10 +360,9 @@ export default function BatchInputsField({ batchId, inputs, onChanged, nowMs, sh
   const netLine = netCountLine({ matched: preview?.matched ?? 0, skipped })
 
   // NO HEADING OF ITS OWN. This field is mounted as the body of BatchDetailView's "What went in"
-  // Section, which already renders the <h3> — a second heading here stacked two of them one line
+  // Section, which already renders the <h3> — a second heading here would stack two of them one line
   // apart and put two entries in the screen-reader heading list for one thing. The host owns the
   // heading; if this is ever mounted with no section around it, the caller supplies one.
-  // Removed at integration 20260904, after the mount landed.
   return (
     <div data-testid="batch-inputs-field" style={{ marginTop: 12 }}>
       <p data-testid="batch-inputs-count" style={{ margin: 0, color: P.mid, fontSize: '0.84rem' }}>
@@ -387,9 +376,8 @@ export default function BatchInputsField({ batchId, inputs, onChanged, nowMs, sh
         <p role="alert" data-testid="batch-inputs-detail-error" style={{ ...noteText, color: P.terra }}>{detailError}</p>
       )}
 
-      {/* The list is behind a deliberate second tap. A five-week pepper window is 152 rows today and
-          rising, and a scrollable wall of them is the discoverability failure this feature exists to
-          avoid, not a rendering of it. */}
+      {/* The list is behind a deliberate second tap: a scrollable wall of rows is the discoverability
+          * failure this feature exists to avoid, not a rendering of it. */}
       {rows.length > 0 && (
         <button type="button" data-testid="batch-inputs-reveal" style={linkBtn}
           onClick={() => setShowRows((v) => !v)}>

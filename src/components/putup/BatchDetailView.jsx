@@ -1,14 +1,13 @@
 // src/components/putup/BatchDetailView.jsx
-// V5-KBCLOSE-001 — one batch, opened on purpose: what went in, what happened to it, what came out.
+// One batch, opened on purpose: what went in, what happened to it, what came out.
 //
 // CONTROLLED. This component issues no GET for its OWN data — `batch` / `inputs` / `stages` /
 // `outputs` arrive already fetched, and `onChanged` walks back up to whoever owns the fetch. That is
-// the same contract GoingNowView holds and it is what keeps the page's invalidation path intact.
-// The hosted BatchInputsField reads for its OWN action (the crop vocabulary its add flow offers) and
-// that is a different thing: it is handed `inputs`, so it never re-reads the batch this page fetched.
-// `nowMs` is a PROP for the same reason it is on GoingNowView: ONE instant per render, so two lines
-// cannot disagree mid-paint and a test can pin an age to a fixed literal.
-//
+// the contract GoingNowView holds and it keeps the page's invalidation path intact. The hosted
+// BatchInputsField reads only for its OWN action (the crop vocabulary its add flow offers); it is
+// handed `inputs`, so it never re-reads the batch this page fetched. `nowMs` is a PROP for the same
+// reason as on GoingNowView: ONE instant per render, so two lines cannot disagree mid-paint and a
+// test can pin an age to a fixed literal.
 // ⚠ THE RULINGS THIS SURFACE INHERITS — read the absences as hard as the presences:
 //   • NO age-derived readiness. No "due", no remaining days, no progress element, no "day 12 of 21".
 //   • NOTHING about acidification, shelf stability, or whether any reading is good.
@@ -59,22 +58,22 @@ import { describeRefusal, hasJarsText, REFUSAL_CODES } from '../../lib/putUpErro
 
 // Local copies of two private vocabularies. STAGE_KIND_LABELS is not exported from goingNow.js and
 // KITCHEN_INPUT_KINDS lives in the Lambda; both are bound to their sources by parity assertions in
-// BatchDetailView.test.jsx rather than by hope — the app has already shipped one bug where two
-// hand-maintained copies of one vocabulary disagreed.
+// PutUpBatchDetail.test.jsx rather than by hope — two hand-maintained copies of one vocabulary have
+// disagreed before.
 //
-// Release F: the table covers EVERY kind a stage row can carry — the Lambda's KITCHEN_STAGE_KINDS_ALL
-// (the 1b history kinds folded in; the parity test binds it). Words, never a status: a pause is a
-// different answer, not a worse one, and "Picked back up" is the card's own word for resuming. A void
-// row never renders (liveStages drops it) — its word is here only so the table is total.
+// The table covers EVERY kind a stage row can carry — the Lambda's KITCHEN_STAGE_KINDS_ALL, which the
+// parity test binds. Words, never a status: a pause is a different answer, not a worse one, and
+// "Picked back up" is the card's own word for resuming. A void row never renders (liveStages drops
+// it) — its word is here only so the table is total.
 const STAGE_KIND_LABELS = {
   started: 'Started', tended: 'Tended', moved: 'Moved', finished: 'Finished', failed: 'Failed',
   reopened: 'Reopened', paused: 'Paused', resumed: 'Picked back up', noted: 'Next time', put_up: 'Put up',
   void: 'Taken back',
 }
 
-// Put-Up release 1b — the Log is the history AS IT STANDS: a void row and the row it voids are both
-// left out (an undone check-in or put-up is gone, not "undone"), exactly as every stage LATERAL in the
-// view skips them. contract-F §2.1 returns void rows in `stages`, so this filter is the client's.
+// The Log is the history AS IT STANDS: a void row and the row it voids are both left out (an undone
+// check-in or put-up is gone, not "undone"), as every stage LATERAL in the view skips them. The
+// server returns void rows in `stages`, so this filter is the client's.
 export function liveStages(rows) {
   const list = Array.isArray(rows) ? rows : []
   const voided = new Set(list.filter(r => r?.stage_kind === 'void' && r.voids_id).map(r => r.voids_id))
@@ -92,10 +91,10 @@ function shortDate(iso) {
   return Number.isNaN(d.getTime()) ? null : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
-// Exported and still bound to KITCHEN_INPUT_KINDS, but no longer rendered here: BatchInputsField
-// owns the inputs section since 20260904 and formats a row through batchInputs.js's own
-// describeInputRow. Kept rather than deleted because the parity assertion over INPUT_KIND_LABELS is
-// a live guard against a vocabulary drifting from the Lambda's, and it needs a caller to test.
+// Exported and still bound to KITCHEN_INPUT_KINDS, but no longer rendered here: BatchInputsField owns
+// the inputs section and formats a row through batchInputs.js's describeInputRow. Kept because the
+// parity assertion over INPUT_KIND_LABELS is a live guard against drift from the Lambda's vocabulary,
+// and it needs a caller to test.
 export function inputRowText(row) {
   if (!row) return ''
   const parts = [INPUT_KIND_LABELS[row.input_kind] || 'Input']
@@ -133,15 +132,13 @@ function localYmd(iso) {
 }
 
 // The line under a row: what was observed (the cue), what was noted — and, when the READING is the
-// row's subject, the row's own label too. Put-Up 1a's Check on it writes ONE row per check-in, so a
-// visit that read the pH AND moved the crock is one `moved` row labelled "Moved to Fridge" that also
-// carries the reading; stageRowText leads with the reading, and without this the move would vanish
-// from the log.
+// row's subject, the row's own label too. Check on it writes ONE row per check-in, so a visit that
+// read the pH AND moved the crock is one `moved` row labelled "Moved to Fridge" that also carries the
+// reading; stageRowText leads with the reading, and without this the move would vanish from the log.
 //
-// Release F (06 §4 item 6) extends it with what F rows carry, as words — acts as their words ("Topped
-// up brine · Skimmed the top"), a top-up as "+250 ml", Made as "made 910 g in all", mash as "mash in
-// 180 g", the start's amount as "about 448 g in it". One line, quiet ink, no glyphs or ticks, never a
-// count or a series.
+// It also says what the F rows carry, as words — acts as their words ("Topped up brine · Skimmed the
+// top"), a top-up as "+250 ml", Made as "made 910 g in all", mash as "mash in 180 g", the start's
+// amount as "about 448 g in it". One line, quiet ink, no glyphs or ticks, never a count or a series.
 export function stageRowDetail(row) {
   if (!row) return ''
   const label = row.ph_reading != null ? row.label : null
@@ -158,9 +155,8 @@ export function stageRowDetail(row) {
 
 export function outputRowText(row, nowMs = Date.now()) {
   if (!row) return ''
-  // Put-Up release 1b: a jar from a sitting carries its name, its container and its date at the
-  // precision it was stored (jarWords.js), and may have no size at all. A pre-1b linked jar keeps
-  // exactly the words it had.
+  // A jar from a sitting carries its name, its container and its date at the precision it was stored
+  // (jarWords.js), and may have no size at all. A linked jar from before sittings keeps its old words.
   if (row.put_up_stage_id || row.label || row.container_label || row.preserved_at_precision) {
     const parts = []
     if (row.label) parts.push(row.label)
@@ -174,8 +170,8 @@ export function outputRowText(row, nowMs = Date.now()) {
     if (row.ph_reading != null) parts.push(`pH ${row.ph_reading}`)
     return parts.join(' · ') || 'A put-up'
   }
-  // A linked jar from before 1b. Contract-F A3: its quantity is the TOTAL, so it is never said beside
-  // its count as if per-container ("3 pint · 3 packages" read as three pints each) — countedSize says
+  // A linked jar from before sittings: its quantity is the TOTAL, so it is never said beside its count
+  // as if per-container ("3 pint · 3 packages" read as three pints each) — countedSize says
   // "3 containers · 3 pint in all".
   const parts = []
   const size = row.package_count != null ? countedSize(row.package_count, row) : sizeWords(row)
@@ -212,12 +208,11 @@ const actionLink = {
   fontSize: '0.78rem',
 }
 
-// ── the missing-datum CTA — MOVED HERE from the Going-now card in Put-Up 1a (V4 §2.3) ───────────
-// The card is left with at most three quiet actions, and setting a start date is a desk decision
-// about the batch rather than a check-in, so it lives on the batch's own surface. Unchanged in every
-// other respect: the shipped "Set parent plant →" shape (SavedSeeds.jsx:955-958), same ink as any
-// other line, never a badge and never a warning colour — an unknown start is a permanent, acceptable
-// terminal state. Expands IN PLACE, so it is not a dismissable layer and needs no registry entry.
+// ── the missing-datum CTA ───────────────────────────────────────────────────────────────────────
+// Setting a start date is a desk decision about the batch rather than a check-in, so it lives on the
+// batch's own surface, not the card. Same ink as any other line, never a badge and never a warning
+// colour — an unknown start is a permanent, acceptable terminal state. Expands IN PLACE, so it is not
+// a dismissable layer and needs no registry entry.
 function SetStartDate({ batch, fetch, onChanged }) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -286,20 +281,20 @@ function SetStartDate({ batch, fetch, onChanged }) {
   )
 }
 
-// ── pause / pick back up — MOVED HERE from the Going-now card in Put-Up 1a (V4 §2.3) ────────────
-// One tap, one stage row (release 1b; see toggle below). No confirm: it is reversible by the same control
-// it was taken with, and a confirm on a reversible act is the tax that teaches people to stop reading
+// ── pause / pick back up ───────────────────────────────────────────────────────────────────────
+// One tap, one stage row (see toggle below). No confirm: it is reversible by the same control it was
+// taken with, and a confirm on a reversible act is the tax that teaches people to stop reading
 // confirms. Pausing is a DIFFERENT ANSWER and not a worse one, so it is an ordinary line, never an alarm.
 function PauseToggle({ batch, fetch, onChanged }) {
   const paused = isSuspended(batch)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
 
-  // Put-Up release 1b (V4 Appendix A; the 1b Lambda's stateStage): a pause is ONE write — POST
-  // /:id/stages {stage_kind: 'paused'|'resumed'} moves suspended_at AND writes the history row in one
-  // statement, whose WHERE is the state precondition. The merge PUT of suspended_at is no longer used
-  // here: it moved the column with no history row, and a row posted after it would be refused (the
-  // batch would already be paused). A refusal (a double tap, a stale tab) says so in the server's words.
+  // A pause is ONE write: POST /:id/stages {stage_kind: 'paused'|'resumed'} moves suspended_at AND
+  // writes the history row in one statement, whose WHERE is the state precondition. The merge PUT of
+  // suspended_at must not be used here: it moves the column with no history row, and a row posted
+  // after it would be refused (the batch would already be paused). A refusal (a double tap, a stale
+  // tab) says so in the server's words.
   const toggle = useCallback(async () => {
     setBusy(true); setErr(null)
     try {
@@ -330,11 +325,11 @@ function PauseToggle({ batch, fetch, onChanged }) {
   )
 }
 
-// ── one sitting in What came out, with its Undo (V4 §2.3 "Undo that put-up", no timer) ──────────────
-// Release F adds, per sitting: "Mash in" beside "Made … in all" (both editable through the sitting's own
-// Log entry, 06 §3.7), the lines added at the end (to every jar, or to one), a way to add one more even
-// after bottling (06 §3.13: final-step additions, fresh or cooked, per Dave), and per jar its heat
-// estimate (worked out from the sitting, or typed) and "from the garden".
+// ── one sitting in What came out, with its Undo (no timer) ─────────────────────────────────────────
+// Per sitting: "Mash in" beside "Made … in all" (both editable through the sitting's own Log entry),
+// the lines added at the end (to every jar, or to one), a way to add one more even after bottling
+// (final-step additions, fresh or cooked), and per jar its heat estimate (worked out from the
+// sitting, or typed) and "from the garden".
 function JarRow({ batchId, jar, nowMs, gardenNames, lines, onChanged }) {
   const [shuOpen, setShuOpen] = useState(false)
   const { fetch } = useApiFetch()
@@ -454,15 +449,15 @@ function Sitting({ batchId, stage, jars, lines, onChanged, nowMs, gardenNames, o
   )
 }
 
-// ── a put-up PICKED for this batch (BUG-BATCHREMOVEDEADEND-001) ─────────────────────────────────────
+// ── a put-up PICKED for this batch ──────────────────────────────────────────────────────────────────
 // The close sheet's "Which put-ups came out of it?" (and How it was made →) link a put-up that was
 // already in the Pantry: batch_id alone, no sitting, so no Undo. "Take it off this batch" is its door —
-// the server's repair path for a wrong pick at close (DELETE /:id/outputs/:plid), which no screen called
-// before this — and the only way such a batch can then be removed. One tap, no confirm: the put-up itself
-// is not touched, and the row that answers puts it back (POST /:id/outputs).
+// the server's repair path for a wrong pick at close (DELETE /:id/outputs/:plid) — and the only way
+// such a batch can then be removed. One tap, no confirm: the put-up itself is not touched, and the
+// row that answers puts it back (POST /:id/outputs).
 //
-// The next read no longer carries the put-up, so its "Taken off · Undo" row is held by the batch surface
-// until navigation, the shape What went in's "Taken out · Undo" has.
+// The next read no longer carries the put-up, so its "Taken off · Undo" row is held by the batch
+// surface until navigation, the shape What went in's "Taken out · Undo" has.
 export const TAKE_OFF_CTA = 'Take it off this batch'
 export const TAKEN_OFF_TEXT = 'Taken off — it’s still in the Pantry.'
 export const NOT_ON_BATCH_TEXT = 'That one isn’t on this batch anymore.'
@@ -566,7 +561,7 @@ function TakenOffJar({ batchId, jar, nowMs, fetch, onPutBack, onChanged }) {
   )
 }
 
-// ── Remove this batch (V4 §2.3: started by mistake) — two-step, refused while it has jars ───────────
+// ── Remove this batch (started by mistake) — two-step, refused while it has jars ────────────────────
 // `blockers` ({ sitting, picked }) is what this surface can see holding the batch: has_jars does not say
 // which kind of jar, and each kind has its own door (putUpErrors.hasJarsText).
 function RemoveBatch({ batch, fetch, onRemoved, blockers }) {
@@ -618,30 +613,29 @@ function Section({ title, testId, children }) {
   )
 }
 
-// `refreshFailed` (release F): the page's re-read after a write failed while this batch was already on
-// screen. The body stays — it is still the batch, a write earlier — and one quiet line says the refresh
-// did not land, with Try again (`onRetry`, disabled while `refreshing`). `error` is only ever a batch
-// that never opened.
+// `refreshFailed`: the page's re-read after a write failed while this batch was already on screen. The
+// body stays — it is still the batch, a write earlier — and one quiet line says the refresh did not
+// land, with Try again (`onRetry`, disabled while `refreshing`). `error` is only ever a batch that
+// never opened.
 //
-// Put-Up UX pass R1 (D15) — THE ACTION ROW. The two everyday acts, Check on it and Put it up, sit in one
-// row under the title instead of a screen and a half down in the Log and What came out. On a batch that
-// is going (or paused) Check on it is the page's one filled button and Put it up the secondary beside it;
-// on a finished batch Check on it is the secondary and nothing is filled — a batch that ended in September
-// has no loudest thing. Their testids did not change, and Put it up is still absent on a finished batch.
-// What each one answers with ("Saved · Undo", the put-up's words) shows under the row it was tapped in.
+// THE ACTION ROW. The two everyday acts, Check on it and Put it up, sit in one row under the title. On
+// a batch that is going (or paused) Check on it is the page's one filled button and Put it up the
+// secondary beside it; on a finished batch Check on it is the secondary and nothing is filled — a
+// batch that ended in September has no loudest thing. Put it up is absent on a finished batch. What
+// each one answers with ("Saved · Undo", the put-up's words) shows under the row it was tapped in.
 // `onOpenRecipe(id, origin)` (optional; the page's opener) is handed to the recipe row.
 export default function BatchDetailView({ batch, inputs, stages, outputs, loading, error, nowMs, onChanged, onRemoved,
   refreshFailed = false, refreshing = false, onRetry, onOpenRecipe }) {
   // For the WRITES this surface makes itself (start date, pause, remove). It still issues no GET for its
   // own data — that contract is about reads, and BatchCloseField already writes the same way.
   const { fetch } = useApiFetch()
-  // Put it up from the batch's own surface. Completion here is the new sitting in What came out (V4
-  // §2.4); the stub's words (with the label hint) sit under the action row until the next visit.
+  // Put it up from the batch's own surface. Completion here is the new sitting in What came out; the
+  // stub's words (with the label hint) sit under the action row until the next visit.
   const [putUpOpen, setPutUpOpen] = useState(false)
   const [stubText, setStubText] = useState(null)
-  // Release F: Jar & heat's disclosure (never opened by itself; closed when a line add starts), the
-  // [Salt] chip's hand-off to the Salt block, the stage being edited and its "Saved · Undo", and Check
-  // on it from the action row.
+  // Jar & heat's disclosure (never opened by itself; closed when a line add starts), the [Salt] chip's
+  // hand-off to the Salt block, the stage being edited and its "Saved · Undo", and Check on it from
+  // the action row.
   const [jarOpen, setJarOpen] = useState(false)
   const [saltFocus, setSaltFocus] = useState(0)
   const [editing, setEditing] = useState(null)
@@ -804,12 +798,11 @@ export default function BatchDetailView({ batch, inputs, stages, outputs, loadin
           {stubText}
         </div>
       )}
-      {/* Release F (06 §3.10): the kind question, inline, on open AND closed batches alike, while the
-          kind is unanswered — the Ferment fields appear with no navigation once it is. */}
+      {/* The kind question, inline, on open AND closed batches alike, while the kind is unanswered — the
+          * Ferment fields appear with no navigation once it is. */}
       {batch.kind == null && <KindQuestion batch={batch} fetch={fetch} onChanged={onChanged} idPrefix="batch-kind" />}
-      {/* The start-date door, on a batch nobody was ever asked about (start_precision NULL). Release F
-          (06 §3.13, Dave 15:55 "as we go"): offered on a finished batch too — the merge PUT takes
-          content writes after close, so the door can land there now. */}
+      {/* The start-date door, on a batch nobody was ever asked about (start_precision NULL). Offered on a
+          * finished batch too — the merge PUT takes content writes after close. */}
       {startPromptState(batch) === 'prompt' && (
         <SetStartDate batch={batch} fetch={fetch} onChanged={onChanged} />
       )}
@@ -819,11 +812,10 @@ export default function BatchDetailView({ batch, inputs, stages, outputs, loadin
         saveAsRecipe={false} asWritten={asWritten} />
 
       <Section title="What went in" testId="batch-detail-inputs">
-        {/* Release F: What went in is WhatWentIn (the reworked field) with the Salt block inside it,
-            always reachable. `inputs` is handed DOWN rather than re-fetched: the page already holds
-            GET /:id, and a child re-read is how one screen ends up with two copies that disagree.
-            Keyed by the batch: what it holds for the visit (the opened add row, "Saved · Undo", a line
-            taken out) belongs to this batch and to no other. */}
+        {/* What went in is WhatWentIn with the Salt block inside it, always reachable. `inputs` is handed
+          * DOWN rather than re-fetched: the page already holds GET /:id, and a child re-read is how one
+          * screen ends up with two copies that disagree. Keyed by the batch: what it holds for the visit
+          * (the opened add row, "Saved · Undo", a line taken out) belongs to this batch and to no other. */}
         <WhatWentIn batch={batch} lines={inputRows} gardenNames={gardenNames} onChanged={onChanged} key={batch.id}
           onSaltTap={() => setSaltFocus(n => n + 1)} onLineStart={() => setJarOpen(false)}
           asWrittenSlot={<MadeAsWrittenButton asWritten={asWritten} />}
@@ -907,8 +899,7 @@ export default function BatchDetailView({ batch, inputs, stages, outputs, loadin
         {/* Pause sits with the other decision about the batch as a whole, above the terminal one. */}
         {!closed && <PauseToggle batch={batch} fetch={fetch} onChanged={onChanged} />}
         <BatchCloseField batch={batch} onChanged={onChanged} />
-        {/* Save as recipe, with the other things said about the batch as a whole (it used to sit above
-            What went in, between the title and the first line). Its own row. */}
+        {/* Save as recipe, with the other things said about the batch as a whole. Its own row. */}
         <div data-testid="batch-detail-save-as-recipe">
           <SaveAsRecipe batch={batch} onChanged={onChanged} />
         </div>
