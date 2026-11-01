@@ -404,3 +404,54 @@ describe('POST /api/photos — intake_status validation', () => {
     expect(b.status).toBe(201)
   })
 })
+
+// OPS-AUDITGUCTABLES-001 sites 3 and 4: the garden_node arms of autoPromoteFeatured (photos/index.js) and of the restore
+// replay (photoDelete.js) set the actor GUC in their own batch, so trg_audit_plants_upd (it watches featured_photo_id)
+// names the caller. A bare write there records 'system'. The caller is a household mate, not the photo's or the
+// planting's owner, so the row cannot pass by naming the owner.
+describe('OPS-AUDITGUCTABLES-001 — the plants hero writes of a tag and a restore are audited as the caller', () => {
+  const MATE = `user_int_photos_mate_${RUN}`
+  async function asMate(fn) {
+    const saved = process.env.GARDEN_HOUSEHOLD_IDS
+    process.env.GARDEN_HOUSEHOLD_IDS = `${USER},${MATE}`
+    setTestUserId(MATE)
+    try { return await fn() } finally {
+      setTestUserId(USER)
+      if (saved === undefined) delete process.env.GARDEN_HOUSEHOLD_IDS
+      else process.env.GARDEN_HOUSEHOLD_IDS = saved
+    }
+  }
+  const heroRows = (plant, photo) => directSql`
+    SELECT id, actor_clerk_sub FROM public.audit_events
+     WHERE table_name = 'plants' AND row_id = ${plant} AND action = 'UPDATE'
+       AND after_jsonb->>'featured_photo_id' = ${photo}`
+  afterAll(async () => { await directSql`DELETE FROM public.audit_events WHERE actor_clerk_sub = ${MATE}` })
+
+  it('site 3: tagging a pending_tag photo auto-promotes the planting hero, and the audit row names the caller', async () => {
+    const id = await insertPhoto({ storagePath: `inbox/${USER}/mate-promote-${RUN}.jpg`, intakeStatus: 'pending_tag' })
+    await directSql`UPDATE plants SET featured_photo_id = NULL WHERE id = ${plantIdB}`
+    const res = await asMate(() => callHandler(handler, { method: 'PUT', path: `/api/photos/${id}`, body: { plant_id: plantIdB } }))
+    expect(res.status, JSON.stringify(res.body)).toBe(200)
+    const [plant] = await directSql`SELECT featured_photo_id FROM garden_node WHERE id = ${plantIdB}`
+    expect(plant.featured_photo_id).toBe(id)
+    expect((await heroRows(plantIdB, id)).map((r) => r.actor_clerk_sub)).toEqual([MATE])
+  })
+
+  it('site 4: restoring a deleted hero replays it onto the planting, and the audit row names the caller', async () => {
+    const id = await insertPhoto({ storagePath: `plants/${plantIdB}/mate-restore-${RUN}.jpg`, plant: plantIdB })
+    await directSql`UPDATE plants SET featured_photo_id = ${id} WHERE id = ${plantIdB}`
+    const del = await asMate(() => callHandler(handler, { method: 'DELETE', path: `/api/photos/${id}` }))
+    expect(del.status, JSON.stringify(del.body)).toBe(200)
+    const [cleared] = await directSql`SELECT featured_photo_id FROM garden_node WHERE id = ${plantIdB}`
+    expect(cleared.featured_photo_id).toBeNull()
+    // The fixture's own hero UPDATE above also has after.featured_photo_id = id (actor 'system'); only rows the
+    // restore adds count.
+    const seen = new Set((await heroRows(plantIdB, id)).map((r) => r.id))
+    const res = await asMate(() => callHandler(handler, { method: 'POST', path: `/api/photos/${id}/restore` }))
+    expect(res.status, JSON.stringify(res.body)).toBe(200)
+    const [plant] = await directSql`SELECT featured_photo_id FROM garden_node WHERE id = ${plantIdB}`
+    expect(plant.featured_photo_id).toBe(id)
+    const added = (await heroRows(plantIdB, id)).filter((r) => !seen.has(r.id))
+    expect(added.map((r) => r.actor_clerk_sub)).toEqual([MATE])
+  })
+})
