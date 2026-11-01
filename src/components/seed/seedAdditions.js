@@ -1,15 +1,13 @@
-// src/components/seed/seedAdditions.js — V5-SEEDLOTADDITION-001 (seed release 3). "Put it in a seed lot
-// I already started", the parts that are decided without a screen: whether the surface exists at all,
-// which of a plant's own lots can still take seed, the request and the timeline entry, and every
-// sentence the add form can say. AddToLot.jsx draws them and SaveSeedSheet.jsx opens it.
+// src/components/seed/seedAdditions.js — "Put it in a seed lot I already started", the parts that are decided without
+// a screen: whether the surface exists at all, which of a plant's own lots can still take seed, the request and the
+// timeline entry, and every sentence the add form can say. AddToLot.jsx draws them and SaveSeedSheet.jsx opens it.
 //
-// PURE. Nothing here fetches, and nothing here prints a server's sentence: a refusal is answered by
-// its `code` in the client's own words (sentenceForRefusal), and an answer with no code gets the
-// general sentence.
+// PURE. Nothing here fetches, and nothing here prints a server's sentence: a refusal is answered by its `code` in the
+// client's own words (sentenceForRefusal), and an answer with no code gets the general sentence.
 //
-// ONE READER FOR THE SWITCH. Every surface of this release asks addToLotAvailable() and nothing else,
-// so "off" is one answer everywhere: no link, no list, no form, no "still says" line, and no request
-// to either new route. It needs BOTH flags: the add form lives in release 2b's From block.
+// ONE READER FOR THE SWITCH. Every surface of the feature asks addToLotAvailable() and nothing else, so "off" is one
+// answer everywhere: no link, no list, no form, no "still says" line, and no request to either new route. It needs
+// BOTH flags: the add form lives in the multi-parent sheet's From block.
 import { SEED_MULTI_PARENT, SEED_ADD_TO_LOT } from '../../lib/featureFlags.js'
 import { formatSeedWeight } from '../../lib/format.js'
 import { seedCountLabel } from './seedLots.js'

@@ -95,7 +95,7 @@ function HarvestWindow({ window: win }) {
   // it go to full ripeness give me vs green?) plus ripe_vs_unripe and the caveat, which render OUTSIDE the points list
   // and are never hidden by collapse: a collapsed unlabelled low-confidence point would be a confidently-presented
   // derived claim (colour-window canon §4/§9). Content is never cut; disclosure manages length. This deviates from
-  // canon §6 "every window point renders" for records over 3 points (noted on harvest-colour-window-V100-20260811.md).
+  // canon §6 "every window point renders" for records over 3 points (noted in the harvest-colour-window design doc).
   const [expanded, setExpanded] = React.useState(false)
   const rec = win.cultivar ?? win.crop
   if (!rec) return null

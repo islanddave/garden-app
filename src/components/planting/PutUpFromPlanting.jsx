@@ -65,12 +65,12 @@ const METHOD_LABELS = {
   dehydrate: 'Dehydrate', powder: 'Powder', passata: 'Passata / sauce',
   can_water_bath: 'Water-bath can', can_pressure: 'Pressure can', jam_preserve: 'Jam / preserve',
   ferment: 'Ferment', cure_store: 'Cure & store', cold_store: 'Cold store',
-  purchased_preserved: 'Bought already preserved',   // D6 (V4-PUTUPPROV-001)
+  purchased_preserved: 'Bought already preserved',
   // The row below falls back to the raw slug, so an omission here surfaces as "ferment_mash" rather than as a blank.
   // Ugly is still a defect, and the parity test (putUpMethodParity.test.js) binds all three maps regardless.
   quick_pickle: 'Quick / vinegar pickle', pesto: 'Pesto', hot_sauce: 'Hot sauce',
   ferment_mash: 'Fermenting mash (unfinished)',
-  candy: 'Candied (pieces or sweets)',   // V5-PUTUPCANDY-001; R2a: the door's chip, not PutUp.jsx's picker
+  candy: 'Candied (pieces or sweets)',   // the door's chip, not PutUp.jsx's picker
   other: 'Other',
 }
 

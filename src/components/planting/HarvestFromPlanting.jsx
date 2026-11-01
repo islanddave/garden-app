@@ -22,7 +22,7 @@ const WINDOW_DAYS = 14
 // reads as "this season" here as everywhere else.
 //
 // The convergence lives in the CALLER on purpose. summarizeHarvests' opts.seasonStart override CANNOT express a grow
-// year: it derives seasonEnd as `${seasonStart.slice(0,4)}-12-31` (harvestSummary.js), so '2025-11-01' yields a
+// year: it derives seasonEnd as `${seasonStart.slice(0,4)}-12-31` (harvestSummary.js), so 'YYYY-11-01' yields a
 // two-month season, silently. Widening that lib is out (it is shared, and growYear.js already imports etDay from it,
 // so a growYear import back would close a cycle). Instead: pre-filter the rows to the grow-year span and reuse
 // summarizeHarvests' OWN allTime bucket over that subset. Same aggregation code path, no second bucketing
@@ -109,8 +109,8 @@ export default function HarvestFromPlanting({ planting, fetch }) {
   // `window_` (trailing underscore) — `window` is the global; shadowing it inside a component is a
   // footgun waiting for the next person who reaches for window.matchMedia in this file.
   const window_ = harvestWindow(summary)
-  // "2026 season" = the season ENDING Oct 2026 (growYear.js), matching harvestExport.js and the Harvests page chips.
-  // Leaving "This year (2026)" over a Nov-1-based bucket would ship a mislabelled number the moment the two diverge.
+  // "<year> season" = the season ENDING Oct of that year (growYear.js), matching harvestExport.js and the Harvests page chips.
+  // Leaving "This year (<year>)" over a Nov-1-based bucket would ship a mislabelled number the moment the two diverge.
   const seasonLabel = season.growYear ? `${season.growYear} season` : 'This season'
   const rows = [
     { key: 'recent', label: `Last ${WINDOW_DAYS} days`, b: summary.recent },

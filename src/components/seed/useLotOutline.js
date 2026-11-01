@@ -1,15 +1,13 @@
-// src/components/seed/useLotOutline.js — V5-SEEDSTAB-001 §4.6: after a write, the row itself is the
-// confirmation.
+// src/components/seed/useLotOutline.js — after a write, the row itself is the confirmation.
 //
-// A save inside Seeds never switches view and never navigates, so "it worked" has to be visible where
-// the user already is: the affected row or card scrolls into sight and carries a static 2 px outline
-// for about two seconds. Operational feedback, not a reward surface — no motion beyond the scroll,
-// which is instant under prefers-reduced-motion, and no colour-only cue (the outline is a shape).
+// A save inside Seeds never switches view and never navigates, so "it worked" has to be visible where the user
+// already is: the affected row or card scrolls into sight and carries a static 2 px outline for about two seconds.
+// Operational feedback, not a reward surface: no motion beyond the scroll, which is instant under
+// prefers-reduced-motion, and no colour-only cue (the outline is a shape).
 //
-// `highlight` is `{ id, seq }` from the Seeds shell. `seq` makes a second highlight of the same lot
-// fire again. `seq === 0` is the ARRIVAL hint from the URL (`?lot=`); `skipArrival` drops it when the
-// view restored a scroll position, so Back to a list the user had scrolled does not yank them to the
-// lot the page was first opened on.
+// `highlight` is `{ id, seq }` from the Seeds shell. `seq` makes a second highlight of the same lot fire again.
+// `seq === 0` is the ARRIVAL hint from the URL (`?lot=`); `skipArrival` drops it when the view restored a scroll
+// position, so Back to a list the user had scrolled does not yank them to the lot the page was first opened on.
 import { useEffect, useRef, useState } from 'react'
 import { usePageScrollYield } from '../../hooks/usePageScrollManager.js'
 
@@ -19,18 +17,17 @@ function prefersReducedMotion() {
   try { return !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches } catch { return false }
 }
 
-// ONCE per highlight ({id, seq}), not once per time `ready` turns true. A view's `ready` falls and
-// rises whenever the lot is filtered out and back in, and each rise used to scroll the page back to a
-// lot outlined long ago (pre-promote regression pass #2, finding A/B).
+// ONCE per highlight ({id, seq}), not once per time `ready` turns true. A view's `ready` falls and rises whenever the
+// lot is filtered out and back in, and each rise would otherwise scroll the page back to a lot outlined long ago.
 export function useLotOutline(highlight, { ready, skipArrival = false } = {}) {
   // An object, not the id: a second highlight of the SAME lot must restart the timer and scroll again.
   const [shown, setShown] = useState(null)
   const firedRef = useRef(null)
   const id = highlight?.id != null ? String(highlight.id) : null
   const seq = highlight?.seq ?? 0
-  // BUG-DETAILPAGESCARRYSCROLL-001 (rimpact-scrollmanager-built N4): the outline scrolls on purpose — a row
-  // the add form just created, after its navigate(-1) — so a Back restore still pulling toward the old
-  // place stops for good first instead of yanking the page back from the row. A no-op outside the manager.
+  // The outline scrolls on purpose (a row the add form just created, after its navigate(-1)), so a Back restore still
+  // pulling toward the old place stops for good first instead of yanking the page back from the row. A no-op outside
+  // the manager.
   const yieldScroll = usePageScrollYield()
 
   useEffect(() => {

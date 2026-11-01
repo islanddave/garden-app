@@ -1,11 +1,8 @@
-// src/components/seed/seedParents.js — V5-SEEDMULTIPARENT-001 release 2b. What a jar's PARENT SET says,
-// decided once.
+// src/components/seed/seedParents.js — what a jar's PARENT SET says, decided once.
 //
-// A saved lot used to have one parent plant, and every notice about it read the FILED variety. A jar can
-// now be gathered off several plantings, of one cultivar or of several, so the chip, the sentences, the
-// F2 label and the Breeding fact all come from this one function over one table (the geneticist's truth
-// table, rows 0-10). The save sheet, the lot page, My seeds and the Saved seeds cards read it, so no two
-// of them can disagree about one jar.
+// A jar can be gathered off several plantings, of one cultivar or of several, so the chip, the sentences, the F2 label
+// and the Breeding fact all come from this one function over one table (the geneticist's truth table, rows 0-10). The
+// save sheet, the lot page, My seeds and the Saved seeds cards read it, so no two of them can disagree about one jar.
 //
 // A LEAF module: it imports the flag and nothing else, and seedLots.js imports IT (isF2Lot is
 // lotNotice(i).f2 === 'full'). That direction is the only one without a cycle, which is why isSavedLot is

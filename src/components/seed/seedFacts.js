@@ -1,17 +1,16 @@
-// V5-SEEDCARDS-001 — a seed's facts in ONE vocabulary, shared by My seeds' expanded row and the seed's
-// detail page (UX spec §6.3 and §7.2: same words, same order). Two copies had already drifted apart
-// once — the detail page showed heat with no word of where the number came from — so both read here.
+// A seed's facts in ONE vocabulary, shared by My seeds' expanded row and the seed's detail page (same words, same
+// order), so the two cannot drift apart.
 //
-// Fixed order. An absent fact is LEFT OUT, never dashed. The one stated absence is a pepper's heat:
-// it is the fact looked for on a pepper, so "not recorded" goes where the eye goes. Pure: each fact
-// is { key, label, value, italic? } with a string value, and the pages own the markup.
+// Fixed order. An absent fact is LEFT OUT, never dashed. The one stated absence is a pepper's heat: it is the fact
+// looked for on a pepper, so "not recorded" goes where the eye goes. Pure: each fact is { key, label, value, italic? }
+// with a string value, and the pages own the markup.
 import { heatOf } from './mySeedsModel.js'
 import { isSavedLot } from './seedLots.js'
 import { lotNotice } from './seedParents.js'
 import { fmtShu } from '../../lib/varietySpec.js'
 
-// Where a Scoville figure came from, in words (UX spec §2). Never the LOT's supplier: heat is a
-// cultivar fact and can come from another seller's page.
+// Where a Scoville figure came from, in words. Never the LOT's supplier: heat is a cultivar fact and can come from
+// another seller's page.
 export const HEAT_SOURCE_WORDS = {
   packet_label: 'from the packet',
   vendor_catalog: 'from a seller’s catalogue',
@@ -71,9 +70,8 @@ export function seedFacts(i, { from = '', compact = false } = {}) {
       value: `${lo === hi ? lo : `${lo}–${hi}`} days${DTM_BASIS_SUFFIX.get(i?.dtm_basis) ?? ''}`,
     })
   }
-  // V5-SEEDSTAB-001 slice 3 — a lot saved off an F1 plant is not "F1 hybrid": the cultivar is, the seed
-  // in this jar is its F2 (seedLots.isF2Lot). A bought packet keeps the cultivar's own word.
-  // V5-SEEDMULTIPARENT-001 release 2b: the words are seedParents.lotNotice's, one per truth-table row.
+  // A lot saved off an F1 plant is not "F1 hybrid": the cultivar is, the seed in this jar is its F2 (seedLots.isF2Lot).
+  // A bought packet keeps the cultivar's own word. The words are seedParents.lotNotice's, one per truth-table row.
   // null = the filed variety's own word; '' = a mixed jar with no single breeding to state, so no fact.
   const breeding = lotNotice(i).breedingFact ?? BREEDING_LABEL.get(i?.breeding_system)
   if (breeding) out.push({ key: 'breeding', label: 'Breeding', value: breeding })

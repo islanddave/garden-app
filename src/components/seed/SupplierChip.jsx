@@ -1,4 +1,4 @@
-// src/components/seed/SupplierChip.jsx — V5-SEEDCARDS-001. The supplier as a featured, coloured chip
+// src/components/seed/SupplierChip.jsx — the supplier as a featured, coloured chip
 // on a seed card: the supplier's designated fill (src/lib/supplierPalette.js), its secondary as the
 // border (DASHED for a source that is not a shop — the non-colour cue), and its NAME as the text, which
 // is the cue that never depends on colour. Composes the frozen <Badge> with a style override rather
