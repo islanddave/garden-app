@@ -30,7 +30,7 @@ import { todayLocalISO } from '../lib/dateLocal.js'
 import { P, TOP_CHROME_HEIGHT_PX, BOTTOM_NAV_HEIGHT_PX } from '../lib/constants.js'
 import { T } from '../components/forms/formStyles.js'
 import Icon from '../components/Icon.jsx'
-// S6: Harvest, Put-Up, Resting's rows, the household sections, the Sow link row.
+// Harvest, Put-Up, Resting's rows, the household sections, the Sow link row.
 import HarvestWatchBand from '../components/HarvestWatchBand.jsx'
 import ComposeHarvestBand from '../components/ComposeHarvestBand.jsx'
 import PutUpUseSoonBand from '../components/PutUpUseSoonBand.jsx'
@@ -43,41 +43,37 @@ import { useMembers } from '../hooks/useMembers.js'
 import { useShowOthers, memberFirstName } from '../lib/householdView.js'
 import { SOW_DATED_LINES_FROZEN } from '../lib/featureFlags.js'
 
-// TodayV2 — the redesigned Today (V5-TODAYREDESIGN-001; plan-v2 §1, §2.1–2.2, §4–§6). App.jsx mounts it at /today,
-// a static import; since S8c (L8) it is the only Today page — the old one and its per-device switch are gone.
+// TodayV2: the Today page. App.jsx mounts it at /today, a static import.
 //
-// S2 IS THE SKELETON: the Seeds frame, the title row (1.3rem green "Today" + Expand/Collapse all), the date,
-// the loading / error / no-plan states, one page-level status region, and the SECTIONS — in their fixed
-// order, as flat bands (TodaySection), open or closed from the three state layers:
-//   Layer 1 remembered (useTodaySections: the localStorage mirror, and since S7 the server's copy on
-//           user_notification_prefs.today_sections, sent from the same hook) — written ONLY by an explicit
-//           header tap;
-//   Layer 2 the visit (useTodayVisit: Expand/Collapse all, and later chip jumps and triggers) — never saved;
-//   Layer 3 triggers (S5: triggers.js openAtStart, ONE evaluation at the ready point) — only Protect tonight,
-//           Heads-up and Needs care ever open by themselves.
-// The bands S2 can build from the plan alone are here: Needs care (count = water + feed + check, §2.4) and
-// Resting (count, names, its explainer). Each later slice fills its own: glance card + jump bar (S3), the
-// Needs care body (S4), Protect tonight + Heads-up (S5), Harvest / Put-Up / Resting rows / household (S6).
+// THE PAGE is the Seeds frame, the title row (1.3rem green "Today" + Expand/Collapse all), the date,
+// the loading / error / no-plan states, one page-level status region, and the SECTIONS, in their fixed
+// order, as flat bands (TodaySection), open or closed from three state layers:
+//   Layer 1 remembered (useTodaySections: the localStorage mirror, and the server's copy on
+//           user_notification_prefs.today_sections, sent from the same hook), written ONLY by an
+//           explicit header tap;
+//   Layer 2 the visit (useTodayVisit: Expand/Collapse all, chip jumps and triggers), never saved;
+//   Layer 3 triggers (triggers.js openAtStart, ONE evaluation at the ready point): only Protect
+//           tonight, Heads-up and Needs care ever open by themselves.
 //
-// S3 — the GLANCE CARD paints as soon as the plan is in (it needs nothing else); its open/closed is Layer 1
-// key 'glance' (a tap is remembered, nothing ever opens it by itself). The JUMP BAR paints at the ready point
-// with the chips live there, HELD for the visit (order.chips); it is the page's one sticky layer. A chip tap
-// opens its section as a visit overlay, scrolls its header under the bar and focuses it; Water / Feed / Check
-// ARE Needs care's task filter (finish plan §3.5, Dave's D17): a tap sets that task, a tap on the task already set
-// clears it, and the jump lands either way. While this page is mounted the document scrolls with the sticky
-// layers subtracted (html scroll-padding, at the bar's measured height).
+// The GLANCE CARD paints as soon as the plan is in (it needs nothing else); its open/closed is Layer 1
+// key 'glance' (a tap is remembered, nothing ever opens it by itself). The JUMP BAR paints at the ready
+// point with the chips live there, HELD for the visit (order.chips); it is the page's one sticky layer.
+// A chip tap opens its section as a visit overlay, scrolls its header under the bar and focuses it;
+// Water / Feed / Check ARE Needs care's task filter: a tap sets that task, a tap on the task already
+// set clears it, and the jump lands either way. While this page is mounted the document scrolls with
+// the sticky layers subtracted (html scroll-padding, at the bar's measured height).
 //
-// THE READY POINT (§6.4): the plan has settled (a plan, no plan, or an error) and Layer 1 can be read — prefs
-// have loaded, OR this device has a mirror, OR 300 ms have passed. Sections paint THERE, all at once, from a
-// snapshot taken there; nothing sits below them that could be pushed down, and a prefs answer that lands
-// later waits for the next visit. `data-today-ready` marks it for gate:today-shape:v2.
+// THE READY POINT: the plan has settled (a plan, no plan, or an error) and Layer 1 can be read: prefs
+// have loaded, OR this device has a mirror, OR 300 ms have passed. Sections paint THERE, all at once,
+// from a snapshot taken there; nothing sits below them that could be pushed down, and a prefs answer
+// that lands later waits for the next visit. `data-today-ready` marks it for gate:today-shape:v2.
 //
 // Region anchors (data-testid) are gate:today-shape:v2's contract (tests/harness/_todaymeasure/
 // today-v2-contract.mjs): renaming one is a contract change made in the same commit.
 export const SECTION_ORDER = ['protect', 'headsup', 'care', 'harvest', 'putup', 'resting']
 const CARE_NEEDS = new Set(['water_due', 'no_history', 'fertilize', 'pest', 'overwintering'])
 const PREFS_WAIT_MS = 300
-// §6.2's bottom allowance: one toast's height above BottomNav, so a focused control is never under either.
+// Bottom allowance: one toast's height above BottomNav, so a focused control is never under either.
 const TOAST_ALLOWANCE_PX = 64
 
 function formatDate(iso) {
@@ -87,7 +83,7 @@ function formatDate(iso) {
   return d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })
 }
 
-// First three names, then "+N" (plan-v2 §1.1 "Blackberry, Kousa Dogwood, Christmas Cactus +6").
+// First three names, then "+N" ("Blackberry, Kousa Dogwood, Christmas Cactus +6").
 export function namesSummary(items, shown = 3) {
   const names = items.map((it) => (it && (it.name || it.crop)) || null).filter(Boolean)
   if (!names.length) return null
@@ -95,9 +91,8 @@ export function namesSummary(items, shown = 3) {
   return names.length > shown ? `${head} +${names.length - shown}` : head
 }
 
-// §2.4: the Needs care header count is Water + Feed + Check over ACTIVE rows — the plan's rows minus the
-// shared skip set (V2 logs nothing until S4, whose store then removes logged rows too). Cold rows belong to
-// Protect tonight alone.
+// The Needs care header count is Water + Feed + Check over ACTIVE rows: the plan's rows minus the
+// shared skip set (the store also removes logged rows). Cold rows belong to Protect tonight alone.
 export function activeCareRows(plan, skipped) {
   return buildCareNeeded(plan).filter((r) => CARE_NEEDS.has(r.need) && !skipped.has(r.key))
 }
@@ -106,47 +101,47 @@ export default function TodayV2() {
   const { user, profile } = useAuthOptional()
   const userId = user?.id ?? null
   const { prefs, prefsLoaded, refreshPrefs } = usePrefs()
-  // Always the household question (§2.9): the server answers [] with no one else, so no toggle reloads.
+  // Always the household question: the server answers [] with no one else, so no toggle reloads.
   const { data, loading, error, reload, seedPending } = useDailyPlan({ includeHousehold: true, seed: userId || undefined })
-  // Review 4160.2 IMPORTANT-2 (integration 2): a Back paints the last good plan (the seed) at once, read BEFORE the
+  // A Back paints the last good plan (the seed) at once, read BEFORE the
   // page was left — a watering logged meanwhile on a planting's own page is still due in it. Until that remount's
   // revalidation settles, every write control on the page (Needs care, Protect tonight, the household sections) is
   // inert: aria-disabled, and its handler posts nothing. Undo stays live (it only deletes this visit's own writes).
   const writesHeld = !!seedPending
   const planDate = data?.plan_date ?? null
   const plan = data?.has_plan ? (data.plan ?? null) : null
-  // S7: the token lets Layer 1 send a tap's entry to the server (useTodaySections owns the sender).
+  // The token lets Layer 1 send a tap's entry to the server (useTodaySections owns the sender).
   const { getToken } = useApiFetch()
   const layer1 = useTodaySections({ userId, prefs, getToken })
-  // §3: a plan served from the offline cache, or not dated today, is stale — it opens nothing.
+  // A plan served from the offline cache, or not dated today, is stale — it opens nothing.
   const stale = !!data && (isFromCache(data) || data.plan_date !== todayLocalISO())
-  // S4: Needs care's state lives here, above its section (the header, the trigger and the visit's held order
-  // are taken at the ready point; the body is unmounted while closed). §2.4: the active rows = the plan's
+  // Needs care's state lives here, above its section (the header, the trigger and the visit's held order
+  // are taken at the ready point; the body is unmounted while closed). The active rows are the plan's
   // care rows minus logged minus skipped.
   const needs = useNeedsCare({ plan, planDate, userId, stale })
   const care = needs.rows
-  // S5: Protect tonight's state lives here too (header, chip count, trigger and held order are taken at the ready
-  // point). Its rows are every cold row — the household's too when this person has the household view on (SF6);
+  // Protect tonight's state lives here too (header, chip count, trigger and held order are taken at the ready
+  // point). Its rows are every cold row, the household's too when this person has the household view on;
   // Needs care never lists one. Needs care's rows weight its spot order, so both sections list spots alike.
   const protect = useProtect({ plan, planDate, userId, stale, householdPlans: data?.household_plans, careRows: needs.allEnriched })
-  // S5: Heads-up (storage windows) reads /api/plants and the device date — plan-independent, never stale.
+  // Heads-up (storage windows) reads /api/plants and the device date — plan-independent, never stale.
   const headsup = useHeadsUp()
   const statusRef = useRef(null)
   const announce = useCallback((msg) => { if (statusRef.current) statusRef.current.textContent = msg }, [])
   const resting = useMemo(() => (Array.isArray(plan?.dormant) ? plan.dormant.filter(Boolean) : []), [plan])
 
-  // ── S6: the plan-INDEPENDENT sections — Harvest and From your Put-Up (plan-v2 §1.0 rows 4–5; they render with no
-  // plan too, §1.4) — the household sections (row 7) and the Sow link row (row 8). The bands are fetched HERE and
-  // handed to their sections' bodies, which are unmounted while closed (useTodayBands). No sow lines are asked for
-  // while the 2027 sowing freeze holds (V5-SOWFREEZELINES-001).
+  // The plan-INDEPENDENT sections: Harvest and From your Put-Up (they render with no plan too), the
+  // household sections and the Sow link row. The bands are fetched HERE and handed to their sections'
+  // bodies, which are unmounted while closed (useTodayBands). No sow lines are asked for while the
+  // sowing freeze (SOW_DATED_LINES_FROZEN) holds.
   const bands = useTodayBands({ viewerId: profile?.id ?? null, sowLines: !SOW_DATED_LINES_FROZEN })
-  // Hoisted from HarvestWatchBand (plan §8 S6): the band's once-per-session handedness adopt ran because the band
+  // Hoisted from HarvestWatchBand: the band's once-per-session handedness adopt ran because the band
   // was always mounted on Today; here the Harvest body is unmounted while closed, so the page runs it.
   useHandednessSync(needs.getToken)
-  // SF6: another member's section only when THIS device has the household view on — V1's switch, read LIVE
-  // through the one reader both pages share (lib/householdView.js; its writer here is the Settings › Controls
-  // row, finish plan D-3), and only for a member with care rows today. The plan read always asks for the
-  // household (§2.9, above); this decides what is SHOWN. Names as V1 names them.
+  // Another member's section only when THIS device has the household view on, read LIVE through the
+  // one reader (lib/householdView.js; its writer is the Settings › Controls row), and only for a member
+  // with care rows today. The plan read always asks for the household (above); this decides what is
+  // SHOWN.
   const showOthers = useShowOthers()
   const { members } = useMembers()
   const household = useMemo(() => {
@@ -163,9 +158,8 @@ export default function TodayV2() {
     ...hhPresent,
   ], [protect.count, headsup.count, care.length, resting.length, bands.harvest.present, bands.putup.present, hhPresent])
 
-  // ── the glance card's weather: computed exactly as the old page (Today.jsx, until S8c) computed it, so a
-  // phone that moved from one to the other read the same numbers — the live rain overlay (display only), the one low per night (V5-FROSTTWOMODELS-001), the frost
-  // line's current lows (V5-TODAYFROSTWARMEDADVISORY-001) and the engine cue re-worded at that low.
+  // The glance card's weather: the live rain overlay (display only), the one low per night, the frost
+  // line's current lows and the engine cue re-worded at that low.
   const { liveHydrology, refreshedAt } = useLiveRain(plan?.weather_coords ?? plan?.coords)
   const agreed = useMemo(() => agreedTonightLow(plan), [plan])
   const current = useMemo(() => currentLows(plan), [plan])
@@ -174,14 +168,14 @@ export default function TodayV2() {
   // when the plan is today's).
   const staleMark = plan ? staleMarker({ planDate, generatedAt: data?.generated_at ?? null, fromCache: isFromCache(data), today: todayLocalISO() }) : null
 
-  // ── the jump chips (§2.4, §2.7): Water / Feed / Check from the same active rows as the Needs care count.
-  // Heads-up carries its count too (finish plan D-7: its band said 1, its chip said nothing).
+  // The jump chips: Water / Feed / Check from the same active rows as the Needs care count.
+  // Heads-up carries its count too.
   const counts = useMemo(() => ({ ...taskCounts(care), protect: protect.count, headsup: headsup.count }), [care, protect.count, headsup.count])
-  // The verdict's count (finish plan D-9): the Water rows still on the list — the Water chip's own number, so the
+  // The verdict's count: the Water rows still on the list — the Water chip's own number, so the
   // card never says "Nothing due" while the bar says "Water 3" — not the plan's raw water_due length.
   const waterDueLeft = counts.water
   const live = useMemo(() => liveChips(present, counts), [present, counts])
-  // ── the filters (§2.6; finish plan §3.5): ONE set, held by useNeedsCare and saved per session — the task from the
+  // The filters: ONE set, held by useNeedsCare and saved per session — the task from the
   // bar's Water / Feed / Check cells, the spots from Needs care's spot chips. Every change, from either, says its
   // result ONCE through the page's one status region ("Needs care: Water, 168 in 8 spots."), from the change itself.
   const setCareFilters = needs.setFilters
@@ -190,7 +184,7 @@ export default function TodayV2() {
     announce(filterAnnouncement(filterResult(care, next)))
   }, [setCareFilters, announce, care])
 
-  // ── the ready point ───────────────────────────────────────────────────────────────────────────────────────
+  // The ready point (see the header).
   const settled = !loading
   const [prefsWaitOver, setPrefsWaitOver] = useState(false)
   useEffect(() => {
@@ -198,7 +192,7 @@ export default function TodayV2() {
     const t = setTimeout(() => setPrefsWaitOver(true), PREFS_WAIT_MS)
     return () => clearTimeout(t)
   }, [settled, prefsWaitOver])
-  // A new plan day while mounted is a new visit (§2.2): re-read prefs first and start it from the answer
+  // A new plan day while mounted is a new visit: re-read prefs first and start it from the answer
   // (bounded by the same 300 ms), so the day's first visit sees the other device's choices.
   const [day, setDay] = useState({ seen: planDate, awaiting: false })
   let awaitingPrefs = day.awaiting
@@ -214,20 +208,20 @@ export default function TodayV2() {
     Promise.resolve().then(() => refreshPrefs()).catch(() => null).finally(done)
     return () => { on = false; clearTimeout(t) }
   }, [day.awaiting, refreshPrefs])
-  // S4 adds /api/plants + /api/locations settled (ok or failed) to the ready point (§6.4): the spots, groups
+  // /api/plants + /api/locations settled (ok or failed) are part of the ready point: the spots, groups
   // and the small-pot trigger read them, and a snapshot taken before they land would be keyed differently.
-  // S5: Protect reads the same two requests (+ the roster when a household row needs a name) — with no plan too,
-  // since the household's cold rows can make Protect exist on their own.
+  // Protect reads the same two requests (+ the roster when a household row needs a name), with no plan
+  // too, since the household's cold rows can make Protect exist on their own.
   // protect.settled covers Heads-up's one request (/api/plants) as well.
-  // S6 adds the bands' first answers (ok or failed), capped by the same 300 ms window: a remembered-open Harvest
-  // is then open at the visit's start and nothing below Needs care moves when they land; a band slower than that
-  // is inserted closed in its slot when it arrives (§2.9).
+  // The bands' first answers (ok or failed) count too, capped by the same 300 ms window: a
+  // remembered-open Harvest is then open at the visit's start and nothing below Needs care moves when
+  // they land; a band slower than that is inserted closed in its slot when it arrives.
   const ready = settled && !awaitingPrefs && (prefsLoaded || layer1.mirrorExists || prefsWaitOver) && (!plan || needs.settled) && protect.settled && (bands.settled || prefsWaitOver)
 
   const { record, isOpen, tap, overlayAll, update } = useTodayVisit({
     userId, planDate, ready,
     start: () => {
-      // §3 + MF1 — ONE evaluation (triggers.js openAtStart): Protect tonight (frost / hard freeze / a chill
+      // ONE evaluation (triggers.js openAtStart): Protect tonight (frost / hard freeze / a chill
       // planting's first night), Heads-up (a storage window's first day, its last two days), Needs care (never /
       // hot / small) each open by themselves unless a close made today already covers their trigger; the
       // descriptors are kept so a close now records the ack.
@@ -246,14 +240,14 @@ export default function TodayV2() {
     },
   })
   const shown = record ? SECTION_ORDER.filter((k) => record.order.sections.includes(k) || present.includes(k)) : []
-  // S6: the household sections, after Resting (held in the visit's order like every section; a member's first
+  // The household sections, after Resting (held in the visit's order like every section; a member's first
   // appearance mid-visit takes the next slot). Expand / Collapse all move them with the rest.
   // Only members still on the page: the switch turned off mid-visit leaves no empty slot (and Collapse all
   // never counts a section that is not drawn).
   const hhShown = record ? [...new Set([...record.order.sections, ...present])].filter((k) => k.startsWith('hh-') && household.some((h) => h.key === k)) : []
   const allShown = [...shown, ...hhShown]
   const anyOpen = allShown.some(isOpen)
-  // Finish plan §3.3 (D15): a Protect tonight section on the page takes the glance card's frost and cold-side cue
+  // A Protect tonight section on the page takes the glance card's frost and cold-side cue
   // lines (lib/todayV2/alerts.js). Before the visit starts, the section is the one the page will draw.
   const protectShown = record ? shown.includes('protect') : present.includes('protect')
   const cue = useMemo(() => ({ callout: cueCallout, generatedAt: data?.generated_at ?? null, planDate }), [cueCallout, data?.generated_at, planDate])
@@ -267,19 +261,19 @@ export default function TodayV2() {
     tap('glance', next)
   }, [glanceOpen, layer1, planDate, tap])
 
-  // The bar exists for the visit only when ≥ 2 chips did at the ready point (§2.7); a chip that goes live later
+  // The bar exists for the visit only when ≥ 2 chips did at the ready point; a chip that goes live later
   // takes its slot, a held one that empties reads "· done".
   const heldChips = record?.order?.chips || []
   const barShown = ready && !!record && heldChips.length >= 2
   const chips = barShown ? shownChips(heldChips, live) : []
 
-  // A chip tap (§2.7, §5.5): the page-scroll manager stands down (usePageScrollYield), the target opens as a
+  // A chip tap: the page-scroll manager stands down (usePageScrollYield), the target opens as a
   // visit overlay (never remembered), a task cell with rows sets its task as THE filter or, already set, clears it
   // (an emptied one only jumps) — and, after the commit that mounts the target's body, the header scrolls under the
   // bar (instant under reduced motion, smooth otherwise) and takes focus without a second scroll. The filter and
   // the open land in that ONE commit (the same event), so the scroll measures Needs care as filtered: never a page
   // that grows under it (Check after Feed left the header short of the bar while the body applied the filter a
-  // commit later, L1).
+  // commit later).
   const frameRef = useRef(null)
   const barRef = useRef(null)
   const reduced = usePrefersReducedMotion()
@@ -308,7 +302,7 @@ export default function TodayV2() {
     if (header && typeof header.focus === 'function') header.focus({ preventScroll: true })
   }, [landing])
 
-  // The bar's real height (D16: a bar whose cells wrap — 200% text — is taller than its one-row 52px), read as it
+  // The bar's real height (a bar whose cells wrap, as at 200% text, is taller than its one-row 52px), read as it
   // changes, so the offsets below never leave a landed or focused header under a second row of cells.
   const [barH, setBarH] = useState(JUMP_BAR_HEIGHT_PX)
   useLayoutEffect(() => {
@@ -321,7 +315,7 @@ export default function TodayV2() {
     return () => ro.disconnect()
   }, [barShown])
 
-  // While this page is mounted the document scrolls with its sticky layers subtracted (§6.2): a focus move,
+  // While this page is mounted the document scrolls with its sticky layers subtracted: a focus move,
   // TalkBack's own scroll or a jump lands BELOW TopChrome and the bar and ABOVE BottomNav plus one toast. The
   // 8px landing gap is each section's scroll-margin-top (TodaySection), so a jump lands a header 8px under the
   // bar. Cleared on unmount — no other page inherits it.
@@ -334,7 +328,7 @@ export default function TodayV2() {
   }, [barShown, barH])
 
   // An explicit tap: the visit's state for the section AND Layer 1. A close made while a trigger holds the
-  // section open records that trigger as a date-scoped ack (MF1); an open drops any ack.
+  // section open records that trigger as a date-scoped ack; an open drops any ack.
   const toggle = useCallback((key) => {
     const next = !isOpen(key)
     const trigger = record?.triggers?.[key]
@@ -344,20 +338,20 @@ export default function TodayV2() {
     tap(key, next)
   }, [isOpen, record, planDate, layer1, tap])
 
-  // SF8: reasons + spots, never counts; the urgency cue (severity.med + the imperative) only when a trigger
-  // opened the section this visit. Emptied mid-visit (§2.5, S4g): "Needs care · all caught up" over what was
+  // Reasons + spots, never counts; the urgency cue (severity.med + the imperative) only when a trigger
+  // opened the section this visit. Emptied mid-visit: "Needs care · all caught up" over what was
   // logged today and what rain took (useNeedsCare caughtUp).
   const resumedSet = useMemo(() => new Set(record?.resting?.resumed || []), [record])
   const markResumed = useCallback((id) => update((r) => ({ ...r, resting: { resumed: [...new Set([...(r.resting?.resumed || []), id])] } })), [update])
   const restingLeft = resting.filter((it) => !resumedSet.has(it.id))
   const careUrgent = !!record?.triggers?.care && record?.overlay?.care === 'open'
-  // S5: the urgency cue (severity.med) only when a trigger opened Protect this visit; the words are the night's —
-  // open "Before dark · tender below 50°", closed "Before dark · Lemon Verbena, Sweet Basil +3" (finish plan §3.3,
-  // D15: the low is the glance card's). Emptied mid-visit: what this visit did.
+  // The urgency cue (severity.med) only when a trigger opened Protect this visit; the words are the night's —
+  // open "Before dark · tender below 50°", closed "Before dark · Lemon Verbena, Sweet Basil +3" (the low
+  // is the glance card's). Emptied mid-visit: what this visit did.
   const protectUrgent = !!record?.triggers?.protect && record?.overlay?.protect === 'open'
   const protectSummaryNow = isOpen('protect') ? protect.summaryOpen : protect.summary
   const headsupUrgent = !!record?.triggers?.headsup && record?.overlay?.headsup === 'open'
-  // A one-item section that is OPEN drops its summary: the summary would repeat its only row (finish plan D-7).
+  // A one-item section that is OPEN drops its summary: the summary would repeat its only row.
   // Only where the summary is the rows themselves — Heads-up (its one window's words) and Resting (its names).
   const soleOpen = (key, n) => n === 1 && isOpen(key)
   const SECTIONS = {
@@ -385,7 +379,7 @@ export default function TodayV2() {
         : needs.caughtUp.summary,
       body: <NeedsCare care={needs} record={record} update={update} announce={announce} onFilters={changeCareFilters} writesHeld={writesHeld} />,
     },
-    // S6: the explainer (S2), then DormantList's rows, bare. Resume is never optimistic (DormantList); the plants it
+    // The explainer, then DormantList's rows, bare. Resume is never optimistic (DormantList); the plants it
     // resumed are held on the visit record, so a close and re-open (closed = unmounted) keeps them off the list,
     // and the count and names follow.
     resting: {
@@ -399,8 +393,8 @@ export default function TodayV2() {
         </div>
       ),
     },
-    // S6 (plan-v2 §1.1 row 7, §4): the compose band's picks line and the watch band's own selection in the header —
-    // names, never a count (Reward UX, §10 item 4) — and both bands' rows, bare, behind the tap.
+    // The compose band's picks line and the watch band's own selection in the header: names, never a
+    // count (Reward UX), and both bands' rows, bare, behind the tap.
     harvest: {
       title: 'Harvest',
       count: null,
@@ -412,7 +406,7 @@ export default function TodayV2() {
         </div>
       ),
     },
-    // S6 (§1.5): the use-soon slice's jars in the header; the band's rows and its Open Put-Up door, bare.
+    // The use-soon slice's jars in the header; the band's rows and its Open Put-Up door, bare.
     putup: {
       title: 'From your Put-Up',
       count: null,
@@ -439,7 +433,7 @@ export default function TodayV2() {
         )}
       </div>
       <p data-testid="today-date" style={dateStyle}>{formatDate(planDate) || 'Your garden, at a glance'}</p>
-      {/* The page's ONE live region (§5.6); the sections announce through it from S4 on. */}
+      {/* The page's ONE live region; the sections announce through it. */}
       <div ref={statusRef} role="status" aria-live="polite" data-testid="today-status" style={srOnly} />
 
       {/* Mounted only while it has something to say: its <section> is a flex item, and an empty one would
@@ -450,7 +444,7 @@ export default function TodayV2() {
       {data && !data.has_plan && (
         <p data-testid="today-noplan-card" style={noPlanStyle}>Today’s plan hasn’t arrived yet — it’s built overnight.</p>
       )}
-      {/* The glance card needs only the plan (its weather comes from it): no plan, no card (§1.4). */}
+      {/* The glance card needs only the plan (its weather comes from it): no plan, no card. */}
       {plan && plan.weather && (
         <GlanceCard
           plan={plan} generatedAt={data?.generated_at ?? null} planDate={planDate}
@@ -461,7 +455,7 @@ export default function TodayV2() {
         />
       )}
       {/* The stale marker lives in the glance card; a plan with no weather has no card, so it says how old it is
-          here instead (finish plan D-9 — offline with a cached plan included). */}
+          here instead (offline with a cached plan included). */}
       {plan && !plan.weather && staleMark && (
         <p data-stale="true" data-testid="today-stale" style={staleLine}>
           <Icon name="severity.low" size={14} decorative style={{ flexShrink: 0 }} />
@@ -475,8 +469,8 @@ export default function TodayV2() {
           {barShown && <JumpBar ref={barRef} chips={chips} counts={counts} task={careTask} onJump={jump} />}
           {SECTION_ORDER.map((key) => {
             // No Needs care section this visit: the caught-up line stands in its SLOT, after Protect and Heads-up
-            // (finish plan D-1: it rendered above every section), with the "No feed schedule" line V1 always
-            // shows (D-5: it lived only inside the Needs care body).
+            // (not above every section), with the "No feed schedule" line, which would otherwise live
+            // only inside the Needs care body.
             if (key === 'care' && !shown.includes('care')) {
               return plan && care.length === 0 ? (
                 <div key="care-empty" style={{ ...stackBody, ...careGap }}>
@@ -503,7 +497,7 @@ export default function TodayV2() {
               </TodaySection>
             )
           })}
-          {/* S6: one section per other member with care rows today (SF6: only while this device has the household
+          {/* One section per other member with care rows today (only while this device has the household
               view on), after Resting — closed by default, never opened by a trigger. `today-household` anchors them. */}
           {hhShown.length > 0 && (
             <div data-testid="today-household" style={stackSections}>
@@ -518,9 +512,9 @@ export default function TodayV2() {
               })}
             </div>
           )}
-          {/* The Sow link row (BD-067): a link, not a section, and LAST — the durable door to Seeds › Sow now. It is
-              CultivationLead, bare (S6); its dated lines stay unasked-for and hidden while the 2027 sowing freeze
-              holds (featureFlags SOW_DATED_LINES_FROZEN, V5-SOWFREEZELINES-001). */}
+          {/* The Sow link row: a link, not a section, and LAST, the durable door to Seeds › Sow now. It is
+              CultivationLead, bare; its dated lines stay unasked-for and hidden while the sowing freeze
+              holds (featureFlags SOW_DATED_LINES_FROZEN). */}
           <CultivationLead data={bands.sow} bare />
         </>
       )}
@@ -528,7 +522,7 @@ export default function TodayV2() {
   )
 }
 
-// ── styles (plan-v2 §4; tokens P / T) ──────────────────────────────────────────────────────────────────────
+// Styles (tokens P / T).
 // The Seeds frame (Seeds.jsx), one flex column: sections are spaced by the gap, never by their own margins.
 const frameStyle = { maxWidth: 720, margin: '0 auto', padding: '12px 16px 90px', display: 'flex', flexDirection: 'column', gap: T.space.sm }
 const titleRow = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: T.space.sm, minHeight: T.tapMinHeight }
@@ -543,7 +537,7 @@ const quietLine = { margin: 0, fontSize: T.type.sm, color: P.mid }
 const staleLine = { margin: 0, display: 'flex', alignItems: 'center', gap: 6, fontSize: T.type.xs, color: P.mid }
 // T.space.md before Needs care: the frame's gap gives T.space.sm, the band asks for the difference.
 const careGap = { marginTop: T.space.md - T.space.sm }
-// S6: a section body holding more than one block (Resting's explainer + rows; Harvest's two bands), and the
+// A section body holding more than one block (Resting's explainer + rows; Harvest's two bands), and the
 // household sections' stack — spaced like the frame, since children never set outer margins.
 const stackBody = { display: 'flex', flexDirection: 'column', gap: T.space.xs }
 const stackSections = { display: 'flex', flexDirection: 'column', gap: T.space.sm }
