@@ -104,9 +104,9 @@ const clientSrc = readFileSync(join(SRC, CLIENT), 'utf8')
 const clientAst = parse(clientSrc)
 
 // Every exported writer, as declared: `export (async) function saveX` or `export const saveX = …`.
-function exportedWriters() {
+function exportedWriters(ast = clientAst) {
   const out = new Map()
-  for (const node of clientAst.body) {
+  for (const node of ast.body) {
     if (node.type !== 'ExportNamedDeclaration' || !node.declaration) continue
     const d = node.declaration
     if (d.type === 'FunctionDeclaration' && /^(save|patch)/.test(d.id.name)) out.set(d.id.name, d)
@@ -119,20 +119,39 @@ function exportedWriters() {
   return out
 }
 
+// The bodies a writer hands to JSON.stringify or a sending helper, as AST nodes.
+function bodiesOf(fn) {
+  const bodies = []
+  visit(fn.body, (n) => {
+    if (isStringify(n)) bodies.push(n.arguments[0])
+    for (const h of SENDING_HELPERS) if (isCallTo(n, h)) bodies.push(n.arguments[1])
+  })
+  return bodies
+}
+
+// Files spelling the prefs route in a string or template literal (comments are not in the AST).
+function routeSpellers(files = walk(SRC)) {
+  const spelling = new Set()
+  for (const f of files) {
+    visit(parse(readFileSync(f, 'utf8')), (n) => {
+      const text = n.type === 'Literal' && typeof n.value === 'string' ? n.value
+        : n.type === 'TemplateElement' ? (n.value.cooked ?? n.value.raw) : null
+      if (text && text.includes(ROUTE)) spelling.add(relative(SRC, f))
+    })
+  }
+  return [...spelling]
+}
+
+// PRINT_LIST=1 prints the spellers and each writer's body keys (null: a body that is not a flat literal).
+const PRINT = 'PRINT_LIST=1 npx vitest run --reporter=verbose src/__tests__/prefsWriters.static.test.js'
+const writerListing = (ast) => Object.fromEntries([...exportedWriters(ast)].sort(([a], [b]) => (a < b ? -1 : 1))
+  .map(([name, fn]) => [name, bodiesOf(fn).map((b) => (b ? bodyKeys(b, fn) : null))]))
+
 describe('I6 — the prefs route has one writer module, and every body it sends is flat', () => {
   it('1. /api/notifications/prefs appears in CODE in exactly one file: the client', () => {
     const files = walk(SRC)
     expect(files.length).toBeGreaterThan(100)                   // the walk found the tree
-    const spelling = new Set()
-    for (const f of files) {
-      const ast = parse(readFileSync(f, 'utf8'))
-      visit(ast, (n) => {
-        const text = n.type === 'Literal' && typeof n.value === 'string' ? n.value
-          : n.type === 'TemplateElement' ? (n.value.cooked ?? n.value.raw) : null
-        if (text && text.includes(ROUTE)) spelling.add(relative(SRC, f))
-      })
-    }
-    expect([...spelling]).toEqual([CLIENT])
+    expect(routeSpellers(files), `${PRINT} prints the spellers`).toEqual([CLIENT])
   })
 
   it('2. the writers are enumerated from the source AND match the module’s real exports', async () => {
@@ -140,7 +159,7 @@ describe('I6 — the prefs route has one writer module, and every body it sends 
     const mod = await import('../lib/notificationPrefsClient.js')
     const real = Object.keys(mod).filter(k => /^(save|patch)/.test(k) && typeof mod[k] === 'function').sort()
     // A writer the scan cannot see is a writer it cannot vouch for.
-    expect(found).toEqual(real)
+    expect(found, `${PRINT} prints the writers`).toEqual(real)
     // Anti-vacuity: the known writers, by name.
     expect(found).toEqual(expect.arrayContaining([
       'saveMorePins', 'saveBarLayout', 'saveGardenGroupBy', 'saveTodaySkipped', 'saveWhatsNewSeen',
@@ -152,11 +171,7 @@ describe('I6 — the prefs route has one writer module, and every body it sends 
   it('2. every body every writer sends is a flat literal, and only a field’s own writer names it', () => {
     const helperBodies = new Map()
     for (const [name, fn] of exportedWriters()) {
-      const bodies = []
-      visit(fn.body, (n) => {
-        if (isStringify(n)) bodies.push(n.arguments[0])
-        for (const h of SENDING_HELPERS) if (isCallTo(n, h)) bodies.push(n.arguments[1])
-      })
+      const bodies = bodiesOf(fn)
       // Every writer sends SOMETHING the scan can read — a writer routed through an unknown helper
       // would otherwise pass by sending nothing visible.
       expect(bodies.length, `${name} sends no body this scan can read`).toBeGreaterThan(0)
@@ -198,6 +213,14 @@ describe('I6 — the prefs route has one writer module, and every body it sends 
         n.callee.object.name === 'Object' && n.callee.property.name === 'assign') merges.push(`Object.assign @${n.start}`)
     })
     expect(merges).toEqual([])
+  })
+
+  it('OPS-CODEREVIEW-001 C4: PRINT_LIST=1 prints the route spellers and the body keys of every writer', () => {
+    const now = writerListing(clientAst)
+    if (process.env.PRINT_LIST) console.log(JSON.stringify({ spelling: routeSpellers(), writers: now }, null, 2))
+    expect(now.saveMorePins).toEqual([['more_pins']])
+    const fake = parse('export function saveA(x) { return JSON.stringify({ a: x }) }\nexport const patchB = (p) => JSON.stringify({ ...p })')
+    expect(writerListing(fake)).toEqual({ patchB: [null], saveA: [['a']] })
   })
 
   // The scanners must be able to fail, or every assertion above is vacuous.

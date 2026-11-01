@@ -679,6 +679,27 @@ export const splicesOf = (census) =>
 export const workspaceSlotsOf = (census, opts) =>
   census.statements.flatMap((s) => s.workspaceBindings.map((b) => ({ id: s.id, file: s.file, fn: s.fn, ctx: b.ctx, src: b.value?.src ?? null, origin: b.value?.origin ?? null, ...classifySlot(b.value, typeof opts === 'function' ? opts(s) : opts) })))
 
+// Rename pairing for the allowlist tests. An id that left a list and one that arrived with the same AST hash (the
+// last id segment, `#k` aside) are one statement moved to a new file:function, as long as that hash's count did not
+// rise. A changed hash or a raised count stays added + removed: that is new SQL to review, not a move.
+export function renamesOf(current, listed) {
+  const hashOf = (id) => id.slice(id.lastIndexOf(':') + 1).replace(/#\d+$/, '')
+  const have = [...new Set(current)]
+  const want = [...new Set(listed)]
+  const added = have.filter((id) => !want.includes(id)).sort()
+  const removed = want.filter((id) => !have.includes(id)).sort()
+  const count = (ids, h) => ids.filter((id) => hashOf(id) === h).length
+  const renamed = []
+  for (const h of new Set(added.map(hashOf))) {
+    if (count(have, h) > count(want, h)) continue
+    const to = added.filter((id) => hashOf(id) === h)
+    const from = removed.filter((id) => hashOf(id) === h)
+    for (let i = 0; i < Math.min(to.length, from.length); i++) renamed.push({ from: from[i], to: to[i] })
+  }
+  const moved = new Set(renamed.flatMap((r) => [r.from, r.to]))
+  return { renamed, added: added.filter((id) => !moved.has(id)), removed: removed.filter((id) => !moved.has(id)) }
+}
+
 // ---------- CLI ----------
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const argv = process.argv.slice(2)
