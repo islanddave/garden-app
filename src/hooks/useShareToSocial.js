@@ -3,47 +3,40 @@ import { useApiFetch } from '../lib/api.js'
 import { shareSlotKey, acquireRequestId, releaseRequestId } from '../lib/shareIdempotency.js'
 import { SHARE_TIMEOUT_MS } from './useShareToFacebook.js'
 
-// V4-IGSHARE-001 — post selected garden photos to Facebook and/or Instagram in ONE compose action.
+// Post selected garden photos to Facebook and/or Instagram in ONE compose action.
 //
 // WHY A COMBINED HOOK RATHER THAN CALLING useShareToFacebook TWICE: the interesting state is not
 // "did it work" but PARTIAL failure. Facebook and Instagram are independent endpoints that fail
 // independently, and the one thing this must never do is report success when only one landed, or
 // double-post the one that already succeeded when the user retries.
 //
-// ── This is a REBUILD of the version rescued from lane-igtrack-20260821, not a port of it ──
+// ── The retry loop this hook is built to avoid ──
 //
-// That version held its client_request_id in a useRef and used the app's default 15s fetch timeout.
-// Both are the exact defects the 2026-08-28 hardening pass removed from useShareToFacebook, and
-// together they are not two bugs but one loop:
+// A client_request_id held in a useRef plus the app's default 15s fetch timeout together make one
+// loop, not two bugs:
 //
 //   the client gives up at 15s -> the Lambda keeps running to its 180s budget (a Function URL is NOT
 //   cancelled by client disconnect) and posts anyway -> the user is shown a failure for a post that
 //   is live -> they reload the PWA -> the useRef key is GONE -> retry mints a fresh id -> the
 //   server's replay lookup misses -> the same photos post to the public surface a SECOND time.
 //
-// So the timeout manufactures the failure and the ref guarantees the retry duplicates. Landing the
-// rescued hook as written would have reintroduced both into a path that, on Instagram, CANNOT be
-// undone: a mistaken IG post is not deletable through the API (verified 2026-08-21, DELETE -> code
-// 10) and must be removed by hand in the app.
+// So the timeout manufactures the failure and the ref guarantees the retry duplicates. On Instagram
+// that CANNOT be undone: a mistaken IG post is not deletable through the API (DELETE returns code
+// 10) and must be removed by hand in the app. Hence the persisted key slots and SHARE_TIMEOUT_MS.
 //
 // ── Idempotency: ONE SLOT PER TARGET ──
 //
-// The rescued lane shared a single client_request_id across both targets and relied on the server
-// scoping its replay query by target. That works, and it has one property this scheme lacks: if a
-// future edit stopped skipping already-succeeded targets, a re-send would replay rather than
-// duplicate.
-//
-// This uses a per-target slot instead — shareSlotKey already takes `target` — because the shared-id
-// scheme takes something away that the project has already decided it will not give up. Its id is
-// released only when EVERY attempted target has succeeded, so a partial failure pins the id: post to
-// both, Instagram fails, and Dave can no longer make a deliberate second Facebook post of those
-// photos until the 24h TTL expires. That is the same "a deterministic key replays forever" trap the
-// storage design rejected on purpose (see src/lib/shareIdempotency.js). Per-target slots release
+// One client_request_id shared across both targets would rely on the server scoping its replay
+// query by target, and it has a cost: its id is released only when EVERY attempted target has
+// succeeded, so a partial failure pins the id — post to both, Instagram fails, and a deliberate
+// second Facebook post of those photos is blocked until the 24h TTL expires. That is the same "a
+// deterministic key replays forever" trap the storage design rejected on purpose (see
+// src/lib/shareIdempotency.js). Per-target slots (shareSlotKey takes `target`) release
 // independently, so one stuck target never holds another hostage.
 //
-// The cross-target protection is not lost, it moved to the server, which is the better place for it:
-// both replay queries are scoped by target (lambda/facebook-share/index.js), so a Facebook row can
-// never answer an Instagram lookup regardless of what key scheme any client invents.
+// Cross-target protection lives on the server, the better place for it: both replay queries are
+// scoped by target (lambda/facebook-share/index.js), so a Facebook row can never answer an
+// Instagram lookup regardless of what key scheme any client invents.
 
 // Instagram's caption ceiling is far below Facebook's. When both targets are selected the STRICTER
 // limit governs — otherwise the user writes 3000 characters, Facebook accepts it, and Instagram
@@ -124,9 +117,8 @@ export function useShareToSocial() {
   // render mirror. This is not belt-and-braces — a ref is the only thing that can answer that
   // question synchronously inside share().
   //
-  // The rescued lane read `perTarget` from the callback closure, which is the value from the last
-  // render. The obvious repair — read it through a setPerTarget(prev => …) updater instead — is ALSO
-  // wrong and fails the same test: React does not run that updater at the call site, it runs it when
+  // Reading `perTarget` from the callback closure gives the value from the last render. The obvious
+  // repair — reading it through a setPerTarget(prev => …) updater instead — is ALSO wrong: React does not run that updater at the call site, it runs it when
   // it processes the update, so anything read out of it is still stale two lines later. Both
   // versions re-send a target that already succeeded, which on Instagram is an undeletable duplicate.
   const perTargetRef = useRef(blank())

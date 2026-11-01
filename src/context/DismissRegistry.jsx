@@ -1,31 +1,26 @@
-// V4-BACKNAV-001 Slice 1 — the shared modal registry (decision V200 §3).
+// The shared modal registry.
 //
-// ONE registry owning stack order, Escape arbitration and aria-modal ownership. The crucible's Q1
-// answer: the question was never "global popstate arbiter vs per-surface handling" — it was "what is
-// the shared registry". Sheet.jsx's openStack could not be it: its entries are opaque `{}` tokens
-// carrying no onDismiss, so a global arbiter reading that stack literally cannot know what to call.
-// Escape works there only because the handler is per-INSTANCE and closes over onCloseRef.
+// ONE registry owning stack order, Escape arbitration and aria-modal ownership. Sheet.jsx's
+// openStack could not be it: its entries are opaque `{}` tokens carrying no onDismiss, so a global
+// arbiter reading that stack cannot know what to call. Escape works there only because the handler
+// is per-INSTANCE and closes over onCloseRef.
 //
-// WHAT THIS REPAIRS TODAY, with no Back involved: Lightbox.jsx binds a document keydown gated on
-// NOTHING, so with PlantingDetail's Details Sheet open under a Lightbox one Escape fires BOTH
-// onCloses. Same for CritterFactsPopover. Two focus traps also run on the same Tab keydown and
-// whichever calls focus() last wins by listener-registration order. That is why Slice 1 is worth
-// shipping even if back-nav is dropped entirely.
+// Even with no Back involved it is needed: document keydowns gated on NOTHING fire every open
+// surface's onClose on one Escape, and two focus traps on the same Tab keydown fight over focus()
+// by listener-registration order.
 //
-// WHAT THIS DELIBERATELY DOES NOT DO (yet):
-//   - [SUPERSEDED 2026-08-06 by Slice 3a] This block used to say the popstate listener was gated on
-//     GATE-A because "whether Android delivers Back as a history traversal or as a CloseWatcher
-//     close-request is an unverified platform claim". That specific question was RESOLVED FROM
-//     SOURCE, not deferred: this app constructs no CloseWatcher, registers no beforeunload, uses no
-//     native <dialog>/showModal() and no popover attribute — all modal surfaces are role="dialog"
-//     divs. Chrome only routes a close-request to CloseWatcher when one of those exists, so within
-//     this app Back can only arrive as a history traversal -> popstate. The listener now lives
-//     below. GATE-A survives as a PROMOTE gate (tests/device/GATE-A.md) covering the four things
-//     jsdom structurally cannot express: Back at history index 0 in an installed PWA, predictive-
-//     back timing, edge-swipe vs 3-button reachability, and service-worker bundle skew.
+// The popstate listener below is not gated on any platform question: this app constructs no
+// CloseWatcher, registers no beforeunload, uses no native <dialog>/showModal() and no popover
+// attribute — all modal surfaces are role="dialog" divs. Chrome only routes a close-request to
+// CloseWatcher when one of those exists, so within this app Back can only arrive as a history
+// traversal -> popstate. tests/device/GATE-A.md stays as a PROMOTE gate for what jsdom cannot
+// express: Back at history index 0 in an installed PWA, predictive-back timing, edge-swipe vs
+// 3-button reachability, and service-worker bundle skew.
+//
+// WHAT THIS DELIBERATELY DOES NOT DO:
 //   - No `inert` on the app root. jsdom's inert support is reflection-level, so a test asserting
-//     focus is actually blocked would FALSE-PASS — the exact class the verification plan exists to
-//     catch. It also adds a second no-in-app-recovery failure mode. Deferred with the confirm slice.
+//     focus is actually blocked would FALSE-PASS. It also adds a second no-in-app-recovery failure
+//     mode.
 //   - No behaviour change to dirty/busy. See decideDismiss's defaults in lib/dismissLayers.js.
 //
 // SCROLL LOCK STAYS IN Sheet.jsx. The registry closes a surface by calling the consumer's OWN
@@ -89,13 +84,11 @@ export function DismissRegistryProvider({ children }) {
   const topmost = resolveTopmost(entries)
   const topmostId = topmost ? topmost.id : null
 
-  // ─── BUG-DIRTYDISMISSGAP-001 — the CONFIRM consumer branch ─────────────────────────────────────
+  // ─── The CONFIRM consumer branch ────────────────────────────────────────────────────────────────
   //
-  // WHAT WAS ACTUALLY BROKEN. The ledger read as "confirmOnDirty is off pending a ConfirmSheet",
-  // implying a flip would call something missing. It would not — it would do NOTHING, silently:
-  // CONFIRM is neither NONE nor BLOCKED, so both switches below fell through to cbRef and dismissed.
-  // A future session could have flipped both booleans, watched the pure-decider tests stay green,
-  // shipped it, and changed nothing on any surface. The branch is the fix; the flag was trivia.
+  // CONFIRM is neither NONE nor BLOCKED, so without this branch both switches below would fall
+  // through to cbRef and dismiss silently: flipping the confirmOnDirty booleans alone changes
+  // nothing on any surface, and the pure-decider tests stay green.
   //
   // PROVIDER-OWNED, not consumer-owned, for three reasons that are not style: only the arbiter can
   // see the whole stack (the confirm must outrank surfaces the consumer cannot know about); the
@@ -110,9 +103,9 @@ export function DismissRegistryProvider({ children }) {
   const raiseConfirm = useCallback((entry) => {
     if (pendingConfirmRef.current) return false      // one question at a time
     if (!entry) return false
-    // V5-SEEDLOTADDITION-001 — a surface may say its question differently for the state it is in right
-    // now (confirmCopy below). Read here, when the question is raised, and each word falls back to the
-    // registered one, so a surface that passes none is asked exactly what it always was.
+    // A surface may say its question differently for the state it is in right now (confirmCopy
+    // below). Read here, when the question is raised, and each word falls back to the registered
+    // one, so a surface that passes none is asked exactly what it always was.
     const live = entry.copyRef?.current || null
     const next = {
       id: entry.id,
@@ -149,10 +142,9 @@ export function DismissRegistryProvider({ children }) {
 
   // THE single Escape listener. Topmost-only, exactly one dismissal per press.
   //
-  // ESCAPE-VS-BACK PARITY IS ACHIEVED AS OF SLICE 3a (2026-08-06). Both gestures now resolve
-  // through this registry: Escape via decideDismiss below, Back via decideBack in the popstate
-  // listener further down. They pick the same target by construction, pinned by the parity
-  // assertion in BackNav.history.test.jsx.
+  // ESCAPE-VS-BACK PARITY: both gestures resolve through this registry: Escape via decideDismiss
+  // below, Back via decideBack in the popstate listener further down. They pick the same target by
+  // construction, pinned by the parity assertion in BackNav.history.test.jsx.
   //
   // The ONE deliberate divergence: a kind:'route' overlay. Escape closes it (decideDismiss does not
   // consult kind) while Back returns NONE and lets the router own it — the router already holds a
@@ -165,9 +157,9 @@ export function DismissRegistryProvider({ children }) {
       // A DESCENDANT ALREADY CONSUMED THIS KEY. React 18 delegates synthetic handlers to the root
       // container, which is a descendant of `document`, so a surface that handles Escape for its
       // own sub-state still lets the event reach us. Without this guard one Escape does two things:
-      // VarietyPicker steps its create stage back (VarietyPicker.jsx:293/304/322 — all
-      // preventDefault, none stopPropagation) AND we close the Sheet it is sitting in. That was
-      // live in v3.103.0; DismissDefaultPrevented.test.jsx pins it and fails without this line.
+      // VarietyPicker steps its create stage back (preventDefault, no stopPropagation) AND we
+      // close the Sheet it is sitting in. DismissDefaultPrevented.test.jsx pins it and fails
+      // without this line.
       //
       // defaultPrevented is the right signal rather than a registry field: it covers descendants
       // nobody has enumerated, it is what "I handled this" already means in the DOM, and it costs
@@ -177,12 +169,11 @@ export function DismissRegistryProvider({ children }) {
       if (e.defaultPrevented) return
       const d = decideDismiss(entries, { blockOnBusy: true, confirmOnDirty: true })
       if (d.action === 'NONE') return          // nothing registered — let the event through
-      // BLOCKED: a write is in flight. Swallow the key rather than discarding the surface. Enabled
-      // in Slice 2 because it is the only way to register the two surfaces that ALREADY hand-rolled
-      // this guard (SpaceAttachPicker suppresses Escape while saving; FacebookShareSheet disables
-      // its Close while posting — the one surface in the app with a non-idempotent in-flight
-      // action) without regressing them. It is inert for every surface that does not set `busy`,
-      // which is all the rest, so turning it on is not a blanket behaviour change.
+      // BLOCKED: a write is in flight. Swallow the key rather than discarding the surface. It is
+      // the only way to register the two surfaces that ALREADY hand-roll this guard
+      // (SpaceAttachPicker suppresses Escape while saving; FacebookShareSheet disables its Close
+      // while posting — the one surface with a non-idempotent in-flight action) without
+      // regressing them. It is inert for every surface that does not set `busy`.
       e.preventDefault()
       if (d.action === 'BLOCKED') return
       // CONFIRM: ask instead of discarding. No marker bookkeeping on this path — Escape consumes no
@@ -194,7 +185,7 @@ export function DismissRegistryProvider({ children }) {
     return () => document.removeEventListener('keydown', onKey)
   }, [entries, raiseConfirm])
 
-  // ─── V4-BACKNAV-001 Slice 3a — the system Back, arbitrated by THIS registry ────────────────────
+  // ─── The system Back, arbitrated by THIS registry ──────────────────────────────────────────────
   //
   // ONE provider-owned marker for the whole modal session, not one per surface. Per-surface arming
   // had a case it could not fix: if a LOWER surface closed first, its entry was stranded MID-STACK
@@ -217,8 +208,7 @@ export function DismissRegistryProvider({ children }) {
     const seq = ++markerSeqRef.current
     // MERGE, never replace. react-router owns {usr, key, idx} and its own source warns that writing
     // state directly "will result in bugs"; clobbering `idx` desyncs the router's index from the
-    // real stack. Replacing wholesale already shipped one real bug here (LogMany: destroyed
-    // `background`, unmounted the overlay, made Undo unreachable for a batch already in the DB).
+    // real stack. Replacing wholesale destroys `background`, which unmounts a route overlay.
     window.history.pushState({ ...(window.history.state || {}), [MARKER_KEY]: { v: MARKER_VERSION, seq } }, '')
     armedRef.current = seq
   }, [])
@@ -241,18 +231,17 @@ export function DismissRegistryProvider({ children }) {
     }
   }, [])
 
-  // BUG-BACKTWICECLOSESAPP-001 — STAND ON OUR MARKER AGAIN WITHOUT CREATING AN ENTRY.
+  // STAND ON OUR MARKER AGAIN WITHOUT CREATING AN ENTRY.
   //
-  // WHAT WAS BROKEN. A Back we answer without closing everything (a refusal while busy, the discard
-  // question, a panel stepping back, the top of a stack closing) leaves a surface open, so the next
-  // Back must be ours too. The four branches below used to get that by calling arm() from inside the
-  // popstate handler: a pushState with no tap behind it. Chrome on Android marks an entry made that
-  // way "skip on the Back button", and a Back press itself clears whatever tap came before it, so the
-  // marker we had just pushed was skippable and the SECOND Back, with no touch between, had nowhere
-  // to go and closed the installed app. One touch anywhere cleared it, which is why it hid.
+  // A Back we answer without closing everything (a refusal while busy, the discard question, a
+  // panel stepping back, the top of a stack closing) leaves a surface open, so the next Back must
+  // be ours too. Re-arming from inside the popstate handler would be a pushState with no tap behind
+  // it: Chrome on Android marks an entry made that way "skip on the Back button", and a Back press
+  // itself clears whatever tap came before it, so the SECOND Back, with no touch between, would
+  // have nowhere to go and would close the installed app.
   //
-  // THE FIX. The entry that Back consumed is still there, one step FORWARD. Go to it. A traversal the
-  // page makes creates nothing, needs no tap and is never skipped. So: NEVER pushState inside onPop.
+  // So the entry that Back consumed, still there one step FORWARD, is reused. A traversal the page
+  // makes creates nothing, needs no tap and is never skipped. NEVER pushState inside onPop.
   //
   // The landing is one more popstate, and it needs no flag of its own: armedRef is set to the marker's
   // seq before we leave, so onPop's "still standing on ours" line swallows it.
@@ -344,7 +333,7 @@ export function DismissRegistryProvider({ children }) {
       }
       blockedRef.current = 0
 
-      // CONFIRM — the highest-risk three lines in this change, and the return is why.
+      // CONFIRM — the return is the point.
       //
       // The Back already consumed our marker, and the surface is NOT closing, so without the return
       // here the dirty sheet is left with no marker and the user's SECOND Back exits the installed

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useApiFetch } from '../lib/api.js'
 
-// useHarvestFilterOptions — V4-HARVESTVIEW-001 S2b (part 2). Supplies the crop + project pickers with
+// useHarvestFilterOptions — supplies the crop + project pickers with
 // a STABLE option universe that is independent of the Log's active crop/project filter.
 //
 // Why not source the crop list from the main useHarvests aggregates: the server computes aggregates
@@ -15,10 +15,9 @@ export function useHarvestFilterOptions() {
   const { fetch: apiFetch } = useApiFetch()
   const [crops, setCrops] = useState([])
   const [projects, setProjects] = useState([])
-  // V4-HARVESTVIEW-001 S4: the season sheet's year universe rides this SAME unfiltered all-time
-  // call (design §2b — never the page's timeframe-scoped aggregates, which would collapse the
-  // universe to the selected season on first use, the exact trap documented above for crop_list).
-  // Retained as the MIN first_pick day key; the page derives the continuous grow-year range from it.
+  // The season sheet's year universe rides this SAME unfiltered all-time call (never the page's
+  // timeframe-scoped aggregates, which would collapse the universe to the selected season on first
+  // use, the exact trap documented above for crop_list). Retained as the MIN first_pick day key; the page derives the continuous grow-year range from it.
   const [minFirstPickDay, setMinFirstPickDay] = useState(null)
 
   const load = useCallback(async () => {

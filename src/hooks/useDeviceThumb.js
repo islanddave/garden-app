@@ -1,4 +1,4 @@
-// src/hooks/useDeviceThumb.js — BUG-SEEDTHUMBSOFFLINE-001. A row's thumb, if this phone already
+// src/hooks/useDeviceThumb.js — a row's thumb, if this phone already
 // holds it (src/lib/deviceThumb.js has the why).
 //
 // Returns:

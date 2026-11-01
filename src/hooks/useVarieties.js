@@ -1,4 +1,4 @@
-// useVarieties — live data hook for plant_varieties (VARIETY-REF Session 2).
+// useVarieties — live data hook for plant_varieties.
 // Wraps useApiFetch with stateful varieties list + search via ?q= server-side filter.
 //
 // Contract:

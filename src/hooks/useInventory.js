@@ -15,7 +15,7 @@
 //     updateItem() merges {currentItem, ...changes} client-side before sending.
 //     If caller has full payload (e.g. InventoryDetail.buildChanges), pass it directly.
 //   - adjustQuantity is type-aware: consumables update `quantity_on_hand`,
-//     durables update `quantity` (P4, V1.2a-3 Increment C / PR-C1, 2026-05-18).
+//     durables update `quantity`.
 //   - lowStockCount = consumables where quantity_on_hand <= reorder_threshold AND threshold is set.
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
@@ -45,7 +45,7 @@ export function useInventory() {
   const loadCounterRef = useRef(0)
 
   // Live mirror of `items` for callbacks that outlive the render that created them —
-  // the undo toast is the one that matters (BUG-INVUNDOQTY-001). A ref, not a functional
+  // the undo toast is the one that matters. A ref, not a functional
   // setItems updater: the app mounts under StrictMode (main.jsx), which double-invokes
   // updaters, so an updater body is not a safe place to read state from.
   // The effect is now a backstop, not the mechanism: commitItems below assigns the ref
@@ -124,24 +124,22 @@ export function useInventory() {
     // Caller may pass partial changes OR full payload.
     // If we have current item in list, merge {current, ...payload} for safety.
     // If not (e.g. detail page deep-link), pass payload through; Lambda will validate.
-    // Reads itemsRef, not the closure's `items`, for the reason adjustQuantity does
-    // (BUG-INVUNDOQTY-001): an instance held across a list change would otherwise merge the row as
-    // it stood when that render ran. Latent rather than live — handleSave, the only caller, always
-    // invokes the current render's instance — but "current item in list" above is only true of the
-    // live list, and the two readers of state in this hook should not disagree about which one.
+    // Reads itemsRef, not the closure's `items`, for the reason adjustQuantity does: an instance
+    // held across a list change would otherwise merge the row as it stood when that render ran. Latent rather than live — handleSave, the only caller, always invokes the current
+    // render's instance — but "current item in list" above is only true of the live list, and the
+    // two readers of state in this hook should not disagree about which one.
     const current = itemsRef.current.find(i => i.id === id)
-    // V5-SEEDMULTIPARENT-001 (R2a) — the list row is `i.*` plus projections, as it stood when the list
-    // loaded, and this merge used to send all of it back. A lot's variety, its parents and its plant
-    // count each have a narrow writer (PUT /:id/filing, /:id/source-plants, /:id/seed-measure), so a
-    // row fetched before one of those ran would re-assert the old value here, with a 200. They are
-    // removed from the FETCHED ROW, before the merge, and never from `payload`: a key the caller sets
-    // on purpose (source_id, acquired_from_source_id, year_harvested, or a variety_id of its own)
-    // still goes through.
+    // The list row is `i.*` plus projections, as it stood when the list loaded, and sending all of
+    // it back would re-assert stale values. A lot's variety, its parents and its plant count each
+    // have a narrow writer (PUT /:id/filing, /:id/source-plants, /:id/seed-measure), so a row fetched
+    // before one of those ran would re-assert the old value here, with a 200. They are removed from
+    // the FETCHED ROW, before the merge, and never from `payload`: a key the caller sets on purpose
+    // (source_id, acquired_from_source_id, year_harvested, or a variety_id of its own) still goes
+    // through.
     // `variety_id` is removed only while the row IS a seeds row and STAYS one. The handler's two
     // variety rules read the BODY: the echoed key is what makes moving a packet out of Seeds answer
     // 400, and an echoed `variety_id: null` is what makes moving a tool INTO Seeds answer "variety_id
-    // is required for seeds". Strip it on either move and that write would reach the database
-    // (pre-promote review PP-03).
+    // is required for seeds". Strip it on either move and that write would reach the database.
     let base = current
     if (current) {
       base = { ...current }
@@ -149,23 +147,23 @@ export function useInventory() {
       if (current.category === 'seeds' && { ...current, ...payload }.category === 'seeds') delete base.variety_id
     }
     const fullPayload = base ? { ...base, ...payload } : { ...payload }
-    // V5-SEEDQTY-001 — a seed lot's measure never rides this PUT. PUT /:id/seed-measure is the only
-    // writer of these three columns, and the list row merged above carries them (`i.*`) as they stood
-    // when the list loaded: InventoryDetail writes a new count through that route and then, on its
-    // next save, would re-send the old one here. The handler's SET list names none of them today, so
-    // they rode inert; stripped, the body cannot re-assert a stale count the day one is added — the
-    // BUG-INVLOSTUPDATE-001 shape that is the reason the narrow route exists.
+    // A seed lot's measure never rides this PUT. PUT /:id/seed-measure is the only writer of these
+    // three columns, and the list row merged above carries them (`i.*`) as they stood when the list
+    // loaded: InventoryDetail writes a new count through that route and then, on its next save,
+    // would re-send the old one here. The handler's SET list names none of them, so they would ride
+    // inert; stripped, the body cannot re-assert a stale count the day one is added — the lost-update
+    // shape that is the reason the narrow route exists.
     for (const k of SEED_MEASURE_KEYS) delete fullPayload[k]
-    // BUG-SEEDSTAGEHEADSHIP-001 — nor does its stage, and for the same reason. POST /:id/seed-stage
-    // is the only writer (it logs the entry in the same statement), and the list row merged above
-    // carries the stage as it stood when the list loaded: a lot moved on from another tab or device
-    // since then was moved straight back here, with a 200 and no entry in its history, which is how
-    // a card lost its "N days" and a ferment its overdue warning. The handler ignores the key now;
-    // not sending it is the half that holds on a Lambda that has not been deployed yet. Removed
-    // AFTER the merge, like the measure: no caller of this function sets a stage.
+    // Nor does its stage, for the same reason. POST /:id/seed-stage is the only writer (it logs the
+    // entry in the same statement), and the list row merged above carries the stage as it stood when
+    // the list loaded: a lot moved on from another tab or device since then would be moved straight
+    // back here, with a 200 and no entry in its history, and a card would lose its "N days" and a
+    // ferment its overdue warning. The handler ignores the key; not sending it is the half that
+    // holds on a Lambda that has not been deployed yet. Removed AFTER the merge, like the measure:
+    // no caller of this function sets a stage.
     // `seed_process` is its twin and goes with it: the same stale row carries it, both of its
     // writers are on POST /:id/seed-stage, and the wide PUT still assigns it by presence, so an
-    // echoed old value put a lot's process back (the card lost " · wet process") with a 200.
+    // echoed old value would put a lot's process back with a 200.
     for (const k of SEED_STAGE_KEYS) delete fullPayload[k]
     try {
       const updated = await fetch('/api/inventory-items/' + id, {
@@ -179,19 +177,17 @@ export function useInventory() {
     }
   }, [fetch, commitItems])
 
-  // ── BUG-INVPUTREORDER-001 — which response is allowed to win ────────────────────────────────────
+  // ── Which response is allowed to win ────────────────────────────────────────────────────────────
   // id -> the sequence number of the most recently ISSUED write for that item. A response may only
   // be applied if it is still the latest; anything older is a message from a superseded request and
   // is dropped.
   //
-  // THE DEFECT. Every optimistic path here was already correct — commitItems assigns itemsRef
-  // synchronously so two taps in one commit compound properly (BUG-INVUNDOQTY-001's fix). What was
-  // never guarded is the RESPONSE. Two + taps issue PUT(3) then PUT(4); if PUT(4)'s response lands
-  // first and PUT(3)'s second, line "commitItems(... updated ...)" below writes the OLDER server row
-  // last and the display settles on 3. No error, no revert, and the toast says the wrong number.
-  // Nothing about HTTP guarantees response order, and this got more reachable rather than less:
-  // BUG-SEEDZEROSOWABLE-001 made the seed count writable at every stage, so the same wide PUT now
-  // fires on any stage move that carries a count instead of only at `stored`.
+  // THE TRAP. commitItems assigns itemsRef synchronously so two taps in one commit compound
+  // properly, but that does not guard the RESPONSE. Two + taps issue PUT(3) then PUT(4); if PUT(4)'s
+  // response lands first and PUT(3)'s second, writing the OLDER server row last would leave the
+  // display on 3. No error, no revert, and the toast says the wrong number. Nothing about HTTP
+  // guarantees response order, and the seed count is writable at every stage, so the same wide PUT
+  // fires on any stage move that carries a count.
   //
   // A REF, NOT STATE, and for the same reason itemsRef is one: this is read inside a callback that
   // outlives the render which created it, and it must be true the instant a write is ISSUED rather
@@ -199,10 +195,8 @@ export function useInventory() {
   // one session, which is the inventory size at worst.
   const putSeqRef = useRef(new Map())
 
-  // V5-SEEDSTAB-001 — the stepper itself lives in lib/quantityAdjuster.js (extracted so a second
-  // store could run it; My seeds did until V5-SEEDCARDS-001 removed its row stepper). Both guards
-  // above travel with it; this hook supplies the
-  // three things it no longer owns — the row as it is NOW (itemsRef), the commit that assigns that
+  // The stepper itself lives in lib/quantityAdjuster.js. Both guards above travel with it; this
+  // hook supplies the three things it no longer owns — the row as it is NOW (itemsRef), the commit that assigns that
   // ref synchronously (commitItems), and its own toast. The body and the success commit are the
   // shipped defaults: the row with the new quantity, less `seed_stage` (wideBody).
   const getRow = useCallback(id => itemsRef.current.find(i => i.id === id), [])

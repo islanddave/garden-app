@@ -1,5 +1,4 @@
-// useSources / useSourceKinds — V4-SOURCEREG-001 + V5-SOURCEKIND-001 controlled provenance
-// vocabulary (GET/POST /api/varieties/sources and /api/varieties/source-kinds).
+// useSources / useSourceKinds — controlled provenance vocabulary (GET/POST /api/varieties/sources and /api/varieties/source-kinds).
 //
 // Shaped on useCropTypes.js, which is the house pattern for a controlled vocabulary the app can
 // both read and MINT. Same three properties, and each is load-bearing here for the same reason it
@@ -70,14 +69,13 @@ function failure(err, fallbackMessage) {
 }
 
 // ONE request per path however many instances mount. Every provenance form carries TWO pickers
-// (origin + acquired-from), so an edit form for a row that already has an origin issued two
-// identical GETs of the same 54-row list. InventoryAdd.sourcePicker.test.jsx reported this and
-// named useSources.js as the only place it could be fixed.
+// (origin + acquired-from), so two instances would issue two identical GETs of the same list.
 //
 // Coalesced at the REQUEST rather than behind a store. useCachedFetch is the obvious candidate and
-// is the wrong tool here on two counts: it caches ONLY when a Clerk sub exists, so it is a plain per-instance fetch in any provider-less unit test — the fix
-// could not be proven by the suite that would have to guard it — and adopting it moves `sources`
-// out of local state, taking the post-mint local insert (and its ORDER BY mirror) with it.
+// is the wrong tool here on two counts: it caches ONLY when a Clerk sub exists, so it is a plain
+// per-instance fetch in any provider-less unit test — the dedupe could not be proven by the suite
+// that would have to guard it — and adopting it moves `sources` out of local state, taking the
+// post-mint local insert (and its ORDER BY mirror) with it.
 //
 // A DEDUPE WINDOW, never a cache: the entry is dropped the moment the promise settles, so the next
 // mount always re-fetches and no caller can be served a list that outlived its request. Both arms

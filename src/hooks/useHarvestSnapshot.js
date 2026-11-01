@@ -2,26 +2,20 @@ import { useState, useEffect, useCallback } from 'react'
 import { useApiFetch } from '../lib/api.js'
 import { snapshotStats } from '../lib/snapshotStats.js'
 
-// useHarvestSnapshot — V4-HARVESTVIEW-001 S2b. The snapshot strip self-labels FIXED windows
-// (design §3b), so it fetches independently of the Log's filters. Grow-year = Nov 1 – Oct 31;
-// "2026 season" ends Oct 2026.
-// S4: grow-year derivation moved to the ONE shared helper (src/lib/growYear.js) — this file held
-// one of the two duplicated copies the design §2b consolidation names.
+// useHarvestSnapshot — the snapshot strip self-labels FIXED windows, so it fetches independently
+// of the Log's filters. Grow-year = Nov 1 – Oct 31; the derivation is the ONE shared helper in
+// src/lib/growYear.js.
 //
-// BUG-HARVSNAPSHOT7D-001 — TWO REQUESTS, ONE PER WINDOW, and the second one is the fix.
+// TWO REQUESTS, ONE PER WINDOW.
 //
-// It used to be one season-scoped request whose `entries` were filtered client-side down to the
-// last 7 days. That is a PAGE, not a set: GET /api/harvests caps entries at PAGE_LIMIT = 50
-// (lambda/harvests/index.js) while `aggregates` is computed over the full filter range with no
-// cursor and no limit. On live prod the tile read "50 picks" against a true 163 — the 50 newest
-// rows covered about three and a half days, and both the count AND the top-crop phrase under them
-// were derived from that slice while labelled "Last 7 days".
+// Filtering a season-scoped request's `entries` client-side down to the last 7 days would count a
+// PAGE, not a set: GET /api/harvests caps entries at PAGE_LIMIT = 50 (lambda/harvests/index.js)
+// while `aggregates` is computed over the full filter range with no cursor and no limit. The tile
+// would read "50 picks" against a true 163 — the 50 newest rows cover only a few days, and both the
+// count AND the top-crop phrase under them would come from that slice while labelled "Last 7 days".
 //
-// NOT A CURSOR DRAIN. Walking the pages would be ~4 round trips today and more every week, on a
-// surface that needs one number; the sibling season-weight hook already rejected exactly that and
-// moved to the uncapped aggregate (that hook is gone — deleted dead under
-// OPS-ORPHANSEASONWEIGHTS-001 — but the reasoning is why this one is shaped as it is), and RAISING
-// PAGE_LIMIT only moves the cliff.
+// NOT A CURSOR DRAIN. Walking the pages would be several round trips, growing every week, on a
+// surface that needs one number; and RAISING PAGE_LIMIT only moves the cliff.
 // The 7-day window is asked for as a window — `timeframe=7d&include=aggregates` — so the server
 // counts it over the whole range and the answer is structurally uncappable.
 //
@@ -35,8 +29,8 @@ import { snapshotStats } from '../lib/snapshotStats.js'
 // rejects on the first failure and leaves the second rejection UNHANDLED — a real window
 // `unhandledrejection` in the browser, not just test noise, since these two fail together whenever
 // the network does. Semantically, the tiles are read as one sentence about the week, so any failure
-// is a whole failure: "A quiet week" printed over a week that had 163 picks is the same class of
-// wrong number this fix exists to remove, and a strip that does not render says nothing false.
+// is a whole failure: "A quiet week" printed over a week that had 163 picks is a wrong number, and
+// a strip that does not render says nothing false.
 import { currentGrowYear } from '../lib/growYear.js'
 
 export function useHarvestSnapshot() {

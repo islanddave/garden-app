@@ -1,8 +1,7 @@
 // src/hooks/useImageWindow.js
-// BUG-PHOTOTHUMB-001 — app-owned image windowing, because NEITHER browser mechanism works here.
+// App-owned image windowing, because NEITHER browser mechanism works here.
 //
-// Measured on the live app (2026-07-27, Dave's own browser): with loading="lazy", 0 of 120 <img>
-// with correct srcs were ever REQUESTED — not slow, never fetched — which is why image surfaces sat
+// Measured on the live app: with loading="lazy", 0 of 120 <img> with correct srcs were ever REQUESTED — not slow, never fetched — which is why image surfaces sat
 // blank and then filled all at once when something finally forced a layout recalc. The same
 // elements flipped to eager loaded instantly, so URLs/presigns/S3/thumbs were fine the whole time;
 // native lazy simply never fires on these grids. But flipping ALL 120 to eager FROZE the renderer,
@@ -13,8 +12,8 @@
 // viewport-intersection machinery native lazy depends on, and that is precisely what is not firing.
 // Do not "improve" this to IO without first proving IO fires on the target surface.
 //
-// Extracted from the PhotoLibrary fix verified live in v3.68.0 (24/24 in 596ms, was 0/120 forever)
-// so every image surface shares one implementation instead of N copies.
+// Extracted from the PhotoLibrary fix (24/24 loaded in 596ms, was 0/120 forever) so every image
+// surface shares one implementation instead of N copies.
 import { useState, useEffect, useCallback } from 'react'
 
 export const IMAGE_WINDOW_PAGE = 24

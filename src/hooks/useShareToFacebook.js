@@ -2,7 +2,7 @@ import { useState, useRef, useCallback } from 'react'
 import { useApiFetch } from '../lib/api.js'
 import { shareSlotKey, acquireRequestId, releaseRequestId } from '../lib/shareIdempotency.js'
 
-// V4-FBSHARE-001 — post selected garden photos to the "Gardens at Mathews" Facebook Page via the
+// Post selected garden photos to the "Gardens at Mathews" Facebook Page via the
 // admin-only POST /api/share/facebook (Graph byte-upload; NOT the OS share sheet in lib/shareEntity.js).
 //
 // State machine: idle -> posting -> success | error | forbidden | token_invalid | disabled | timeout.
@@ -15,7 +15,7 @@ import { shareSlotKey, acquireRequestId, releaseRequestId } from '../lib/shareId
 //                    duplicate.
 //
 // SHARE_TIMEOUT_MS — why this call opts out of the 15s app default.
-// The Lambda's own budget is 180s (verified live: garden-facebook-share Timeout=180). A Function URL
+// The Lambda's own budget is 180s (garden-facebook-share Timeout=180). A Function URL
 // is NOT cancelled when the client disconnects, so aborting at 15s does not stop the post — it only
 // stops us WATCHING it. The user then sees "failed" for a post that is on the Page, and retries.
 // That is the exact sequence that double-posts. Waiting past the server's own self-termination means

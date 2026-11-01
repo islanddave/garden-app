@@ -1,19 +1,17 @@
 // src/hooks/useScrollRestore.js
-// V4-SCROLLRESTORE-001 (BD0806-05) — "I lose my place when I hit Back", generalised.
+// "I lose my place when I hit Back" — the shared scroll-restore driver.
 //
-// WHAT THIS IS. Garden already restores scroll correctly in prod (V4-NAVSTATE-001/002). The
-// decision half of that is pure and tested in src/lib/scrollRestore.js; the DRIVER half was inline
-// in Garden.jsx and therefore reachable from exactly one page. This hook is that driver, extracted,
-// with three changes Garden's version could not make as a page-local global:
+// WHAT THIS IS. The decision half is pure and tested in src/lib/scrollRestore.js; this hook is the
+// DRIVER, usable from any page:
 //
-//   1. KEYED PER HISTORY ENTRY, not per route. Garden stores one module-scoped `lastGardenScrollY`,
-//      so arriving at Garden from ANYWHERE restores the last offset — including a fresh forward
-//      navigation, where the user has never been down the page. Here the offset is filed under the
-//      history entry it belongs to (react-router keeps its entry key in window.history.state.key —
-//      the same field DismissRegistry is careful to merge rather than clobber), so Back restores and
-//      a forward navigation is inert.
+//   1. KEYED PER HISTORY ENTRY, not per route. A route-scoped offset would restore the last
+//      position on arriving from ANYWHERE — including a fresh forward navigation, where the user
+//      has never been down the page. Here the offset is filed under the history entry it belongs
+//      to (react-router keeps its entry key in window.history.state.key — the same field
+//      DismissRegistry is careful to merge rather than clobber), so Back restores and a forward
+//      navigation is inert.
 //   2. NO ROUTER IMPORT. The key is read from window.history.state directly rather than through
-//      useLocation(). Five PhotoLibrary suites replace 'react-router-dom' wholesale with a stub that
+//      useLocation(). The PhotoLibrary suites replace 'react-router-dom' wholesale with a stub that
 //      exports only <Link>; a useLocation() in this file would fault the page in all of them. The
 //      value read is the same one react-router wrote.
 //   3. A VIEW-STATE CHANNEL (saveState / restoredState) alongside the offset — see ORDERING below.
@@ -35,9 +33,8 @@
 // WHEN THE TARGET EXCEEDS THE NEW CONTENT HEIGHT the browser clamps silently and restoreStep keeps
 // returning RETRY until the ~20-frame budget is spent, then EXHAUSTED. The user is left at the
 // bottom of the content that does exist — the closest reachable point to where they were — and the
-// loop stops. It never spins, never fights, and never throws. That is deliberate: the DONE/EXHAUSTED
-// distinction exists so an anchor-based fallback can branch on it later; inventing one now is not
-// this ticket.
+// loop stops. It never spins, never fights, and never throws. The DONE/EXHAUSTED distinction exists
+// so an anchor-based fallback could branch on it; nothing does yet.
 //
 // NEVER FIGHT THE USER: a wheel/touchstart/keydown at any point hands control back permanently for
 // that mount.
@@ -88,7 +85,7 @@ function flush() {
 // jsdom (no history state) sees — inert there, because nothing ever saves a non-zero offset.
 // The entry is the one the PAGE TREE shows (pageEntryKey): under a route overlay that is the overlay's
 // background, not the overlay's own entry, and an entry an overlay's replace-close left behind answers
-// to the page entry it continues (BUG-OVERLAYRELOADKEY-001, src/lib/pageEntry.js).
+// to the page entry it continues (src/lib/pageEntry.js).
 function entryKey(id) {
   // Only the history.state read is guarded (an opaque origin throws there). pageEntryKey stays outside
   // the try, so a fault in it — a suite's partial featureFlags mock, say — surfaces instead of quietly
@@ -127,7 +124,7 @@ export function __peekScrollRestoreEntry(id) { return readEntry(entryKey(id)) }
  * @param {boolean} opts.ready  The page's content is committed — normally `!loading`. The restore
  *                              does not start until this is true.
  * @param {boolean} [opts.stateAtTop=false]  Hand back the saved view state even when there is no
- *                              offset to restore (V5-SEEDSPOLISH-001). For pages whose view state is
+ *                              offset to restore. For pages whose view state is
  *                              DISCLOSURE — folded groups, an expanded card — which the user sets
  *                              without scrolling at all. Off by default because FeedPage and
  *                              PhotoLibrary size their first fetch or tile window from the state, and
@@ -152,11 +149,11 @@ export default function useScrollRestore({ id, ready, stateAtTop = false }) {
   const targetY = saved && Number.isFinite(saved.y) ? saved.y : 0
   const armed = hasRestoreTarget(targetY)
 
-  // BUG-DETAILPAGESCARRYSCROLL-001 — ownership is PER ENTRY (rimpact-scrollmanager IMPORTANT-4). This mount
-  // claims its entry from the app-level page-scroll manager only when it holds a saved value for it; then
-  // the manager zeroes the scroll once in the POP commit and leaves the restore to the loop below. With no
-  // saved value — a fresh push, an entry this hook stopped writing after a same-page re-key — the manager
-  // restores instead, so no entry is left with no owner. Inert outside the manager's provider.
+  // Ownership is PER ENTRY. This mount claims its entry from the app-level page-scroll manager only
+  // when it holds a saved value for it; then the manager zeroes the scroll once in the POP commit and
+  // leaves the restore to the loop below. With no saved value — a fresh push, an entry this hook
+  // stopped writing after a same-page re-key — the manager restores instead, so no entry is left
+  // with no owner. Inert outside the manager's provider.
   const [claimEntry] = useState(() => (saved ? currentPageEntry() : null))
   useClaimPageScroll(claimEntry)
 
@@ -170,10 +167,10 @@ export default function useScrollRestore({ id, ready, stateAtTop = false }) {
 
   const write = useCallback(() => {
     if (!openRef.current) return
-    // ONLY THE ENTRY THIS MOUNT BELONGS TO MAY BE WRITTEN (BUG-SAVEDSEEDSBACKTOP-001). Once the router
-    // has pushed or popped, window.scrollY describes the NEXT page. The unmount cleanup runs after React
-    // has swapped the DOM, when Chrome has already clamped the offset to that page's short first paint
-    // (Saved seeds → a planting's "Loading…" read 56 and overwrote the 4,147 the listener had saved),
+    // ONLY THE ENTRY THIS MOUNT BELONGS TO MAY BE WRITTEN. Once the router has pushed or popped,
+    // window.scrollY describes the NEXT page. The unmount cleanup runs after React has swapped the
+    // DOM, when Chrome has already clamped the offset to that page's short first paint (a
+    // detail page's "Loading…" overwriting the offset the listener had saved),
     // and a scroll event that clamp fires can land before the cleanup does. react-router writes
     // history.state synchronously in the click, and the browser does before popstate, so by either read
     // the key has moved on and the last write made while the entry was current stands. A sheet's Back
@@ -207,11 +204,10 @@ export default function useScrollRestore({ id, ready, stateAtTop = false }) {
     const onVisibility = () => { if (document.visibilityState === 'hidden') onHide() }
     window.addEventListener('scroll', onScroll, { passive: true })
     // pagehide, not unload: an installed PWA is frozen/discarded rather than unloaded, and unmount
-    // alone does not fire when Chrome tears the document down. And pagehide alone is not enough either
-    // (BUG-DETAILPAGESCARRYSCROLL-001): Android discards a frozen tab with no event at all, so the last
-    // moment Chrome guarantees is visibilitychange → hidden (Page Lifecycle); freeze is flushed too.
-    // Those two ride the page-scroll manager's flag, so with the manager off this hook behaves exactly as it
-    // did before the manager (rimpact-scrollmanager-built N8).
+    // alone does not fire when Chrome tears the document down. And pagehide alone is not enough
+    // either: Android discards a frozen tab with no event at all, so the last moment Chrome
+    // guarantees is visibilitychange → hidden (Page Lifecycle); freeze is flushed too. Those two
+    // ride the page-scroll manager's flag, so with the manager off only pagehide flushes.
     window.addEventListener('pagehide', onHide)
     if (SCROLL_MANAGER_ENABLED) {
       document.addEventListener('visibilitychange', onVisibility)

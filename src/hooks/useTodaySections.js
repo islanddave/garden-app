@@ -1,22 +1,21 @@
-// useTodaySections — the redesigned Today's REMEMBERED open/closed state, Layer 1 (plan-v2 §2.1; §13 MF1,
-// Simplify 4). V5-TODAYREDESIGN-001 S2.
+// useTodaySections — the redesigned Today's REMEMBERED open/closed state, Layer 1.
 //
 // WRITTEN ONLY BY AN EXPLICIT HEADER TAP. Expand/Collapse all, a chip jump and an auto-open trigger are the
 // VISIT's (useTodayVisit.js) and never land here, so nothing the page decides on its own is ever remembered
-// as Dave's choice.
+// as the person's choice.
 //
 // ENTRY: { open: bool, at: 'YYYY-MM-DD', ack?: { t?, r? } } per section key (protect headsup care harvest
 // putup resting hh-<member8>). `open` is remembered across days; an `ack` (a close made while a trigger
-// had the section open) is DATE-SCOPED — it holds only while `at` is the plan day (MF1), and the trigger
-// module (S5) is what reads it.
+// had the section open) is DATE-SCOPED — it holds only while `at` is the plan day, and the trigger
+// module is what reads it.
 //
 // THE MIRROR, localStorage 'today-sections:<user>' = { v:1, s:{…entries}, dirty:[keys] }. Every tap lands
 // here first and is marked dirty: the local copy is authoritative until the server has confirmed it.
 //
-// S7 — THE SENDER (this hook, given `getToken`). A tap's entry goes to the server at once:
+// THE SENDER (this hook, given `getToken`). A tap's entry goes to the server at once:
 // PATCH /api/notifications/prefs { today_sections: { v:1, <dirty key>: entry, … } }, ALONE (never batched: a
-// pre-S7 Lambda's 400, or the S7 Lambda's 409 while its database lacks the column, would drop anything riding
-// with it), keepalive. The server merges per top-level key, so only dirty entries are sent. One request at a
+// 400 from a Lambda that predates the field, or a 409 while the database lacks the column, would drop
+// anything riding with it), keepalive. The server merges per top-level key, so only dirty entries are sent. One request at a
 // time; taps made while one is on the wire go together in the next. A 200 clears exactly the keys whose entry is
 // still what was sent (sectionsWire confirmedKeys); a 4xx, 5xx or network failure leaves them dirty, and every
 // mount — a visit start, or a return to Today — sends what is still dirty. Nothing else sends: Expand/Collapse
@@ -65,7 +64,7 @@ export function writeMirror(key, mirror) {
   try { localStorage.setItem(key, JSON.stringify({ v: V, s: mirror.s, dirty: mirror.dirty })) } catch { /* full or blocked: the visit still holds the tap */ }
 }
 
-// The server's entries, or null: absent (pre-S7), another version, or a service-worker cache body.
+// The server's entries, or null: absent, another version, or a service-worker cache body.
 export function serverSections(prefs) {
   if (!prefs || isFromCache(prefs)) return null
   const t = prefs.today_sections
@@ -100,7 +99,7 @@ export function useTodaySections({ userId, prefs, getToken } = {}) {
   // of that section (asked at call time: a save confirmed after the body arrived changes the answer).
   const resolve = useCallback((section) => resolveSection(section, mirror, sectionPredatesSave(prefs, section) ? null : server), [mirror, server, prefs])
 
-  // S7: the sender. Refs, so a send in flight survives re-renders and its answer lands on the mirror it was for.
+  // The sender. Refs, so a send in flight survives re-renders and its answer lands on the mirror it was for.
   const tokenRef = useRef(getToken)
   tokenRef.current = getToken
   const keyRef = useRef(key)

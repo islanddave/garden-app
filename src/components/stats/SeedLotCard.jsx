@@ -1,7 +1,6 @@
-// SeedLotCard — one saved seed lot on Season stats (round-2 "saved-seed cards, rebuilt"). Leads with
-// the cultivar and how many seeds ("~" when the count is an estimate), then the plant it came off and
-// where that plant came from. Link chips come from sourceLinkChips, so only filled fields appear.
-// Deliberately NO F1 / OP / "?" badges (Dave, round 2). "Edit source" opens the source's edit screen.
+// SeedLotCard — one saved seed lot on Season stats. Leads with the cultivar and how many seeds
+// ("~" when the count is an estimate), then the plant it came off and where that plant came from. Link chips come from sourceLinkChips, so only filled fields appear.
+// Deliberately NO F1 / OP / "?" badges. "Edit source" opens the source's edit screen.
 import React from 'react'
 import { Link } from 'react-router-dom'
 import { sourceLinkChips } from '../../lib/sourceLinks.js'

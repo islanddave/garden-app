@@ -3,30 +3,23 @@ import { useAuth } from './AuthContext.jsx'
 import { useApiFetch } from '../lib/api.js'
 import { fetchNotificationPrefs } from '../lib/notificationPrefsClient.js'
 
-// PrefsContext — V5-ADMINCENTER-001. The app-level, once-at-boot read of user_notification_prefs.
-// Design: project-state/design-admincentre-V100-20260908.md §3, §4.
+// PrefsContext — the app-level, once-at-boot read of user_notification_prefs.
 //
 // PER-USER, AND ONLY PER-USER. user_notification_prefs is keyed by created_by, so nothing
-// installation-wide belongs here — the table's key is the reason, not convention. The tab bar has
-// been on both sides of that line: V5-ADMINCENTER-001 moved it OUT to a global app_config value
-// after Dave's 2026-09-08 "one nav order" ruling, and V5-NAVCUSTOM-001 moved it back IN when he
-// reversed that ruling on 2026-09-24 (D4: "only my bar changes" — order AND which tabs sit on the
-// bar are personal). The bar (bar_layout), the More pins (more_pins) and the editor flag
-// (can_edit_bar, computed per request, never stored) ride this provider's one read;
-// NavPrefsContext, directly beneath it, turns them into the bar, the pins and their launch caches.
+// installation-wide belongs here — the table's key is the reason, not convention. The bar
+// (bar_layout), the More pins (more_pins) and the editor flag (can_edit_bar, computed per request,
+// never stored) ride this provider's one read; NavPrefsContext, directly beneath it, turns them
+// into the bar, the pins and their launch caches.
 //
 // WHY A PROVIDER AND NOT ANOTHER fetch(). GET /api/notifications/prefs is this app's per-user
-// cross-device preference store (~10 columns of pure UI state live on it) and it had EIGHT
-// independent callers each fetching on their own mount, three of them in the same frame on /today —
-// inside the boot window three consecutive perf rows were spent clearing, against a measured 1,706ms
-// cold start (warmOrigins.js:3-5). Dedup lives in fetchNotificationPrefs itself (single flight), so
-// this provider's boot read JOINS whatever those callers have already started rather than becoming a
-// ninth. That collapse is a net improvement to the boot path, which is why the provider pays for
-// itself independently of the row that introduced it.
+// cross-device preference store (pure UI state) and several components each fetched it on their
+// own mount, some in the same frame on /today, spending the boot window's network budget. Dedup
+// lives in fetchNotificationPrefs itself (single flight), so this provider's boot read JOINS
+// whatever those callers have already started rather than becoming another.
 //
 // "READ ONCE AT BOOT, EFFECTIVE ON REFRESH" — both halves satisfied structurally. Once at boot: this
-// effect, keyed on identity. On refresh: sw.js:258-262 routes Lambda-origin GETs networkFirst with a
-// 12s bound. `refreshPrefs` exists so a surface can re-read immediately after its own save; it is a
+// effect, keyed on identity. On refresh: the service worker routes Lambda-origin GETs networkFirst
+// with a bound. `refreshPrefs` exists so a surface can re-read immediately after its own save; it is a
 // deliberate second read, not a poll.
 const DEFAULT = { prefs: null, prefsLoaded: false, refreshPrefs: async () => null }
 const PrefsContext = createContext(DEFAULT)

@@ -4,18 +4,12 @@ import { MODE, MODE_VALUES, MODE_STORAGE_KEY } from '../lib/mode.js'
 /**
  * src/context/ModeContext.jsx
  *
- * Bite 2 of Post-V2 UX overhaul Increment 2: Field/Desk mode toggle scaffold.
+ * Provides the global "Field" vs "Desk" mode for the app.
  *
- * Provides the global "Field" vs "Desk" mode for the app (Dave-call #3 from
- * roadmap §4). Bite 2 is no-op visible scaffolding: the chip shows current
- * mode and toggles, but no other surface branches on mode yet. Bite 3 will
- * gate the FieldCapture page on `useMode() === MODE.FIELD` and swap the
- * BottomNav +LOG affordance for the mic button in Field mode.
- *
- * Defaults (V3-DESK-001, Dave+Jen 2026-06-08):
+ * Default:
  *   - Desk ALWAYS, regardless of device/pointer. The desk/home view is used
  *     far more than field even on mobile, so Field is the alternate the user
- *     opts into via the toggle (no longer auto-selected on touch devices).
+ *     opts into via the toggle (never auto-selected on touch devices).
  * Persisted to sessionStorage so the user's explicit toggle survives
  * navigation but resets at tab close (per spec: "manual session-persistent").
  *
@@ -27,8 +21,8 @@ import { MODE, MODE_VALUES, MODE_STORAGE_KEY } from '../lib/mode.js'
 const ModeContext = createContext(null)
 
 function detectDefaultMode() {
-  // V3-DESK-001: default is Desk for every device. Field is opt-in via the
-  // toggle, no longer auto-selected on coarse-pointer (touch) devices.
+  // Default is Desk for every device. Field is opt-in via the toggle, never
+  // auto-selected on coarse-pointer (touch) devices.
   return MODE.DESK
 }
 

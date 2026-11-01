@@ -21,23 +21,23 @@ export const DismissTopContext = createContext(null)
 //   registered — true only when a provider is present. Consumers key their
 //                LEGACY per-instance Escape handler on `!registered`, so this hook is safe in
 //                isolated unit tests that render a Sheet with no provider (registered=false → the
-//                component behaves byte-identically to before this slice).
+//                component keeps its own handler).
 //   isTopmost  — drives aria-modal ownership and arrow-key gating. Defaults TRUE when unregistered,
 //                again so the un-provided case is unchanged.
 export function useDismissable({
   open, onDismiss, dirty = false, busy = false, layer = LAYER.SHEET,
-  // V4-BACKNAV-001 Slice 3a. Both are registration-time constants and therefore safe effect deps.
+  // Both are registration-time constants and therefore safe effect deps.
   //
   // kind: 'route' marks a surface the ROUTER owns (App.jsx's OverlayHost). Back must fall through
   //   to the router for those; Escape still closes them. See decideBack.
   // armsBack: DEFAULT FALSE. Registry membership does not imply Back membership — Sheet calls this
-  //   hook once for all 9 <Sheet> render sites, so a default of true would silently enrol
-  //   BottomNav's two navigating sheets on the app's most frequent path.
+  //   hook once for every <Sheet> render site, so a default of true would silently enrol
+  //   BottomNav's navigating sheets on the app's most frequent path.
   kind = 'modal', armsBack = false,
-  // BUG-DIRTYDISMISSGAP-001 — the per-surface CONFIRM opt-in, and three more registration-time
-  // constants. DEFAULT FALSE for the same reason armsBack is: Sheet calls this hook once for all 18
-  // of its render sites, so a default of true would silently enrol every one of them, including the
-  // three overlay routes whose content already survives a dismiss via a real draft stash.
+  // The per-surface CONFIRM opt-in, and three more registration-time constants. DEFAULT FALSE for
+  // the same reason armsBack is: Sheet calls this hook once for all of its render sites, so a
+  // default of true would silently enrol every one of them, including the overlay routes whose
+  // content already survives a dismiss via a real draft stash.
   //
   // SCALARS, NOT A COPY OBJECT. These are effect deps (registration-time constants, unlike
   // dirty/busy), and an inline `confirmCopy={{...}}` literal has a fresh identity every render — it
@@ -45,7 +45,7 @@ export function useDismissable({
   // exactly the failure the dirty/busy exclusion below exists to prevent, so the copy travels as
   // strings, which compare by value.
   confirmOnDirty = false, confirmTitle = null, confirmBody = null,
-  // confirmCopy (V5-SEEDLOTADDITION-001): the question's words for the state the surface is in RIGHT
+  // confirmCopy: the question's words for the state the surface is in RIGHT
   //   NOW, when they differ from the registered ones: { title, body, confirmLabel, cancelLabel }, any
   //   of them, or null. Read through a REF when the question is raised, never registered and never
   //   pushed through update(), for backIntercept's reason: an inline literal is new every render, and

@@ -1,11 +1,10 @@
-// useWhatsNew — V4-WHATSNEW-001. Fetches releases.json, derives whether the newest release is
+// useWhatsNew — fetches the latest release, derives whether the newest release is
 // unseen vs the last-seen version, and stays in sync across instances (header dot + More-tab dot)
 // via the SEEN_EVENT. First run writes the current version (no cold-start dot).
 //
-// V4-WHATSNEW-002 / V4-USERPREFS-001 — last-seen is now PER-USER and cross-device. whatsNew.js's
-// header used to say this sync was "deferred to V4-WHATSNEW-002"; this is it.
+// Last-seen is PER-USER and cross-device.
 //
-// localStorage REMAINS, as the synchronous local layer: readSeen() is what lets the dot resolve on
+// localStorage stays as the synchronous local layer: readSeen() is what lets the dot resolve on
 // the first frame instead of flashing on while a prefs GET is in flight. The server is the
 // cross-device layer on top.
 //
@@ -14,15 +13,15 @@
 // the phone, while a STALE server value must never re-raise a dot the user already dismissed here.
 // Taking the max is the only merge with both properties.
 //
-// V4-PERFTHEMEA-001 — reads /releases-latest.json (releases.json[0] alone, ~1.7 KB) rather than the
-// full 141,722 B history. This hook only ever wanted d[0].version. See useAppUpdate.js for the
+// Reads /releases-latest.json (releases.json[0] alone, ~1.7 KB) rather than the full history. This
+// hook only ever wants d[0].version. See useAppUpdate.js for the
 // measurements, the two-files-stay-in-sync contract, and why neither file may become cacheable.
 // MOUNT SITE MATTERS FOR THE BYTE COUNT: the only consumer is WhatsNewDot inside BottomNav. On the
 // shipped bar that is the Release Notes row of the More sheet, and Sheet.jsx returns null when closed
 // — so this fetch does NOT fire on boot, it fires the first time the More menu is opened. Moving this
 // hook to a surface that mounts at boot would re-add a per-load fetch; keep that in view if
 // WhatsNewDot ever grows another mount point.
-// V5-NAVSLOTADORN-001 — the one exception, and it is chosen: a person who puts Release Notes ON their
+// The one exception, and it is chosen: a person who puts Release Notes ON their
 // tab bar gets the dot on that tab, which is always mounted, so for that person this read does fire at
 // launch (~1.7 KB). Nobody else's boot changes.
 import { useEffect, useState, useCallback } from 'react'

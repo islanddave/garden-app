@@ -1,11 +1,10 @@
-// useTags / useEntityTags — frontend wire for the V4-TAGSUB-001 faceted tag substrate
-// (garden-tags Lambda: /api/tags + /api/entity-tags). Backend shipped v3.2.0; this is the
-// read/write seam GARDENIA + PlantingUI will consume. No surface renders tags yet (wire-only).
+// useTags / useEntityTags — frontend wire for the faceted tag substrate
+// (garden-tags Lambda: /api/tags + /api/entity-tags): the read/write seam for tag surfaces.
 //
-// GUARD (D-WIRE): both hooks are inert when import.meta.env.VITE_API_TAGS is falsy — no fetch,
+// GUARD: both hooks are inert when import.meta.env.VITE_API_TAGS is falsy — no fetch,
 // loading resolves false, lists empty, mutations return { error: 'Tags API not configured' }.
-// Lets the hooks land + ship before the repo var / build wiring is live (ship-then-wire, the
-// VITE_API_VARIETIES precedent) without a relative-origin 404 from resolveUrl's '' base fallback.
+// Lets the hooks ship before the repo var / build wiring is live without a relative-origin 404
+// from resolveUrl's '' base fallback.
 //
 // Contracts mirror lambda/tags/index.js:
 //   GET    /api/tags?facet=&q=                       -> Tag[]              (canonical visibility predicate)
@@ -19,7 +18,7 @@
 //
 // Tag: { id, facet, label, slug, source, owner_id, visibility, created_by, created_at, updated_at }
 // NOTE: the entity-tags GET returns tag rows (t.*), not the entity_tag link id; detachTag therefore
-// takes the entity_tag surrogate id, which the render surface (PLANTINGUI) must source — tracked gap.
+// takes the entity_tag surrogate id, which the render surface must source.
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useApiFetch } from '../lib/api.js'
@@ -173,10 +172,10 @@ export function useEntityTags(entityType, entityId) {
   return { direct, projected, loading, error, reload, attachTag, detachTag }
 }
 
-// useEntityTagsBulk — whole-garden tag map for the faceted Garden render (V4-GARDENIA-001).
+// useEntityTagsBulk — whole-garden tag map for the faceted Garden render.
 // Calls GET /api/entity-tags?entity_type=<type> (no entity_id) -> { entities: { <id>: {direct,projected} } }.
-// Inert (entities={}) when VITE_API_TAGS is falsy, so surfaces that mount it render unchanged
-// until the tags API is wired. Read-only; mirrors the loadCounter race-guard of the other hooks.
+// Inert (entities={}) when VITE_API_TAGS is falsy, so surfaces that mount it render unchanged.
+// Read-only; mirrors the loadCounter race-guard of the other hooks.
 export function useEntityTagsBulk(entityType) {
   const { fetch } = useApiFetch()
   const [entities, setEntities] = useState({})

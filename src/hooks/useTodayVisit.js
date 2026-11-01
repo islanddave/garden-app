@@ -1,6 +1,6 @@
-// useTodayVisit — the redesigned Today's VISIT, Layer 2 (plan-v2 §2.1, §2.2). V5-TODAYREDESIGN-001 S2.
+// useTodayVisit — the redesigned Today's VISIT, Layer 2.
 //
-// WHAT A VISIT IS. It starts at the page's READY point (§6.4) on a mount that is NOT a page-scroll-manager
+// WHAT A VISIT IS. It starts at the page's READY point on a mount that is NOT a page-scroll-manager
 // return (app launch, a tab tap, a push from another page), and again whenever plan_date changes while the
 // page is mounted — the day changes in place, never by remounting. It CONTINUES across a POP return (Back
 // from a planting, a reload, a tab restore) for the same user and plan day: the stored record is restored
@@ -9,13 +9,13 @@
 // THE RECORD (visitLayout.js, sessionStorage 'today-visit:<user>:<plan_date>:v2'):
 //   order.sections  the sections present at the ready point — their slots are held for the visit
 //   layer1          Layer 1 (useTodaySections) as read at the ready point, per present section
-//   overlay         visit-only opens/closes: Expand/Collapse all, a chip jump (S3), a trigger (S5)
-//   triggers        the trigger descriptors that fired at the ready point (S5) — a close made while one has
+//   overlay         visit-only opens/closes: Expand/Collapse all, a chip jump, a trigger
+//   triggers        the trigger descriptors that fired at the ready point — a close made while one has
 //                   the section open is what records a date-scoped ack
-//   order.chips     the jump-bar chips present at the ready point (S3) — held for the visit
-//   (filter)        retired by the Today finish plan §3.5 (Dave's D17): a chip's pre-select intent for Needs care's
-//                   task row. The bar's Water / Feed / Check cells now ARE the filter (useNeedsCare, per session),
-//                   so there is no second row to hand an intent to. A record saved before carries it unread.
+//   order.chips     the jump-bar chips present at the ready point — held for the visit
+//   (filter)        retired: the bar's Water / Feed / Check cells now ARE the filter (useNeedsCare, per
+//                   session), so there is no second row to hand an intent to. A record saved earlier
+//                   carries it unread.
 // Effective open = overlay > layer1 > closed. An explicit header tap is the page's to route: it writes Layer
 // 1 (useTodaySections.remember) and calls `tap`, which records the new state and clears the overlay, so the
 // tap wins for the rest of the visit. A section that appears mid-visit is in no snapshot: it is closed.
@@ -75,6 +75,6 @@ export function useTodayVisit({ userId, planDate, ready, start }) {
 
   const isOpen = useCallback((section) => effectiveOpen(shown, section), [shown])
 
-  // S4: a slice's own fields on the record (Needs care's open spots, done lines, runs) — `fn(record)` → record.
+  // A slice's own fields on the record (Needs care's open spots, done lines, runs) — `fn(record)` → record.
   return { record: shown, returned, isOpen, tap, overlayAll, update }
 }

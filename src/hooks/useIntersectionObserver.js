@@ -1,10 +1,7 @@
-// useIntersectionObserver — scaffolding hook for Session 3 Stage 2 viewport gate.
-// Spec: revision §3.26 (Stage 2 reveal must defer when tile is out-of-viewport).
+// useIntersectionObserver — viewport gate (a reveal must defer while its tile is out of the viewport).
 //
 // Generic + reusable. Returns { isIntersecting, ref } where ref is attached to
 // the target element. Callback fires on every intersection state change.
-//
-// Session 2 scope: hook + tests only. Wiring into CritterSprite is Session 3.
 
 import { useEffect, useRef, useState } from 'react'
 

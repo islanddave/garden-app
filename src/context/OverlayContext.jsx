@@ -1,10 +1,9 @@
 // src/context/OverlayContext.jsx
-// V4-OVERLAY-001 Slice 1 — route-backed overlays (design V102 §1, Architecture A).
-// Navigate carrying state:{ background: location }; App renders the PAGE tree at
+// Route-backed overlays. Navigate carrying state:{ background: location }; App renders the PAGE tree at
 // `background ?? location` and an OVERLAY tree at the REAL location when a background exists.
 // This context is the single source of the "effective page location" so App-level chrome
 // (TopChrome/TodayBand/BottomNav/CritterArrivalController) follows the BACKGROUND, not the
-// overlay URL (§2).
+// overlay URL.
 import React, { createContext, useContext, useMemo, useCallback, useEffect } from 'react'
 import { useLocation, useNavigate, Link } from 'react-router-dom'
 import { readAnyMarker } from '../lib/backNav.js'
@@ -12,21 +11,20 @@ import { CONTINUES_ENTRY_KEY, locationEntryKey } from '../lib/pageEntry.js'
 
 const OverlayContext = createContext(null)
 
-// ─── BUG-OVERLAYDISMISSREKEY-001 — close by walking back to the page's OWN history entry ──────────
+// ─── Close by walking back to the page's OWN history entry ────────────────────────────────────────
 //
-// Closing by replace (the only close there was) put a NEW entry, with a new react-router key, where the
-// overlay's entry had been: [.., k1:page, k2:/search] -> [.., k1:page, k3:page]. Two defects followed.
-// The page stayed mounted under a key it never opened on, so useScrollRestore — which may write only
-// while its own entry is current (BUG-SAVEDSEEDSBACKTOP-001) — saved nothing for the rest of the visit
-// and Back from a detail landed at the top. And the stack held the page twice, so the first system Back
-// after a close went k3 -> k1, the same URL: a press that did nothing. The system Back never had either
-// problem, because it pops to k1.
+// Closing by replace puts a NEW entry, with a new react-router key, where the overlay's entry had
+// been: [.., k1:page, k2:/search] -> [.., k1:page, k3:page]. Two defects follow. The page stays
+// mounted under a key it never opened on, so useScrollRestore — which may write only while its own
+// entry is current — saves nothing for the rest of the visit and Back from a detail lands at the
+// top. And the stack holds the page twice, so the first system Back after a close goes k3 -> k1, the
+// same URL: a press that does nothing. The system Back has neither problem, because it pops to k1.
 //
-// So a close now does what Back does, whenever the page's entry is PROVABLY behind us: the background
-// carries where its entry sits (react-router's `idx`, which BrowserRouter writes into history.state and
-// which EventNew's weigh-frame close already reads) and which document wrote it. The walk is refused —
-// and the old replace stands — when any of that cannot be shown: an entry written before this release
-// (no historyEntry), MemoryRouter (window.history never moves, so the distance is 0), a DismissRegistry
+// So a close does what Back does, whenever the page's entry is PROVABLY behind us: the background
+// carries where its entry sits (react-router's `idx`, which BrowserRouter writes into history.state
+// and which EventNew's weigh-frame close also reads) and which document wrote it. The walk is
+// refused — and the replace stands — when any of that cannot be shown: an entry with no
+// historyEntry, MemoryRouter (window.history never moves, so the distance is 0), a DismissRegistry
 // Back marker on top (it copies the idx of the entry under it, so the arithmetic would stop one short
 // and close a sheet instead), an entry from before a reload (history.go across documents is a full page
 // load, not a close), or a distance past MAX_CLOSE_STEPS.
@@ -37,7 +35,6 @@ const OverlayContext = createContext(null)
 // that overlay sits one entry above the page while reading the page's idx. withHistoryEntry records
 // that (markerSlot) and the walk counts it. A replace-open over anything that is NOT a marker has
 // overwritten the page's own entry, so there is nothing to walk back to and nothing is recorded.
-// (design review: Projects/Gardening/_seedstab11_20260925/design-critique-pwa.md F1.)
 
 // Which document wrote an entry. `location.reload()` (the service worker's post-deploy controllerchange)
 // keeps history.state but not this module, so a background from the old document is recognisable.
@@ -103,7 +100,7 @@ let closingFrom = null
 
 // Signals to route content that it is rendering INSIDE an overlay Sheet (vs full-page). OverlayHost
 // provides `true`; everywhere else it defaults false. Lets a route (e.g. Search) drop its full-page
-// 100dvh floor and defer initial focus to the Sheet when it is shown as a flyover (§6/§7).
+// 100dvh floor and defer initial focus to the Sheet when it is shown as a flyover.
 const OverlaySurfaceContext = createContext(false)
 export function OverlaySurfaceProvider({ children }) {
   return <OverlaySurfaceContext.Provider value={true}>{children}</OverlaySurfaceContext.Provider>
@@ -112,10 +109,9 @@ export function useInOverlaySurface() {
   return useContext(OverlaySurfaceContext)
 }
 
-// V4-DRAFTFULLPAGE-001 (b) — the missing half of Sheet §5.2: Sheet shipped a `dirty` prop (backdrop
-// tap no-ops while dirty; Escape + the labelled Close stay live) with zero consumers. This channel
-// lets overlay CONTENT report its dirty state UP to the hosting Sheet: OverlayHost owns the state
-// and provides the setter; content calls useReportOverlayDirty(bool). Everywhere else (full page,
+// Sheet takes a `dirty` prop (backdrop tap no-ops while dirty; Escape + the labelled Close stay
+// live). This channel lets overlay CONTENT report its dirty state UP to the hosting Sheet:
+// OverlayHost owns the state and provides the setter; content calls useReportOverlayDirty(bool). Everywhere else (full page,
 // isolated tests) the context is null and the hook is a strict no-op. Value is the setter function
 // itself — stable from useState, so consumer effects keyed on it never re-fire.
 const OverlayDirtyContext = createContext(null)
@@ -135,7 +131,7 @@ export function useReportOverlayDirty(dirty) {
 }
 
 // A background is honored only if it looks like a real location. Guards the
-// "stale background across reload/deploy" trap (§V102 failure mode b): an unparseable/legacy value
+// "stale background across reload/deploy" trap: an unparseable/legacy value
 // degrades to full-page (background=undefined) instead of rendering a broken overlay tree.
 function validBackground(bg) {
   return bg && typeof bg === 'object' && typeof bg.pathname === 'string' ? bg : undefined
@@ -151,7 +147,7 @@ export function OverlayProvider({ children }) {
     () => ({
       background, // undefined unless an overlay is open
       overlayLocation: location, // the REAL location — the overlay tree renders here
-      pageLocation: background ?? location, // what chrome + the page tree render (§2, §3)
+      pageLocation: background ?? location, // what chrome + the page tree render
     }),
     [background, location]
   )
@@ -201,9 +197,9 @@ export function OverlayLink({ to, state, children, ...rest }) {
   )
 }
 
-// Dismiss (§4): NEVER a bare navigate(-1) (history.back() at idx 0 is a no-op — the overlay would
+// Dismiss: NEVER a bare navigate(-1) (history.back() at idx 0 is a no-op — the overlay would
 // stick open). Walk back to the page's own entry when planOverlayClose can prove where it is (see
-// BUG-OVERLAYDISMISSREKEY-001 above); otherwise replace to the background URL, else /today.
+// the walk-back note above); otherwise replace to the background URL, else /today.
 // Resilient outside a provider (useContext, not useOverlay) so overlay route content (LogMany "Done")
 // can call it in isolated unit tests that render without a provider — there background is simply
 // undefined and it falls back to /today (same as no overlay).
@@ -230,30 +226,28 @@ export function useOverlayDismiss() {
     }
     // The replace mints a new key under a page that stays mounted. Stamp the entry with the page entry it
     // continues, so whatever files state by entry (useScrollRestore) keeps one identity through the close
-    // (BUG-OVERLAYRELOADKEY-001, src/lib/pageEntry.js). Nothing else of the page's own state rides along,
-    // unchanged from before.
+    // (src/lib/pageEntry.js). Nothing else of the page's own state rides along.
     const continues = locationEntryKey(background)
     navigate(background.pathname + background.search,
       continues ? { replace: true, state: { [CONTINUES_ENTRY_KEY]: continues } } : { replace: true })
   }, [navigate, background])
 }
 
-// Slice 2 — safe read of the current background (undefined when no overlay / outside a
+// Safe read of the current background (undefined when no overlay / outside a
 // provider). Lets overlay content preserve `background` when it re-navigates to the SAME url with new
-// state (LogMany's post-batch critterCheck push, §4) without pulling in useLocation() — which the
+// state (LogMany's post-batch critterCheck push) without pulling in useLocation() — which the
 // bare-mock unit tests for these pages do not provide.
 export function useOverlayBackground() {
   const ctx = useContext(OverlayContext)
   return ctx ? ctx.background : undefined
 }
 
-// Slice 2 — SWAP the overlay's content WITHOUT changing the background. For cross-links that live
+// SWAP the overlay's content WITHOUT changing the background. For cross-links that live
 // INSIDE an overlay (Log one <-> Log many, and Log Many's harvest→per-plant route): using
 // useOverlayNavigate there would set background to the overlay's OWN url (/log or /log/many), which
 // would render a form as the page-tree "background" and dismiss to the wrong place. Instead we carry
 // the EXISTING background forward and `replace` (a content swap must not grow history). When no
-// overlay is open (full-page) this is a plain push navigate — identical to the old
-// <Link>/navigate() the call site used before.
+// overlay is open (full-page) this is a plain push navigate.
 export function useOverlaySwap() {
   const navigate = useNavigate()
   const ctx = useContext(OverlayContext)
@@ -283,19 +277,19 @@ export function OverlaySwapLink({ to, state, replace: replaceProp, children, ...
   )
 }
 
-// Slice 2 — safe read of the OPEN overlay's pathname (null when no overlay is open / outside a
+// Safe read of the OPEN overlay's pathname (null when no overlay is open / outside a
 // provider). Drives the CritterArrivalController suppress-and-queue: a reward must never pop over an
-// open capture form (§7). Returns null (not-open) in isolated tests with no provider.
+// open capture form. Returns null (not-open) in isolated tests with no provider.
 export function useOpenOverlayPath() {
   const ctx = useContext(OverlayContext)
   if (!ctx || !ctx.background) return null
   return ctx.overlayLocation?.pathname ?? null
 }
 
-// Slice 2 follow-up (Dave 2026-07-20) — the explicit reward signal LogMany pushes onto the REAL
+// The explicit reward signal LogMany pushes onto the REAL
 // overlay location's state at the confirm→result moment (state.critterCheck). Unlike an ambient
 // poll-surfaced critter, it means "a batch was just completed — show the reward NOW, on the result
-// screen." The CritterArrivalController treats it as a show-now trigger that BYPASSES the §7 form-open
+// screen." The CritterArrivalController treats it as a show-now trigger that BYPASSES the form-open
 // suppression (which otherwise queues the reward to dismiss, deferring it off the accomplishment
 // moment onto the underlying page). It reads the REAL overlay location — NOT background/pageLocation,
 // where the same-path push does NOT land. null outside a provider / when no signal is present.

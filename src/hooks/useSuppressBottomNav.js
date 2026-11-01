@@ -1,16 +1,16 @@
 // useSuppressBottomNav — the session posture's "the screen becomes the task" mechanism, extracted
-// for the second consumer (V4-PUTUPSESSION-001's freezer walk).
+// for the second consumer (Put-Up's freezer walk).
 //
 // BottomNav is App-level chrome and a page cannot re-render it, so a session hides it the way the
 // app's own keyboard suppression already does: `visibility: hidden` on the <nav> PLUS
 // `--bottom-nav-height: 0px`, TOGETHER, so the paint and the reserved inset can never disagree for
-// a frame (BottomNav.jsx:183-197 states that invariant). Worth 56px of the most thumb-reachable
+// a frame (BottomNav.jsx states that invariant). Worth 56px of the most thumb-reachable
 // strip on the device, occupied entirely by targets that ABANDON the session.
 //
 // WHY THIS IS A COPY AND NOT AN IMPORT FROM EventNew.jsx. EventNew carries the original and it is
-// frozen — OPS-WEIGHINUXFROZEN-001, Dave: "frame is perfect. 100% A+". Editing it to import from
-// here would be a change to the weigh-in surface for no behavioural gain, so the duplication is
-// deliberate: this file is additive and EventNew is untouched. The style element carries its OWN id
+// frozen. Editing it to import from here would be a change to the weigh-in surface for no
+// behavioural gain, so the duplication is deliberate: this file is additive and EventNew is
+// untouched. The style element carries its OWN id
 // so the two can never fight over one node if a future surface mounts both.
 //
 // Effect cleanup is what makes "the nav must come back the moment he leaves" structural rather than

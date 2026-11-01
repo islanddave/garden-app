@@ -1,5 +1,5 @@
 // src/hooks/usePageScrollManager.js
-// BUG-DETAILPAGESCARRYSCROLL-001 — the app-level page-scroll manager's WIRING. Every decision it acts on
+// The app-level page-scroll manager's WIRING. Every decision it acts on
 // is src/lib/pageScroll.js (decidePageScroll, driverStep, the store), table-tested there; this file only
 // connects them to the commit, the scroll event and the page lifecycle.
 //
@@ -20,22 +20,22 @@
 //     claimed its own restore (useScrollRestore, Garden) — then one zero in the commit and the page does it.
 // The full table is decidePageScroll's header.
 //
-// FILING follows useScrollRestore's two rules (rimpact-scrollmanager IMPORTANT-3): an offset is filed only
+// FILING follows useScrollRestore's two rules: an offset is filed only
 // while the history entry is still the committed page's (react-router has already written the next entry
 // by the time a swap's clamp fires a scroll event), and never while a restore is armed for it (the
 // driver's own clamped attempts would overwrite the target). Nothing is filed in an effect cleanup. And
 // nothing is filed while the page is COVERED — the active entry is a route overlay's or a Back marker's:
 // the body is scroll-locked under a sheet, so a scroll event there is the page rendering shorter behind
 // it, never a place. The last offset filed before the cover is the snapshot a walk-back close or a marker
-// pop re-applies if the page moved (IMPORTANT-2), which is what Chrome's own traversal restore did before
+// pop re-applies if the page moved, which is what Chrome's own traversal restore did before
 // 'manual' turned it off.
 //
-// WHO TAKES OVER A RESTORE, per owner (qa-scrollmanager-built M12). This manager's driver stops for good on
+// WHO TAKES OVER A RESTORE, per owner. This manager's driver stops for good on
 // real scrolling — a wheel, a moving finger (touchmove), a key — and on a deliberate act: a click, a
 // mouse/pen press, focus arriving in a text field by a user act (not a page's own mount focus), or the page
-// itself scrolling on purpose (usePageScrollYield, e.g. useLotOutline's outline). NOT on touchstart, and not on a TOUCH pointerdown,
-// which is the same moment: a thumb resting on the glass while the page loads must not lose the place
-// (rimpact-scrollmanager IMPORTANT-7); lifting it after a short tap is a click, which does count, and a long
+// itself scrolling on purpose (usePageScrollYield, e.g. useLotOutline's outline). NOT on touchstart,
+// and not on a TOUCH pointerdown, which is the same moment: a thumb resting on the glass while the
+// page loads must not lose the place; lifting it after a short tap is a click, which does count, and a long
 // rest produces no click at all. The hook pages' own restore (useScrollRestore) and Garden's keep their
 // older rule — wheel, touchstart, keydown — for their ~20-frame loops; those are not this driver.
 import { createContext, createElement, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -103,9 +103,9 @@ const clock = () => (typeof performance !== 'undefined' ? performance.now() : Da
 
 // Did this DOCUMENT arrive by a fresh navigation — a launch, a typed URL, a PWA shortcut into a running app —
 // rather than a reload, a Back/Forward or a tab restore? Then the offset its path filed in an earlier document
-// is not its place (rimpact-scrollmanager-built N3), and a door's arrival hint (`?lot=`) is an arrival, not a
-// return (N6). A discarded tab brought back counts as a restore whatever type it reports. Read once: the
-// answer belongs to the document. No navigation timing → not fresh (restore, as before).
+// is not its place, and a door's arrival hint (`?lot=`) is an arrival, not a
+// return. A discarded tab brought back counts as a restore whatever type it reports. Read once: the
+// answer belongs to the document. No navigation timing → not fresh (restore).
 let freshDocument
 export function documentArrivedFresh() {
   if (freshDocument !== undefined) return freshDocument
@@ -121,7 +121,7 @@ export function __setDocumentArrivedFresh(value) { freshDocument = value }
 
 // Focus arriving in a text field is the user taking over only when a user act brought it there: a page that
 // focuses its own field on mount (full-page Search does, on every params change) is not the user
-// (qa2-scrollmanager-confirm MINOR-5). Where the browser reports no activation state, it counts, as before.
+// Where the browser reports no activation state, it counts.
 function focusByUser() {
   try {
     const ua = typeof navigator !== 'undefined' ? navigator.userActivation : null
@@ -221,11 +221,11 @@ export function usePageScrollManager({ pageLocation, location, navigationType, r
 
   useLayoutEffect(() => { s.ready = ready }, [s, ready])
 
-  // A claim is PER ENTRY (rimpact-scrollmanager IMPORTANT-4): a page claims the entry it holds a saved
+  // A claim is PER ENTRY: a page claims the entry it holds a saved
   // offset for, at its first render. A claim that lands after the commit that armed a restore for that
   // entry — a page that mounted late, behind Protected's skeleton at boot — cancels the driver: the page
   // restores itself. `yieldScroll` is a page about to scroll on purpose (an outline, a highlight): the
-  // restore stops for good rather than pulling the page back (rimpact-scrollmanager-built N4).
+  // restore stops for good rather than pulling the page back.
   const api = useMemo(() => ({
     claim(key) {
       s.claims.set(key, (s.claims.get(key) || 0) + 1)
@@ -289,7 +289,7 @@ export function usePageScrollManager({ pageLocation, location, navigationType, r
   }, [s, enabled, commit, navigationType, entry, path])
 
   // One passive listener each, installed once. The cleanup removes listeners and nothing else: it never
-  // files (IMPORTANT-3), and it never cancels the driver, because StrictMode runs this cleanup and the
+  // files, and it never cancels the driver, because StrictMode runs this cleanup and the
   // effect again inside one commit, and the layout effect above does not re-arm for a location it has
   // already seen. A real unmount marks the state dead, and the driver's next frame stops it.
   useEffect(() => {
@@ -297,7 +297,7 @@ export function usePageScrollManager({ pageLocation, location, navigationType, r
     s.alive = true
     // Who takes over: the file header's "WHO TAKES OVER A RESTORE". Click and press are listened for in the
     // CAPTURE phase, so the restore has stopped before the page's own handler runs — a "Show more" tap must
-    // never be pulled back to the old place by the content it adds (qa-scrollmanager-built, Event log).
+    // never be pulled back to the old place by the content it adds.
     const takeover = (reason) => { if (s.driver) stopDriver(s, 'TAKEOVER', reason) }
     const onWheel = () => takeover('wheel')
     const onTouchMove = () => takeover('touchmove')
@@ -338,9 +338,9 @@ export function usePageScrollManager({ pageLocation, location, navigationType, r
 
   // "This mount is a return": the page tree arrived by POP (Back, Forward, a reload, a tab restore) — except
   // the document's own first location when the document arrived by a fresh navigation (react-router's
-  // initial action is POP for every load, a typed URL included): a door's arrival hint is honoured there
-  // (rimpact-scrollmanager-built N6). Pages mount behind Protected's skeleton AFTER the first commit, so
-  // this reads the location, not the commit count.
+  // initial action is POP for every load, a typed URL included): a door's arrival hint is honoured there.
+  // Pages mount behind Protected's skeleton AFTER the first commit, so this reads the location, not
+  // the commit count.
   const atFirstLocation = !s.firstLoc || s.firstLoc === commit
   const isReturn = !!enabled && navigationType === 'POP' && !(atFirstLocation && documentArrivedFresh())
   return useMemo(() => ({ api, isReturn }), [api, isReturn])
@@ -364,10 +364,10 @@ export function useClaimPageScroll(entry) {
 }
 
 // Whether the page tree's latest arrival was a POP (Back, Forward, a reload, a tab restore): "this is a
-// return", which the manager restores, so a page's own arrival scroll must not fire against it
-// (rimpact-scrollmanager IMPORTANT-5). LIVE — it follows every navigation; a caller that means "the
-// navigation that mounted me" captures it at first render (usePageScrollReturnAtMount). False outside the
-// provider and with the flag off, so both keep today's behaviour.
+// return", which the manager restores, so a page's own arrival scroll must not fire against it.
+// LIVE — it follows every navigation; a caller that means "the navigation that mounted me"
+// captures it at first render (usePageScrollReturnAtMount). False outside the provider and with the
+// flag off, so both keep the plain behaviour.
 export function usePageScrollReturn() {
   return useContext(ReturnContext)
 }

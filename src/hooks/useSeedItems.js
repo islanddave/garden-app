@@ -1,16 +1,16 @@
-// src/hooks/useSeedItems.js — V5-SEEDSTAB-001. The Seeds page's ONE copy of the seed rows.
+// src/hooks/useSeedItems.js — the Seeds page's ONE copy of the seed rows.
 //
 // My seeds and Saved seeds render the same ~330 rows (`GET /api/inventory-items?category=seeds`,
-// ~437 kB), and the ferment line under the switch reads them on all three views. Each used to fetch
-// its own copy, which on one page means a stage moved in Saved seeds leaves My seeds' chip wrong until
-// a remount, and a switch between views re-downloads the lot. The page owns this fetch — Put-Up's
-// "one GET, not two" — and hands it down; every write either patches a row in place or reloads.
+// large), and the ferment line under the switch reads them on all three views. Separate fetches
+// would mean that on one page a stage moved in Saved seeds leaves My seeds' chip wrong until
+// a remount, and a switch between views re-downloads the lot. The page owns this fetch and hands
+// it down; every write either patches a row in place or reloads.
 //
 // NOT useCachedFetch. That hook revalidates on every mount, and the views mount and unmount on every
 // switch; the store has to live above them for the same reason the fetch does.
 //
 // `fromCache`: offline, the service worker answers with the last copy it held and api.js marks the
-// parsed value (SW-STALEAPI-001). The page shows a stale band with Retry rather than presenting a
+// parsed value. The page shows a stale band with Retry rather than presenting a
 // cached list as fresh — the ferment line in particular must not say "day 3" off a copy from last week.
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useApiFetch, isFromCache } from '../lib/api.js'
@@ -26,7 +26,7 @@ export function useSeedItems() {
   const [refreshing, setRefreshing] = useState(false)
 
   // Rows as they are NOW, for callbacks that outlive the render that made them — the quantity
-  // adjuster's undo is the one that matters (BUG-INVUNDOQTY-001). Assigned synchronously by commit().
+  // adjuster's undo is the one that matters. Assigned synchronously by commit().
   const itemsRef = useRef(null)
   const seqRef = useRef(0)
 

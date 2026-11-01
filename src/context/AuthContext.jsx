@@ -1,8 +1,7 @@
 // The DEFAULT React import is required to render this provider under vitest: the unit run falls
 // back to the CLASSIC JSX transform (React.createElement), so a file that relies on the automatic
-// runtime throws "React is not defined" the moment a test mounts it. Every other rendered .jsx in
-// src/ already carries it; this one never did because nothing had mounted it until
-// clientPrefs.test.jsx. Inert in the production build, which uses the automatic runtime.
+// runtime throws "React is not defined" the moment a test mounts it. Inert in the production build,
+// which uses the automatic runtime.
 import React, { createContext, useContext, useEffect, useState } from 'react'
 import { useUser, useClerk } from '@clerk/react'
 import { invalidateAll as invalidateDataCache } from '../lib/dataCache.js'
@@ -13,7 +12,7 @@ import { POST_LOGIN_ROUTE } from '../lib/constants.js'
 
 const AuthContext = createContext(null)
 
-// V4-COLDSTART-001 — the ceiling on the boot wait.
+// The ceiling on the boot wait.
 //
 // 10 000 ms is Clerk's own number, not a tuned one: `@clerk/shared/dist/getToken.mjs:29-36` races
 // its ready-promise against exactly this and rejects with
@@ -37,7 +36,7 @@ export function AuthProvider({ children }) {
   const user = isSignedIn ? clerkUser : null
   const loading = !isLoaded
 
-  // V4-COLDSTART-001 — the bounded wait, and the third identity state it produces.
+  // The bounded wait, and the third identity state it produces.
   //
   // THE HANG. clerk-js is hot-loaded from Clerk's CDN. Offline that load fails; IsomorphicClerk
   // emits status 'error' and then RETURNS without calling emitLoaded (@clerk/react's ClerkProvider
@@ -45,11 +44,11 @@ export function AuthProvider({ children }) {
   // useUser() keeps returning isLoaded:false (@clerk/shared react useUser: `user === undefined`
   // ⇒ isLoaded:false), and `loading` above is true FOREVER. The render gate downstream paints a
   // boot skeleton for as long as that holds: no error, no recovery, no way out but force-stopping
-  // the app. Dave gardens in rural dead zones on Chrome Android, so it is a routine condition.
+  // the app. Gardens sit in rural dead zones on Chrome Android, so it is a routine condition.
   //
   // `unknown` is deliberately a SUBSET of `loading`, never a replacement for it. Two consequences,
   // both load-bearing:
-  //   • every consumer that only knows the boolean keeps withholding exactly as it does today, so
+  //   • every consumer that only knows the boolean keeps withholding exactly as it always did, so
   //     this cannot leak by omission — the only surface that changes is the one explicitly taught
   //     about `identity` (App.jsx's AppShell).
   //   • an unresolved identity can never take the signed-OUT branch. Collapsing them would redirect
@@ -80,14 +79,14 @@ export function AuthProvider({ children }) {
     avatar_url: clerkUser.imageUrl || null,
   } : null
 
-  // V4-IMGCACHE-001 D-1: on any identity change, evict the whole in-heap data cache so a soft
+  // On any identity change, evict the whole in-heap data cache so a soft
   // sign-out (no page reload) or an in-place sub switch can never leave one identity's cached lists
   // resident for the next. The identity-scoped key already prevents cross-read; this is the eviction
   // half (memory + retention hygiene). A boot transition (null → sub) is a no-op on an empty cache.
   const userId = user?.id ?? null
   useEffect(() => { invalidateDataCache() }, [userId])
 
-  // V4-IMGCACHE-002 D-2: boot-warm + foreground revalidate. Called AFTER the eviction effect above so
+  // Boot-warm + foreground revalidate. Called AFTER the eviction effect above so
   // the hook ordering guarantees eviction runs first on an identity change — a warm that ran before it
   // would have its freshly-written entry immediately cleared.
   useCacheLifecycle(userId)
@@ -105,7 +104,7 @@ export function AuthProvider({ children }) {
     }
   }
 
-  // V4-RANKCLEAR-001 — the ONE sign-out funnel in the app (BottomNav's confirm row is its only
+  // The ONE sign-out funnel in the app (BottomNav's confirm row is its only
   // caller), so the client-preference clear belongs here rather than at the call site.
   //
   // BEFORE the await, deliberately. Clerk's signOut may navigate, and anything after the await is
@@ -114,7 +113,7 @@ export function AuthProvider({ children }) {
   // are presentation-only and rebuild from normal use within days, so that is the cheaper failure.
   async function signOut() {
     clearClientPrefs()
-    // Put-Up 1a (V4 §6.5): this person's half-typed Put-Up sheet drafts go too, same ordering reason.
+    // This person's half-typed Put-Up sheet drafts go too, same ordering reason.
     clearSheetDraftsFor(user?.id)
     await clerkSignOut()
   }

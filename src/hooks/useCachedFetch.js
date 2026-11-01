@@ -1,15 +1,14 @@
-// src/hooks/useCachedFetch.js — V4-IMGCACHE-001 D-1. SWR read hook over dataCache, gated on a live
-// household identity.
+// src/hooks/useCachedFetch.js — SWR read hook over dataCache, gated on a live household identity.
 //
 // Three modes (rules-of-hooks: all hooks are called every render; the return selects the mode):
 //  • CACHED   (a Clerk sub + a non-null path): identity-scoped key `${sub}|${path}`.
 //    Subscribes to the store, serves cache on first paint, revalidates on EVERY mount, returns
 //    { data, loading, error, isValidating, refetch }. `loading` is true until data OR an error exists.
 //  • PLAIN    (no sub yet — path present): a plain fetch-on-mount that writes
-//    NO cache entry — byte-identical to the pre-D1 useState+useEffect sites. The no-sub branch is the
-//    security boundary: nothing is EVER cached under an absent sub, so user B can never read a
-//    `u:undefined|…` bucket (the request still goes out, uncached, exactly as today). It also means a
-//    provider-less unit test just plain-fetches — no AuthProvider harness needed.
+//    NO cache entry. The no-sub branch is the security boundary: nothing is EVER cached under an
+//    absent sub, so user B can never read a `u:undefined|…` bucket (the request still goes out,
+//    uncached). It also means a provider-less unit test just plain-fetches — no AuthProvider
+//    harness needed.
 //  • IDLE     (no path): pending, no fetch, no cache.
 //
 // `error` surfaces ONLY on a COLD failure (no usable data); a background-revalidate failure keeps the
@@ -19,7 +18,7 @@ import { useApiFetch } from '../lib/api.js'
 import { useAuthOptional } from '../context/AuthContext.jsx'
 import * as cache from '../lib/dataCache.js'
 
-// `stale` (SW-STALEAPI-001): the last commit came from the service worker's offline cache rather
+// `stale`: the last commit came from the service worker's offline cache rather
 // than the network. Carried through so a surface can say so; the correctness half — never
 // advancing the freshness clock — lives in dataCache and does not depend on anyone reading this.
 const EMPTY_SNAP = { status: 'empty', data: undefined, error: null, isValidating: false, stale: false }
@@ -31,7 +30,7 @@ export function useCachedFetch(path) {
   const sub = user?.id ?? null
   const cached = !!path && !!sub
   const usePlain = !cached && !!path            // no sub yet — plain fetch, no cache
-  const key = cached ? cache.keyFor(sub, path) : null   // D-2: shared builder, or boot-warm misses
+  const key = cached ? cache.keyFor(sub, path) : null   // shared builder, or boot-warm misses
 
   // Latest fetch fn behind a ref so the fetcher identity stays stable across token refreshes.
   const fetchRef = useRef(fetch); fetchRef.current = fetch
@@ -41,10 +40,10 @@ export function useCachedFetch(path) {
   )
 
   // ── CACHED path (no-ops when key is null) ──
-  // `ep` (BUG-TODAYSECTIONSSTUCK-001): invalidateAll replaces every entry. AuthContext runs it in a passive effect,
-  // which fires AFTER a child's, so a reader mounted in the same commit as the identity has already registered on the
-  // evicted entry. A new epoch re-subscribes, re-registers and revalidates on the fresh entry; without it `loading`
-  // stayed true until a remount (Today's sections below the weather card never appeared).
+  // `ep`: invalidateAll replaces every entry. AuthContext runs it in a passive effect, which fires
+  // AFTER a child's, so a reader mounted in the same commit as the identity has already registered
+  // on the evicted entry. A new epoch re-subscribes, re-registers and revalidates on the fresh
+  // entry; without it `loading` stays true until a remount.
   const ep = useSyncExternalStore(cache.subscribeEpoch, cache.epoch, cache.epoch)
   const subscribe = useCallback((cb) => (key ? cache.subscribe(key, cb) : _noopUnsub()), [key, ep])
   const getSnap = useCallback(() => (key ? cache.getSnapshot(key) : EMPTY_SNAP), [key, ep])

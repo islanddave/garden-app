@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { useCritterCollection } from '../../hooks/useCritterCollection.js'
 import { P } from '../../lib/constants.js'
 
-// Garden visitors — Slice 8 DrG ambient reward presence (Reward-UX V101): a single quiet line +
+// Garden visitors — ambient reward presence (Reward-UX): a single quiet line +
 // link to the collection. NO count badge, NO streak, NO shame, NO interrupt. Present-when-present:
 // renders NOTHING when the collection is empty (an empty "0 visitors" line reads as a pressure cue).
 export default function GardenVisitors() {

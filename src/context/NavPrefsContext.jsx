@@ -7,8 +7,7 @@ import { resolveBarLayout } from '../lib/navConfig.js'
 import { MORE_PINS_MAX_SHOWN, MORE_PINS_MAX_STORED, MORE_PIN_ID_RE, barSlotRows, drawnPinIds, resolvePins } from '../lib/moreRegistry.js'
 import { onReconnect } from '../lib/reconnect.js'
 
-// NavPrefsContext — V5-NAVCUSTOM-001. A person's tab bar and More-menu pins.
-// Design: project-state/design-navcustom-V100-20260924.md §8; contract: _navcustom-build-20260924/CONTRACT.md.
+// NavPrefsContext — a person's tab bar and More-menu pins.
 //
 // A PROVIDER, NOT BARE HOOKS, for three reasons that bare hooks cannot meet:
 //   1. ONE STATE, TWO CONSUMERS. BottomNav draws the bar and AdminConfig edits it, both mounted at
@@ -20,9 +19,8 @@ import { onReconnect } from '../lib/reconnect.js'
 //      per consumer, or a reconnect would send the same list N times.
 // It sits directly under PrefsProvider and reads it; it adds no request of its own at boot.
 //
-// PER PERSON (D4, Dave 2026-09-24). Both values live on the caller's user_notification_prefs row
-// (bar_layout, more_pins), keyed by the Clerk sub. Nothing here is global: this replaces the retired
-// AppConfigProvider, whose one boot GET is gone with it.
+// PER PERSON. Both values live on the caller's user_notification_prefs row (bar_layout, more_pins),
+// keyed by the Clerk sub. Nothing here is global.
 //
 // THE LAUNCH CACHES ARE CACHES OF SERVER STATE, not a store of record (precedent: clientPrefs.js).
 // They are read SYNCHRONOUSLY so the first paint draws this person's bar rather than the shipped one,
@@ -40,7 +38,7 @@ import { onReconnect } from '../lib/reconnect.js'
 // cache is rewritten, but the new value is applied at once ONLY if there was no cache at launch (a
 // first launch after sign-in); otherwise it takes effect from the next launch. The one other way the
 // bar moves mid-session is the person's own Save in the editor (applyLayout). Jen's bar therefore
-// never shifts while she is using it — and, per D4, never because of Dave at all.
+// never shifts while she is using it — and never because of another household member's edit.
 //
 // PINS ARE OPTIMISTIC AND DURABLE. A tap changes the button at once and marks the list pending
 // BEFORE the request goes out, so an app closed mid-save re-sends at the next launch. The save's
@@ -49,7 +47,7 @@ import { onReconnect } from '../lib/reconnect.js'
 // server-confirmed list, reported as 'error'. Unknown ids ride along in every save (moreRegistry.js).
 // No toast, banner or dot for any of it (Reward UX / ADHD rules): the row's own button is the signal.
 //
-// A PREFS BODY THAT IS NOT FRESH NEVER OVERWRITES WHAT THIS SESSION KNOWS (QA IMPORTANT-2, reg M5).
+// A PREFS BODY THAT IS NOT FRESH NEVER OVERWRITES WHAT THIS SESSION KNOWS.
 //   - A body the service worker served from its cache (marked FROM_CACHE by fetchNotificationPrefs)
 //     may predate a pin or a Save this device already made. It may say who can edit — the best answer
 //     on hand — and nothing else: pins, the pin cache and the bar cache all stand.
@@ -58,7 +56,7 @@ import { onReconnect } from '../lib/reconnect.js'
 //     join a GET that left BEFORE the save — never rewrites the bar cache.
 //   - Pins are saved as a WHOLE list, so a session that has never learned the server's list (no owned
 //     cache, no fresh read yet) cannot save one: a tap then answers 'not-loaded' rather than overwrite
-//     the server's pins with a list built from nothing — AND GOES TO GET THE LIST (QA RE-1). Prefs are
+//     the server's pins with a list built from nothing — AND GOES TO GET THE LIST. Prefs are
 //     otherwise read once per identity, so without that re-read a failed or SW-served boot read left
 //     pinning impossible until the next cold start, which on a backgrounded PWA can be days. The refused
 //     tap and the `online` event both re-read while the list is unknown; the prefs client's single-
@@ -136,7 +134,7 @@ function readLaunch(userId) {
   }
 }
 
-// V5-NAVANYSLOT-001 — a slot may be a tab or a More row; an id this build cannot draw is skipped.
+// A slot may be a tab or a More row; an id this build cannot draw is skipped.
 const rowsOf = (keys) => barSlotRows(keys)
 
 // No provider (isolated component tests, public pages): the shipped bar, no pins, no editor. The same
@@ -218,7 +216,7 @@ export function NavPrefsProvider({ children }) {
     sendPins(cur.pins, cur.confirmed ?? cur.pins)
   }, [sendPins])
 
-  // While this session has never learned the server's pin list, go and get it (QA RE-1). Prefs are
+  // While this session has never learned the server's pin list, go and get it. Prefs are
   // otherwise read once per identity. refreshPrefs goes through fetchNotificationPrefs, whose
   // single-flight latch joins any read already in flight, so repeated triggers cost one request.
   const learnPins = useCallback(() => {
@@ -252,8 +250,8 @@ export function NavPrefsProvider({ children }) {
       // Nothing local to protect: the server's list is the list. And nothing of THIS person's is
       // pending, so a pending stamp still on the phone is another session's leftover — possibly this
       // person's own, from before someone else used the phone. It can only ever re-send a list this
-      // cache no longer holds, over a newer server list (QA RE-2: A → B → A without sign-out, then an
-      // edit on another device), so it goes with the old cache.
+      // cache no longer holds, over a newer server list (A → B → A without sign-out, then an edit on
+      // another device), so it goes with the old cache.
       writePinsCache(cur.userId, server)
       writePending(cur.userId, false)
       Object.assign(patch, { pins: server, confirmed: server })

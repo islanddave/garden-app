@@ -1,4 +1,4 @@
-// useFindings — fetch hook for GET /api/findings (DRG Care Knowledge Engine read model, slice 8).
+// useFindings — fetch hook for GET /api/findings (DRG Care Knowledge Engine read model).
 // Contract: { data, loading, error, reload }
 //   data: { schema_version, generated_at, count, findings: [...] } | null
 import { useState, useEffect, useCallback, useRef } from 'react'
