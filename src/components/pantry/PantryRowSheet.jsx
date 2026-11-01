@@ -1,8 +1,8 @@
 // What opens when a Pantry row is tapped.
 //
-// A PUT-UP (jar), in this order: Move it… (the shipped move route) · Next time… (a batch jar writes the
+// A PUT-UP (jar), in this order: Move it… (the existing move route) · Next time… (a batch jar writes the
 // batch's `noted` stage row; a batchless jar appends a dated line to its notes) · Gave it away… (a use of a
-// count, default 1, fate given_away) · Went bad (fate discarded) · Edit… (the shipped jar editor, with
+// count, default 1, fate given_away) · Went bad (fate discarded) · Edit… (the existing jar editor, with
 // Remove… inside, two-step, refused with the server's reason) · then How it was made → (a put-up with no
 // batch, only when the host hands in `onHowItWasMade`) or What went in →
 // (a put-up that came from a batch the host can name, only when the host hands in `onOpenBatch`).
@@ -72,7 +72,7 @@ const actionBtn = {
   fontSize: T.type.base, fontWeight: 600, color: P.dark,
 }
 
-// "2 × 8 oz woozy · put up sometime in August · produce from Warner Farms" — the shipped jar row's words,
+// "2 × 8 oz woozy · put up sometime in August · produce from Warner Farms" — the existing jar row's words,
 // said once in the sheet from the jar's own record. A put-up's source is where what WENT IN came from, not
 // where the jar came from, so a source that is not the garden reads "produce from <name>"; a
 // planting reads "from <its name>".
@@ -301,7 +301,7 @@ function CountPanel({ row, busy, idPrefix, start, question, label, cta, onCancel
   )
 }
 
-// "Next time…": a batch jar writes its batch's `noted` stage row (the shipped stages route); a
+// "Next time…": a batch jar writes its batch's `noted` stage row (the existing stages route); a
 // batchless jar appends a dated line to its own notes (the PATCH's notes_append).
 function NextTimePanel({ row, fetch, onCancel, onSaved }) {
   const [text, setText] = useState('')
@@ -359,11 +359,11 @@ function RemoveTwoStep({ onRemove, busy, testId }) {
   )
 }
 
-// A jar's Edit is the shipped jar editor (the page's RowEditor, handed in as `JarEditor`) over the full
+// A jar's Edit is the existing jar editor (the page's RowEditor, handed in as `JarEditor`) over the full
 // jar (GET /api/preservation/:id): the Pantry row carries only what the list shows.
 function JarEditPanel({ row, rec, recFailed, fetch, JarEditor, onCancel, onSaved, onRemoved }) {
   const [busy, setBusy] = useState(false)
-  // The editor's refusal (a string or describeRefusal's object — the shipped editor renders both), and
+  // The editor's refusal (a string or describeRefusal's object — the existing editor renders both), and
   // Remove's, kept apart so each says its own thing where it happened.
   const [editErr, setEditErr] = useState(null)
   const [removeErr, setRemoveErr] = useState(null)

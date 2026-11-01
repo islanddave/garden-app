@@ -27,7 +27,7 @@
 //   · "What kind of batch?" — collapsed, optional (KindChips). "Other" still asks its short name.
 //   · "Following a recipe? · tested recipes →" — a free-text reference and the tested-recipe caution
 //     behind its toggle.
-// The salt/brine note Snap used to ask at pack time is NOT here: Salt is entered with What went in.
+// There is no salt/brine field here: Salt is entered with What went in.
 //
 // ONE WRITE: the photo (if any) is uploaded first into the inbox as `pending_tag` with no parent —
 // the one parentless shape photos_must_have_parent admits — then POST /api/kitchen-batches carries

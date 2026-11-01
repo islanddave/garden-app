@@ -1,14 +1,10 @@
-// src/components/photo/QuickTagCarousel.jsx
-// V4-PHOTOBULK-001 S6 — drain the inbox one photo at a time.
+// Drain the photo inbox one photo at a time: review unassigned photos in the app and assign each to a
+// plant. Bulk upload puts photos into the inbox (intake_status='pending_tag', no parent); the Photo
+// Library's tag modal can also empty it, but costs roughly four taps and a scroll per photo, which is
+// fine for five photos and abandoned at twenty.
 //
-// Dave's brief, verbatim (2026-08-30): "bulk uploading unattached to specific plants where I can
-// review in the app the unassigned photos one at a time and assign them to plants." That is this
-// component. Bulk upload already puts photos into the inbox (intake_status='pending_tag', no
-// parent); the Photo Library's tag modal can already empty it. This exists because that modal costs
-// roughly four taps and a scroll per photo, which is fine for five photos and abandoned at twenty.
-//
-// ENTRY POINT is the Untagged COUNT (Dave, D4): tapping the number opens this, tapping the word
-// still filters the grid.
+// ENTRY POINT is the Untagged COUNT: tapping the number opens this, tapping the word still filters
+// the grid.
 //
 // ── TAPS, NOT SWIPES ─────────────────────────────────────────────────────────────────────────
 // A swipe has no discoverable mapping to "which planting", cannot express more than two or three
@@ -24,9 +20,8 @@
 // route cannot express "put this back in the inbox", and it does not read body.intake_status at all.
 //
 // So Undo reopens the photo for RE-assignment: it stays attached to the wrong planting until a right
-// one is chosen. That is honest about what the server can do, and it covers the real mistake, which
-// is "wrong plant" rather than "should not have been tagged". A true return-to-inbox needs a Lambda
-// change and therefore a promote; it is recorded as such rather than faked here.
+// one is chosen. That covers the real mistake, which is "wrong plant" rather than "should not have
+// been tagged". A true return-to-inbox needs a Lambda change.
 //
 // ── SHORTCUTS ────────────────────────────────────────────────────────────────────────────────
 // Most-recently-used within this drain, seeded from the plantings the library's own photos are
@@ -37,17 +32,14 @@
 //
 // ── NO COMPLETION CELEBRATION (Reward UX rule) ───────────────────────────────────────────────
 // A plain "N to go" count is cadence utility and fine. "You tagged all 17!" is a celebration in
-// response to completion, which is squarely a reward surface, and the rule's falsifiable test sends
-// yes-but-uncertain to yes. So: no badge, no animation, no count-up, no streak. The empty state
-// states a fact and stops.
-
+// response to completion, which is squarely a reward surface. So: no badge, no animation, no
+// count-up, no streak. The empty state states a fact and stops.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import PhotoView from './PhotoView.jsx'
 import PlantingSelect from '../forms/PlantingSelect.jsx'
 import { useDismissable } from '../../context/DismissRegistry.jsx'
-// LAYER lives in dismissLayers, not the registry — the registry imports it too. formStyles
-// re-exports the same frozen T object as lib/tokens (verified identical), and PhotoLibrary reaches
-// for lib/tokens; matching that here keeps one import path per module across this feature.
+// LAYER lives in dismissLayers, not the registry — the registry imports it too. T comes from
+// lib/tokens, the same path PhotoLibrary uses.
 import { LAYER } from '../../lib/dismissLayers.js'
 import { TIER } from '../../lib/photoModel.js'
 import { P } from '../../lib/constants.js'
@@ -151,8 +143,7 @@ export default function QuickTagCarousel({
     } catch (err) {
       setBusy(false)
       // Stay on this photo. Advancing past a failed assignment would leave it silently untagged in a
-      // deck the user believes they finished — the exact "it said it worked" failure this whole
-      // track keeps running into.
+      // deck the user believes they finished — the exact "it said it worked" failure.
       setError(err?.message || 'Could not assign that photo — try again.')
     }
   }, [photo, busy, byId, apiFetch, onAssigned, advance])
@@ -189,11 +180,10 @@ export default function QuickTagCarousel({
       }}
     >
       {/* SAFE-AREA INSETS, top and bottom. The app sets viewport-fit=cover, so a full-bleed fixed
-          overlay that pads with plain pixels puts its header under the status bar and its action row
-          under the gesture bar on Dave's Android. Every other full-screen surface here already does
-          this — Lightbox, ConfirmSheet, PhotoHero, SpaceAttachPicker — and the harness could not
-          have caught it: desktop Chrome reports both insets as 0, so the layout measured clean. This
-          is a convention to copy, not a value to discover. */}
+        * overlay that pads with plain pixels puts its header under the status bar and its action row
+        * under the gesture bar on Android. Every other full-screen surface here does the same
+        * (Lightbox, ConfirmSheet, PhotoHero, SpaceAttachPicker), and the layout harness cannot catch a
+        * miss: desktop Chrome reports both insets as 0. QuickTagCarousel.safeArea.test.jsx pins it. */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                     padding: '10px 12px', paddingTop: 'calc(10px + env(safe-area-inset-top, 0px))',
                     borderBottom: `1px solid ${P.border}` }}>
@@ -282,8 +272,8 @@ export default function QuickTagCarousel({
 
             <div style={{ display: 'flex', gap: T.space.sm, marginTop: T.space.sm }}>
               {/* Skip is "not now", never "never": the photo keeps intake_status='pending_tag' and
-                  comes back next time. A photo skipped every time is a photo that keeps
-                  reappearing, which is correct for a to-do list. */}
+                * comes back next time. A photo skipped every time keeps reappearing, which is correct
+                * for a to-do list. */}
               <button type="button" data-testid="quicktag-skip" disabled={busy} onClick={advance}
                       style={{ flex: 1, padding: '12px 16px', borderRadius: T.radiusButton,
                                border: `1px solid ${P.border}`, backgroundColor: P.white,
@@ -304,8 +294,8 @@ export default function QuickTagCarousel({
             </div>
 
             {/* Names what Back will actually do, because "Back" alone reads as navigation and this
-                one steps through a deck. Only shown when the previous photo was ASSIGNED — that is
-                the case where the user might want to change their mind. */}
+              * one steps through a deck. Only shown when the previous photo was ASSIGNED — that is
+              * the case where the user might want to change their mind. */}
             {index > 0 && assigned[deck[index - 1]?.id] && (
               <p data-testid="quicktag-undo-hint"
                  style={{ margin: `${T.space.xs}px 0 0`, fontSize: T.type.xs, color: P.light, textAlign: 'center' }}>

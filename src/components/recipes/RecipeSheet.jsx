@@ -1,10 +1,9 @@
-// src/components/recipes/RecipeSheet.jsx
-// Put-Up release 4 (V4 §2.6) — create or edit a recipe: name · what it makes (type) · link or notes ·
+// Create or edit a recipe: name · what it makes (type) · link or notes ·
 // optional lines (name + amount as written + "at the end") · optional "how long, and where" line — plus the
-// process jar and the final container a make can span (Dave 2026-09-30) and the yield as written. Only the
+// process jar and the final container a make can span and the yield as written. Only the
 // name is required. <Sheet armsBack>; the draft survives a dismiss (kitchen/sheetDraft.js, sheet 'recipe',
 // id 'new' or the recipe's id); the create is keyed (one key per draft, reused on every retry).
-// A REPLAYED CREATE (BUG-PUTUPREPLAYDROPSEDIT-001; kitchen/idempotencyKey.js): the key never changes with what
+// A REPLAYED CREATE (kitchen/idempotencyKey.js): the key never changes with what
 // is typed, so a Save whose answer was lost, a change, and Save again is answered with the recipe the first
 // one made. When that recipe is THIS sitting's (sent from the sheet that is open now, made minutes ago,
 // untouched since) the sheet PATCHes what it holds onto it before it closes — the PATCH replaces the whole
@@ -18,20 +17,20 @@
 // written (recipes.js recipeHolds). What has gone out under the key rides in the draft as `sent`, from the
 // first Save on (a draft never sent has no such key).
 //
-// ⚠ Notes are his text VERBATIM (including his own target pH): sent exactly as typed, never trimmed inside,
-// and shown here exactly as stored — the bold and italic of recipe detail are that surface's alone.
-// Plain markup, existing primitives, no visual design (functionality first).
+// ⚠ Notes are the cook's text VERBATIM (including their own target pH): sent exactly as typed, never
+// trimmed inside, and shown here exactly as stored — the bold and italic of recipe detail are that
+// surface's alone.
 //
-// Put-Up UX pass R1 — the sheet reads top to bottom, and both pickers say what they are for:
+// The sheet reads top to bottom, and both pickers say what they are for:
 //   Name → What it makes (it groups the list) → Notes → Link → What goes in → How long, and where →
 //   How it's made (the kind of batch Make this starts), directly above Made in → Put up in.
-// A line is its name and the amount as he would write it; the exact number and unit sit behind
+// A line is its name and the amount as the cook would write it; the exact number and unit sit behind
 // "▸ exact amount", which opens by itself when the amount starts with a digit and is always open on a
 // line that holds a number (recipes.js exactAmountOpens). "How long, and where" is a number, three unit
 // chips and place chips built from the Lambda's six kinds — the stored one always among them
 // (recipes.js keepsKindChips). Every chip is 48 px tall; there is no native checkbox.
-// THE DRAFT'S SHAPE IS UNCHANGED: nothing that only opens or closes a part of the sheet is stored, so a
-// draft written before this pass restores as it was written.
+// THE DRAFT'S SHAPE IS STABLE: nothing that only opens or closes a part of the sheet is stored, so an
+// older draft restores as it was written.
 import React, { useEffect, useId, useRef, useState } from 'react'
 import { P, T } from '../../lib/tokens.js'
 import { setReloadBlocked } from '../../lib/reloadGate.js'
@@ -79,7 +78,7 @@ export function recipeUnsavedText(recipe, { why = '', lost = false } = {}) {
   return `${head} This change ${lost ? 'may not have saved' : 'did not save'} — try again. What you typed is still here.`
 }
 
-// The quiet text action, 48 px tall on Put-Up surfaces (UX pass R1).
+// The quiet text action, 48 px tall on Put-Up surfaces.
 const small = { minHeight: T.buttonMinHeight, padding: '4px 8px', background: 'none', border: 'none', color: P.green,
   fontFamily: 'inherit', fontSize: T.type.sm, fontWeight: 600, cursor: 'pointer' }
 const heading = { fontSize: T.type.sm, fontWeight: 600, color: P.dark }
@@ -118,7 +117,7 @@ function RecipeSheetOpen({ recipe = null, types = [], usedTypeIds = [], fetch, o
   // Set once a save lands: the draft is cleared then, and nothing may write it back before the sheet unmounts
   // (a Save now changes the draft as it sends).
   const savedRef = useRef(false)
-  // Set by a "saved earlier" refusal (pre-promote I-1): the first Save landed, so the STORED draft has done its
+  // Set by a "saved earlier" refusal: the first Save landed, so the STORED draft has done its
   // job. It is taken out of storage and not written back — the sheet opened next, after a close or a reload,
   // is an empty one with no key — while THIS sheet keeps its key and `sent`: Save again is refused again.
   const [spent, setSpent] = useState(false)

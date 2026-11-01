@@ -1,11 +1,10 @@
-// src/components/recipes/RecipesView.jsx
-// Put-Up release 4 (V4 §2.6) — the Recipes segment of the Put-Up page: the household's recipes grouped by
+// The Recipes segment of the Put-Up page: the household's recipes grouped by
 // what they make (filterable by type), a recipe's detail, the create/edit sheet, and the three doors from a
 // recipe into the kitchen — Make this (the Start sheet prefilled), and Made it, ate it all (a make with nothing
-// kept, every line as written, recorded as eaten). Plain markup on the existing primitives; no visual design.
+// kept, every line as written, recorded as eaten).
 //
-// ⚠ RECIPE DETAIL IS THE ONLY SURFACE THAT RENDERS THE NOTES (V4 "pH") — his target pH lives there, as he
-// wrote it: paired marks show as bold or italic (recipes.js notesSegments, built as elements) and no other
+// ⚠ RECIPE DETAIL IS THE ONLY SURFACE THAT RENDERS THE NOTES — the cook's target pH lives there, as
+// written: paired marks show as bold or italic (recipes.js notesSegments, built as elements) and no other
 // character moves. Its list of batches made from the recipe shows a date and the ending in words, at equal
 // weight, and never a reading (the server does not send one: recipeRoutes.js readRecipe's batch list is an
 // explicit column list).
@@ -14,7 +13,7 @@
 // mount, GET /api/recipes/:id on open. `onBatchStarted(batch)` is the page's own landing (PutUp.jsx), so a
 // batch started here opens exactly as one started from Going now does.
 //
-// RECIPE MODE (Put-Up UX pass R1). The page may own WHICH recipe is open, so that recipe detail is a history
+// RECIPE MODE. The page may own WHICH recipe is open, so that recipe detail is a history
 // entry and Back returns to it: it passes `openId` (its ?recipe= value; null on the list) and
 // `onOpen(id | null)`. CONTROLLED IF AND ONLY IF `onOpen` IS A FUNCTION — never "if openId is set": the page's
 // openId is null on the list, and a view that fell back to its own state there would open a detail the page's
@@ -25,7 +24,7 @@
 //     own Back and Remove);
 //   · a batch opened from the detail is handed over with where it came from,
 //     onBatchStarted(batch, { label: <recipe name>, kind: 'recipe', id }), so its Back can name the recipe.
-// Without onOpen, everything is as it was — the hand-over included: onBatchStarted(batch) and nothing else.
+// Without onOpen the view is uncontrolled — the hand-over included: onBatchStarted(batch) and nothing else.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { P, T } from '../../lib/tokens.js'
 import { useApiFetch } from '../../lib/api.js'
@@ -42,7 +41,7 @@ import {
   KEPT_SOME_CTA, NOTHING_KEPT_OUTCOME,
 } from './recipes.js'
 
-// The quiet text action, 48 px tall on Put-Up surfaces (UX pass R1).
+// The quiet text action, 48 px tall on Put-Up surfaces.
 const link = { display: 'inline-flex', alignItems: 'center', minHeight: T.buttonMinHeight, padding: '2px 8px 2px 0', background: 'none',
   border: 'none', cursor: 'pointer', fontFamily: 'inherit', color: P.green, fontSize: T.type.sm, fontWeight: 600 }
 const isHttp = (u) => /^https?:\/\//i.test(String(u ?? ''))
@@ -309,9 +308,9 @@ export function RecipeDetail({ id, fetch, now, ownBack = true, onBack, onEdit, o
       {recipe.notes && (
         <section data-testid="recipe-detail-notes-section" style={{ marginBottom: T.space.md }}>
           <h3 style={{ margin: '0 0 4px', fontSize: T.type.sm, color: P.dark }}>Notes</h3>
-          {/* His text as he wrote it (V4 §2.6), whitespace kept; a pair of marks shows as bold or italic and
-              nothing else moves. Built as ELEMENTS from text runs — never as markup. The only surface that
-              renders it. */}
+          {/* The cook's text as written, whitespace kept; a pair of marks shows as bold or italic and
+            * nothing else moves. Built as ELEMENTS from text runs — never as markup. The only surface that
+            * renders it. */}
           <div data-testid="recipe-detail-notes" style={{ whiteSpace: 'pre-wrap', fontSize: T.type.sm, color: P.dark, lineHeight: 1.5 }}>
             {notesSegments(recipe.notes).map((s, i) => (
               s.kind === 'bold' ? <strong key={i}>{s.text}</strong>

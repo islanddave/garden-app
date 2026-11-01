@@ -1,6 +1,6 @@
 // The one page-level door that adds ONE thing to the Pantry per save.
 //
-// Required at open: 3 — What is it? (the shipped name search) · Where does it live? (place chips) ·
+// Required at open: 3 — What is it? (the existing name search) · Where does it live? (place chips) ·
 // How was it put up? (method chips + the as-is chip + Other ways…; nothing preselected). Before a place
 // is picked the row offers the general four; a place puts its own four there, and a method already
 // chosen stays as one more chip. Save is NEVER disabled: tapped with no method it moves focus to the
