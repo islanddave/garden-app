@@ -341,7 +341,9 @@ describe('after the move — one line at the top of the Pantry, from the row the
     vi.setSystemTime(NOW)
     onTestFinished(() => vi.useRealTimers())
     const { line } = await moveOnPantry(HOUSE, 'id:loc-3')
-    expect(words(line)).toMatch(/^Candied ginger — moved to Kitchen fridge · discard by .+ · house estimate$/)
+    // The exact day: the sheet's Today chip (NOW, Oct 1) + candy's fridge figure (1 month, shelfLife.js) = Nov 1,
+    // this year, so no year. A move day that is not the chip's day reds here.
+    expect(words(line)).toBe('Candied ginger — moved to Kitchen fridge · discard by Nov 1 · house estimate')
     expect(words(line)).not.toContain('May 1, 2031')
   })
 

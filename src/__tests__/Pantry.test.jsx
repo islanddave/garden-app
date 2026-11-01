@@ -112,6 +112,28 @@ describe('the Pantry segment (V4 §2.5, §6.1)', () => {
     expect(screen.getByTestId('pantry-row-open-put_up:jar-last').textContent).toContain('discard by Oct 3 · set by hand · soon')
   })
 
+  // The server owns the status: it judges the ET day and "soon" as the last fraction of the preserved_at span,
+  // neither of which the row carries (lambda/preservation/useBy.js classifyUseBy). So each row below disagrees
+  // with the device's clock on purpose, and the chip must still say the server's word.
+  it('the discard chip says the server\'s status, never one worked out from the date on this device\'s clock', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-10-15T12:00:00'))
+    onTestFinished(() => vi.useRealTimers())
+    const jar = (stock_id, name, discard) => jarRow({ stock_id, name, place: FRIDGE, group_key: 'loc-3', group_label: 'Kitchen fridge',
+      method: 'pesto', count_left: 1, discard: { basis: 'typed', ...discard } })
+    wire({ rows: [
+      jar('jar-ok', 'Basil cubes', { date: '2026-10-14', status: 'ok' }),      // a day behind this clock, not passed on the server's
+      jar('jar-soon', 'Garlic scape pesto', { date: '2027-03-01', status: 'soon' }),  // months away, yet in its last stretch
+      jar('jar-past', 'Ramp pesto', { date: '2026-12-01', status: 'past' }),    // ahead of this clock, passed on the server's
+    ] })
+    renderPantry()
+    const chip = async (id) => (await screen.findByTestId(`pantry-row-open-put_up:${id}`)).textContent
+    expect(await chip('jar-ok')).toContain('discard by Oct 14 · set by hand')
+    expect(await chip('jar-ok')).not.toMatch(/passed|soon/)
+    expect(await chip('jar-soon')).toContain('discard by Mar 1, 2027 · set by hand · soon')
+    expect(await chip('jar-past')).toContain('discard date passed Dec 1 · set by hand')
+  })
+
   it('offers ONE inline action: Used one while more than one is left, Used it up otherwise', async () => {
     renderPantry()
     await rowEl('put_up:jar-reaper')
