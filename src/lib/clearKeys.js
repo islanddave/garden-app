@@ -1,4 +1,4 @@
-// BUG-COALESCECLEAR-001 — the client half of the clear:[] channel.
+// The client half of the clear:[] channel.
 //
 // The server-side channel is inert without this. A PUT that binds a column as
 // `COALESCE(${body.x ?? null}, x)` treats null and absent identically, so a form that sends
@@ -13,8 +13,7 @@
 // Never merely because a key is absent from form state. A form that renders six of a table's
 // thirty columns must not be able to NULL the other twenty-four — that is the mirror image of the
 // bug being fixed, and it is a worse one, because it destroys data instead of silently keeping it.
-// Derived from the pattern EventDetail.jsx established for BUG-EVENTEDITFIELDS-001; factored out
-// here when projects and locations needed the same rule (2026-08-07).
+// Same pattern as EventDetail.jsx; factored out so projects, locations and plants share the rule.
 //
 // The `fields` argument IS the render manifest: pass the keys the form has inputs for, and nothing
 // else. Driving clear off the same list the form renders from is what keeps the two in step — the
@@ -58,8 +57,7 @@ export function buildClearKeys(fields, form, saved, opts = {}) {
 
 /**
  * Spread-ready: `...clearPatch(fields, form, saved)` adds `clear` only when non-empty, so a save
- * with nothing to clear is byte-identical to one from before this channel existed. That
- * byte-identity is what lets this ship without re-testing every existing save path.
+ * with nothing to clear is byte-identical to one without the channel.
  */
 export function clearPatch(fields, form, saved, opts = {}) {
   const keys = buildClearKeys(fields, form, saved, opts);
@@ -83,21 +81,20 @@ export function clearPatch(fields, form, saved, opts = {}) {
 export const SERVER_CLEARABLE = {
   projects: ['description', 'variety', 'start_date', 'target_end_date', 'location_id'],
   locations: ['description'],
-  // Tier 1 of the plants triage — mirrored verbatim from lambda/plants/validate.js. Eleven of these
-  // 25 have no input in PlantForm, so they are inert until some form renders them; that is fine and
-  // is why the manifest, not this list, decides what a given form may clear.
+  // Mirrored verbatim from lambda/plants/validate.js. Some of these have no input in PlantForm, so they
+  // are inert until some form renders them; that is fine and is why the manifest, not this list,
+  // decides what a given form may clear.
   plants: [
     'notes', 'metadata', 'lineage_note',
     'sown_at', 'sown_at_approx', 'germinated_at', 'germinated_at_approx',
     'transplanted_at_approx', 'planted_out_at_approx',
     'qty_initial', 'qty_current', 'loss_cause',
-    'seeds_sown', 'seeds_germinated',   // V4-SEEDGERMRATE-001 (BD-057)
+    'seeds_sown', 'seeds_germinated',
     'source_type', 'source_ref', 'source_generation',
-    // BUG-PLANTSOURCEIDCLEAR-001 — moved here from the server's presence sentinel. PlantForm DOES
-    // render these two, so unlike the eleven inert entries above they are live the moment this
-    // lands: buildClearKeys emits the key only when the loaded row held a source AND the picker is
-    // now empty, which is precisely "the user removed it" and is the signal the server needs to
-    // tell a deliberate removal from a client that never had the value.
+    // source_id and acquired_from_source_id: PlantForm DOES render these two, so unlike the inert
+    // entries above they are live: buildClearKeys emits the key only when the loaded row held a source
+    // AND the picker is now empty, which is precisely "the user removed it" and is the signal the
+    // server needs to tell a deliberate removal from a client that never had the value.
     'source_id', 'acquired_from_source_id',
     'parent_plant_id', 'divergence_type', 'succession_group_id', 'succession_order',
     'source_inventory_item_id',

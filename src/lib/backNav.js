@@ -1,11 +1,11 @@
-// V4-BACKNAV-001 Slice 3a — the pure half of the Back arbiter (crucible V100, 2026-08-06).
+// The pure half of the Back arbiter.
 //
-// WHY THIS REPLACES useBackDismiss. Before this, Escape ran through ONE registry listener resolving
-// topmost by (layer, seq), while Back ran through EIGHT per-surface popstate listeners each
-// comparing its own opaque marker. Those are two different orderings, so the two gestures could
-// resolve to DIFFERENT surfaces — shipped defect: with SowNow's sow sheet open and VarietyPicker's
-// registry-only ConflictModal on top, Escape closed the modal (right) while Back closed the sheet
-// beneath and tore the modal down with it. Slice 3a makes Back read the same registry Escape reads.
+// WHY THIS REPLACES useBackDismiss. Escape ran through ONE registry listener resolving topmost by
+// (layer, seq), while Back ran through EIGHT per-surface popstate listeners each comparing its own
+// opaque marker. Those are two different orderings, so the two gestures could resolve to DIFFERENT
+// surfaces: with SowNow's sow sheet open and VarietyPicker's registry-only ConflictModal on top,
+// Escape closed the modal (right) while Back closed the sheet beneath and tore the modal down with it.
+// Back now reads the same registry Escape reads.
 //
 // Kept pure (no DOM, no React, no history) for the same reason dismissLayers.js is: jsdom cannot
 // deliver an Android Back gesture, but it can drive a truth table exhaustively. src/lib/** is in
@@ -38,24 +38,17 @@ export function readAnyMarker(state) {
 
 // An entry participates in Back only when it is BOTH ours to close and opted in.
 //
-// `armsBack` DEFAULTS FALSE and that inversion is deliberate. useBackDismiss was opt-IN at 8
-// hand-picked call sites, and its own doc comment scoped that to surfaces which OPEN AND CLOSE IN
-// PLACE. Moving Back into useDismissable would have made it opt-OUT — and because Sheet.jsx calls
-// useDismissable ONCE on behalf of all 9 <Sheet> render sites, that would have SILENTLY enrolled
-// surfaces nobody had judged. Registry membership must not imply Back membership; they are
-// different questions with different safety scopes. That is why the default is false, and it still
-// is.
+// `armsBack` DEFAULTS FALSE and that inversion is deliberate. useBackDismiss was opt-IN, scoped to
+// surfaces which OPEN AND CLOSE IN PLACE. Moving Back into useDismissable would have made it opt-OUT,
+// and because Sheet.jsx calls useDismissable ONCE on behalf of all <Sheet> render sites, that would
+// SILENTLY enrol surfaces nobody had judged. Registry membership must not imply Back membership; they
+// are different questions with different safety scopes.
 //
-// WHAT IS NO LONGER TRUE: BottomNav's two sheets. This comment used to name them as the case the
-// false default existed to keep out, because every row there closes the sheet AND navigates, which
-// orphans the pushed entry. As of v4.13.0 (BD-009 / BUG-BACKNAVMORE-001) they ARM — the exclusion
-// cost a live bug (Back over an open sheet navigated the tab underneath), and the orphaning is
-// fixed where it is actually caused, on the NAVIGATION side: BottomNav's SheetRowLink
-// replace-navigates while the session marker is current, collapsing that entry into the
-// destination, and its sign-out row applies the same gate at click time
-// (BUG-SIGNOUTBACKRACE-001). So the false default is still the right default — it just no longer
-// has BottomNav as its motivating example. A surface that navigates away MUST either consume the
-// marker on the way out or leave armsBack false; those are the only two safe options.
+// BottomNav's two sheets ARM even though every row there closes the sheet AND navigates, which would
+// orphan the pushed entry: the orphaning is fixed on the NAVIGATION side. BottomNav's SheetRowLink
+// replace-navigates while the session marker is current, collapsing that entry into the destination,
+// and its sign-out row applies the same gate at click time. A surface that navigates away MUST either
+// consume the marker on the way out or leave armsBack false; those are the only two safe options.
 export function isArmable(e) {
   return !!e && e.kind !== 'route' && !!e.armsBack
 }
@@ -66,10 +59,11 @@ export function isArmable(e) {
 //   NONE      — the registry does not own this Back; the caller must NOT swallow it (let the
 //               router navigate, or let the app exit).
 //   BLOCKED   — topmost has a write in flight. popstate is NOT cancelable, so "blocking" can only
-//               be expressed by re-pushing an entry; the provider bounds that (see A5).
+//   BLOCKED   — topmost has a write in flight. popstate is NOT cancelable, so "blocking" can only
+//               be expressed by re-pushing an entry; the provider bounds that.
 //   CONFIRM   — topmost holds unsaved input AND has opted in (see the per-entry note on
-//               decideDismiss). BUG-DIRTYDISMISSGAP-001 wired this to a real consumer branch: the
-//               provider raises ConfirmSheet and RE-ARMS, rather than falling through to cbRef.
+//               decideDismiss). The provider raises ConfirmSheet and RE-ARMS, rather than falling
+//               through to cbRef.
 //   INTERCEPT — topmost wants to handle this itself first (a sub-state step-back).
 //   DISMISS   — close the topmost, and only the topmost.
 export function decideBack(entries, { confirmOnDirty = false, blockOnBusy = true } = {}) {
@@ -95,10 +89,10 @@ export function decideBack(entries, { confirmOnDirty = false, blockOnBusy = true
   if (top.kind === 'route') return { action: 'NONE', target: top }
   // NOTE `armsBack` is deliberately NOT consulted here. It governs whether a surface JUSTIFIES
   // CREATING a history entry (the BottomNav concern), not whether it may be dismissed by a Back we
-  // already own. Gating dismissal on it was the first cut and it was wrong: a registry-only dialog
-  // sitting on top of an armed sheet returned NONE, so Back consumed the marker and did nothing —
-  // a dead press, and the exact Escape/Back divergence this slice exists to remove. Once a marker
-  // is armed, Back closes the topmost, which is what parity with Escape means.
+  // already own. Gating dismissal on it would be wrong: a registry-only dialog sitting on top of an
+  // armed sheet would return NONE, so Back would consume the marker and do nothing — a dead press, and
+  // the Escape/Back divergence this arbiter exists to remove. Once a marker is armed, Back closes the
+  // topmost, which is what parity with Escape means.
   if (blockOnBusy && top.busy) return { action: 'BLOCKED', target: top }
   // Per-entry opt-in, same three-term test decideDismiss uses — the two deciders must not disagree
   // about WHICH surfaces confirm, or Escape and Back diverge again.

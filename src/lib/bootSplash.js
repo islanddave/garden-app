@@ -1,10 +1,8 @@
-// V4-PERFTHEMEA-001 — canonical home for the reasoning behind the two index.html boot changes.
-// It lives here rather than in index.html because that document is the critical path and its
-// comments SHIP: an earlier draft of this change put the full rationale inline and added 1.6 kB
-// gzip to the first byte-for-byte blocking download, in a change whose entire purpose is to make
-// boot faster. Source comments here are stripped by the minifier and cost nothing.
+// Canonical home for the reasoning behind the two index.html boot changes (#boot-splash and the Clerk
+// preconnect). It lives here rather than in index.html because that document is the critical path and
+// its comments SHIP, while source comments here are stripped by the minifier and cost nothing.
 //
-// ── MEASURED BOOT (prod garden.futureishere.net, Chrome @375px, resource timing, 2026-08-12) ──
+// ── MEASURED BOOT (prod, Chrome @375px, resource timing) ──
 //   t=348ms   index.html TTFB
 //   t=783ms   entry bundle done (402 kB gzip, 50+ pages statically imported — no route splitting)
 //   t=823ms   FIRST reference to the Clerk origin → DNS + TCP + TLS start only now
@@ -41,29 +39,20 @@
 // credentials mode, so a single link warms exactly one pool and the other consumer still pays the
 // full handshake — which is what makes the pair the standard pattern rather than a redundancy.
 //
-// ⚠ CORRECTION (V4-PERFCLERK-001, 2026-08-18). The original single link omitted `crossorigin` on
-// the stated premise that "both consumers of this origin are credentialed — clerk.browser.js is a
-// plain <script> (cookies sent) and Clerk's /v1/* calls use credentials:'include'". THE FIRST HALF
-// IS FALSE for the shipped @clerk/react 6.12.7 loader: it does not emit a plain <script>, it calls
-// its injector with `crossOrigin:'anonymous'` for BOTH data-clerk-js-script (clerk.browser.js) and
-// data-clerk-ui-script (@clerk/ui) — confirmed in the decompressed prod bundle and in
-// node_modules/@clerk/react/dist/ClerkProvider-*.mjs. So the credentialed preconnect warmed a
-// socket neither script download could use, and the t=823ms handshake it was written to eliminate
-// was still being paid. The second half is true, which is why the plain link STAYS: the later
-// /v1/environment + /v1/client calls really do use credentials:'include' and really do need it.
-// Measured cost of the handshake this recovers: TCP+TLS ≈ 112ms on wired broadband; plausibly
-// 300–600ms on Android cellular. Do not "tidy" either link away — they serve different pools.
+// WHY BOTH LINKS STAY. @clerk/react's loader (checked against the shipped 6.12.7) injects
+// clerk.browser.js and @clerk/ui with `crossOrigin:'anonymous'`, so those downloads use the anonymous
+// pool; a credentialed link alone warms a socket neither script download can use. The later
+// /v1/environment + /v1/client calls use credentials:'include' and need the credentialed pool, which
+// is why the plain link STAYS. The handshake this recovers is TCP+TLS ≈ 112ms on wired broadband;
+// plausibly 300–600ms on Android cellular. Do not "tidy" either link away — they serve different pools.
 //
 // The inline script is try/catch-wrapped because it runs in <head> before #root exists: a throw
 // would abort boot outright. A preconnect is an optimisation; boot is not negotiable.
 //
-// NOT FIXED HERE, and deliberately so — see scratchpad/lane-perfthemea.md: the ~1.9s of
-// main-thread evaluation inside that waterfall (route-level code splitting), the 21 independent
-// Lambda origins whose cold TTFB measured 1.4–1.8s vs 0.13–0.24s warm, and extending the existing
-// dataCache/useCachedFetch beyond the three photo surfaces. Each needs a decision above this lane.
-// UPDATE (V4-PERFCLERK-001): the Lambda-origin half now has a partial answer — src/lib/warmOrigins.js
-// spends the Clerk dead window cold-starting the four above-the-fold origins with tokenless GETs.
-// The other two remain open.
+// NOT FIXED HERE: the ~1.9s of main-thread evaluation inside that waterfall (route-level code
+// splitting), and the 21 independent Lambda origins whose cold TTFB measured 1.4–1.8s vs 0.13–0.24s
+// warm. The latter is partly answered by src/lib/warmOrigins.js, which spends the Clerk dead window
+// cold-starting the four above-the-fold origins with tokenless GETs.
 
 // Remove the pre-React boot paint. Idempotent; a no-op when the element was never rendered (unit
 // tests never load index.html into jsdom). Called from a LAYOUT effect at the App root so the

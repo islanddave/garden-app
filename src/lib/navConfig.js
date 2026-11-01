@@ -1,19 +1,15 @@
-// navConfig — the tab bar's layout as DATA. V5-ADMINCENTER-001 made the order configurable;
-// V5-NAVCUSTOM-001 made it PER PERSON and let three tabs move into More.
-// Design: project-state/design-navcustom-V100-20260924.md §8 (binding over its §1–§3).
+// navConfig — the tab bar's layout as DATA: configurable order, PER PERSON, with three tabs able to
+// move into More.
 //
-// WHAT MOVED. BottomNav's `TABS` was a module const — five literal rows. It is now this registry
-// plus a LAYOUT, and the layout is the only thing a person's settings can change. Everything else
-// about the bar is untouched: the More button (a hardcoded <button> emitted after the map),
-// CREATE_ACTIONS, the More sheet, and the field/desk highlight swap are separate mechanisms.
+// The bar is this registry plus a LAYOUT, and the layout is the only thing a person's settings can
+// change. The More button (a hardcoded <button> emitted after the map), CREATE_ACTIONS, the More sheet,
+// and the field/desk highlight swap are separate mechanisms.
 //
-// PER PERSON (D4 — Dave, 2026-09-24: "only my bar changes"). The layout is
-// user_notification_prefs.bar_layout, keyed by the Clerk sub, so Dave's reorder or move never
-// shifts Jen's bar. This REVERSES the 2026-09-08 "one global nav order" ruling, and it reverses it
-// for the ORDER as well as for which tabs sit on the bar: a global order beside a personal hide
-// would still let Dave's reorder move Jen's bar, which is the exact thing D4 ruled out. The global
-// public.app_config path is retired from the SPA; see resolveNavTabs at the bottom for the one
-// piece of it that survives, and why.
+// PER PERSON. The layout is user_notification_prefs.bar_layout, keyed by the Clerk sub, so one
+// person's reorder or move never shifts another's bar. That holds for the ORDER as well as for which
+// tabs sit on the bar: a global order beside a personal hide would still let one person's reorder move
+// the other's bar. The global public.app_config path is retired from the SPA; see resolveNavTabs at
+// the bottom for the one piece of it that survives, and why.
 //
 // A TAB THAT LEAVES THE BAR LANDS IN MORE, it never disappears. `hidden` means "moved into More":
 // BottomNav draws every hidden key as a row at the top of "Your garden", so no page loses its door.
@@ -30,34 +26,30 @@
 // NULL MEANS SHIPPED DEFAULT. No prefs row, a NULL column, a failed GET, an offline boot and a
 // first launch all arrive here as null/undefined and render today's exact bar.
 //
-// ANY PAGE CAN TAKE A SLOT (V5-NAVANYSLOT-001, Dave 2026-09-30: "Make every More menu item + existing
-// 5 options available to add there" — Harvests will drop into More and Put-Up keeps a slot). `order`
-// is no longer a permutation of the five tab keys: it is the bar itself, left to right, and an entry
-// may be a tab key OR a More row id (src/lib/moreRegistry.js MORE_ROWS). The rules that keep every
-// door open are unchanged in spirit:
+// ANY PAGE CAN TAKE A SLOT. `order` is the bar itself, left to right, and an entry may be a tab key
+// OR a More row id (src/lib/moreRegistry.js MORE_ROWS). The rules that keep every door open:
 //   * Today and ＋ must be in it (BAR_REQUIRED_KEYS), so neither can leave the bar;
 //   * at most BAR_MAX_SLOTS entries, so More is always the 6th slot at most — the geometry the
 //     320px bar was built for;
-//   * a movable tab that is not on the bar is `moved` and drawn at the top of More, exactly as before.
+//   * a movable tab that is not on the bar is `moved` and drawn at the top of More.
 // This module validates an entry by FORM (BAR_SLOT_ID_RE), the way the Lambda validates more_pins,
 // because it cannot import MORE_ROWS (moreRegistry imports this file). Whether an id can be DRAWN is
 // decided where ids become rows (moreRegistry.barSlotRow): an id this build does not know — a newer
 // bundle's row, a row whose build flag is off — sleeps rather than knocking the whole bar back to the
-// default. Stored {order: [the five], hidden: [...]} layouts from before this change read exactly as
-// they always did: bar = order minus hidden.
+// default. A stored {order: [the five tab keys], hidden: [...]} layout reads as bar = order minus hidden.
 
 export const TAB_REGISTRY = {
   today:      { to: '/today',    label: 'Today',    iconName: 'nav.today' },
   garden:     { to: '/garden',   label: 'Garden',   iconName: 'nav.garden' },
   // The FAB. `highlight` is what BottomNav forks on to draw the circle — and, in field mode, to
   // swap it for the mic. A layout may move it; it cannot hide it, because it is not in
-  // MOVABLE_TAB_KEYS and `order` must be a permutation of every default key.
+  // MOVABLE_TAB_KEYS and `order` must hold every BAR_REQUIRED_KEYS entry.
   create:     { to: '/log',      label: 'Create',   iconName: 'nav.plus', highlight: true },
   harvests:   { to: '/harvests', label: 'Harvests', iconName: 'nav.harvests' },
   'put-up':   { to: '/put-up',   label: 'Put-Up',   iconName: 'nav.putup' },
 }
 
-// The shipped bar, in shipped order (V4-PUTUPENGINE-001). Changing THIS is a deploy and a
+// The shipped bar, in shipped order. Changing THIS is a deploy and a
 // deliberate act; changing a person's layout is not, which is the whole point of the split.
 // The Lambda's NAV_TAB_KEYS must equal this, order included (CONTRACT §4; parity-tested).
 export const DEFAULT_NAV_TABS = ['today', 'garden', 'create', 'harvests', 'put-up']
@@ -66,7 +58,7 @@ export const DEFAULT_NAV_TABS = ['today', 'garden', 'create', 'harvests', 'put-u
 // is More, which is not a key. The Lambda's MOVABLE_TAB_KEYS must equal this (CONTRACT §4).
 export const MOVABLE_TAB_KEYS = ['garden', 'harvests', 'put-up']
 
-// V5-NAVANYSLOT-001 — the two tabs every bar must hold (see the header), and the slot cap. The Lambda's
+// The two tabs every bar must hold (see the header), and the slot cap. The Lambda's
 // BAR_REQUIRED_KEYS / BAR_MAX_SLOTS must equal these (lambda/critter/navcustom.parity.test.js).
 export const BAR_REQUIRED_KEYS = ['today', 'create']
 export const BAR_MAX_SLOTS = DEFAULT_NAV_TABS.length
@@ -130,13 +122,13 @@ function validHidden(hidden) {
 }
 
 // resolveNavTabs — THE RETIRED GLOBAL PATH'S RESOLVER, kept for one reader. No SPA code calls it any
-// more: the bar comes from resolveBarLayout over the per-person prefs row (D4). The critter Lambda
+// more: the bar comes from resolveBarLayout over the per-person prefs row. The critter Lambda
 // keeps GET/PATCH /api/app-config dormant for one release (CONTRACT §6) so clients still rolling out
 // get a 200 rather than a 404, and lambda/critter/appConfig.parity.test.js still pins that dormant
 // route's validator against THIS function — including its same-array-reference-on-fallback contract.
 // Delete it together with the dormant route, not before.
 //
-// Its rule is the V5-ADMINCENTER-001 one and is unchanged: a config is accepted only if it is a
+// Its rule is unchanged from the global-config days: a config is accepted only if it is a
 // permutation of DEFAULT_NAV_TABS, and anything else returns the shipped default whole. NEVER throws,
 // NEVER returns empty. Each guard has its own killing input in navConfig.test.js.
 export function resolveNavTabs(raw) {
