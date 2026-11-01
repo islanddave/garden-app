@@ -506,8 +506,12 @@ const STATES = Object.keys(P);
 // rather than being answered with nothing.
 let db = null;
 let modelError = null;
+// The actor GUC withActor leads every audited batch with (OPS-AUDITGUCTABLES-001). Answered for this exact text
+// only, so any other function-call SELECT still throws below.
+const ACTOR_GUC = "SELECT set_config('app.actor_clerk_sub', $1, true)";
 function answerFromModel(text, values) {
   try {
+    if (text === ACTOR_GUC) return [{ set_config: values[0] }];
     const kind = tokensOf(text)[0];
     if (kind === 'update') return execUpdate(updateOf(text), values, db);
     if (kind === 'select') return evaluate(modelOf(text), values, db).map((g) => ({ ...g, name: g.display_name }));
@@ -752,6 +756,7 @@ const plantRow = (id) => db.plantings.find((r) => r.id === id);
 const containerRow = (id) => db.containers.find((r) => r.id === id);
 const archivedContainers = () => db.containers.filter((c) => c.archived_at !== null).map((c) => c.id).sort();
 const kindOf = (c) => {
+  if (c.text === ACTOR_GUC) return 'actor guc';
   const t = tokensOf(c.text);
   return t[0] === 'update' ? `update ${t[1].replace(/^public\./, '')}` : t[0];
 };
@@ -790,13 +795,15 @@ describe('BUG-PLANTSLISTARCHIVEDCONTAINER-001 — bringing a planting back bring
     const { status, body, calls } = await unarchive(Q.trap);
     expect(status).toBe(200);
     expect(body).toEqual({ id: Q.trap, archived_at: null });
-    // What the route SENT: exactly two UPDATEs — no set_config, the route never set one — in one
-    // transaction, the planting's first so the container statement reads the row it just wrote.
-    expect(calls.map(kindOf)).toEqual(['update garden_node', 'update container']);
-    expect(calls[0].tx, 'the planting UPDATE ran outside a transaction').not.toBeNull();
-    expect(calls[1].tx, 'the container UPDATE ran outside the planting UPDATE\'s transaction').toBe(calls[0].tx);
+    // What the route SENT: the caller's actor GUC first (OPS-AUDITGUCTABLES-001), then exactly two UPDATEs in
+    // the same transaction, the planting's first so the container statement reads the row it just wrote.
+    expect(calls.map(kindOf)).toEqual(['actor guc', 'update garden_node', 'update container']);
+    expect(calls[0].values).toEqual([DAVE]);
+    expect(calls[1].tx, 'the planting UPDATE ran outside a transaction').not.toBeNull();
+    expect(calls[0].tx, 'the actor GUC ran outside the planting UPDATE\'s transaction').toBe(calls[1].tx);
+    expect(calls[2].tx, 'the container UPDATE ran outside the planting UPDATE\'s transaction').toBe(calls[1].tx);
     // Exactly one container matched: its own. (Also the live instrument for the zero asserted below.)
-    expect(calls[1].rowCount, 'the container statement did not match exactly the planting\'s own container').toBe(1);
+    expect(calls[2].rowCount, 'the container statement did not match exactly the planting\'s own container').toBe(1);
     // What it DID.
     expect(plantRow(Q.trap).archived_at).toBeNull();
     expect(containerRow(K.trap).archived_at, 'the container stayed archived, so the planting is still hidden').toBeNull();
@@ -809,17 +816,19 @@ describe('BUG-PLANTSLISTARCHIVEDCONTAINER-001 — bringing a planting back bring
 
   it('writes the container\'s archived_at and nothing else', async () => {
     const { calls } = await unarchive(Q.trap);
-    expect(updateOf(calls[1].text).set).toEqual([['archived_at', { kind: 'lit', value: null }]]);
+    expect(updateOf(calls[2].text).set).toEqual([['archived_at', { kind: 'lit', value: null }]]);
     expect(containerRow(K.trap)).toEqual({ ...container(K.trap), archived_at: null });
   });
 
-  it('archive: the one UPDATE it always sent, on its own — no container statement, no transaction', async () => {
+  it('archive: the actor GUC first, then the one planting UPDATE in its transaction — no container statement', async () => {
     // A LIVE planting in an ARCHIVED container: the one row the container statement would act on.
     const before = archivedContainers();
     const { status, calls } = await archive(Q.sibLive);
     expect(status).toBe(200);
-    expect(calls.map(kindOf)).toEqual(['update garden_node']);
-    expect(calls[0].tx).toBeNull();
+    expect(calls.map(kindOf)).toEqual(['actor guc', 'update garden_node']);
+    expect(calls[0].values).toEqual([DAVE]);
+    expect(calls[0].tx).not.toBeNull();
+    expect(calls[1].tx, 'the planting UPDATE ran outside the actor GUC\'s transaction').toBe(calls[0].tx);
     expect(plantRow(Q.sibLive).archived_at).not.toBeNull();
     expect(archivedContainers()).toEqual(before);
   });
@@ -827,7 +836,7 @@ describe('BUG-PLANTSLISTARCHIVEDCONTAINER-001 — bringing a planting back bring
   it('never touches a soft-deleted container, even for a live planting in one', async () => {
     const { status, calls } = await unarchive(Q.inDeletedArchived);
     expect(status).toBe(404);   // the F4 gate on the planting UPDATE, unchanged
-    expect(calls.map(kindOf)).toEqual(['update garden_node', 'update container']);
+    expect(calls.map(kindOf)).toEqual(['actor guc', 'update garden_node', 'update container']);
     expect(containerRow(K.deletedArchived).archived_at, 'a soft-deleted container was unarchived').not.toBeNull();
     expect(containerRow(K.deletedArchived).deleted_at).not.toBeNull();
   });
@@ -866,8 +875,8 @@ describe('BUG-PLANTSLISTARCHIVEDCONTAINER-001 — bringing a planting back bring
     // survived every unit test). tests/integration/plants-archived-container.int.test.js checks the
     // same case on Postgres by the container's row version.
     for (const { calls } of [inLive, none]) {
-      expect(calls.map(kindOf)).toEqual(['update garden_node', 'update container']);
-      expect(calls[1].rowCount, 'the container statement matched a container it had nothing to bring back').toBe(0);
+      expect(calls.map(kindOf)).toEqual(['actor guc', 'update garden_node', 'update container']);
+      expect(calls[2].rowCount, 'the container statement matched a container it had nothing to bring back').toBe(0);
     }
   });
 
@@ -884,11 +893,14 @@ describe('BUG-PLANTSLISTARCHIVEDCONTAINER-001 — bringing a planting back bring
     const { status, body, calls } = await restore(Q.deletedInArchived);
     expect(status).toBe(200);
     expect(body).toEqual({ id: Q.deletedInArchived, name: `planting ${Q.deletedInArchived}`, deleted_at: null });
-    // The third UPDATE is BUG-PLANTRESTORESTRAND-001's packet statement (its own describe is below).
-    expect(calls.map(kindOf)).toEqual(['select', 'update garden_node', 'update container', 'update inventory_items']);
+    // The third UPDATE is BUG-PLANTRESTORESTRAND-001's packet statement (its own describe is below). The actor
+    // GUC leads the batch (OPS-AUDITGUCTABLES-001).
+    expect(calls.map(kindOf)).toEqual(['select', 'actor guc', 'update garden_node', 'update container', 'update inventory_items']);
     expect(calls[0].tx).toBeNull();
-    expect(calls[1].tx, 'the restore UPDATE ran outside a transaction').not.toBeNull();
-    expect(calls[2].tx, 'the container UPDATE ran outside the restore UPDATE\'s transaction').toBe(calls[1].tx);
+    expect(calls[1].values).toEqual([DAVE]);
+    expect(calls[2].tx, 'the restore UPDATE ran outside a transaction').not.toBeNull();
+    expect(calls[1].tx, 'the actor GUC ran outside the restore UPDATE\'s transaction').toBe(calls[2].tx);
+    expect(calls[3].tx, 'the container UPDATE ran outside the restore UPDATE\'s transaction').toBe(calls[2].tx);
     expect(containerRow(K.restoreHome).archived_at).toBeNull();
     expect(archivedContainers()).toEqual(before.filter((id) => id !== K.restoreHome));
     expect(await onGarden()).toContain(Q.deletedInArchived);
@@ -988,7 +1000,7 @@ const packetDb = () => ({
 });
 const packetRow = (id) => db.packets.find((r) => r.id === id);
 const deletedPackets = () => db.packets.filter((r) => r.deleted_at !== null).map((r) => r.id).sort();
-const RESTORE_KINDS = ['select', 'update garden_node', 'update container', 'update inventory_items'];
+const RESTORE_KINDS = ['select', 'actor guc', 'update garden_node', 'update container', 'update inventory_items'];
 
 describe('BUG-PLANTRESTORESTRAND-001 — restoring a planting brings its deleted seed packet back', () => {
   beforeEach(() => { db = packetDb(); });
@@ -999,7 +1011,7 @@ describe('BUG-PLANTRESTORESTRAND-001 — restoring a planting brings its deleted
     expect(status).toBe(200);
     expect(body).toEqual({ id: R.onLive, name: `planting ${R.onLive}`, deleted_at: null });
     expect(calls.map(kindOf)).toEqual(RESTORE_KINDS);
-    expect(calls[3].rowCount, 'the packet statement matched a packet it had nothing to bring back').toBe(0);
+    expect(calls[4].rowCount, 'the packet statement matched a packet it had nothing to bring back').toBe(0);
     expect(packetRow(PK.live)).toEqual(packet(PK.live));
     expect(deletedPackets()).toEqual(before);
   });
@@ -1010,10 +1022,10 @@ describe('BUG-PLANTRESTORESTRAND-001 — restoring a planting brings its deleted
     expect(status).toBe(200);
     expect(body).toEqual({ id: R.onDeleted, name: `planting ${R.onDeleted}`, deleted_at: null, restored_packet_id: PK.deleted });
     expect(calls.map(kindOf)).toEqual(RESTORE_KINDS);
-    expect(calls[1].tx, 'the restore UPDATE ran outside a transaction').not.toBeNull();
-    expect(calls[3].tx, 'the packet UPDATE ran outside the restore UPDATE\'s transaction').toBe(calls[1].tx);
+    expect(calls[2].tx, 'the restore UPDATE ran outside a transaction').not.toBeNull();
+    expect(calls[4].tx, 'the packet UPDATE ran outside the restore UPDATE\'s transaction').toBe(calls[2].tx);
     // After the planting's own UPDATE: the packet statement reads the row that UPDATE just wrote.
-    expect(calls[3].rowCount, 'the packet statement did not match exactly the planting\'s own packet').toBe(1);
+    expect(calls[4].rowCount, 'the packet statement did not match exactly the planting\'s own packet').toBe(1);
     expect(plantRow(R.onDeleted).deleted_at).toBeNull();
     expect(packetRow(PK.deleted).deleted_at, 'the packet stayed deleted — the strand').toBeNull();
     expect(deletedPackets(), 'a packet other than the planting\'s own was touched')
@@ -1022,7 +1034,7 @@ describe('BUG-PLANTRESTORESTRAND-001 — restoring a planting brings its deleted
 
   it('writes the packet\'s deleted_at and nothing else', async () => {
     const { calls } = await restore(R.onDeleted);
-    expect(updateOf(calls[3].text).set).toEqual([['deleted_at', { kind: 'lit', value: null }]]);
+    expect(updateOf(calls[4].text).set).toEqual([['deleted_at', { kind: 'lit', value: null }]]);
     expect(packetRow(PK.deleted)).toEqual(packet(PK.deleted));
   });
 
@@ -1048,8 +1060,8 @@ describe('BUG-PLANTRESTORESTRAND-001 — restoring a planting brings its deleted
       expect(status).toBe(404);
       expect(body).toEqual({ error: 'Not found' });
       expect(calls.map(kindOf)).toEqual(RESTORE_KINDS);
-      expect(calls[1].rowCount, 'the planting was restored onto a packet that stayed deleted').toBe(0);
-      expect(calls[3].rowCount).toBe(0);
+      expect(calls[2].rowCount, 'the planting was restored onto a packet that stayed deleted').toBe(0);
+      expect(calls[4].rowCount).toBe(0);
       expect(plantRow(plantId).deleted_at, 'the planting came back onto a deleted packet — the strand').not.toBeNull();
       expect(packetRow(packetId).deleted_at).not.toBeNull();
       expect(deletedPackets()).toEqual(before);
