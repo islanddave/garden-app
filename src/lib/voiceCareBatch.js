@@ -1,5 +1,5 @@
 // src/lib/voiceCareBatch.js
-// V5-VOICECARE-001 — the network half of a spoken care command: the dry run that defines the area's
+// V5-VOICECARE-001: the network half of a spoken care command: the dry run that defines the area's
 // plant set (R1), the write (R8) and the undo (R9). The decisions all live in voiceCareResolve.js,
 // which is pure; this file only moves them across the wire.
 //
@@ -9,13 +9,13 @@
 // `.status === 0`.
 //
 // ── WHY THE WRITE NAMES IDS, NEVER "THE AREA MINUS THE SKIPS" ───────────────────────────────────
-// The read-back is a promise about an exact set: "Feed 21 in Pasture In-Ground, skipping Zephyr
-// Squash, Crimson Sweet, King Richard". With scope `space` + exclude_plant_ids the server re-resolves
-// the area at write time, so a planting the other household member adds or ends between the read-back
-// and "next" silently changes what gets written, and an exclusion id that is not in the area silently
-// does nothing. With scope `ids` the same drift is a 409 SCOPE_IDS_UNRESOLVED and nothing is written
-// (lambda/events/index.js, the count assertion). Log Many's pick mode made the same choice for the
-// same reason; here it is a set he HEARD rather than one he can see.
+// The read-back is a promise about an exact set: "Feed 21 in Pasture In-Ground, skipping Zephyr Squash,
+// Crimson Sweet, King Richard". With scope `space` + exclude_plant_ids the server re-resolves the area at
+// write time, so a planting another household member adds or ends between the read-back and "next"
+// silently changes what gets written, and an exclusion id that is not in the area silently does nothing.
+// With scope `ids` the same drift is a 409 SCOPE_IDS_UNRESOLVED and nothing is written
+// (lambda/events/index.js, the count assertion). Log Many's pick mode made the same choice; here the set
+// is one the user HEARD rather than one they can see.
 //
 // ── THE IDEMPOTENCY KEY IS MINTED AT THE READ-BACK ──────────────────────────────────────────────
 // prepareCarePlan() mints it with the plan, so a "next" that times out and is said again replays the
@@ -33,7 +33,7 @@ export const CARE_INPUT_SOURCE = 'voice'
 
 export const SCOPE_CHANGED_SPOKEN = 'Nothing was logged — something changed. Say it again.'
 // Honest about what it does not know: a timeout can land AFTER the server committed. Retrying with the
-// same key is safe either way, which is the one thing worth telling him.
+// same key is safe either way, which is the one thing worth telling the user.
 export const NOT_CONFIRMED_SPOKEN = 'I couldn’t confirm that was logged. Say “next” to try again — it won’t log twice.'
 export const REJECTED_SPOKEN = 'Nothing was logged — the app refused that request.'
 export const UNDONE_SPOKEN = 'Undone.'
@@ -84,10 +84,10 @@ export async function prepareCarePlan(apiFetch, {
   return { ...plan, idempotencyKey: mintKey(), aliasUses: careAliasUses(plan, aliasIndex) }
 }
 
-// BUG-VOICEALIASHITCOUNT-001 — the taught aliases this plan's skips were resolved through, in the shape
-// recordAliasUse sends: [{ heard_key, variety_id }], once each. A skip reads 'alias' only when the learned
-// layer answered it — strict names answer first (voiceCareResolve's resolveName) — and the key it was
-// looked up by, looseKey(heard), IS the stored heard_key (resolveAlias). Carried on the plan, never in
+// BUG-VOICEALIASHITCOUNT-001: the taught aliases this plan's skips were resolved through, in the shape
+// recordAliasUse sends ([{ heard_key, variety_id }], once each). A skip reads 'alias' only when the
+// learned layer answered it (strict names answer first in voiceCareResolve's resolveName), and the key it
+// was looked up by, looseKey(heard), IS the stored heard_key (resolveAlias). Carried on the plan, never in
 // the write body (careWriteBody names its fields), and counted by the host only once the batch is logged.
 export function careAliasUses(plan, aliasIndex) {
   if (!aliasIndex?.size) return []
