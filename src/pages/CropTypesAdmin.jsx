@@ -1,5 +1,4 @@
-// src/pages/CropTypesAdmin.jsx — V4-CROPTYPERETIRE-001. Retire a crop type nothing uses, or bring
-// one back. The one door to both, at /admin/crop-types (row in DebugMenu.jsx).
+// Retire a crop type nothing uses, or bring one back, at /admin/crop-types (row in DebugMenu.jsx).
 //
 // WHO SEES IT. The server decides (ADMIN_CLERK_SUBS on the varieties Lambda, fail-closed); there is
 // no client admin list, as on every /admin page. A non-admin who follows the Debug & smoke row gets

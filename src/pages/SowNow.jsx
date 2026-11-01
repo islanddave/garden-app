@@ -1,14 +1,12 @@
-// src/pages/SowNow.jsx — DRG-SOWNOW-001 /sow surface.
-// Fetches GET /api/inventory-items/sow-candidates (v_sow_candidates rows), runs them
-// through the pure sowEngine bucketizer for today, and renders action-bucket sections
-// in fixed order. Actionable cards open the Sow sheet (components/seed/SowSheet.jsx since
-// V5-SEEDSTAB-001 slice 2a — the seed's detail page opens the same one), which POSTs
-// /api/plants with the seed-provenance wire shape: source_type 'seed_packet' for a bought
-// packet, 'saved_seed' for seed Dave saved himself (dropdownRegistry PLANT_SOURCE_OPTIONS).
-// NO quantity decrement (decision: quantity_on_hand
-// = packets owned; sowing doesn't consume a packet) — so a packet only reaches zero when
-// Dave edits it down, which is what makes zero a trustworthy "used up" signal for the
-// V4-SEEDZEROVIEW-001 `sowed_previously` section rather than an artefact of sowing.
+// The /sow surface. Fetches GET /api/inventory-items/sow-candidates (v_sow_candidates rows), runs them
+// through the pure sowEngine bucketizer for today, and renders action-bucket sections in fixed order.
+// Actionable cards open the Sow sheet (components/seed/SowSheet.jsx; the seed's detail page opens the
+// same one), which POSTs /api/plants with the seed-provenance wire shape: source_type 'seed_packet' for
+// a bought packet, 'saved_seed' for seed the household saved itself (dropdownRegistry
+// PLANT_SOURCE_OPTIONS).
+// NO quantity decrement (quantity_on_hand = packets owned; sowing doesn't consume a packet), so a packet
+// only reaches zero when the user edits it down, which is what makes zero a trustworthy "used up" signal
+// for the `sowed_previously` section rather than an artefact of sowing.
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
@@ -25,24 +23,22 @@ import useScrollRestore from '../hooks/useScrollRestore.js'
 import { seedsHref, addPacketHref, seedsReturnState } from '../lib/seedsRoutes.js'
 import { todayLocalISO } from '../lib/dateLocal.js'
 
-// V5-SEEDSTAB-001 — where this view sends the add form and a packet's detail page back to.
+// Where this view sends the add form and a packet's detail page back to.
 const SOW_VIEW_HREF = seedsHref('sow')
 
-// V4-RELOADGATEWIRE-001 — this page's draft-stash route key. The Sow sheet writes and clears it; this
-// page restores from it. Its own key, never the packet page's (see SowSheet.jsx, "per-host draft key").
+// This page's draft-stash route key. The Sow sheet writes and clears it; this page restores from it.
+// Its own key, never the packet page's (see SowSheet.jsx, "per-host draft key").
 const DRAFT_KEY = 'sow-now'
 
-// Section order is FIXED per the panel deltas spec. Third element = optional subtitle.
+// Section order is FIXED. Third element = optional subtitle.
 // `sow_next_year` sits below every this-season section but above the non-actionable ones. It is
 // DEMOTED (muted heading) but never collapsed: it is actionable and deadline-bearing, and hiding it
 // behind a disclosure is exactly how a window closes unseen.
 //
-// The sow_next_year subtitle read 'Sow these this summer; they flower next spring.' until
-// 2026-08-17. It was written when the bucket held four ornamentals (hollyhock, blackberry lily, two
-// money plants) and it framed a HORIZON partition as a flower section: the bucket takes anything
-// sowGoal() calls establishment, which already includes biennial vegetables and will include hardy
-// greens sown for a spring cut. The copy now names both payoffs instead of only the floral one, and
-// says plainly what the section is for — that nothing in it feeds you this season.
+// The sow_next_year subtitle names both payoffs rather than only the floral one: the bucket takes
+// anything sowGoal() calls establishment, which includes biennial vegetables and will include hardy
+// greens sown for a spring cut, so it must not frame a horizon partition as a flower section. It says
+// plainly what the section is for: nothing in it feeds you this season.
 const BUCKET_META = [
   ['window_closing',     'Window closing'],
   ['start_indoors_now',  'Start indoors now'],
@@ -50,34 +46,30 @@ const BUCKET_META = [
   ['sow_inside_anytime', 'Sow inside anytime'],
   ['sow_next_year',      'For next year — sow now', 'Sow now, bloom or harvest next spring — nothing here pays off this season.'],
   ['hold',               'Hold for later'],
-  // V4-SEEDSAVEFLOW-001. Seed you are still making. Open and mid-page rather than collapsed at the
-  // bottom with the other two divert targets, and the difference is what the section MEANS: those
-  // are review surfaces for packets that are done with (empty, or put away for the year), this one
-  // is forward-looking. Dave wants to keep seeing that the seed exists and is coming while being
-  // unable to mis-sow it, and a lot behind a ▸ toggle is not something you can see coming.
+  // Seed you are still making. Open and mid-page rather than collapsed at the bottom with the other two
+  // divert targets, because of what the section MEANS: those are review surfaces for packets that are
+  // done with (empty, or put away for the year), this one is forward-looking. The user should keep seeing
+  // that the seed exists and is coming while being unable to mis-sow it, and a lot behind a ▸ toggle is
+  // not something you can see coming.
   ['in_process',         'Still in process', 'Seed you are saving that is not finished yet. It stays on the list so you can see it coming — but it cannot be sown until it is dry and stored.'],
   ['needs_profile',      'Needs a sow profile'],
-  // BUG-FROSTANCHORERA5-001 gave this section its subtitle, and the subtitle is the condition the
-  // correction shipped under rather than a nicety. Correcting the measured frost anchor from 10-29 to
-  // 10-15 moves 7 of 12 fall-hardy crops into this bucket — spinach, lettuce, kale, beet, turnip, bok
-  // choy, chard — on the day the fall sowing decision is live. The engine is right to close their
-  // windows: it is answering "can this reach full size before frost", and 14 of those days were an
-  // instrument error that had been quietly promising a fortnight nobody had. But a list that silently
-  // withdraws most of the hardy set teaches Dave to distrust the list, and the crop he is most likely
-  // to sow anyway is exactly the one this bucket looks most wrong about. So the section says what the
-  // date means and what it does not: for a crop frost does not kill, past the date is a smaller cut,
-  // not a dead planting, and that is his call to make rather than the app's to hide.
+  // The subtitle is the condition this bucket ships under, not a nicety. The engine answers "can this
+  // reach full size before frost" and closes the windows of most fall-hardy crops (spinach, lettuce,
+  // kale, beet, turnip, bok choy, chard) on the day the fall sowing decision is live. A list that
+  // silently withdraws most of the hardy set teaches the user to distrust it, and the crop they are
+  // most likely to sow anyway is the one this bucket looks most wrong about. So the section says what
+  // the date means and what it does not: for a crop frost does not kill, past the date is a smaller cut,
+  // not a dead planting, and that is the user's call to make rather than the app's to hide.
   ['too_late',           'Too late this year',
     'These dates ask whether a sowing can reach full size before frost — not whether it will survive one. Frost-hardy crops like spinach, kale and chard are not killed by frost, so sowing one late still gives you a smaller cut; it just will not make a full one.'],
-  // V4-SEEDZEROVIEW-001. The packets there is none of left. Dave: "I want to keep zero counts in our
-  // records, viewable as 'sowed previously' so i can review … zero counts can be filtered out of sow
-  // now and other used surfaces, but a view/filter of them would be useful." Collapsed and near the
-  // bottom because it is a review surface, not a working list — but present, complete, and never a
-  // delete or a retire. There is deliberately NO reorder cue here: he said he will not use one.
+  // The packets there is none of left. Zero counts are kept in the records and viewable as 'sowed
+  // previously'; they are filtered out of sow now and the other working surfaces. Collapsed and near the
+  // bottom because it is a review surface, not a working list, but present, complete, and never a delete
+  // or a retire. There is deliberately NO reorder cue here.
   ['sowed_previously',   'Sowed previously', 'None of these left. Kept in full so you can see what you have grown and everything about the packet — they just stay off the working list.'],
-  // V4-SOWARCHIVE-001. Dead last and collapsed, like too_late: the whole point is to get these off
-  // the working list. They are still ON the page and one tap from returning — archiving is a view
-  // preference, not a delete, so it must never look like the packet is gone.
+  // Dead last and collapsed, like too_late: the point is to get these off the working list. They are
+  // still ON the page and one tap from returning; archiving is a view preference, not a delete, so it
+  // must never look like the packet is gone.
   ['archived',           'Archived for this season'],
 ]
 
@@ -93,12 +85,11 @@ const COLLAPSED = new Set(['too_late', 'sowed_previously', 'archived'])
 // Buckets whose cards carry a Sow action.
 const ACTIONABLE = new Set(['window_closing', 'start_indoors_now', 'direct_sow_now', 'sow_inside_anytime', 'sow_next_year'])
 
-// V4-SEEDSAVEFLOW-001. Marker copy for a lot that is still being processed, keyed by the DB's own
-// seed_stage vocabulary and worded exactly as SavedSeeds' STAGE_META labels the same jar, so the two
-// surfaces cannot end up calling it two different things. `stored` has no entry on purpose — a
-// stored lot is a packet and gets no marker at all. Exported so the suite can pin that every stage
-// sowEngine diverts on has words here: a stage with no label would render a colour-only chip, which
-// is exactly the marker nobody who cannot see colour can read.
+// Marker copy for a lot that is still being processed, keyed by the DB's own seed_stage vocabulary and
+// worded exactly as SavedSeeds' STAGE_META labels the same jar, so the two surfaces cannot end up
+// calling it two different things. `stored` has no entry on purpose: a stored lot is a packet and gets
+// no marker at all. Exported so the suite can pin that every stage sowEngine diverts on has words here;
+// a stage with no label would render a colour-only chip, which nobody who cannot see colour can read.
 export const SEED_STAGE_LABEL = { fermenting: 'Fermenting', drying: 'Drying' }
 
 // Unicode vulgar fractions for the common seed depths (text, not emoji).
@@ -125,19 +116,17 @@ function depthSpacingLine(candidate) {
   return parts.length ? parts.join(' · ') : null
 }
 
-// V5-SEEDSTAB-001 — `embedded` renders this as the Sow now view of the Seeds page: no breadcrumb, no
-// H1 and no page frame, because the Seeds shell owns the title, the switch and one frame for all three
-// views. Omitted, the standalone render is unchanged — the harness and this page's suites mount it.
-// The engine, the buckets and the Sow sheet are untouched either way.
+// `embedded` renders this as the Sow now view of the Seeds page: no breadcrumb, no H1 and no page frame,
+// because the Seeds shell owns the title, the switch and one frame for all three views. Omitted, the
+// standalone render is unchanged. The engine, the buckets and the Sow sheet are untouched either way.
 //
-// `sownIds` / `onSown` lift the "Sown ✓" confirmations into the shell. Switching views unmounts this
-// body, and a confirmation held here died with it — so a packet sown seconds ago was offered again on
-// the way back, and switching views is a lighter gesture than leaving a page. `onArchived(id, season)`
-// lets the shell patch its seed rows so My seeds' "Archived for this season" chip agrees at once.
-// V5-SEEDSTAB-001 slice 2a — `sownIds` is a Map, packet id -> the id of the planting that sow created
-// (null if the create answered without one), because the chip now carries a persistent "See the
-// planting" link; `onSown(packetId, plantingId)`. `onGoToLot(id)` is the shell's in-page door to a lot
-// in Saved seeds (switch the view, outline the lot) — the "Still in process" cards use it.
+// `sownIds` / `onSown` lift the "Sown ✓" confirmations into the shell: switching views unmounts this
+// body, and a confirmation held here would die with it, so a packet sown seconds ago would be offered
+// again on the way back. `sownIds` is a Map, packet id -> the id of the planting that sow created (null
+// if the create answered without one), because the chip carries a persistent "See the planting" link;
+// `onSown(packetId, plantingId)`. `onArchived(id, season)` lets the shell patch its seed rows so My
+// seeds' "Archived for this season" chip agrees at once. `onGoToLot(id)` is the shell's in-page door to a
+// lot in Saved seeds (switch the view, outline the lot); the "Still in process" cards use it.
 export default function SowNow({ todayISO = todayLocalISO(), embedded = false, sownIds: sownIdsProp, onSown, onArchived, onGoToLot }) {
   const navigate = useNavigate()
   const { fetch } = useApiFetch()
@@ -148,26 +137,23 @@ export default function SowNow({ todayISO = todayLocalISO(), embedded = false, s
   const [error, setError] = useState(null)
   const [localSownIds, setLocalSownIds] = useState(() => new Map())
   const sownIds = sownIdsProp ?? localSownIds
-  // Best-effort Back restore (V5-SEEDSTAB-001). The open disclosures ride with the offset: a restored
-  // position measured against sections that have since collapsed lands somewhere else entirely.
-  // stateAtTop (V5-SEEDSPOLISH-001): a section opened at the top of the page is still open on Back.
+  // Best-effort Back restore. The open disclosures ride with the offset: a restored position measured
+  // against sections that have since collapsed lands somewhere else entirely. stateAtTop: a section
+  // opened at the top of the page is still open on Back.
   const { restoredState, saveState } = useScrollRestore({ id: 'seeds-sow', ready: !loading, stateAtTop: true })
-  // Which COLLAPSED sections are expanded, keyed by bucket. One Set rather than a boolean per
-  // section: V4-SEEDZEROVIEW-001 made this a third disclosure, and a per-key ternary in
-  // renderSection is exactly the drift vector the shared COLLAPSED set exists to close.
+  // Which COLLAPSED sections are expanded, keyed by bucket. One Set rather than a boolean per section: a
+  // per-key ternary in renderSection is exactly the drift vector the shared COLLAPSED set exists to close.
   const [openSections, setOpenSections] = useState(() => new Set(restoredState?.open ?? []))
   useEffect(() => { saveState({ open: [...openSections] }) }, [openSections, saveState])
   // In-flight archive PATCHes, by inventory_item_id — disables the button so a double-tap on a
   // slow phone connection cannot fire two writes.
   const [archiveBusy, setArchiveBusy] = useState(() => new Set())
 
-  // Sheet target — null when closed, else the bucket entry being sown. The Sow sheet (SowSheet.jsx)
-  // hosts the canonical PlantingEditor (add-from-packet), so a sown planting gets a real place + full
-  // details and can never land orphaned (BUG-ORPHANNAV-001, the old mini-form's project_id:null). The
-  // sheet owns everything past WHICH packet: its projects fetch, the editor's dirty/busy signals, the
-  // reload hold, and the stash's write and clear.
+  // Sheet target: null when closed, else the bucket entry being sown. The Sow sheet (SowSheet.jsx) hosts
+  // the canonical PlantingEditor (add-from-packet), so a sown planting gets a real place + full details
+  // and can never land orphaned. The sheet owns everything past WHICH packet: its projects fetch, the
+  // editor's dirty/busy signals, the reload hold, and the stash's write and clear.
   const [sowTarget, setSowTarget] = useState(null)
-  // V4-BACKNAV-001 Slice P (extended) — the sow sheet closes in place (setSowTarget(null)).
 
   useEffect(() => {
     let alive = true
@@ -181,7 +167,7 @@ export default function SowNow({ todayISO = todayLocalISO(), embedded = false, s
       .catch((err) => {
         if (!alive) return
         // `||`, not `??`: api.js throws Error('') on an empty statusText, and '' would render the
-        // "No seed packets yet" empty state for a load that FAILED (lane T4).
+        // "No seed packets yet" empty state for a load that FAILED.
         setError(err?.message || 'Failed to load sow candidates')
       })
       .finally(() => { if (alive) setLoading(false) })
@@ -193,48 +179,43 @@ export default function SowNow({ todayISO = todayLocalISO(), embedded = false, s
     [candidates, todayISO]
   )
 
-  // V4-RELOADGATEWIRE-001 — the ONLY local state in this file that represents content the user
-  // explicitly typed or picked/overrode is `sowTarget`: which packet's Sow sheet is open, set from
-  // either an ordinary Sow tap or the "Sow anyway" engine-override tap on a gated hold. Everything
-  // else here is fetched data (candidates), UI view state (disclosure open/closed, archive busy), or
-  // a post-save confirmation cache (sownIds) — none of it is unsaved input, and the
-  // per-candidate windowLabel/daysLeft annotations are computed by sowEngine and always regenerable
-  // from fresh candidates, never something a reload could "lose". PlantingEditor owns its own field
-  // state (place/quantity/notes) internally, so this predicate — like the stash and the
-  // checked-for-landmine restore below — recovers WHICH packet was mid-sow, not what was typed into
-  // the sheet itself.
+  // The ONLY local state in this file that represents content the user explicitly typed or picked is
+  // `sowTarget`: which packet's Sow sheet is open, set from either an ordinary Sow tap or the "Sow
+  // anyway" override tap on a gated hold. Everything else is fetched data (candidates), UI view state
+  // (disclosure, archive busy) or a post-save confirmation cache (sownIds); none of it is unsaved input,
+  // and the per-candidate windowLabel/daysLeft annotations are computed by sowEngine and always
+  // regenerable. PlantingEditor owns its field state (place/quantity/notes) internally, so this
+  // predicate, like the stash and the restore below, recovers WHICH packet was mid-sow, not what was
+  // typed into the sheet.
   //
-  // Hoisted to a named value (not inlined per-consumer) for the same reason EventNew's
-  // hasUnsavedInput is: it feeds three channels (the draft persist and the reload hold, both inside
-  // SowSheet as "a packet is open", and the overlay-dirty report below) and letting them drift to
-  // slightly different predicates is how one ends up defended and the others not.
+  // Hoisted to a named value for the same reason EventNew's hasUnsavedInput is: it feeds three channels
+  // (the draft persist and the reload hold, both inside SowSheet as "a packet is open", and the
+  // overlay-dirty report below), and letting them drift to different predicates is how one ends up
+  // defended and the others not.
   //
-  // V4-PLANTEDITORWIRE-001 — `editorDirty` is deliberately NOT a term here, and the reason is
-  // arithmetic rather than taste: PlantingEditor is rendered ONLY while a packet is open and its
-  // unmount releases, so editorDirty ⟹ sowTarget and `dirty || editorDirty` is exactly `dirty`. A
-  // term that cannot change the value of the expression it is in cannot be tested, and an untestable
-  // OR is how a predicate ends up looking guarded while proving nothing. Nor is the editor's signal
-  // used to NARROW this to `sowTarget && editorDirty`: the stash restores the open sheet on a packet
-  // the user chose, and that choice is worth holding a deploy for whether or not a field is filled.
-  // The place the editor's signal is genuinely load-bearing is the Sheet's backdrop guard in
-  // SowSheet, which is the one discard path on this page that `dirty` never covered.
+  // `editorDirty` is deliberately NOT a term here: PlantingEditor is rendered ONLY while a packet is
+  // open and its unmount releases, so editorDirty implies sowTarget and `dirty || editorDirty` is
+  // exactly `dirty`. A term that cannot change the expression's value cannot be tested. Nor is the
+  // editor's signal used to NARROW this to `sowTarget && editorDirty`: the stash restores the open sheet
+  // on a packet the user chose, and that choice is worth holding a deploy for whether or not a field is
+  // filled. The editor's signal is load-bearing in the Sheet's backdrop guard in SowSheet, the one
+  // discard path `dirty` never covered.
   const dirty = !!sowTarget
 
-  // Restore a dismissed/reloaded Sow sheet, once candidates have loaded. Gated on `buckets` rather
-  // than a bare mount: there is nothing to validate a stashed id against before the fetch resolves.
-  // The ref makes this fire exactly once — `buckets` gets a new identity after every archive/
-  // un-archive PATCH rewrites `candidates`, and without the guard a later PATCH would re-run this and
-  // reopen a sheet the user has since closed.
+  // Restore a dismissed/reloaded Sow sheet, once candidates have loaded. Gated on `buckets` rather than
+  // a bare mount: there is nothing to validate a stashed id against before the fetch resolves. The ref
+  // makes this fire exactly once: `buckets` gets a new identity after every archive/un-archive PATCH
+  // rewrites `candidates`, and without the guard a later PATCH would re-run this and reopen a sheet the
+  // user has since closed.
   //
-  // LANDMINE CHECK (V4-RELOADGATEWIRE-001, cf. EventNew's draftRestoredTypeRef): EventNew's restore
-  // set form.event_type, which a SEPARATE effect ([form.event_type]) watched and treated as a fresh
-  // type change, wiping the very state the restore had just filled — fixed with a one-shot skip ref.
-  // No such landmine here — but NOT because there is a single writer: `sowTarget` is also set by
-  // openSowSheet (both the Sow and the "Sow anyway" taps), cleared by closeSowSheet, and cleared
-  // again on a successful create. What makes the restore safe is that nothing treats a sowTarget
-  // CHANGE as a fresh selection to reset from: the only readers are the render below, the
-  // overlay-dirty report, and SowSheet's stash and reload-hold effects, which key on the open packet
-  // to mirror it outward and reset no state of their own.
+  // Landmine check (cf. EventNew's draftRestoredTypeRef): EventNew's restore set form.event_type, which a
+  // SEPARATE effect watched and treated as a fresh type change, wiping the state the restore had just
+  // filled. No such landmine here, though not because there is a single writer: `sowTarget` is also set
+  // by openSowSheet (both the Sow and the "Sow anyway" taps), cleared by closeSowSheet, and cleared again
+  // on a successful create. The restore is safe because nothing treats a sowTarget CHANGE as a fresh
+  // selection to reset from: the only readers are the render below, the overlay-dirty report, and
+  // SowSheet's stash and reload-hold effects, which key on the open packet to mirror it outward and
+  // reset no state of their own.
   const restoredDraftRef = useRef(false)
   useEffect(() => {
     if (restoredDraftRef.current || !buckets) return
@@ -252,31 +233,29 @@ export default function SowNow({ todayISO = todayLocalISO(), embedded = false, s
   // The stash is WRITTEN by SowSheet while it holds a packet — for ABNORMAL exits only — and cleared
   // by its every deliberate close; what it does and does not recover is recorded there.
 
-  // Tells the hosting overlay Sheet (if any) not to let a stray backdrop tap silently discard this
-  // page while a sow is mid-flight.
+  // Tells the hosting overlay Sheet (if any) not to let a stray backdrop tap silently discard this page
+  // while a sow is mid-flight.
   //
-  // INERT IN PRODUCTION TODAY — say so plainly rather than let the call site imply a guard that is
-  // running. This page renders inside `/seeds` (V5-SEEDSTAB-001; `/sow` is now a redirect there), a
-  // plain full-page route with NO `overlayable` flag (unlike /log, /log/many and /put-up), so no
-  // OverlayDirtyProvider is ever mounted above this page and
-  // this hook reports into nothing. It is kept as forward-compat: it costs nothing, it keeps the
-  // page in the standard three-guard shape, and adding `overlayable` later then needs no follow-up
-  // here. The guard that actually runs on this surface is the reload hold SowSheet takes while it is
-  // open. The suite's dirty-channel assertions manufacture their own provider and are labelled
-  // forward-compat to match — they pin the contract, they do not evidence a live guard. It stays HERE
-  // rather than in SowSheet: the channel is one value per page, and the packet page reports its own
-  // form's state into it too.
+  // INERT in practice, and said plainly rather than letting the call site imply a running guard. This
+  // page renders inside `/seeds` (`/sow` redirects there), a plain full-page route with NO `overlayable`
+  // flag (unlike /log, /log/many and /put-up), so no OverlayDirtyProvider is mounted above it and this
+  // hook reports into nothing. It is kept as forward-compat: it costs nothing, keeps the page in the
+  // standard three-guard shape, and adding `overlayable` later needs no follow-up here. The guard that
+  // actually runs on this surface is the reload hold SowSheet takes while it is open. The suite's
+  // dirty-channel assertions manufacture their own provider and pin the contract; they do not evidence
+  // a live guard. It stays HERE rather than in SowSheet: the channel is one value per page, and the
+  // packet page reports its own form's state into it too.
   useReportOverlayDirty(dirty)
 
   const openSowSheet = useCallback((entry) => {
     setSowTarget(entry)
   }, [])
 
-  // V4-RELOADGATEWIRE-001 — where every close of the Sow sheet ends: the Sheet's Close control,
-  // Escape, an un-dirty backdrop tap, the back gesture, the editor's own Cancel and a successful
-  // create. SowSheet has already CLEARED THE STASH and reset the editor's busy signal by the time this
-  // runs (the reasoning — why a dismissal clears the stash here and not in EventNew/LogMany — is
-  // recorded on SowSheet's `close`); what is left for the page is to forget the target.
+  // Where every close of the Sow sheet ends: the Sheet's Close control, Escape, an un-dirty backdrop tap,
+  // the back gesture, the editor's own Cancel and a successful create. SowSheet has already CLEARED THE
+  // STASH and reset the editor's busy signal by the time this runs (why a dismissal clears the stash
+  // there and not in EventNew/LogMany is recorded on SowSheet's `close`); what is left for the page is
+  // to forget the target.
   const closeSowSheet = useCallback(() => {
     setSowTarget(null)
   }, [])
@@ -292,11 +271,11 @@ export default function SowNow({ todayISO = todayLocalISO(), embedded = false, s
     else setLocalSownIds((prev) => new Map(prev).set(packet.id, plantingId))
   }, [onSown])
 
-  // V4-SOWARCHIVE-001. Archive/un-archive a packet for THIS season.
+  // Archive/un-archive a packet for THIS season.
   //
-  // The season is taken from todayISO rather than from a fresh Date, so the stamp we write is the
-  // exact year the engine is bucketing against (bucketize derives its year the same way). A packet
-  // archived at 11:59pm on 31 Dec is stamped with the year Dave was actually looking at.
+  // The season is taken from todayISO rather than from a fresh Date, so the stamp we write is the exact
+  // year the engine is bucketing against (bucketize derives its year the same way). A packet archived at
+  // 11:59pm on 31 Dec is stamped with the year the user was actually looking at.
   //
   // Written OPTIMISTICALLY into `candidates` — not into a side Set — so the single useMemo
   // re-bucketizes from one source of truth and the archived section cannot disagree with the active
@@ -318,9 +297,9 @@ export default function SowNow({ todayISO = todayLocalISO(), embedded = false, s
         method: 'PATCH',
         body: JSON.stringify(archived ? { archived: true, season } : { archived: false }),
       })
-      // Deliberately NOT the section heading's own words: the toast says where the card WENT,
-      // which is the thing that isn't obvious the first time a card disappears from under your
-      // thumb. (It also kept colliding with the heading in the DOM.)
+      // Deliberately NOT the section heading's own words: the toast says where the card WENT, which is the
+      // thing that isn't obvious the first time a card disappears from under your thumb. It must also differ
+      // from the heading's text, or the two collide in the DOM.
       show({ message: archived ? 'Archived — moved to the bottom' : 'Back on the list' })
       // Only once the PATCH landed: the shell's copy of the row must never hold a stamp the server
       // refused. Patched in place — an archive changes one column, not worth refetching 330 rows for.
@@ -335,39 +314,37 @@ export default function SowNow({ todayISO = todayLocalISO(), embedded = false, s
     }
   }, [fetch, show, todayISO, onArchived])
 
-  // V5-SEEDSTAB-001 — a packet's detail page, pushed. Embedded, the push carries the Seeds URL so the
-  // detail page's Cancel can go back to it with one Back instead of pushing the page again.
+  // A packet's detail page, pushed. Embedded, the push carries the Seeds URL so the detail page's Cancel
+  // can go back to it with one Back instead of pushing the page again.
   const openPacket = useCallback((id) => {
     if (embedded) navigate(`/inventory/${id}`, { state: seedsReturnState(SOW_VIEW_HREF) })
     else navigate(`/inventory/${id}`)
   }, [embedded, navigate])
 
-  // V5-SEEDSTAB-001 slice 2a (§8) — "Add sow details" goes where sow details ARE edited: the cultivar's
-  // variety editor. It used to open the packet's page, which cannot edit a single sow-profile field (they
-  // live on the cultivar, and the variety editor is their only editor), so the card's one fix was a dead
-  // end. A plain push: the editor leaves with navigate(-1) on save and on cancel, which lands back on
-  // this view, and Sow now refetches on the way in — a filled profile moves the packet out of "Needs a
-  // sow profile" by itself. The editor says for itself when the viewer cannot edit this cultivar. Every
-  // seed row carries a variety (chk_inventory_seed_requires_variety); a row that somehow does not keeps
-  // the old door rather than getting none.
+  // "Add sow details" goes where sow details ARE edited: the cultivar's variety editor. The packet's page
+  // cannot edit a sow-profile field (they live on the cultivar), so opening it would be a dead end. A
+  // plain push: the editor leaves with navigate(-1) on save and on cancel, which lands back on this view,
+  // and Sow now refetches on the way in, so a filled profile moves the packet out of "Needs a sow
+  // profile" by itself. The editor says for itself when the viewer cannot edit this cultivar. Every seed
+  // row carries a variety (chk_inventory_seed_requires_variety); a row that somehow does not keeps the
+  // packet-page door rather than getting none.
   const editSowDetails = useCallback((c) => {
     if (c.variety_id) navigate(`/varieties/${c.variety_id}/edit`)
     else openPacket(c.inventory_item_id)
   }, [navigate, openPacket])
 
-  // V5-SEEDSTAB-001 slice 2a (§8) — a lot still in process, in Saved seeds: the one place its stage moves
-  // (V5-SEEDSTAGEONEPLACE-001), which is the only thing that will ever put it back on this list. Inside
-  // the Seeds page that is the shell's in-page door — the view switch replaces and the lot is outlined,
-  // as the ferment line and My seeds' own "Change stage" do. Standalone (the harness and the unit
-  // suites; /sow itself redirects into Seeds) it is the Seeds URL for that lot.
+  // A lot still in process, in Saved seeds: the one place its stage moves, which is the only thing that
+  // will ever put it back on this list. Inside the Seeds page that is the shell's in-page door (the view
+  // switch replaces and the lot is outlined, as the ferment line and My seeds' own "Change stage" do).
+  // Standalone (the harness and the unit suites) it is the Seeds URL for that lot.
   const goToLot = useCallback((id) => {
     if (onGoToLot) onGoToLot(id)
     else navigate(seedsHref('saved', { lot: id }))
   }, [onGoToLot, navigate])
 
-  // "Sown ✓" plus, once the create named its planting, a persistent way to it (§8: a link, not a toast —
-  // it stays on the card for the visit, across view switches, because the shell holds it). Operational
-  // confirmation of a task Dave started, so it is the same quiet chip it always was.
+  // "Sown ✓" plus, once the create named its planting, a persistent way to it (a link, not a toast: it
+  // stays on the card for the visit, across view switches, because the shell holds it). Operational
+  // confirmation of a task the user started, so it is the same quiet chip.
   function renderSown(c) {
     const plantingId = sownIds.get(c.inventory_item_id)
     return (
@@ -396,31 +373,27 @@ export default function SowNow({ todayISO = todayLocalISO(), embedded = false, s
       : bucketKey === 'sowed_previously' ? entry.depletedFrom
         : bucketKey === 'in_process' ? entry.inProcessFrom
           : null
-    // V4-SEEDSAVEFLOW-001. Read off the CANDIDATE, not off bucketKey, so the marker travels with the
-    // lot into the archived section too — an archived jar of wet seed is still a jar of wet seed.
-    // Falls back rather than rendering an empty chip if a stage ever arrives with no label (pinned
-    // by test, but a blank marker on a real surface is worse than a vague one).
-    // BUG-SEEDZEROSOWABLE-001 — the second marker, and it is NOT a stage name. An unstarted save has
-    // no seed_stage by design (choosing a process writes a permanent seed_lot_stage_log row, so the
-    // sheet must not choose one on the user's behalf), and SEED_STAGE_LABEL would fall through to
-    // the generic "Still in process" — which is exactly what the section heading already says, so
-    // the chip would add nothing. "Not started yet" names the state and, with it, the way out.
-    // Read off the CANDIDATE for the same reason as the line above: the marker travels into the
-    // archived section with the lot.
-    // The chip is a LABEL plus a consequence, and the consequence differs between the two markers.
-    // "not ready to sow" is a claim about the seed's physical state and is only true of a lot the
-    // app has been told is fermenting or drying. An unstarted lot is diverted for its COUNT, it
-    // keeps its `Sow anyway` override, and telling the user it cannot be sown while offering them a
-    // button to sow it would be the page contradicting itself.
+    // Read off the CANDIDATE, not off bucketKey, so the marker travels with the lot into the archived
+    // section too. Falls back rather than rendering an empty chip if a stage ever arrives with no label
+    // (pinned by test, but a blank marker on a real surface is worse than a vague one).
+    // The second marker is NOT a stage name: an unstarted save has no seed_stage by design (choosing a
+    // process writes a permanent seed_lot_stage_log row, so the sheet must not choose one on the user's
+    // behalf), and SEED_STAGE_LABEL would fall through to the generic "Still in process", which the
+    // section heading already says. "Not started yet" names the state and the way out.
+    // The chip is a LABEL plus a consequence, and the consequence differs between the two markers. "not
+    // ready to sow" is a claim about the seed's physical state and is only true of a lot the app has been
+    // told is fermenting or drying. An unstarted lot is diverted for its COUNT and keeps its `Sow anyway`
+    // override; saying it cannot be sown while offering a button to sow it would be the page
+    // contradicting itself.
     const stageLabel = isInProcess(c)
       ? (SEED_STAGE_LABEL[String(c.seed_stage).trim().toLowerCase()] ?? 'Still in process')
       : isUnstartedSave(c) ? 'Not started yet'
         : null
     const stageNote = isInProcess(c) ? 'not ready to sow' : 'no count recorded yet'
-    // BUG-SOWPROSEUNREAD-001 — what the packet says about timing, trimmed, or '' when it says
-    // nothing. direct_sow_timing first because it is the field the engine itself reads; sow_notes is
-    // the fallback for a packet that carries only the looser note. Both are already projected on
-    // v_sow_candidates, so this costs no new query.
+    // What the packet says about timing, trimmed, or '' when it says nothing. direct_sow_timing first
+    // because it is the field the engine itself reads; sow_notes is the fallback for a packet that
+    // carries only the looser note. Both are already projected on v_sow_candidates, so this costs no
+    // new query.
     const sowProse = String(c.direct_sow_timing || c.sow_notes || '').trim()
     return (
       <div key={c.inventory_item_id} style={cardStyle}>
@@ -433,12 +406,11 @@ export default function SowNow({ todayISO = todayLocalISO(), embedded = false, s
             {entry.reopensOn && (
               <span style={reopensBadge}>opens ~{formatDate(entry.reopensOn)}</span>
             )}
-            {/* V4-SEEDSAVEFLOW-001. WORDS carry this, not colour: the chip names the stage the lot
-                is actually in and says plainly that it cannot be sown, so it reads the same to
-                anyone who cannot see the warn tone at all. The house Badge primitive rather than a
-                local span — no new export from components/forms, which the FROZEN-primitives test
-                fails on. whiteSpace overridden because Badge is nowrap by default and this string is
-                long enough to overflow the title column on a 360px phone. */}
+            {/* WORDS carry this, not colour: the chip names the stage the lot is in and says plainly that
+                it cannot be sown, so it reads the same to anyone who cannot see the warn tone. The house
+                Badge primitive rather than a local span: a new export from components/forms fails the
+                FROZEN-primitives test. whiteSpace overridden because Badge is nowrap by default and this
+                string overflows the title column on a 360px phone. */}
             {stageLabel && (
               <Badge tone="warn" data-testid="seed-stage-chip" style={{ whiteSpace: 'normal' }}>
                 {stageLabel} — {stageNote}
@@ -459,24 +431,18 @@ export default function SowNow({ todayISO = todayLocalISO(), embedded = false, s
           {entry.gateReason && (
             <div style={gateReasonLine}>{entry.gateReason}</div>
           )}
-          {/* Where it sat before it was diverted. Answers "why was this on my list?" without making
-              Dave put it back to find out. */}
+          {/* Where it sat before it was diverted. Answers "why was this on my list?" without making the
+              user put it back to find out. */}
           {divertedFrom && BUCKET_LABEL[divertedFrom] && (
             <div style={gateReasonLine}>From: {BUCKET_LABEL[divertedFrom]}</div>
           )}
-          {/* BUG-SOWPROSEUNREAD-001 — the packet's own words, when the engine could not read them.
-              "Needs a sow profile" is true of a packet with NO timing at all. It is MISLEADING for a
-              packet that has timing prose the classifier simply does not parse: the profile exists,
-              the card claims it is missing, and the gardener is handed nothing to act on. Measured
-              on live prod: of 114 varieties carrying timing prose, NINE have zero readable clauses —
-              Quincy, Javelin, Common Milkweed, Long Island Improved, Red Mustard, Zebrune, Yellow
-              Granex PRR, Althaea officinalis, Column Blend. Each says something useful and each
-              currently shows a dead end.
-              Rendering the raw string is strictly more information than rendering nothing, and it
-              invents no policy — the classifier is not being taught a new pattern here, and no date
-              is being derived from prose nobody parsed. It is the packet talking, labelled as such
-              so it never reads as an engine verdict. `needs_profile` ONLY: everywhere else the
-              engine DID understand the timing and its own window label is the better answer. */}
+          {/* The packet's own words, when the engine could not read them. "Needs a sow profile" is true of
+              a packet with NO timing at all but misleading for one that has timing prose the classifier does
+              not parse: the profile exists, the card claims it is missing, and the gardener has nothing to
+              act on. Rendering the raw string is strictly more information than nothing and invents no
+              policy: no date is derived from prose nobody parsed, and it is labelled as the packet talking
+              so it never reads as an engine verdict. `needs_profile` ONLY: everywhere else the engine DID
+              understand the timing and its own window label is the better answer. */}
           {bucketKey === 'needs_profile' && sowProse && (
             <div data-testid="sow-prose" style={{ fontSize: '0.78rem', color: P.mid, marginTop: 6, lineHeight: 1.5 }}>
               <span style={{ color: P.light }}>The packet says: </span>{sowProse}
@@ -498,25 +464,19 @@ export default function SowNow({ todayISO = todayLocalISO(), embedded = false, s
             </button>
           )
         )}
-        {/* Override: an engine misclassification must never hard-block an action the gardener
-            knows is right. Gated holds keep a secondary path to the same sow sheet.
-            V4-SEEDSAVEFLOW-001 EXCEPTION, and it is the one place this page withholds the override
-            on purpose: every other divert is a JUDGEMENT the engine made about timing, which Dave
-            may know better than. `in_process` is not a judgement, it is a physical fact about the
-            seed — it is wet, in a jar, in pulp — and there is no override that makes it sowable
-            today. A "Sow anyway" here would offer the exact mis-sow this whole guard exists to
-            prevent. The lot is still fully on the page, and one tap from Saved seeds, where its
-            stage moves (the door below). */}
-        {/* BUG-SEEDZEROSOWABLE-001 CARVE-OUT, and it is narrower than it looks. The withholding
-            above is kept for every lot whose seed is physically not seed yet; `unstartedSave` is
-            the one member of this bucket where that is not the claim being made. Nobody said an
-            unstarted lot is wet — the user declined to say ANYTHING about its process, which is a
-            different fact from "it is fermenting", and a dry-shelled bean saved this morning is
-            sowable this afternoon. The rationale the withholding rests on ("it is wet, in a jar, in
-            pulp") does not reach it, so applying the rule here would deny an override on the
-            strength of an assertion the app never made. The lot is diverted for its COUNT, and a
-            count is exactly the kind of engine judgement Dave may know better than — which is the
-            general rule this bucket was carved out of in the first place. */}
+        {/* Override: an engine misclassification must never hard-block an action the gardener knows is
+            right. Gated holds keep a secondary path to the same sow sheet.
+            EXCEPTION, the one place this page withholds the override on purpose: every other divert is a
+            JUDGEMENT the engine made about timing, which the user may know better than. `in_process` is a
+            physical fact about the seed (wet, in a jar, in pulp) and no override makes it sowable today; a
+            "Sow anyway" here would offer the exact mis-sow this guard exists to prevent. The lot is still
+            fully on the page, and one tap from Saved seeds, where its stage moves (the door below). */}
+        {/* CARVE-OUT, narrower than it looks: the withholding above holds for every lot whose seed is
+            physically not seed yet; `unstartedSave` is the one member of this bucket where that claim is
+            not made. The user declined to say ANYTHING about its process, which is different from "it is
+            fermenting", and a dry-shelled bean saved this morning is sowable this afternoon. The lot is
+            diverted for its COUNT, and a count is exactly the kind of engine judgement the user may know
+            better than. */}
         {!ACTIONABLE.has(bucketKey) && (bucketKey !== 'in_process' || entry.unstartedSave) && entry.gated && (
           sown ? (
             renderSown(c)
@@ -541,17 +501,15 @@ export default function SowNow({ todayISO = todayLocalISO(), embedded = false, s
             Add sow details
           </button>
         )}
-        {/* V5-SEEDSTAB-001 slice 2a (§8) — a "Still in process" card was a dead end: it said the lot
-            could not be sown until it was dry and stored, and offered no way to where that happens.
-            Fermenting or drying → Saved seeds, on this lot (the only stage writer). A lot whose process
-            never started is NOT listed there (Saved seeds shows staged lots), so it goes to its own
-            page, where its count and origin are recorded. Keyed on the CANDIDATE's state, the same
-            predicates the chip above reads, so the door and the chip can never disagree.
-            The visible words are SHORTER than My seeds' "Change stage in Saved seeds →" on purpose:
-            gate:seeds-page's 360px screenshot showed that label plus Archive 13px wider than the card's
-            content box (the action row does not shrink), with Archive pushed into the card's padding.
-            "Change stage →" pairs with Archive like "Add sow details" does. The destination stays in
-            the accessible name, which starts with the visible words. */}
+        {/* A "Still in process" card must not be a dead end: it says the lot cannot be sown until it is dry
+            and stored, so it offers the way to where that happens. Fermenting or drying goes to Saved seeds,
+            on this lot (the only stage writer). A lot whose process never started is NOT listed there (Saved
+            seeds shows staged lots), so it goes to its own page, where its count and origin are recorded.
+            Keyed on the CANDIDATE's state, the same predicates the chip above reads, so the door and the chip
+            can never disagree. The visible words are SHORTER than My seeds' "Change stage in Saved seeds →"
+            on purpose: at 360px that label plus Archive overflowed the card's content box (the action row
+            does not shrink). "Change stage →" pairs with Archive like "Add sow details" does. The destination
+            stays in the accessible name, which starts with the visible words. */}
         {bucketKey === 'in_process' && isInProcess(c) && (
           <button
             type="button"
@@ -574,10 +532,9 @@ export default function SowNow({ todayISO = todayLocalISO(), embedded = false, s
             Details
           </button>
         )}
-        {/* V4-SEEDZEROVIEW-001. The point of this section is review — "so i can review … all the
-            details even if zero" — and the card alone carries only what the sow engine needed. Same
-            navigation the needs_profile card already uses, so the packet's full record is one tap
-            from here rather than a search through Inventory. */}
+        {/* The point of this section is review, and the card alone carries only what the sow engine
+            needed. Same navigation the needs_profile card uses, so the packet's full record is one tap
+            away rather than a search through Inventory. */}
         {bucketKey === 'sowed_previously' && (
           <button
             type="button"
@@ -588,10 +545,10 @@ export default function SowNow({ todayISO = todayLocalISO(), embedded = false, s
             Details
           </button>
         )}
-        {/* V4-SOWARCHIVE-001. Offered on EVERY bucket rather than a curated subset: the reason a
-            packet is not wanted on the list ("already sown all I'm going to") is Dave's, not the
-            engine's, so any card can be the one he wants gone. The archived section offers the
-            inverse. aria-label carries the packet name — 'Archive' alone is ambiguous in a list. */}
+        {/* Offered on EVERY bucket rather than a curated subset: the reason a packet is not wanted on the
+            list is the user's, not the engine's, so any card can be the one they want gone. The archived
+            section offers the inverse. aria-label carries the packet name: 'Archive' alone is ambiguous
+            in a list. */}
         <button
           type="button"
           onClick={() => setArchived(c, bucketKey !== 'archived')}
@@ -660,7 +617,6 @@ export default function SowNow({ todayISO = todayLocalISO(), embedded = false, s
       <>
         {!embedded && (
           <>
-            {/* Breadcrumb */}
             <div style={{ fontSize: '0.82rem', color: P.light, marginBottom: 8 }}>
               <Link to="/inventory" style={{ color: P.green, textDecoration: 'none' }}>Inventory</Link>
               {' › Sow now'}
@@ -688,8 +644,7 @@ export default function SowNow({ todayISO = todayLocalISO(), embedded = false, s
             <p style={{ margin: '0 0 20px', color: P.light, fontSize: '0.875rem' }}>
               Add seed packets to your inventory and this page will tell you what to sow when.
             </p>
-            {/* V5-SEEDSTAB-001 — straight to the seed-mode add form, returning to this view. The old
-                /inventory/add-seeds hop was a pass-through with its extraction flag off. */}
+            {/* Straight to the seed-mode add form, returning to this view. */}
             <Link to={addPacketHref(SOW_VIEW_HREF)} state={seedsReturnState(SOW_VIEW_HREF)} style={ctaLink}>Add seeds</Link>
           </div>
         )}
@@ -708,8 +663,8 @@ export default function SowNow({ todayISO = todayLocalISO(), embedded = false, s
     <SowSheet packet={sowPacket} draftKey={DRAFT_KEY} todayISO={todayISO} onSown={handleSown} onClose={closeSowSheet} eager />
   )
 
-  // V5-SEEDSTAB-001 — embedded, the Seeds shell supplies the page and its frame (one max-width and
-  // inset for all three views); standalone keeps the frame this page always had, DOM unchanged.
+  // Embedded, the Seeds shell supplies the page and its frame (one max-width and inset for all three
+  // views); standalone keeps the frame this page always had, DOM unchanged.
   if (embedded) return <div data-testid="sow-now-view">{body}{sheet}</div>
   return (
     <div style={{ minHeight: '100dvh', backgroundColor: P.cream }}>
@@ -719,7 +674,6 @@ export default function SowNow({ todayISO = todayLocalISO(), embedded = false, s
   )
 }
 
-// ── Styles ────────────────────────────────────────────────────────────────────
 const sectionHeading = {
   margin: '0 0 10px',
   fontSize: '0.85rem',
@@ -792,15 +746,14 @@ const cardStyle = {
 }
 
 // The name keeps at least TITLE_COL_MIN_PX; when the actions would take more than that leaves, they
-// drop under the name (the card wraps) instead of squeezing it. Measured at 360px before this: a
-// needs-profile card's "Add sow details" + "Archive" left the name 76px and put "Red Mustard
-// (heirloom, unspecified variety)" on five lines. 140px keeps Sow + Archive beside the name at 360
-// (so ordinary cards do not grow) and wraps the wider pairs. gate:seeds-page reads this constant.
+// drop under the name (the card wraps) instead of squeezing it. 140px keeps Sow + Archive beside the
+// name at 360 (so ordinary cards do not grow) and wraps the wider pairs. gate:seeds-page reads this
+// constant.
 const TITLE_COL_MIN_PX = 140
 const titleColumn = { flex: `1 1 ${TITLE_COL_MIN_PX}px`, minWidth: 0 }
 
 // Action column. Wraps rather than overflows: a card can carry two buttons (Sow + Archive, or
-// Add sow details + Archive) and the narrowest phone Dave uses is 360px. marginLeft auto keeps it on
+// Add sow details + Archive) and the narrowest supported phone is 360px. marginLeft auto keeps it on
 // the right when the card has wrapped it under the name.
 const cardActions = {
   display: 'flex',
@@ -886,9 +839,9 @@ const sownChip = {
   flexShrink: 0,
 }
 
-// V5-SEEDSTAB-001 slice 2a — the way to the planting a sow just made, beside its chip. A text link in
-// the chip's green, never a second filled button (the chip is the answer; this is where it went), at
-// the 44px tap floor like every other action on the card.
+// The way to the planting a sow just made, beside its chip. A text link in the chip's green, never a
+// second filled button (the chip is the answer; this is where it went), at the 44px tap floor like
+// every other action on the card.
 const seePlantingLink = {
   display: 'inline-flex',
   alignItems: 'center',

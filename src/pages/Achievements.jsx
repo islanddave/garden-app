@@ -1,11 +1,5 @@
-// Achievements page — V1.2a-1 Session 4
-// Three sections:
-//   - Earned (sorted by earned_at DESC)
-//   - Available (locked, visible, sorted by sort_order)
-//   - Secret count chip (no detail, just "🤫 N hidden" if > 0)
-//
-// Future: tap-on-earned → detail modal; tap-on-locked → richer hint modal.
-// V1.2a-1: static cards with inline hints.
+// Achievements page: Earned (by earned_at DESC), Available (locked and visible, by sort_order),
+// and a secret-count chip with no detail.
 
 import { useAchievements } from '../hooks/useAchievements.js'
 import { P } from '../lib/constants.js'

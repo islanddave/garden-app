@@ -22,21 +22,17 @@ import { sendCaptureToClaude } from '../lib/sendCapture.js'
 /**
  * src/pages/FieldCapture.jsx
  *
- * Bite 4: durable IndexedDB queue + real audio capture.
- * Bite 5: per-entry TranscriptReview inline expansion (tap a queued capture to
- *         open transcript review surface).
+ * Durable IndexedDB queue + real audio capture, with per-entry TranscriptReview expansion (tap a
+ * queued capture to open its transcript review).
  *
- * Lifecycle on first mount:
- *   1. Install-early storage prompt: requestPersistence() (per Concept B spec).
- *   2. Load the captureQueue list into local state.
- *   3. Subscribe to window.online -> re-poll the queue (Bite 6 will retry items).
+ * On first mount: requestPersistence() (install-early storage prompt), load the captureQueue list
+ * into local state, and subscribe to window.online to re-poll the queue.
  *
- * Mode gate: Desk mode visits redirect to /dashboard (carry-over from Bite 3).
+ * Mode gate: Desk mode redirects to /dashboard.
  *
- * No deletion path in this bite (Dave-call from Bite 4: "brain dump and lose it"
- * = adoption killer for Jen).
+ * No deletion path, deliberately: losing a captured note is an adoption killer for the second user.
  *
- * Operational surface -- not a reward. Functional ACKs only.
+ * Operational surface, not a reward: functional ACKs only.
  */
 export default function FieldCapture() {
   const { mode } = useMode()
@@ -47,7 +43,7 @@ export default function FieldCapture() {
   const [loading,     setLoading]     = useState(true)
   const [expandedId,  setExpandedId]  = useState(null)
   const [tileSend,    setTileSend]    = useState(null)  // { id, status, msg }
-  // V4-DIRTYGUARDSWEEP-001 — the two in-memory-only windows this page owns. See hasUnsavedInput.
+  // The two in-memory-only windows this page owns. See hasUnsavedInput.
   const [recording,   setRecording]   = useState(false)
   const [enqueueing,  setEnqueueing]  = useState(false)
 
@@ -86,19 +82,15 @@ export default function FieldCapture() {
     return onReconnect(() => { refresh() })
   }, [mode, refresh])
 
-  // V4-DIRTYGUARDSWEEP-001 — this page's unsaved state is the LIVE RECORDING, and only that.
-  // Everything else here is already durable or already defended: the queue is IndexedDB
-  // (captureQueue.js), and the two typed surfaces — TapCaptureFallback's textarea and
-  // TranscriptReview's draft — hold the gate themselves. A recording is the opposite: the blob
-  // exists nowhere but inside MicCaptureButton until onRecorded fires, so a deploy reload mid-note
-  // destroys it with nothing to restore from, and this is the one screen built to be used at the
-  // plant with the phone coming out of a pocket (the exact visibilitychange→update path
-  // reloadGate.js exists for). The enqueueing term covers the await between the recorder going idle
-  // and captureQueue owning the bytes — a gap the recording flag alone leaves open.
-  // Deliberately EXCLUDES expandedId (navigation), errorBanner (transient), loading, and tileSend
-  // (a failed share is one re-tap; the entry itself is already durable). Each of those is true on
-  // paths where nothing is at risk, and a guard that fires there holds a deploy for a user who has
-  // nothing to lose — the false-positive failure this row exists to avoid.
+  // This page's unsaved state is the LIVE RECORDING, and only that. Everything else is already durable or
+  // defended: the queue is IndexedDB (captureQueue.js), and the two typed surfaces (TapCaptureFallback's
+  // textarea, TranscriptReview's draft) hold the gate themselves. A recording's blob exists nowhere but
+  // inside MicCaptureButton until onRecorded fires, so a deploy reload mid-note destroys it with nothing
+  // to restore from; this is the screen used at the plant with the phone coming out of a pocket (the
+  // visibilitychange -> update path reloadGate.js exists for). The enqueueing term covers the await
+  // between the recorder going idle and captureQueue owning the bytes.
+  // Deliberately EXCLUDES expandedId, errorBanner, loading and tileSend: each is true on paths where
+  // nothing is at risk, and a guard that fires there holds a deploy for a user with nothing to lose.
   const hasUnsavedInput = recording || enqueueing
 
   useReportOverlayDirty(hasUnsavedInput)
@@ -124,9 +116,9 @@ export default function FieldCapture() {
     // recording flag is down while the blob is still only in memory. Hold across the write.
     setEnqueueing(true)
     try {
-      // Bite 7: transcript captured one-pass alongside the recording (may be
-      // empty if Web Speech was unsupported / silently failed — recording still
-      // queues, and TranscriptReview's "Speak it now" is the redo path).
+      // Transcript captured one-pass alongside the recording (may be empty if Web Speech was
+      // unsupported or silently failed; the recording still queues, and TranscriptReview's "Speak it now"
+      // is the redo path).
       await enqueueRecording({ blob, mime, durationMs, transcript, transcriptSource, mode })
       setExpandedId(null)   // collapse any stale expanded entry; fresh capture shows at top
       await refresh()
@@ -180,9 +172,8 @@ export default function FieldCapture() {
     )
   }
 
-  // Bite 7: one-tap Send to Claude directly from a queued tile when a transcript
-  // is already present (the one-pass-capture happy path). Reuses the shared
-  // share -> clipboard -> manual chain via sendCaptureToClaude.
+  // One-tap Send to Claude from a queued tile when a transcript is already present (the one-pass-capture
+  // happy path). Reuses the shared share -> clipboard -> manual chain via sendCaptureToClaude.
   async function handleTileSend(entry) {
     setErrorBanner(null)
     setTileSend({ id: entry.id, status: 'sending', msg: null })
@@ -324,8 +315,8 @@ export default function FieldCapture() {
                       <span aria-hidden="true" style={{ marginRight: 6 }}>
                         {q.kind === 'audio' ? '🎤' : '📝'}
                       </span>
-                      {/* Bite 7: when a one-pass transcript is present, show it
-                          inline as the primary label instead of "Voice (Xs)". */}
+                      {/* When a one-pass transcript is present, show it inline as the primary label
+                          instead of "Voice (Xs)". */}
                       {q.kind === 'audio'
                         ? (q.transcript || `Voice (${q.durationMs ? Math.round(q.durationMs / 100) / 10 : '?'}s)`)
                         : (q.transcript || q.text || '')}
@@ -337,9 +328,8 @@ export default function FieldCapture() {
                     </div>
                   </button>
 
-                  {/* Bite 7: direct Send-to-Claude on the tile when a transcript
-                      is present and the entry hasn't been handed off yet. No
-                      expand required for the common one-pass-capture path. */}
+                  {/* Direct Send-to-Claude on the tile when a transcript is present and the entry hasn't been
+                      handed off yet; no expand needed for the common one-pass-capture path. */}
                   {q.transcript && q.status !== 'handed_off' && (
                     <div style={{ padding: '0 12px 10px', display: 'flex', flexDirection: 'column', gap: 4 }}>
                       <button

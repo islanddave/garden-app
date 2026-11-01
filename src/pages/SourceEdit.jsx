@@ -1,8 +1,5 @@
-// SourceEdit — /sources/:id. V5-SOURCECONTACT-001.
-//
-// Dave: "a source add/edit should include optional fields for website, IG, FB, physical address for
-// me to enter". SourcePicker's mint panel covers ADD; this is EDIT — the first screen that can change
-// a source after it exists (before it, a source minted with a name alone kept only that forever).
+// SourceEdit: /sources/:id. SourcePicker's mint panel covers ADD; this is the only screen that can
+// change a source after it exists.
 //
 // Loads one live source (GET /api/varieties/sources/:id), saves through useSources.updateSource
 // (PATCH). The PATCH is partial, so only fields that CHANGED are sent: an untouched field can never
@@ -10,8 +7,6 @@
 //
 // No delete control, on purpose: plants and seed lots point at sources, and removing one is a merge
 // question the app does not answer yet. The route answers DELETE with 405 for the same reason.
-//
-// NOT routed here. App.jsx belongs to the coordinator lane; it mounts this at /sources/:id.
 import React, { useEffect, useMemo, useState } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
@@ -72,8 +67,8 @@ export default function SourceEdit() {
   const navigate = useNavigate()
   const location = useLocation()
   // A deep link or a fresh window opens here with no page behind it in this app, and navigate(-1)
-  // would leave the app (or do nothing). The router's first entry is keyed 'default' — its own
-  // "history.length <= 1", and unlike window.history.length it is also true under MemoryRouter.
+  // would leave the app (or do nothing). The router's first entry is keyed 'default', which is also
+  // true under MemoryRouter, unlike window.history.length.
   const goBack = () => (location.key === 'default' ? navigate('/season-stats', { replace: true }) : navigate(-1))
   const { fetch } = useApiFetch()
   // The list is not needed here; updateSource is. `enabled: false` keeps this page from fetching it.
@@ -151,8 +146,8 @@ export default function SourceEdit() {
           </Field>
 
           <Field label="What kind of place" htmlFor={fid('kind')} optional>
-            {/* `options`, not children: the primitive then appends a stored kind that is no longer
-                live, so a retired kind shows as itself instead of as "not set". */}
+            {/* `options`, not children: the primitive then appends a stored kind that is no longer live, */}
+            {/* so a retired kind shows as itself instead of as "not set". */}
             <Select id={fid('kind')} value={form.kind} onChange={set('kind')} placeholder="— not set —"
               options={kindOptions} data-testid="source-edit-kind" />
           </Field>

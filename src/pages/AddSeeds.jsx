@@ -1,14 +1,12 @@
-// src/pages/AddSeeds.jsx — V4-SEEDINV-001 /inventory/add-seeds bulk seed intake.
-// ChoiceGrid chooser: Photo of packets (camera -> canvas downscale -> extract-seeds
-// mode:image) | Paste an order (textarea -> extract-seeds mode:text) | One item
-// (-> /inventory/add). Extracted packets[] land in a local review list with per-row
-// variety auto-match chips + a Sheet editor (VarietyPicker override + name/qty/price/
-// date). Save all runs sequentially: NEW rows create the variety first via
-// useVarieties().createVariety(packetToVarietyCols(packet, {validSlugs})) — crop type gated on
-// the live crop_types catalog (409 {error, existing}
-// -> auto-use existing.id), then POST /api/inventory-items with a payload mirroring
-// InventoryAdd.buildPayload (server sets created_by — never sent from the client)
-// plus packet metadata. All state stays local to this page.
+// /inventory/add-seeds: bulk seed intake. A ChoiceGrid chooser: Photo of packets (camera -> canvas
+// downscale -> extract-seeds mode:image) | Paste an order (textarea -> extract-seeds mode:text) | One
+// item (-> /inventory/add). Extracted packets[] land in a local review list with per-row variety
+// auto-match chips and a Sheet editor (VarietyPicker override + name/qty/price/date). Save all runs
+// sequentially: NEW rows create the variety first via
+// useVarieties().createVariety(packetToVarietyCols(packet, {validSlugs})), with the crop type gated on
+// the live crop_types catalog (409 {error, existing} -> auto-use existing.id), then POST
+// /api/inventory-items with a payload mirroring InventoryAdd.buildPayload (the server sets created_by;
+// never sent from the client) plus packet metadata. All state stays local to this page.
 import React, { useState, useMemo, useRef, useEffect, useId } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
@@ -31,7 +29,7 @@ import ChoiceGrid from '../components/forms/ChoiceGrid.jsx'
 const MAX_LONG_EDGE = 1568
 const JPEG_QUALITY = 0.85
 
-// V4-DIRTYGUARDSWEEP-001 — draft-stash route key (siblings: 'logone', 'logmany').
+// Draft-stash route key (siblings: 'logone', 'logmany').
 const DRAFT_KEY = 'addseeds'
 
 async function fileToJpegBase64(file) {
@@ -118,7 +116,6 @@ function buildRowPayload(row, varietyId) {
 
 export default function AddSeeds() {
   const navigate = useNavigate()
-  // V4-BACKNAV-001 Slice P (extended) — the row-edit sheet closes in place (setEditingIdx(null)).
   const { fetch } = useApiFetch()
   const { show } = useToast()
   // ONE shared varieties list at page level — rows auto-match against it.
@@ -127,22 +124,21 @@ export default function AddSeeds() {
   // Declared ahead of the crop-type vocabulary below, which is fetched only once rows can exist.
   const [rows, setRows] = useState(null)        // null until an extract succeeds
 
-  // BUG-ADDSEEDSVALIDSLUGS-001 — each packet's LLM crop-type guess is gated on the LIVE crop_types
-  // catalog. Without validSlugs, packetToVarietyCols gates on its frozen CROP_TYPE_SLUGS list: 73
-  // slugs against 158 live garden types in prod on 2026-09-23, so a carrot, bean, pea, kale or radish
-  // packet (85 live types in all) would save untyped and drop out of every by-type view.
+  // Each packet's LLM crop-type guess is gated on the LIVE crop_types catalog. Without validSlugs,
+  // packetToVarietyCols gates on its frozen CROP_TYPE_SLUGS list, which is much smaller than the live
+  // catalog, so common crops (carrot, bean, pea, kale, radish) would save untyped and drop out of every
+  // by-type view.
   //
-  // The list is passed ONLY when it is non-empty. packetToVarietyCols treats any validSlugs as the
-  // whole catalog and `[]` is truthy, so an empty list rejects every guess, and useCropTypes returns
-  // [] while loading AND on any fetch error. Both empty cases therefore fall back to the frozen list,
-  // which is exactly the pre-fix behaviour and never worse. The loading window is closed separately by
-  // holding Save all until the fetch settles (see the button), so no save can race the catalog.
+  // The list is passed ONLY when it is non-empty. packetToVarietyCols treats any validSlugs as the whole
+  // catalog and `[]` is truthy, so an empty list rejects every guess, and useCropTypes returns [] while
+  // loading AND on any fetch error. Both empty cases therefore fall back to the frozen list, which is never
+  // worse. The loading window is closed separately by holding Save all until the fetch settles (see the
+  // button), so no save can race the catalog.
   // Default 'garden' scope: a non-plant food class must never type a seed packet's variety.
   //
-  // Fetched only when a packet grid can exist (review MINOR-3, mainsync8): with the extractor flag off
-  // and no restored draft, this page's only job is the redirect below, and the catalog fetch was a
-  // request whose answer was thrown away on every visit. `rows` turning non-null (a draft restored,
-  // an extract landed) enables it, and useCropTypes resolves `loading` false while disabled, so
+  // Fetched only when a packet grid can exist: with the extractor flag off and no restored draft, this
+  // page's only job is the redirect below, so the fetch would be wasted. `rows` turning non-null (a draft
+  // restored, an extract landed) enables it, and useCropTypes resolves `loading` false while disabled, so
   // Save all is never held by a fetch that was not started.
   const { cropTypes, loading: cropTypesLoading } = useCropTypes({ enabled: SEED_BULK_EXTRACT_ENABLED || rows != null })
   const varietyColsOpts = useMemo(
@@ -164,11 +160,10 @@ export default function AddSeeds() {
   const rowsRef = useRef(rows)
   rowsRef.current = rows
 
-  // V4-DIRTYGUARDSWEEP-001 — restore an interrupted intake, one-shot on mount.
-  // `status: 'saving'` is downgraded to 'pending' on the way in: that value only ever exists mid-loop
-  // inside handleSaveAll, so a draft carrying it was written by a session that died during the save.
-  // Restoring it verbatim would render a row stuck on "Saving…" with no Edit control and no way to
-  // retry — the row would be un-saveable and un-editable for the rest of the session.
+  // Restore an interrupted intake, one-shot on mount. `status: 'saving'` is downgraded to 'pending' on the
+  // way in: that value only exists mid-loop inside handleSaveAll, so a draft carrying it was written by a
+  // session that died during the save, and restoring it verbatim would leave a row stuck on "Saving…" with
+  // no Edit control and no way to retry.
   useEffect(() => {
     const draft = readDraft(DRAFT_KEY)
     if (!draft) return
@@ -205,28 +200,22 @@ export default function AddSeeds() {
 
   useReportOverlayDirty(hasUnsavedInput)
 
-  // /inventory/add-seeds is not an overlayable route today, so the hook above is a strict no-op and
-  // the reload gate below is what actually protects this page. Per-instance key + BOOLEAN dep for
-  // the reasons EventNew.jsx:933-941 records.
+  // /inventory/add-seeds is not an overlayable route, so the hook above is a strict no-op and the reload
+  // gate below is what protects this page. Per-instance key + BOOLEAN dep for the reasons EventNew.jsx
+  // records.
   const reloadGateKey = `add-seeds:${useId()}`
   useEffect(() => {
     setReloadBlocked(reloadGateKey, hasUnsavedInput)
     return () => setReloadBlocked(reloadGateKey, false)
   }, [reloadGateKey, hasUnsavedInput])
 
-  // "PRESELECT IT OR DO NOT EXIST AT ALL" — Dave, 2026-09-03, on landing here from the Add seeds
-  // chip and being handed a chooser. The preselect half shipped in v4.106.0; this is the other half.
+  // With SEED_BULK_EXTRACT_ENABLED off, the grid below renders exactly ONE tile, and a chooser with one
+  // option is not a choice. So when there is nothing to choose between, this page forwards straight to
+  // the destination that tile points at, preselected, and replaces itself in history so Back returns to
+  // Inventory rather than bouncing off this redirect.
   //
-  // With SEED_BULK_EXTRACT_ENABLED off, the grid below renders exactly ONE tile, and a chooser with
-  // one option is not a choice — it is a screen whose only function is to make you tap again to get
-  // where the link already said you were going. So when there is nothing to choose between, this
-  // page forwards straight through to the destination that one tile points at, preselected, and
-  // replaces itself in history so Back returns to Inventory rather than bouncing off this redirect.
-  //
-  // Gated on the flag rather than on a tile count, deliberately: the day the extractor key exists
-  // the flag flips, three real options appear, and the chooser becomes a chooser again with no code
-  // change here. The page does not cease to exist; it declines to interrupt when it has nothing
-  // to ask.
+  // Gated on the flag rather than on a tile count, deliberately: when the extractor key exists the flag
+  // flips, three real options appear, and the chooser becomes a chooser again with no code change here.
   const navigatedThrough = useRef(false)
   useEffect(() => {
     if (SEED_BULK_EXTRACT_ENABLED || rows || navigatedThrough.current) return
@@ -275,16 +264,10 @@ export default function AddSeeds() {
     setMode(value)
     setBanner(null)
     if (value === 'one_item') {
-      // PRESELECTED, and it always should have been. This route is reached only from a page titled
-      // "Add seeds", so arriving at a blank generic form and being asked to choose "consumable" and
-      // "seeds" by hand makes the user re-state what they already said — Dave, 2026-09-03: "Add
-      // Seeds takes me to a generic inventory form — it should preselect consumable + type (seed) or
-      // not exist at all."
-      //
-      // The params are not new and the destination already honours them: InventoryAdd reads `type`
-      // and `category` from the query string (InventoryAdd.jsx:39-40), and the sibling caller on
-      // /seeds/saved has always passed them (SavedSeeds.jsx ADD_PACKET_HREF). One destination, two
-      // callers, and only one of them said what it wanted. That is the whole defect.
+      // PRESELECTED: this route is reached only from a page titled "Add seeds", so landing on a blank
+      // generic form would make the user re-state "consumable" and "seeds". InventoryAdd reads `type` and
+      // `category` from the query string, and the sibling caller on /seeds/saved passes them the same way
+      // (SavedSeeds.jsx ADD_PACKET_HREF).
       navigate('/inventory/add?type=consumable&category=seeds')
       return
     }
@@ -376,7 +359,6 @@ export default function AddSeeds() {
     <div style={{ minHeight: '100dvh', backgroundColor: P.cream }}>
       <div style={{ maxWidth: 600, margin: '0 auto', padding: '28px 16px 80px' }}>
 
-        {/* Breadcrumb */}
         <div style={{ fontSize: '0.82rem', color: P.light, marginBottom: 8 }}>
           <Link to="/inventory" style={{ color: P.green, textDecoration: 'none' }}>Inventory</Link>
           {' › Add seeds'}
@@ -386,7 +368,6 @@ export default function AddSeeds() {
           Add seeds
         </h1>
 
-        {/* Chooser */}
         {!rows && (
           <div style={card}>
             <ChoiceGrid
@@ -395,13 +376,11 @@ export default function AddSeeds() {
               ariaLabel="How do you want to add seeds?"
               value={mode}
               onChange={handleChoose}
-              // BUG-SEEDEXTRACTOR-001 — the two bulk tiles are gated because they have never worked
-              // in prod: both need ANTHROPIC_API_KEY, which is not in the secrets bundle, so both
-              // 501 on tap. Dave 2026-09-03: do not provision it, hide the dead buttons, revisit
-              // well down the line. Filtered rather than deleted — every path behind them is intact
-              // and flipping SEED_BULK_EXTRACT_ENABLED true is the only change needed once the key
-              // exists. With the flag off the grid renders ONE tile, which is honest: "One item" is
-              // genuinely the only way to add seeds today.
+              // The two bulk tiles are gated because both need ANTHROPIC_API_KEY, which is not in the
+              // secrets bundle, so both 501 on tap. Filtered rather than deleted: every path behind them is
+              // intact, and flipping SEED_BULK_EXTRACT_ENABLED true is the only change needed once the key
+              // exists. With the flag off the grid renders ONE tile, which is honest: "One item" is the only
+              // way to add seeds.
               options={[
                 ...(SEED_BULK_EXTRACT_ENABLED ? [
                   { value: 'photo', label: 'Photo of packets', icon: <Icon name="media.camera" size={26} decorative /> },
@@ -451,7 +430,6 @@ export default function AddSeeds() {
           </div>
         )}
 
-        {/* Review list */}
         {rows && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
@@ -511,9 +489,9 @@ export default function AddSeeds() {
             </div>
 
             <div style={{ display: 'flex', gap: 14, alignItems: 'center', paddingTop: 4 }}>
-              {/* Held while the crop-type catalog loads (BUG-ADDSEEDSVALIDSLUGS-001): a save in that
-                  window would type against the frozen list. Bounded: useCropTypes always settles
-                  (the fetch times out), and on failure Save all opens on the frozen-list fallback. */}
+              {/* Held while the crop-type catalog loads: a save in that window would type against the
+                  frozen list. Bounded: useCropTypes always settles (the fetch times out), and on failure
+                  Save all opens on the frozen-list fallback. */}
               <Button
                 type="button"
                 variant="primary"
@@ -532,7 +510,6 @@ export default function AddSeeds() {
         )}
       </div>
 
-      {/* Row edit Sheet */}
       <Sheet
         armsBack
         open={!!editingRow}
@@ -541,9 +518,8 @@ export default function AddSeeds() {
       >
         {editingRow && (
           <div style={{ padding: '4px 24px 8px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {/* BUG-FIELDCHILDDROP-001: this hint was a second child of the Field and had
-                never rendered. The `help` prop is where it belongs — same position under
-                the control, plus the aria-describedby the loose <div> never had. */}
+            {/* Hint goes in the `help` prop: Field takes exactly one control child, so a second child never
+                rendered, and `help` also supplies the aria-describedby. */}
             <Field
               label="Variety"
               help={<>Leave blank to create &ldquo;{varietyCols(editingRow.packet).name}&rdquo; as a new variety on save.</>}

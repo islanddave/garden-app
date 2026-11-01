@@ -37,7 +37,6 @@ export default function Login() {
     }}>
       <div style={{ width: '100%', maxWidth: '380px' }}>
 
-        {/* Header */}
         <div style={{ textAlign: 'center', marginBottom: '28px' }}>
           <div style={{ fontSize: '2.5rem', marginBottom: '8px' }}>🌿</div>
           <h1 style={{ color: P.green, fontSize: '1.4rem', fontWeight: 700, margin: 0 }}>
@@ -49,7 +48,6 @@ export default function Login() {
           </p>
         </div>
 
-        {/* Card */}
         <div style={{
           backgroundColor: P.white,
           border: `1px solid ${P.border}`,
@@ -57,14 +55,12 @@ export default function Login() {
           padding: '28px',
         }}>
 
-          {/* Not-authorized message (set by AuthContext after allowlist rejection) */}
           {notAuthorized && (
             <div role="alert" style={errorBannerStyle}>
               Access not granted. This is a private garden app.
             </div>
           )}
 
-          {/* Runtime error (e.g. OAuth initiation failure) */}
           {error && (
             <div role="alert" style={errorBannerStyle}>
               {error}
@@ -112,7 +108,6 @@ export default function Login() {
   )
 }
 
-// ---- Google "G" logo SVG ----
 function GoogleLogo() {
   return (
     <svg width="18" height="18" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
@@ -130,7 +125,6 @@ function GoogleLogo() {
   )
 }
 
-// ---- Styles ----
 const errorBannerStyle = {
   backgroundColor: '#fef2f2',
   border: '1px solid #fecaca',

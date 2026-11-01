@@ -1,21 +1,15 @@
-// SettingsControls — V4-HANDEDNESSCONTROLS-001 (BD-054). Which hand works the phone.
+// SettingsControls: which hand works the phone.
 //
-// WHY A SETTING AND NOT A CONSTANT. Dave, verbatim: "I want a setting if at all possible. My usage
-// may easily change based on setup/kitchen space." A hardcoded left-handed layout would also be
-// wrong for the app's other user — and getting it wrong for her is not cosmetic, because it puts a
-// 10-20 day snooze under her thumb (src/lib/handedness.js).
+// A setting and not a constant: usage changes with setup and kitchen space, and a hardcoded
+// left-handed layout would be wrong for the app's other user, putting a 10-20 day snooze under her
+// thumb (src/lib/handedness.js).
 //
-// WHY ITS OWN PAGE RATHER THAN A SECTION OF /settings/notifications. That page is titled
-// "Notifications" and is about critter visits; handedness is neither. Settings.jsx's own header has
-// anticipated this since MVP-Critter Session 4 — "when a second settings page lands later, refactor
-// to a real /settings parent". This is that second page, added WITHOUT doing the parent refactor:
-// /settings still redirects to notifications and its two tests are untouched. Turning /settings into
-// a real index is a nav-structure change nobody asked for in this lane, and it would put a hop in
-// front of the one destination that exists today.
+// Its own page rather than a section of /settings/notifications, which is about critter visits.
+// /settings still redirects to notifications; turning it into a real index is a nav-structure change
+// that would add a hop in front of the one destination that exists.
 //
-// NO CONFIRM, NO SAVE BUTTON, NO TOAST. The choice applies on tap and is instantly reversible by
-// the control that made it, so a confirmation step would be pure friction — and the Reward-UX
-// posture forbids celebrating an operational control anyway.
+// No confirm, no save button, no toast: the choice applies on tap and is instantly reversible by the
+// control that made it, and the Reward-UX posture forbids celebrating an operational control.
 import React from 'react'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
@@ -39,9 +33,9 @@ export default function SettingsControls() {
   useHandednessSync(getToken)
 
   const choose = (v) => {
-    // LOCAL FIRST, ALWAYS. writeHand dispatches the change event, so every wired surface — including
-    // the preview below — turns over in the same frame whether or not the network is reachable.
-    // The server write is fire-and-forget on top of it and NEVER throws (notificationPrefsClient).
+    // Local first: writeHand dispatches the change event, so every wired surface (including the
+    // preview below) turns over in the same frame whether or not the network is reachable. The server
+    // write is fire-and-forget on top of it and never throws (notificationPrefsClient).
     writeHand(v)
     saveHandedness({ getToken, value: v })
   }
@@ -92,10 +86,9 @@ export default function SettingsControls() {
         })}
       </div>
 
-      {/* THE PREVIEW IS THE POINT OF THIS PAGE, not decoration. The setting's whole consequence is
-          WHICH CONTROL ENDS UP UNDER YOUR THUMB, and that is unreadable from two radio labels. This
-          is a real orderByThumb row — the same primitive HarvestWatchBand uses — so it cannot drift
-          from the surfaces it is describing, and it flips as you tap. */}
+      {/* The preview is the point of this page: the setting's whole consequence is which control ends up
+          under your thumb, and that is unreadable from two radio labels. It is a real orderByThumb row,
+          the same primitive HarvestWatchBand uses, so it cannot drift from the surfaces it describes. */}
       <div style={{ marginTop: 24 }}>
         <div style={{ fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase', color: P.light }}>
           What changes
@@ -119,10 +112,8 @@ export default function SettingsControls() {
         </div>
       </div>
 
-      {/* Honest about the scope of what just changed. The preference is stored on this device
-          immediately; the cross-device half needs a column that is authored and not yet applied
-          (migrations/v4-handednesscontrols-001), so promising "on all your devices" here would be a
-          claim the app cannot currently keep. */}
+      {/* The copy claims only what is true: the preference is stored on this device immediately, and
+          the cross-device half is a best-effort server write, so "on all your devices" would overpromise. */}
       <p style={{ fontSize: '0.78rem', color: P.light, marginTop: 16, lineHeight: 1.5 }}>
         Saved on this device. The weigh-in button on the Harvests header stays on the right either
         way — you tap it before you pick anything up, so both hands are free.
@@ -133,11 +124,10 @@ export default function SettingsControls() {
   )
 }
 
-// THE HOUSEHOLD VIEW'S SWITCH (Today finish plan D-3; Dave 10-11, "settings row"). The redesigned Today has no
-// pill of its own, and once the old page goes this is the only way to turn it on. It is the SAME per-device key
-// the old page's pill writes (lib/householdView.js), so the two pages agree; Today reads it live. Per phone, on
-// purpose (SF6): turning it on here never puts someone else's care on another phone. No confirm and no toast,
-// like the handedness choice above: it applies on tap and the same tap undoes it.
+// The household view's switch. The redesigned Today has no pill of its own, so this is the way to turn it on.
+// It is the same per-device key the old page's pill writes (lib/householdView.js), so the two pages agree;
+// Today reads it live. Per phone on purpose: turning it on here never puts someone else's care on another
+// phone. No confirm and no toast, like the handedness choice above: it applies on tap and the same tap undoes it.
 function HouseholdRow() {
   const on = useShowOthers()
   return (
