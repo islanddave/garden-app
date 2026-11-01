@@ -1,24 +1,17 @@
-// season-stats.js — V5-SEASONSTATS-001. GET /api/harvests/season-stats?season=YYYY[&sections=a,b]
+// GET /api/harvests/season-stats?season=YYYY[&sections=a,b]: read-only season stats route (V5-SEASONSTATS-001).
+// Rides the existing /api/harvests prefix like watch-route.js; no new Function URL or deploy entry.
 //
-// Layer B of the season stats engine (plan D1): a READ-ONLY route inside lambda/harvests, riding the
-// EXISTING /api/harvests prefix in src/lib/api.js exactly like watch-route.js — no new Function URL, repo variable, staging URL or deploy matrix entry, and
-// GARDEN_HOUSEHOLD_IDS is already set on this Lambda.
+// THE NUMBERS LIVE IN THE VIEWS. Every figure comes from a public.stat_* view; this module only filters
+// them and season-stats-sections.js shapes the rows into the v1 contract (tests/fixtures/season-stats.v1.json).
+// Nothing here computes a statistic.
 //
-// THE NUMBERS LIVE IN THE VIEWS. Every figure comes from a public.stat_* view
-// (migrations/v5-seasonstats-001); this module filters them to the caller's household and season,
-// and season-stats-sections.js shapes the rows into the v1 contract
-// (tests/fixtures/season-stats.v1.json). Nothing here computes a statistic.
+// HOUSEHOLD SCOPE: every view exposes `owner`, and EVERY query below must filter
+// `owner = ANY(householdIds)` and `grow_year = year`, with householdScope() from ./household.js.
 //
-// HOUSEHOLD SCOPE: every view exposes `owner`, and EVERY query below filters
-// `owner = ANY(householdIds)` and `grow_year = year` — householdScope() from ./household.js, the
-// same membership-gated scope the rest of this Lambda uses. A non-member sees only their own rows.
+// CACHE: 60 s in module memory, keyed household|year|sections. A warm Lambda serves an answer up to 60 s stale.
 //
-// CACHE (plan D5): 60 s in module memory, keyed household|year|sections. The page is a season review
-// that changes at most a few times a day; the cache only absorbs the page's own re-renders and
-// tab flips. A warm Lambda serves a stale-by-≤60 s answer, which is the stated contract.
-//
-// Every date column is cast ::text in SQL so the wire carries 'YYYY-MM-DD' strings with no timezone
-// math in JS (the driver would otherwise hand back a Date at UTC midnight — the previous ET evening).
+// Date columns are cast ::text in SQL so the wire carries 'YYYY-MM-DD' strings; the driver would otherwise
+// return a Date at UTC midnight, which is the previous ET evening.
 
 import {
   STATS_VERSION, SECTION_IDS, LONGEST_LIMIT, parseSections, queriesFor, buildEnvelope,

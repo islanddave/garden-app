@@ -1,17 +1,13 @@
-// season-stats-sections.js — V5-SEASONSTATS-001. PURE shapers for GET /api/harvests/season-stats.
+// Pure shapers for GET /api/harvests/season-stats (V5-SEASONSTATS-001). DB-free so they unit-test under
+// the root vitest run.
 //
-// Every number is computed in the stat_* views (migrations/v5-seasonstats-001/0a-additive-ddl.sql).
-// This module only does the three things a view cannot: merge rows across household OWNERS (a view
-// is keyed by owner and cannot know the household, which lives in GARDEN_HOUSEHOLD_IDS), round for
-// the wire (pounds to LB_DP only — display rounding is the client's), and lay each section out in the v1 contract. The contract is
-// tests/fixtures/season-stats.v1.json — keys, nesting and types there are the source of truth, and
-// season-stats-sections.test.js holds this module to that file.
+// Every number is computed in the stat_* views. This module only merges rows across household OWNERS (a view
+// is keyed by owner and cannot know the household), rounds for the wire, and lays each section out in the
+// v1 contract. tests/fixtures/season-stats.v1.json is the source of truth for keys, nesting and types;
+// season-stats-sections.test.js holds this module to it.
 //
-// No verdict sentences and no Limits prose leave the server: meta carries numbers and limit codes,
-// and the client writes the words (plan D4).
-//
-// DB-free so it unit-tests under the root vitest run without neon/clerk/aws (same split as
-// aggregate.js / watch.js).
+// No verdict sentences or Limits prose leave the server: meta carries numbers and limit codes, and the
+// client writes the words.
 
 export const STATS_VERSION = 1;
 
@@ -42,9 +38,8 @@ export const HEAT_BANDS = Object.freeze([
 export const LONGEST_LIMIT = 15;
 export const TOMATO_MEASURED_SHARE_MIN = 0.7;
 export const SEP_MIN_FRUIT = 5;
-// Every pound figure leaves the server at 3 dp and is rounded ONCE, by the client, for display. Two
-// sections rounding the same planting's pounds to different places (2 dp here, 1 dp there) put two
-// different figures for one plant on one page (4.3 on the keep list, 4.2 on its saved-seed card).
+// Every pound figure leaves the server at 3 dp and is rounded ONCE, by the client, for display. Rounding
+// the same planting's pounds to different places in two sections would show two figures for one plant.
 export const LB_DP = 3;
 
 // ── helpers ──────────────────────────────────────────────────────────────────────────────────────
@@ -71,9 +66,8 @@ export function day(v) {
 const minDay = (a, b) => (a == null ? b : b == null ? a : (a <= b ? a : b));
 const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 
-// A per-owner statistic (a median, a pooled ratio) cannot be merged by summing. When a household has
-// more than one owner contributing rows, report the owner with the most rows — documented as a limit
-// of the per-owner views, and moot today (one owner holds every planting that produces).
+// A per-owner statistic (a median, a pooled ratio) cannot be merged by summing. With several owners
+// contributing rows, report the owner with the most rows; moot while one owner holds every producing planting.
 function dominantOwnerValue(rows, key) {
   const byOwner = new Map();
   for (const r of rows) {
