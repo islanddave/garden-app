@@ -1,12 +1,12 @@
-// W-DEL (V4-PHOTOREASSIGN-001 / defect D2) — the photo soft-delete + restore CORE.
+// Photo soft-delete + restore CORE.
 //
-// WHY A SEPARATE MODULE AND NOT MORE OF index.js. index.js "is not importable from repo root (its
-// @aws-sdk/@clerk/@neondatabase deps are per-Lambda, not installed here)", so everything written
-// into it can only ever be covered by SQL-TEXT assertions — a tier that cannot prove a statement
-// runs, cannot prove ORDER, cannot prove a branch was taken, and has already let this repo ship
-// features that were inert. This file imports only the dependency-free ./audit-actor.js, so its behaviour is
-// executed by the unit suite against a recording fake `sql` (the household.js / authz-parents.js /
-// photo-access.js precedent). index.js keeps only auth, routing, and the response envelope.
+// WHY A SEPARATE MODULE AND NOT MORE OF index.js. index.js is not importable from the repo root (its
+// @aws-sdk/@clerk/@neondatabase deps are per-Lambda, not installed here), so anything written into it
+// can only be covered by SQL-TEXT assertions — a tier that cannot prove a statement runs, cannot prove
+// ORDER, and cannot prove a branch was taken. This file imports only the dependency-free
+// ./audit-actor.js, so its behaviour is executed by the unit suite against a recording fake `sql` (the
+// household.js / authz-parents.js / photo-access.js precedent). index.js keeps only auth, routing, and
+// the response envelope.
 //
 // SOFT-DELETE-ONLY. Nothing here removes a row and nothing here touches S3. `deleted_at = now()`
 // is the delete; default reads already filter it; every relation is preserved (no FK hard-cascade
@@ -19,10 +19,10 @@ import { withActor } from './audit-actor.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// BUG-VARIETYACTOREMPTY-001. Kept byte-identical in behaviour to auditActor() in
-// lambda/varieties/validate.js — each Lambda zips its own dir, so the two plant_varieties writers
-// cannot share a module; lambda/audit-actor-empty.test.js drives BOTH and fails if they diverge.
-// Rationale for throwing rather than substituting a sentinel is on softDeletePhoto below.
+// Kept byte-identical in behaviour to auditActor() in lambda/varieties/validate.js — each Lambda zips
+// its own dir, so the two plant_varieties writers cannot share a module; lambda/audit-actor-empty.test.js
+// drives BOTH and fails if they diverge. Rationale for throwing rather than substituting a sentinel is
+// on softDeletePhoto below.
 function auditActor(userId) {
   if (typeof userId !== 'string' || userId.trim() === '') {
     throw new Error('audit actor is absent — refusing to write an unattributable audit row');
@@ -30,10 +30,10 @@ function auditActor(userId) {
   return userId;
 }
 
-// ── DD4: PHOTO_POINTERS is the ONE named set, never a hand-written list per call site. ───────────
+// ── PHOTO_POINTERS is the ONE named set, never a hand-written list per call site. ───────────────
 //
-// Snapshot of live prod `pg_constraint WHERE confrelid = 'photos'::regclass` (introspected
-// 2026-08-12): 12 FK columns across 8 tables. Refresh with
+// Snapshot of live prod `pg_constraint WHERE confrelid = 'photos'::regclass`: 12 FK columns across 8
+// tables. Refresh with
 //   SELECT conrelid::regclass::text, a.attname::text, c.confdeltype::text
 //     FROM pg_constraint c JOIN unnest(c.conkey) k ON true
 //     JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k
@@ -46,16 +46,16 @@ function auditActor(userId) {
 //   inside this app cannot retract that post, so erasing the local record of it would make the
 //   ledger lie. RETAIN is a correctness decision, not laziness.
 //
-// `surface` is the relation the statement targets, which is NOT always `table` (DD5): plants and
+// `surface` is the relation the statement targets, which is NOT always `table`: plants and
 // plant_projects are written through the auto-updatable views `garden_node` / `container` (the same
 // surface autoPromoteFeatured and the set-featured validators write), and plant_varieties through
 // `cultivar` (the surface lambda/varieties writes). Base-table triggers still fire through a view.
 //
-// `featured_image_id` is the deprecated V1-era twin of featured_photo_id (0 rows populated on all
-// four tables, live but unexercised). Open decision D-2 ("deprecate now or keep supported?") is NOT
-// settled, so this lane does NOT stop accepting it in lambda/inventory-items — it only guarantees
-// that if a row ever DOES carry one, deleting the photo clears it. Nulling a column nobody writes
-// costs four no-op statements and removes the entire "we forgot the twin" failure mode.
+// `featured_image_id` is the deprecated V1-era twin of featured_photo_id (unpopulated on all four
+// tables, live but unexercised). Whether to deprecate it is an open decision, so this code does NOT
+// stop accepting it in lambda/inventory-items — it only guarantees that if a row ever DOES carry one,
+// deleting the photo clears it. Nulling a column nobody writes costs four no-op statements and
+// removes the entire "we forgot the twin" failure mode.
 export const PHOTO_POINTERS = [
   { table: 'plants', column: 'featured_photo_id', surface: 'public.garden_node', action: 'null' },
   { table: 'plants', column: 'featured_image_id', surface: 'public.garden_node', action: 'null' },
@@ -74,19 +74,19 @@ export const PHOTO_POINTERS = [
   { table: 'share_log', column: 'photo_id', surface: 'public.share_log', action: 'retain' },
 ];
 
-// SCOPING RULE for every null statement: keyed on `<pointer column> = <deleted photo id>` and
-// NOTHING ELSE. Deliberate, and uniform across all eleven arms:
-//   • It is inherently safe. The caller's ownership of the PHOTO is proven by the pre-read before
-//     any statement is built, so the only rows reachable are rows pointing at a photo this
-//     household owns. Clearing a reference to a resource you own is not a foreign-row mutation.
+// SCOPING RULE for every null statement: keyed on `<pointer column> = <deleted photo id>` and NOTHING
+// ELSE. Deliberate, and uniform across all eleven arms:
+//   • It is inherently safe. The caller's ownership of the PHOTO is proven by the pre-read before any
+//     statement is built, so the only rows reachable are rows pointing at a photo this household owns.
+//     Clearing a reference to a resource you own is not a foreign-row mutation.
 //   • A household predicate would instead LEAVE a pointer at a soft-deleted photo whenever the two
-//     ever diverge, which is precisely the INV-HERO violation this work exists to close — and it
-//     would make preflight check #2 ("heroes pointing at a soft-deleted photo == 0") unsatisfiable
-//     rather than meaningful.
-//   • R8: plant_varieties is a SHARED cultivar catalogue (424 rows, RLS disabled, created_by values
-//     include `system` and offline intake scripts). The plan rules that arm must be photo_id-scoped
-//     only. Applying that rule uniformly is what lets the whole set be one loop instead of eleven
-//     bespoke predicates with eleven chances to differ.
+//     ever diverge, which is precisely the hero-pointing-at-a-deleted-photo violation this exists to
+//     close, and would make preflight check #2 ("heroes pointing at a soft-deleted photo == 0")
+//     unsatisfiable rather than meaningful.
+//   • plant_varieties is a SHARED cultivar catalogue (RLS disabled, created_by values include `system`
+//     and offline intake scripts), so that arm must be photo_id-scoped only. Applying the rule
+//     uniformly is what lets the whole set be one loop instead of eleven bespoke predicates with
+//     eleven chances to differ.
 // NO statement here names `created_by` — `prevent_ownership_transfer` guards six of these tables
 // and a NULL -> value or value -> value write on that column counts as a transfer.
 
@@ -135,10 +135,10 @@ function pointerNullStatement(sql, p, photoId) {
 // that by row-count on the UPDATE is what conflates them.
 //
 // The effective_* columns implement the EVENT-INCLUSIVE planting linkage: EventNew logs event
-// photos with {project_id, event_id} and NO plant_id, and 123 of prod's 250 explicit plant heroes
-// are attached that way. `photos.plant_id` alone would miss the majority of them on restore. This
-// is byte-for-byte the predicate lambda/plants/index.js's set-featured validator already enforces
-// at WRITE time, which is the rule: the replay may not be STRICTER than the write, or the user
+// photos with {project_id, event_id} and NO plant_id, and most explicit plant heroes are attached
+// that way. `photos.plant_id` alone would miss the majority of them on restore. This is
+// byte-for-byte the predicate lambda/plants/index.js's set-featured validator already enforces at
+// WRITE time, which is the rule: the replay may not be STRICTER than the write, or the user
 // re-picks the hero, the write accepts it, and the next restore drops it again.
 //
 // Deliberately NOT event-inclusive for projects/locations/inventory/spaces: each of those
@@ -162,9 +162,9 @@ async function loadOwnedPhotoForDelete(sql, photoId, householdIds) {
   return rows.length ? rows[0] : null;
 }
 
-// BUG-PHOTODELETEDEADLOCK500-001 — what the delete sheet prints when this delete lost a deadlock.
-// The client shows the server's `error` verbatim (src/lib/api.js -> PhotoLibrary's delete sheet), so
-// this sentence IS the on-screen sentence.
+// What the delete sheet prints when this delete lost a deadlock. The client shows the server's
+// `error` verbatim (src/lib/api.js -> PhotoLibrary's delete sheet), so this sentence IS the
+// on-screen sentence.
 export const PHOTO_DELETE_RETRY_COPY =
   'That photo was being changed by something else just then. It was not deleted. Try again.';
 
@@ -179,15 +179,15 @@ export const PHOTO_DELETE_RETRY_COPY =
  *
  * Statement 0 is `set_config('app.actor_clerk_sub', …, true)` — transaction-local. plant_varieties
  * fires trg_audit_plant_varieties on UPDATE, which reads that GUC and otherwise records the actor as
- * 'system'. The events/plants/projects/varieties lambdas all set it; photos never has.
+ * 'system'.
  *
- * BUG-VARIETYACTOREMPTY-001 — the bind goes through auditActor(), not `userId ?? 'system'`. `??`
- * only catches null/undefined, and the value that actually reaches the audit trail as '' is neither:
- * `set_config(name, NULL, true)` STORES the empty string rather than leaving the GUC unset, so
- * `COALESCE(current_setting(...), 'system')` in the trigger returns '' and the row records an actor
- * that is present-but-nameless. 201 such rows exist on prod. `?? 'system'` also passes a literal ''
- * straight through. Every caller is behind `if (!userId) return 401` (photos/index.js), so refusing
- * here is unreachable by design — it is what keeps it that way.
+ * The bind goes through auditActor(), not `userId ?? 'system'`. `??` only catches null/undefined, and
+ * the value that actually reaches the audit trail as '' is neither: `set_config(name, NULL, true)`
+ * STORES the empty string rather than leaving the GUC unset, so `COALESCE(current_setting(...),
+ * 'system')` in the trigger returns '' and the row records an actor that is present-but-nameless.
+ * `?? 'system'` also passes a literal '' straight through. Every caller is behind
+ * `if (!userId) return 401` (photos/index.js), so refusing here is unreachable by design — it is what
+ * keeps it that way.
  *
  * @returns {{status:number, body:object}}
  */
@@ -199,7 +199,7 @@ export async function softDeletePhoto(sql, { photoId, householdIds, userId, spac
   // existence oracle for another household's photo ids, which every other route here avoids.
   if (!photo) return { status: 404, body: { error: 'Photo not found' } };
 
-  // W-DEL-AC2. Re-delete is a 200, and it must NOT re-stamp deleted_at: that timestamp is the only
+  // Re-delete is a 200, and it must NOT re-stamp deleted_at: that timestamp is the only
   // forensic marker of when the delete happened, and the documented data-repair rollback
   // (`UPDATE photos SET deleted_at = NULL WHERE deleted_at > <deploy ts>`) is only correct because
   // of it. Returning early is what pins it — the UPDATE below additionally carries
@@ -228,7 +228,7 @@ export async function softDeletePhoto(sql, { photoId, householdIds, userId, spac
   } catch (err) {
     // 40P01 — Postgres picked this transaction as a deadlock victim and rolled it back WHOLE: the
     // photo is not deleted and no pointer was nulled, so "try again" is true. Reproduced on real
-    // Postgres against a planting merge (tests/integration/seed-lot-parents.int.test.js, D-3): this
+    // Postgres against a planting merge (tests/integration/seed-lot-parents.int.test.js): this
     // takes the photo row and then the rows that feature it, where a merge and a seed-lot parents
     // save take their lots first. The statement order stays where it is, so the pair that remains
     // is answered rather than chased — a 409 the user can act on, not the route's 500.
@@ -250,10 +250,10 @@ export async function softDeletePhoto(sql, { photoId, householdIds, userId, spac
     return { status: 200, body: { id: photoId, deleted_at: now?.deleted_at ?? null, affected: [], already_deleted: true } };
   }
 
-  // STABLE CONTRACT: an array of {table, column, id}. Not a bare id array — 22 photos on prod today
-  // are the hero of two or more parents, and one table can be hit through two pointer columns, so a
-  // flat id list cannot express what actually changed. Clients must tolerate its ABSENCE (an old
-  // Lambda paired with a new client) and fall back to coarse invalidation.
+  // STABLE CONTRACT: an array of {table, column, id}. Not a bare id array — a photo can be the hero of
+  // two or more parents, and one table can be hit through two pointer columns, so a flat id list
+  // cannot express what actually changed. Clients must tolerate its ABSENCE (an old Lambda paired
+  // with a new client) and fall back to coarse invalidation.
   const affected = [];
   pointers.forEach((p, i) => {
     for (const row of results[i + 2] ?? []) affected.push({ table: p.table, column: p.column, id: row.id });
@@ -262,7 +262,7 @@ export async function softDeletePhoto(sql, { photoId, householdIds, userId, spac
   return { status: 200, body: { id: deleted.id, deleted_at: deleted.deleted_at, affected } };
 }
 
-// The restore's hero replay (DD8). Mirrors autoPromoteFeatured's shape — same `IS NULL` guard, same
+// The restore's hero replay. Mirrors autoPromoteFeatured's shape — same `IS NULL` guard, same
 // ownership predicates, same non-fatal contract — with two deliberate differences:
 //   1. The plants arm keys on the EVENT-INCLUSIVE effective planting id (see
 //      loadOwnedPhotoForDelete), because most plant heroes are event-linked.
@@ -271,15 +271,14 @@ export async function softDeletePhoto(sql, { photoId, householdIds, userId, spac
 //      alter the auto-promote semantics of every POST.
 //
 // `featured_photo_id IS NULL` is what makes this a RESTORE and not a takeover: a hero the user
-// re-picked while the photo was deleted wins, exactly as DD8 requires. Consequence to state plainly
-// rather than hide: this is a best-fit replay, not a byte-exact one. photos has no column to persist
-// the delete's RETURNING set in and this lane may not ship DDL, so a photo that was merely IN a
-// parent's gallery (never its hero) can be promoted on restore if that parent has no hero at the
-// time. It can never DISPLACE a hero.
+// re-picked while the photo was deleted wins. Consequence to state plainly rather than hide: this
+// is a best-fit replay, not a byte-exact one. photos has no column to persist the delete's
+// RETURNING set in, so a photo that was merely IN a parent's gallery (never its hero) can be
+// promoted on restore if that parent has no hero at the time. It can never DISPLACE a hero.
 //
-// featured_image_id / plant_varieties.photo_id / preservation_log.photo_id are not replayed: all
-// three are 0-populated on prod and none has a designation UI, so there is no user intent to
-// restore. Their delete-side null remains, which is the safe direction.
+// featured_image_id / plant_varieties.photo_id / preservation_log.photo_id are not replayed: none
+// is populated on prod and none has a designation UI, so there is no user intent to restore.
+// Their delete-side null remains, which is the safe direction.
 //
 // The garden_node and spaces arms go through withActor (their audit triggers read the actor GUC); the other three
 // tables have no actor trigger and stay bare. A refused actor throws into the non-fatal catch below.
@@ -343,11 +342,11 @@ async function restoreHeroPointers(sql, photo, householdIds, userId, spaceEnable
 }
 
 /**
- * POST /api/photos/:id/restore — the DURABLE recovery path (DD8).
+ * POST /api/photos/:id/restore — the DURABLE recovery path.
  *
  * This is why delete may carry low friction: forgiveness does not expire. A 5-second undo toast is
  * convenience; it is NOT the recovery model, and this project already paid for that lesson once
- * (V3-ARCHIVE-001 shipped archive with a 6s undo and no restore path).
+ * (archive once shipped with a short undo toast and no restore path).
  *
  * photos_must_have_parent needs no re-validation here: restore changes only deleted_at, and the row
  * satisfied the CHECK when it was written.
@@ -378,8 +377,7 @@ export async function restorePhoto(sql, { photoId, householdIds, userId, spaceEn
     // idx_photos_content_hash_uniq is UNIQUE (created_by, content_hash) WHERE content_hash IS NOT
     // NULL AND deleted_at IS NULL — a PARTIAL index the deleted row is currently outside of. Coming
     // back inside it collides if the same bytes were re-uploaded meanwhile. A typed 409 says
-    // something the user can act on; a 500 says the app is broken. (Inert today by construction:
-    // content_hash is NULL on all 1253 live rows, so this path cannot be exercised on prod data.)
+    // something the user can act on; a 500 says the app is broken.
     if (err?.code === '23505') {
       return { status: 409, body: { error: 'A copy of this photo has since been re-uploaded', code: 'photo_duplicate' } };
     }
@@ -393,25 +391,24 @@ export async function restorePhoto(sql, { photoId, householdIds, userId, spaceEn
   return { status: 200, body: { id: restored.id, deleted_at: null } };
 }
 
-// ── W-RESTORE — the "Recently deleted" LIST (DD8's other half). ───────────────────────────────────
+// ── The "Recently deleted" LIST ────────────────────────────────────────────────────────────────────
 //
 // WHY IT LIVES HERE AND NOT IN index.js. This is the ONE read in the whole photos surface that is
-// SUPPOSED to return soft-deleted rows, and read-paths-deletedat.test.js's 0A.6 enumeration guard
+// SUPPOSED to return soft-deleted rows, and read-paths-deletedat.test.js's enumeration guard
 // asserts that every `SELECT ... FROM photos` template in index.js carries `deleted_at IS NULL`.
-// Putting the query here is not a dodge of that guard — it is the exemption made STRUCTURAL and
+// Putting the query here is not a dodge of that guard — it makes the exemption STRUCTURAL and
 // nameable: the guard keeps meaning "no serving read in index.js leaks deleted photos", this module
 // holds the single deliberate inverse, and photoDelete.test.js pins that this file contains exactly
 // ONE `deleted_at IS NOT NULL` SELECT so a second one cannot appear unremarked. It also puts the
 // query in the tier that can actually EXECUTE it (index.js is unit-testable only as source text).
 //
 // SCOPE: `created_by = ANY(householdIds)` — byte-identical to the live GET /api/photos list and to
-// softDeletePhoto's own pre-read. Dave and Jen see (and can restore) each other's deletions, which
-// is the same household decision the DELETE route documents; V5-PERMSHARD-001 is where that changes,
-// if it ever does.
+// softDeletePhoto's own pre-read. Household members see (and can restore) each other's deletions,
+// the same household decision the DELETE route documents.
 //
 // ORDER is `deleted_at DESC` — most-recently-DELETED first, which is the order the user's memory is
 // in ("I just deleted the wrong one"), NOT created_at. `id DESC` is a tiebreak so two photos deleted
-// inside one transaction (the W-EVTDEL multi-photo path deletes several at one `now()`) have a
+// inside one transaction (the multi-photo event-delete path deletes several at one `now()`) have a
 // stable order across refetches instead of drifting between renders.
 //
 // NO permanent-delete/empty-trash companion exists, deliberately. Soft-Delete-Only: this surface can
