@@ -1,10 +1,8 @@
-// V4-STATUSTAP-001 — tappable planting-status control for the photo hero overlay.
-// Renders the PlantStatusBadge (or a "Set status" pill when unset) with a transparent native
-// <select> overlaid at inset:0, so a tap opens the native status menu (native picker UX + full
-// keyboard/AT operability) while the visible face is the multi-channel badge. Encapsulates the
-// status change — PUT /api/plants/:id {status} (COALESCE-partial, emits a status_change audit
-// event) + an operational toast (Reward-UX operational carve-out) — so it can live on the hero.
-// Replaces the redundant status <select> formerly in QuickActions (a single status control now).
+// Tappable planting-status control for the photo hero overlay. Renders the PlantStatusBadge (or a "Set status" pill
+// when unset) with a transparent native <select> overlaid at inset:0, so a tap opens the native status menu (native
+// picker UX + full keyboard/AT operability) while the visible face is the multi-channel badge. Encapsulates the status
+// change: PUT /api/plants/:id {status} (COALESCE-partial, emits a status_change audit event) + an operational toast
+// (Reward-UX operational carve-out), so it can live on the hero. It is the single status control on the page.
 import React, { useState } from 'react'
 import { useApiFetch } from '../../lib/api.js'
 import { useOptionalToast } from '../../context/ToastContext.jsx'

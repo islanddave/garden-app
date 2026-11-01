@@ -1,23 +1,20 @@
-// V4-MATURITYBASIS-001 — "add transplant date" affordance.
+// "Add transplant date" affordance.
 //
-// Slice A suppresses the Est.-harvest window for a from-transplant crop that has no
-// transplanted_at / planted_out_at (computeMaturity -> awaitingTransplant, design D3): 50 windows
-// in prod went blank rather than showing a date anchored on the wrong end of the nursery period.
-// A blank slot with no way out is a dead end, so this puts a tappable way to fix it EXACTLY where
-// the date would have been.
+// computeMaturity suppresses the Est.-harvest window for a from-transplant crop that has no transplanted_at /
+// planted_out_at (awaitingTransplant, design D3), rather than show a date anchored on the wrong end of the nursery
+// period. A blank slot with no way out is a dead end, so this puts a tappable way to fix it EXACTLY where the date
+// would have been.
 //
-// Deliberately NOT headline treatment (Dave's call): no banner, no card, no auto-opening modal, no
-// colour block. Same type scale (0.82rem) and same ink as the label it replaces; only the verb
-// phrase is tinted + underlined to read as tappable. The touch target is >=44px tall via minHeight
-// on an otherwise chrome-less button, so the affordance is thumb-sized on Android/Chrome without
-// gaining any visual weight.
+// Deliberately NOT headline treatment: no banner, no card, no auto-opening modal, no colour block. Same type scale
+// (0.82rem) and same ink as the label it replaces; only the verb phrase is tinted + underlined to read as tappable.
+// The touch target is >=44px tall via minHeight on an otherwise chrome-less button, so the affordance is thumb-sized
+// without gaining any visual weight.
 //
-// Saving PUTs /api/plants/:id {transplanted_at} and hands the date back through onSaved so the
-// parent can patch its record in place — the corrected window renders immediately, without a
-// refetch round trip. PUT, not PATCH: /api/plants/:id routes GET/PUT/DELETE only and 405s
-// everything else, and the PUT SET-list is COALESCE(body.x, p.x) per column, so a body carrying
-// only the two transplant keys sets those and preserves every other column. Omitting `status`
-// also keeps isStatusChange false, so a date save emits no status_change event.
+// Saving PUTs /api/plants/:id {transplanted_at} and hands the date back through onSaved so the parent can patch its
+// record in place: the corrected window renders immediately, without a refetch. PUT, not PATCH: /api/plants/:id
+// routes GET/PUT/DELETE only and 405s everything else, and the PUT SET-list is COALESCE(body.x, p.x) per column, so a
+// body carrying only the two transplant keys sets those and preserves every other column. Omitting `status` also
+// keeps isStatusChange false, so a date save emits no status_change event.
 import React, { useState } from 'react'
 import { P } from '../../lib/constants.js'
 import { useApiFetch } from '../../lib/api.js'
@@ -40,7 +37,6 @@ export default function TransplantDatePrompt({ planting, onSaved }) {
   const [open, setOpen] = useState(false)
   const [date, setDate] = useState('')
   const [saving, setSaving] = useState(false)
-  // V4-BACKNAV-001 Slice P (extended) — close-in-place interrupt prompt.
   const [err, setErr] = useState(null)
 
   if (!planting?.id) return null

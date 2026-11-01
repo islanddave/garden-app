@@ -1,7 +1,6 @@
-// HarvestFromPlanting — V4-HARVESTQTY-001. "How much has actually come off THIS planting."
-// Sibling of PutUpFromPlanting: same {planting, fetch} contract, same self-fetch posture. It reads
-// GET /api/events/harvest-summary?plant_id=<id> rather than widening GET /api/plants/:id — the
-// shared planting payload is on every planting surface and is not worth the blast radius.
+// HarvestFromPlanting: "How much has actually come off THIS planting." Sibling of PutUpFromPlanting: same
+// {planting, fetch} contract, same self-fetch posture. It reads GET /api/events/harvest-summary?plant_id=<id> rather
+// than widening GET /api/plants/:id, because the shared planting payload is on every planting surface.
 //
 // All aggregation lives in src/lib/harvestSummary.js (pure, clock-free). This file only renders.
 // The server supplies et_today so no client clock or timezone guess enters the computation.
@@ -18,19 +17,16 @@ import { growYearOfDayKey, growYearSpan } from '../../lib/growYear.js'
 
 const WINDOW_DAYS = 14
 
-// V4-SEASONCONV-001 — the season bucket is the GROW year (Nov 1 - Oct 31), not the calendar year.
-// Every other harvest surface already buckets on the grow year (Harvests.jsx, useHarvestSnapshot,
-// HarvestTimeframeChips, harvestExport, and all four lambda/harvests/* modules); this table was the
-// last calendar-year holdout, so a Nov or Dec pick would read as "next year" here and "this season"
-// everywhere else in the app.
+// The season bucket is the GROW year (Nov 1 - Oct 31), not the calendar year, as on every other harvest surface
+// (Harvests.jsx, useHarvestSnapshot, HarvestTimeframeChips, harvestExport, lambda/harvests/*), so a Nov or Dec pick
+// reads as "this season" here as everywhere else.
 //
-// The convergence lives in the CALLER on purpose. summarizeHarvests' existing opts.seasonStart
-// override CANNOT express a grow year: it derives seasonEnd as `${seasonStart.slice(0,4)}-12-31`
-// (harvestSummary.js:94), so passing '2025-11-01' yields a two-month season 2025-11-01..2025-12-31 —
-// wrong end, silently, with no error. Widening that lib is out of the question here (it is shared,
-// and growYear.js already imports etDay from it, so a growYear import back would close a cycle).
-// Instead: pre-filter the rows to the grow-year span and reuse summarizeHarvests' OWN allTime bucket
-// over that subset. Same aggregation code path, no second bucketing implementation to drift.
+// The convergence lives in the CALLER on purpose. summarizeHarvests' opts.seasonStart override CANNOT express a grow
+// year: it derives seasonEnd as `${seasonStart.slice(0,4)}-12-31` (harvestSummary.js), so '2025-11-01' yields a
+// two-month season, silently. Widening that lib is out (it is shared, and growYear.js already imports etDay from it,
+// so a growYear import back would close a cycle). Instead: pre-filter the rows to the grow-year span and reuse
+// summarizeHarvests' OWN allTime bucket over that subset. Same aggregation code path, no second bucketing
+// implementation to drift.
 //
 // Clock-free like the lib it wraps: `today` is the server's et_today, never new Date().
 export function growYearSlice(rows, today, timeZone) {
@@ -71,8 +67,8 @@ export default function HarvestFromPlanting({ planting, fetch }) {
     timeZone: data?.time_zone,
   }), [data])
 
-  // V4-SEASONCONV-001. Deliberately NOT summary.year — that bucket is still calendar-year and is now
-  // unread by any production surface. Must sit above the early returns: it is a hook.
+  // Deliberately NOT summary.year: that bucket is calendar-year and no production surface reads it. Must sit above the
+  // early returns: it is a hook.
   const season = useMemo(() => {
     const timeZone = data?.time_zone
     const today = data?.et_today
@@ -113,9 +109,8 @@ export default function HarvestFromPlanting({ planting, fetch }) {
   // `window_` (trailing underscore) — `window` is the global; shadowing it inside a component is a
   // footgun waiting for the next person who reaches for window.matchMedia in this file.
   const window_ = harvestWindow(summary)
-  // "2026 season" = the season ENDING Oct 2026 (growYear.js:3-4), matching harvestExport.js:28 and
-  // the Harvests page chips. Renaming alongside the math is not cosmetic: leaving "This year (2026)"
-  // over a Nov-1-based bucket would ship a mislabelled number the moment the two diverge.
+  // "2026 season" = the season ENDING Oct 2026 (growYear.js), matching harvestExport.js and the Harvests page chips.
+  // Leaving "This year (2026)" over a Nov-1-based bucket would ship a mislabelled number the moment the two diverge.
   const seasonLabel = season.growYear ? `${season.growYear} season` : 'This season'
   const rows = [
     { key: 'recent', label: `Last ${WINDOW_DAYS} days`, b: summary.recent },
@@ -154,9 +149,8 @@ export default function HarvestFromPlanting({ planting, fetch }) {
           Last picked {formatDate(summary.lastHarvestDate)}
         </div>
       )}
-      {/* Observed harvest window. Descriptive, never predictive — see harvestWindow() for why a
-          predicted first-pick date was measured and dropped. Hidden for a single-day history,
-          which the "Last picked" line above already states. */}
+      {/* Observed harvest window. Descriptive, never predictive (see harvestWindow() for why a predicted first-pick */}
+      {/* date was dropped). Hidden for a single-day history, which the "Last picked" line above already states. */}
       {window_?.isSpan && (
         <div data-testid="harvest-window" style={{ fontSize: '0.78rem', color: P.light, marginTop: 2 }}>
           {`Picking over ${window_.days} days · ${formatDate(window_.first)} – ${formatDate(window_.last)}`}

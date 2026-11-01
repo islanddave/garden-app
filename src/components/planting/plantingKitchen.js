@@ -1,19 +1,17 @@
 // src/components/planting/plantingKitchen.js
-// B′ release 3 — the planting page's kitchen lists (V4 §2.5 "Planting page"), the PURE half; and (Put-Up R2a)
-// the What its "Put something up" door opens with.
-// Reads GET /api/kitchen-batches?plant_id= → { batches, kept_fresh }. Everything here is a LIST — never a
-// sum, a count headline or a percentage (V4 §2.5; the reward-UX rule: ambient recognition only).
+// The planting page's kitchen lists, the PURE half; and the What its "Put something up" door opens with.
+// Reads GET /api/kitchen-batches?plant_id= → { batches, kept_fresh }. Everything here is a LIST, never a sum, a count
+// headline or a percentage (V4 §2.5; the reward-UX rule: ambient recognition only).
 //
-//   · "from <batch> →" — a single-planting batch whose jars already show in the planting's put-up list
-//     reads as a link on THOSE jar rows, not as a second row of its own;
+//   · "from <batch> →" — a single-planting batch whose jars already show in the planting's put-up list reads as a
+//     link on THOSE jar rows, not as a second row of its own;
 //   · every other batch that used the planting (a garden line, or stock drawn from it) is listed once;
 //   · each carries its "Next time…" lines (batch: its noted rows; a jar or an item: its notes' lines).
 //
-// Put-Up UX pass R1 — the put-up rows say what the Pantry says about the same jar: how many are left, and
-// the discard-date sentence from the one module every surface says it in (putup/jarWords.js discardWords),
-// so cured and cellared produce keep "use by" and everything else says "discard by". The words below read
-// the planting's own read (whats-put-up's record, jarRules.js projectRow), not the Pantry's row.
-// PURE.
+// The put-up rows say what the Pantry says about the same jar: how many are left, and the discard-date sentence from
+// the one module every surface says it in (putup/jarWords.js discardWords), so cured and cellared produce keep "use
+// by" and everything else says "discard by". The words below read the planting's own read (whats-put-up's record,
+// jarRules.js projectRow), not the Pantry's row.
 import { discardWords } from '../putup/jarWords.js'
 import { gramsOf } from '../putup/fermentMath.js'
 import { withFrom } from '../putup/origin.js'
@@ -29,11 +27,11 @@ export const batchHref = (id) => `/put-up?batch=${encodeURIComponent(id)}`
 // never spreads its own route state into /put-up. null when the planting has no name to say.
 export const batchLinkState = (planting) => withFrom(null, { label: planting?.name })
 
-// Put-Up R2a, lane K — the What the planting page's "Put something up" door opens with: THIS planting, so a
-// save records its plant_id, crop and variety exactly as the old Log form's prefill did. The name is the
-// planting's own, else its variety's (plantingWaveLabel's fallback, forms/PlantingSelect.jsx, without its
-// "Planting" word, which would be saved as the put-up's name). A blank name is never seeded: the door would
-// refuse it at Save. null when there is no id or no name to say — then the page offers no door at all.
+// The What the planting page's "Put something up" door opens with: THIS planting, so a save records its plant_id, crop
+// and variety. The name is the planting's own, else its variety's (plantingWaveLabel's fallback,
+// forms/PlantingSelect.jsx, without its "Planting" word, which would be saved as the put-up's name). A blank name is
+// never seeded: the door would refuse it at Save. null when there is no id or no name to say; then the page offers no
+// door at all.
 export function doorWhatOf(planting) {
   if (planting?.id == null) return null
   const name = String(planting.name ?? '').trim() || String(planting.variety_ref?.name ?? '').trim()
@@ -78,11 +76,10 @@ export function usedWords(b) {
 // un-flagged call would have returned.
 export const isUsedUp = (r) => r?.remaining_count != null && Number(r.remaining_count) <= 0
 
-// How many are left, on EVERY row still in the Pantry: "3 left" for counted stock; for a weighed bag (one
-// container in a mass unit; its grams are what was last weighed, else what it held) what is left IN THE UNIT
-// IT WAS TYPED IN — "about 1 lb left", and "about 412 g left" for one typed in grams. The Pantry row's words,
-// from the Pantry row's own function (Put-Up R2a, UX I-2), so the two surfaces cannot disagree about one
-// bag. null when nothing can be said.
+// How many are left, on EVERY row still in the Pantry: "3 left" for counted stock; for a weighed bag (one container in
+// a mass unit; its grams are what was last weighed, else what it held) what is left IN THE UNIT IT WAS TYPED IN:
+// "about 1 lb left", and "about 412 g left" for one typed in grams. The Pantry row's words, from the Pantry row's own
+// function, so the two surfaces cannot disagree about one bag. null when nothing can be said.
 export function leftWords(r) {
   if (!r) return null
   if (r.stock_mode === 'weighed') {
