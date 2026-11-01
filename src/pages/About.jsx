@@ -1,15 +1,14 @@
-// V3-RELEASENOTES-001 — About tab. Replaces the global <Footer/> (removed app-wide);
-// the app version + copyright now live here. Reads the __APP_VERSION__ global injected
-// by vite.config.js at build time (footer==tag convention preserved, just relocated).
+// About tab: the app version and copyright. Reads the __APP_VERSION__ global injected
+// by vite.config.js at build time.
 import React, { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { P } from '../lib/constants.js'
 
 const APP_VERSION = (typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : null) || '0.0.0'
 
-// BUG-STALECLIENT-001: derive the ACTIVE service worker's deploy tag from its versioned cache
-// names (static-v{version}-{sha}). "App" vs "Service worker" disagreeing on this page is the
-// one-glance stale-client diagnostic — reportable from any device with no devtools.
+// Derives the ACTIVE service worker's deploy tag from its versioned cache names
+// (static-v{version}-{sha}). "App" vs "Service worker" disagreeing on this page is the
+// one-glance stale-client diagnostic, reportable from any device with no devtools.
 export function swVersionFromCacheKeys(keys) {
   if (!Array.isArray(keys)) return null
   for (const k of keys) {

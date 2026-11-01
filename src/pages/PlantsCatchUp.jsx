@@ -1,8 +1,7 @@
-// PlantsCatchUp — V5-PLANTSTARTDATES-001. Rough start dates for the plantings that have none.
+// PlantsCatchUp: rough start dates for the plantings that have none.
 //
-// Replaces the V1.2a-4 "Catch up — coming soon" stub. The
-// rules (who is listed, which months, which day, the PUT body) live in lib/catchUp.js; this file is
-// the list and its per-row state.
+// The rules (who is listed, which months, which day, the PUT body) live in lib/catchUp.js; this file
+// is the list and its per-row state.
 //
 // ROWS NEVER MOVE. The list is a snapshot taken at load: a saved row now has a date, so re-deriving
 // membership after a save would slide it out from under the finger that just tapped Save — and every
@@ -233,7 +232,7 @@ export default function PlantsCatchUp() {
 
   const total = groups.reduce((n, g) => n + g.count, 0)
 
-  // Photos are windowed, rows are not (the My seeds and End of season pattern, BUG-PHOTOTHUMB-001): a
+  // Photos are windowed, rows are not (the My seeds and End of season pattern): a
   // thumbnail mounts for the first IMAGE_WINDOW_PAGE rows on the page, or once its row comes within
   // reach of the viewport. ~134 rows mounting every thumbnail at once is the eager-image freeze, and a
   // photo with no thumb falls back to its full original.
