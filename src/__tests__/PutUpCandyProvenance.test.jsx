@@ -18,7 +18,7 @@
 // say whether a person is actually told, so the copy is asserted here as a FULL LITERAL rather than
 // a substring: a reworded claim must break this file, because the wording IS the mitigation.
 import React from 'react'
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, onTestFinished } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 
@@ -100,6 +100,11 @@ describe('the saved row carries the provenance beside its date', () => {
   }
 
   it('labels a candy row that has a date: "house estimate" on the chip, the detail line in its sheet, verbatim', async () => {
+    // "Oct 1" carries no year only while the clock is in 2026, and the fixture says use soon: pin the clock
+    // just before it.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-09-20T12:00:00'))
+    onTestFinished(() => vi.useRealTimers())
     renderPutUp()
     expect(await screen.findByText(/discard by Oct 1 · house estimate/)).toBeTruthy()
     await openSheet()

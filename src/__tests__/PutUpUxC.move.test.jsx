@@ -17,7 +17,7 @@
 // from the row instead of the answer -> "a worked-out date at another kind of place" reds.
 // CI LANE: `npm test` plus the blocking TZ re-run. No jest-dom (L-182).
 import React, { useState } from 'react'
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, onTestFinished } from 'vitest'
 
 // The page's scroll manager, as PantryView sees it: the real module with a yield that is counted. Outside
 // the app's provider the real yield is a no-op, so nothing else in this file changes.
@@ -334,6 +334,12 @@ describe('after the move — one line at the top of the Pantry, from the row the
   })
 
   it('a house estimate is worked out again: the line carries the NEW date, from the answer', async () => {
+    // The host moves on NOW, so the new estimate lands a month after NOW, while the fake's projectRow
+    // judges its status on the clock. Pin the clock to NOW, or the line reads "passed" once real time
+    // overtakes that month.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(NOW)
+    onTestFinished(() => vi.useRealTimers())
     const { line } = await moveOnPantry(HOUSE, 'id:loc-3')
     expect(words(line)).toMatch(/^Candied ginger — moved to Kitchen fridge · discard by .+ · house estimate$/)
     expect(words(line)).not.toContain('May 1, 2031')
