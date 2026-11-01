@@ -1,27 +1,25 @@
-// Put-Up release 2 (B′) — the Pantry's routes on the preservation Lambda (V4 §2.5, §4.3, §5.1 rows "2",
-// §5.2-§5.4; the pinned B′ cross-lane contract):
+// The Pantry's routes on the preservation Lambda (V4 §2.5, §4.3, §5.1 rows "2", §5.2-§5.4):
 //   GET    /api/pantry?group=place|kind&q=&place_id=   put-ups ∪ pantry items, one row shape
 //   POST   /api/pantry/items                          keyed create ("As is" / "Fresh, as picked")
 //   PATCH  /api/pantry/items/:id                      presence-sentinel edit, Used it up / its Undo, Move
 //   DELETE /api/pantry/items/:id                      Remove (logged by mistake) — a soft delete
 //   POST   /api/pantry/uses/:id/undo                  the reversing use (Used one / Went bad / Gave it away)
 // and removeJar, the body of DELETE /api/preservation/:id (Remove on a put-up), which index.js calls.
-// POST /api/pantry/uses itself is F's (pantryUses.js), matched first as a literal; B′ widens its fate there.
+// POST /api/pantry/uses itself is pantryUses.js's, matched first as a literal.
 //
-// WHY A SIBLING MODULE. index.js loads neon, clerk and aws at module scope and cannot be imported by vitest;
-// this file takes `sql` as an argument and imports only dependency-free siblings, so every statement below
-// is EXECUTED under `npm test` against a mock driver (pantryRoutes.test.js). Same null-for-not-mine
-// contract as the kitchen, sources, jar and uses delegations.
+// A sibling module: index.js loads neon, clerk and aws at module scope and cannot be imported by vitest;
+// this file takes `sql` as an argument and imports only dependency-free siblings, so every statement is
+// EXECUTED under `npm test` against a mock driver (pantryRoutes.test.js). Same null-for-not-mine contract
+// as the kitchen, sources, jar and uses delegations.
 //
-// AUTHORIZATION (V4 §5.3). Household scope on every read and write (Dave and Jen read and write; a STRANGER
+// Authorization (V4 §5.3): household scope on every read and write (members read and write; a STRANGER
 // gets not-found). Every body-settable FK has a household loader: storage_location_id (loadPlace below),
 // plant_id (lineRoutes.js loadPlantings), pantry_item_id on a line (pantryItems.js loadPantryItems).
 // Server-set only, never read from a body: user_id, created_by, delta_at, remaining_count,
 // remaining_amount, deleted_at.
 //
-// AUDIT. pantry_item is unaudited (V4 §5.5). preservation_log is audited (1b), so the undo and removeJar
-// run through withActor, whose batch leads with the actor GUC — the grouping lambda/audit-actor-guc.test.js
-// asserts.
+// Audit: pantry_item is unaudited (V4 §5.5). preservation_log is audited, so the undo and removeJar run
+// through withActor, whose batch leads with the actor GUC (lambda/audit-actor-guc.test.js asserts the grouping).
 import { withActor } from './audit-actor.js';
 import { MASS_G, normalizeText } from './kitchenBatch.js';
 import { loadPlantings } from './lineRoutes.js';
@@ -39,10 +37,9 @@ const refuse = (status, code, error, extra = {}) => ({ status, body: { error, co
 const keyConflict = refuse(409, 'key_conflict', 'That key is already in use.');
 const notAllowed = { status: 405, body: { error: 'Method not allowed' } };
 
-// ── routing ──────────────────────────────────────────────────────────────────────────────────────
-// Returns { route, id } for a path that is ours, null otherwise. '/api/pantry/uses' is NOT ours (F's
-// literal, matched earlier in index.js). The captures are `[^/]+` and the uuid is checked in the handler
-// (a malformed id is a 404), so the client↔Lambda route contract can execute the patterns.
+// Routing. Returns { route, id } for a path that is ours, null otherwise. '/api/pantry/uses' is NOT ours
+// (pantryUses.js's literal, matched earlier in index.js). The captures are `[^/]+` and the uuid is checked
+// in the handler (a malformed id is a 404), so the client-Lambda route contract can execute the patterns.
 export function parsePantryRoute(rawPath) {
   if (typeof rawPath !== 'string') return null;
   if (rawPath === '/api/pantry' || rawPath === '/api/pantry/') return { route: 'list' };
@@ -75,9 +72,9 @@ export async function handlePantryRoute({ sql, rawPath, method, rawBody, query =
   return undoUse(sql, r.id, body(), userId, householdIds);
 }
 
-// ── the place loader (storage_location_id is body-settable here) ───────────────────────────────────
-// The index.js loadStorageLocation predicate (user_id in the household, live), returning what the item's
-// reply names. null on any failure — no existence oracle.
+// The place loader (storage_location_id is body-settable here): index.js loadStorageLocation's predicate
+// (user_id in the household, live), returning what the item's reply names. null on any failure (no
+// existence oracle).
 export async function loadPlace(sql, id, householdIds) {
   if (!isUuid(id)) return null;
   const rows = await sql`
@@ -89,13 +86,12 @@ export async function loadPlace(sql, id, householdIds) {
   return rows[0] ?? null;
 }
 
-// ── GET /api/pantry ──────────────────────────────────────────────────────────────────────────────
-// Put-ups: live, with something left (COALESCE(remaining_count, package_count) > 0) and not consumed. Items:
-// live and not used up. The discard-by status is classified here, from the STORED date and basis
-// (pantryItems.js discardOf); from_garden for a put-up is F §2.7's jar rule (its source is our garden, or
-// any of its live preservation_source rows is) — plus a planting link, which chk_preservation_log_source_plant
-// already ties to our garden. Both arms read quantity_value, quantity_unit, source_kind and source_label, so
-// both row kinds carry those four AS STORED (R2a: an item's Edit panel is seeded from its list row).
+// GET /api/pantry. Put-ups: live, with something left (COALESCE(remaining_count, package_count) > 0) and
+// not consumed. Items: live and not used up. The discard-by status is classified here from the STORED date
+// and basis (pantryItems.js discardOf); from_garden for a put-up is the jar rule (its source is our garden,
+// or any of its live preservation_source rows is) plus a planting link, which
+// chk_preservation_log_source_plant already ties to our garden. Both arms carry quantity_value,
+// quantity_unit, source_kind and source_label AS STORED (an item's Edit panel is seeded from its list row).
 export async function listPantry(sql, query, householdIds, now) {
   const group = PANTRY_GROUPS.includes(query.group) ? query.group : 'place';
   const placeId = normalizeText(query.place_id);
@@ -146,15 +142,15 @@ export async function listPantry(sql, query, householdIds, now) {
   return { status: 200, body: { rows: sortPantryRows(rows) } };
 }
 
-// ── POST /api/pantry/items ───────────────────────────────────────────────────────────────────────
-// ONE statement: the place found or made (by {kind, label}, the put-up route's find-or-create, trimmed and
-// case-insensitive over the household) and the item. A 23505 on uq_pantry_item_idempotency_key (only that
-// one) is a replay; a key held outside the household is 409 with no payload. Never ON CONFLICT on the item.
+// POST /api/pantry/items. ONE statement: the place found or made (by {kind, label}, the put-up route's
+// find-or-create, trimmed and case-insensitive over the household) and the item. A 23505 on
+// uq_pantry_item_idempotency_key (only that one) is a replay; a key held outside the household is 409 with
+// no payload. Never ON CONFLICT on the item.
 //
-// EVERY CHECK ON pantry_item HAS WORDS HERE (R2a adds the nine of migrations/v5-pantryitemamount-001): a
-// 23514 with no row below is rethrown and reaches the person as a 500. The validators pre-empt all but one —
-// chk_pantry_item_source_plant, which reads the STORED plant_id that a PATCH body cannot carry, so on a PATCH
-// the database decides it and this map answers. These are user copy: a cached bundle prints them verbatim.
+// EVERY CHECK ON pantry_item HAS WORDS HERE (including migrations/v5-pantryitemamount-001's nine): a 23514
+// with no row below is rethrown and reaches the person as a 500. The validators pre-empt all but
+// chk_pantry_item_source_plant, which reads the STORED plant_id a PATCH body cannot carry, so on a PATCH the
+// database decides it and this map answers. These are user copy: a cached bundle prints them verbatim.
 export const ITEM_CONSTRAINT_MESSAGES = {
   chk_pantry_item_name_nonblank: 'Name what it is (at most 120 characters).',
   chk_pantry_item_acquired_precision: 'That is not a date precision this app knows.',
@@ -170,10 +166,10 @@ export const ITEM_CONSTRAINT_MESSAGES = {
   chk_pantry_item_source_other: 'Name where it came from.',
   chk_pantry_item_source_plant: PLANTING_SOURCE_REFUSAL,
 };
-// V4-CROPTYPERETIRE-001 — a retired crop type gains no new rows. The foreign key cannot say this (a
-// retired type's row is still there), so the create's INSERT and the PATCH's first read each check it.
-// The create asks twice in its one statement: the arm that makes a new place runs to completion
-// whatever the item's INSERT decides, so without its own check a refused create would leave an empty place.
+// A retired crop type gains no new rows (V4-CROPTYPERETIRE-001). The foreign key cannot say this (a retired
+// type's row is still there), so the create's INSERT and the PATCH's first read each check it. The create
+// asks twice in its one statement: the arm that makes a new place runs to completion whatever the item's
+// INSERT decides, so without its own check a refused create would leave an empty place.
 export const RETIRED_CROP_REFUSAL = 'That crop type was retired. Pick a different crop.';
 function itemError(err) {
   if (err?.code !== '23514' && err?.code !== '23503') return null;
@@ -199,8 +195,7 @@ export async function createItem(sql, body, userId, householdIds) {
     crop = crop ?? planting.crop_type_slug ?? null;
   }
   const acq = acquiredOf(body);
-  // The amount as logged and where it came from (validated above): a body without them binds NULL for all
-  // four, which is the row the pre-R2a writer made.
+  // The amount as logged and where it came from (validated above): a body without them binds NULL for all four.
   const amt = amountOf(body);
   const src = sourceOf(body, body.plant_id ?? null);
   const newKind = place ? null : body.place.kind;
@@ -275,18 +270,16 @@ async function replayItem(sql, key, householdIds) {
   return { status: 200, body: { item: projectItem(prior[0]), replayed: true } };
 }
 
-// ── PATCH /api/pantry/items/:id ──────────────────────────────────────────────────────────────────
-// Presence-sentinel over ITEM_PATCH_KEYS: an absent key is unchanged. used_up_at "now" stamps it (keeping
-// an earlier stamp — a retried tap is a no-op) and null clears it (Undo). A move is storage_location_id
-// (household-loaded). Works on a used-up item (that is how Undo reaches it); a removed one is 404.
-// The amount pair and the source pair each travel together (the validator refuses one alone), so ONE flag
-// writes both columns of a pair: null, null clears the amount, or un-chooses the source. A source that is
-// not our garden on an item tied to a planting is refused by chk_pantry_item_source_plant in the UPDATE
-// itself — the stored plant_id is the database's to read — and answered in words (itemError).
-// crop_type_slug (BUG-PUTUPREPLAYDROPSEDIT-001) is written only on an item tied to NO planting: with a
-// planting the crop is the planting's (the create's "that planting is a different crop"), so the key is
-// refused there before anything is written — plant_id is read first, and no route ever changes it — and the
-// UPDATE's own CASE holds the same rule. An unknown crop is the FK's 23503, answered in words (itemError).
+// PATCH /api/pantry/items/:id. Presence-sentinel over ITEM_PATCH_KEYS: an absent key is unchanged.
+// used_up_at "now" stamps it (keeping an earlier stamp, so a retried tap is a no-op) and null clears it
+// (Undo). A move is storage_location_id (household-loaded). Works on a used-up item (that is how Undo
+// reaches it); a removed one is 404. The amount pair and the source pair each travel together (the
+// validator refuses one alone), so ONE flag writes both columns of a pair. A source that is not our garden
+// on an item tied to a planting is refused by chk_pantry_item_source_plant in the UPDATE itself (the stored
+// plant_id is the database's to read) and answered in words (itemError). crop_type_slug is written only on
+// an item tied to NO planting: with a planting the crop is the planting's, so the key is refused there
+// before anything is written (plant_id is read first; no route changes it) and the UPDATE's own CASE holds
+// the same rule. An unknown crop is the FK's 23503, answered in words (itemError).
 export async function patchItem(sql, itemId, body, householdIds) {
   if (!isUuid(itemId)) return notFound;
   const verr = validateItemPatch(body);
@@ -356,9 +349,8 @@ export async function patchItem(sql, itemId, body, householdIds) {
   return { status: 200, body: { item: projectItem(rows[0]) } };
 }
 
-// ── DELETE /api/pantry/items/:id — Remove (logged by mistake), a soft delete ───────────────────────
-// A line that already named the item keeps its stamped label; the item stays a record (V4 §2.5 "Bought
-// items": "Remove (logged by mistake; a soft delete)"). A second DELETE matches nothing → 404.
+// DELETE /api/pantry/items/:id: Remove (logged by mistake), a soft delete. A line that already named the
+// item keeps its stamped label; the item stays a record (V4 §2.5). A second DELETE matches nothing -> 404.
 export async function deleteItem(sql, itemId, householdIds) {
   if (!isUuid(itemId)) return notFound;
   const rows = await sql`
@@ -372,19 +364,17 @@ export async function deleteItem(sql, itemId, householdIds) {
   return { status: 200, body: { ok: true } };
 }
 
-// ── POST /api/pantry/uses/:id/undo ───────────────────────────────────────────────────────────────
-// The reversing row (count −n, reverses_use_id = the use, the same fate) and the increment, in ONE
-// statement, read from the use and its jar household-scoped. Refused (409): a batch-linked use
-// (use_is_batch_line — taking its line out reverses it), a row that is itself a reversal
+// POST /api/pantry/uses/:id/undo. The reversing row (count -n, reverses_use_id = the use, the same fate)
+// and the increment, in ONE statement, read from the use and its jar household-scoped. Refused (409): a
+// batch-linked use (use_is_batch_line; taking its line out reverses it), a row that is itself a reversal
 // (use_is_reversal), a use already undone under another key (already_undone; uq_pantry_use_reverses_use_id
-// is the backstop for two phones at once), a removed jar (jar_removed), and a count the jar can no longer
-// hold (count_changed — the count was lowered since). The key is the undo tap's own: the same key again
-// is a replay (200 replayed), a key used for anything else is key_conflict.
-//   * delta_at is stamped (06 §1.3 item 5: every non-legacy UPDATE that moves remaining_count).
-//   * consumed_at is cleared: after the increment something is left.
+// backstops two phones at once), a removed jar (jar_removed), and a count the jar can no longer hold
+// (count_changed). The key is the undo tap's own: the same key again is a replay (200 replayed), a key used
+// for anything else is key_conflict.
+//   * delta_at is stamped (every non-legacy UPDATE that moves remaining_count); consumed_at is cleared.
 //   * A WEIGHED jar that the use took to 0 g (pantryUses.js sets remaining_amount 0 there) gets its grams
-//     back as the bag's weight less its live weighed draws (lines of kind put_up with no pantry_use — F's
-//     definition of a weighed draw). The grams the tap zeroed are not recorded anywhere else.
+//     back as the bag's weight less its live weighed draws (lines of kind put_up with no pantry_use). The
+//     grams the tap zeroed are not recorded anywhere else.
 export async function undoUse(sql, useId, body, userId, householdIds) {
   if (!isUuid(useId)) return notFound;
   const key = body?.idempotency_key ?? null;
@@ -498,12 +488,11 @@ async function replayUndo(sql, useId, key, householdIds) {
   return { status: 200, body: { replayed: true, use: prior[0].use, jar: prior[0].jar } };
 }
 
-// ── DELETE /api/preservation/:id — Remove on a put-up (V4 §2.5 "Remove") ─────────────────────────────
-// Remove means logged by mistake. Refused, with the reason and a path, on a jar that was used (the net of
-// its non-batch uses is above 0 — Used one, Used up, Went bad, Gave it away that were not undone) or that
-// has a live batch line drawing from it (a draw, counted or weighed). Otherwise the shipped soft delete.
-// ONE statement: the checks and the UPDATE read the same snapshot. preservation_log is audited
-// (deleted_at is watched), so it rides the actor GUC.
+// DELETE /api/preservation/:id: Remove on a put-up (V4 §2.5). Remove means logged by mistake. Refused, with
+// the reason and a path, on a jar that was used (the net of its non-batch uses is above 0: Used one, Used
+// up, Went bad, Gave it away that were not undone) or that has a live batch line drawing from it (counted
+// or weighed). Otherwise the shipped soft delete. ONE statement: the checks and the UPDATE read the same
+// snapshot. preservation_log is audited (deleted_at is watched), so it rides the actor GUC.
 export async function removeJar(sql, jarId, userId, householdIds) {
   if (!isUuid(jarId)) return notFound;
   const [, rows] = await withActor(sql, userId, () => [

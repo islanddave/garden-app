@@ -1,31 +1,26 @@
-// Put-Up release 1b — the two jar writers that are not the legacy PUT:
+// The two jar writers that are not the legacy PUT:
 //   PATCH /api/preservation/:id        presence-sentinel edit + V4's correction rule
 //   POST  /api/preservation/:id/move   a place change + V4's move rule
 //
-// WHY A SIBLING MODULE. Same reason as kitchenRoutes.js and sourceRoutes.js: index.js loads neon, clerk
-// and aws at module scope, so a route written there is asserted only by its spelling. This file takes
-// `sql` as an argument and imports only dependency-free siblings, so every statement below is EXECUTED
-// under `npm test` against a mock driver (jarRoutes.test.js). index.js delegates to it with the same
-// null-for-not-mine contract the kitchen and sources delegations use.
+// A sibling module for the same reason as kitchenRoutes.js and sourceRoutes.js: index.js loads neon,
+// clerk and aws at module scope, so a route written there is asserted only by its spelling. This file
+// takes `sql` and imports only dependency-free siblings, so jarRoutes.test.js executes every statement
+// against a mock driver. index.js delegates with the same null-for-not-mine contract.
 //
-// THE DATE RULES LIVE IN ONE PLACE PER RULE (V4 "What changes a date after it is written"):
-//   * resolveJarUseBy (shelfLife.js) is the engine answer — never re-derived here.
-//   * recipeUseBy (shelfLife.js) is the recipe's answer, the rung above the engine — never re-derived here.
-//   * correctionUseBy / moveUseBy below decide WHEN each is consulted, from the stored basis.
-// A stored basis of NULL is a row written before 1b whose backfill (0p) has not run: its date's
-// provenance is unknown, so it is treated as TYPED — never re-derived, never nulled. Destroying a date
-// someone may have typed is the failure mode; keeping a table date one extra edit is not.
+// Date rules, one home each (V4 "What changes a date after it is written"): resolveJarUseBy and
+// recipeUseBy (shelfLife.js) are the engine's and the recipe's answers, never re-derived here;
+// correctionUseBy / moveUseBy below decide WHEN each is consulted, from the stored basis. A NULL basis
+// is a row from before 1b whose backfill has not run: treated as TYPED, never re-derived, never nulled
+// (destroying a date someone may have typed is the failure mode).
 //
-// OPTIMISTIC GUARD. Both writers read the jar, compute the date in JS (the engine is JS), then write.
-// When the write depends on what was read, it carries `AND xmin = <read xmin>`: xmin changes on every
-// UPDATE of the row, so any write in between (another phone's Mark used, Move, PATCH) makes this one
-// match 0 rows, and the answer is 409 client_stale — the shipped client's Refresh door. A PATCH that
-// touches nothing the date rule reads (a name, a note) carries no guard, so a concurrent Mark used can
-// never make a label edit fail. A clear also reads the batch's recipe line before it writes; that read
-// sits outside the guard (xmin is the jar's), as Put it up's own recipe read sits outside its write.
+// Optimistic guard: both writers read the jar, compute the date in JS, then write. A write that depends
+// on what was read carries `AND xmin = <read xmin>`, so any write in between makes this one match 0 rows
+// and the answer is 409 client_stale (the client's Refresh door). A PATCH touching nothing the date rule
+// reads (a name, a note) carries no guard, so a concurrent Mark used never fails a label edit. A clear's
+// recipe read sits outside the guard (xmin is the jar's).
 //
-// AUDIT. preservation_log carries trg_audit_preservation_log_upd (1b). Every write here runs through withActor,
-// whose batch leads with the actor GUC — the grouping lambda/audit-actor-guc.test.js asserts.
+// Audit: every write runs through withActor, whose batch leads with the actor GUC (asserted by
+// lambda/audit-actor-guc.test.js).
 import { withActor } from './audit-actor.js';
 import { resolveJarUseBy, recipeUseBy } from './shelfLife.js';
 import {
@@ -46,8 +41,8 @@ export const PLACE_KINDS = ['deep_freezer', 'fridge_freezer', 'fridge', 'pantry'
 // Returns { id } or { id: null } for paths that are ours, null otherwise.
 export function parseJarRoute(rawPath) {
   if (typeof rawPath !== 'string') return null;
-  // A3: a `[^/]+` capture with the uuid check below — behaviour identical, and the static client↔Lambda
-  // route contract (src/__tests__/clientRouteLambdaContract.test.js) can see the pattern.
+  // A `[^/]+` capture plus the uuid check below, so src/__tests__/clientRouteLambdaContract.test.js can
+  // see the pattern.
   const m = rawPath.match(/^\/api\/preservation\/([^/]+)(?:\/(move))?\/?$/);
   if (!m || !UUID_RE.test(m[1])) return null;
   return { id: m[1], sub: m[2] ?? null };
@@ -65,9 +60,8 @@ export async function handleJarRoute({ sql, rawPath, method, rawBody, userId, ho
   return patchJar(sql, route.id, JSON.parse(rawBody ?? '{}'), userId, householdIds);
 }
 
-// ── the jar, as the date rules read it ───────────────────────────────────────────────────────────
-// Put-Up R2a: plus the planting and harvest link and the stored where-from pair, which the PATCH's
-// where-from rule is judged against (a PATCH body carries only what changed, never the links).
+// The jar as the date rules read it, plus the planting and harvest link and the stored where-from pair
+// the PATCH's where-from rule is judged against (a PATCH body carries only what changed).
 async function loadJar(sql, jarId, householdIds) {
   const rows = await sql`
     SELECT p.id, p.method, p.method_other_text, p.label, p.is_raw, p.in_oil, p.texture,
@@ -84,11 +78,8 @@ async function loadJar(sql, jarId, householdIds) {
   return rows.length ? rows[0] : null;
 }
 
-// ── the jar's recipe, as a clear reads it (Put-Up UX pass R1) ───────────────────────────────────
-// The "how long, and where" line of the recipe the jar's batch follows, or null: a jar with no batch,
-// a batch with no recipe, a removed batch and a removed recipe all answer null. Put it up's predicate
-// (kitchenRoutes.js putUp): the batch and the recipe are each the household's and live. Read ONLY when
-// a typed date is cleared, so no other PATCH and no Move issues it.
+// The jar's recipe "how long, and where" line, or null (no batch, no recipe, either one removed). Same
+// predicate as Put it up (kitchenRoutes.js putUp). Read ONLY when a typed date is cleared.
 async function loadJarRecipe(sql, jarId, householdIds) {
   const rows = await sql`
     SELECT rc.keeps_n, rc.keeps_unit, rc.keeps_storage_kind
@@ -120,20 +111,17 @@ const factsOf = (jar, kind) => ({
   texture: jar.texture ?? null, precision: jar.preserved_at_precision ?? null,
 });
 
-// ── V4: "A correction of method, Raw/In oil or texture at the same place re-derives a table/house date
-// from the jar's stored anchor if the jar has never moved, else nulls. Typed dates (and an explicit
-// 'no date') survive; a recipe date survives while the storage kind still matches. Clearing a typed date
-// ('clear' on the PATCH) resolves the same way." Returns null for "leave the date as it is".
+// V4: a correction of method, Raw/In oil or texture at the same place re-derives a table/house date from
+// the jar's stored anchor if the jar has never moved, else nulls. Typed dates (and an explicit 'no date')
+// survive; a recipe date survives while the storage kind still matches. A clear resolves the same way.
+// Returns null for "leave the date as it is".
 //
-// A CLEAR RESOLVES BY THE WHOLE DISCARD-BY LADDER, in this order (Put-Up UX pass R1):
-//   (a) a jar that has MOVED gets no date. First, and it stays first: recipeUseBy counts from the put-up
-//       day and knows nothing of a move, so a jar that spent time at another kind of place would be
-//       dated as if it had sat at the recipe's place throughout;
-//   (b) the recipe's "how long, and where", when `recipe` (the line of the live household recipe the
-//       jar's batch follows; patchJar loads it) names the kind of place the jar is at. It is what Put it
-//       up gives the same jar at create (putUp.js planPutUp), Raw and In oil included;
+// A clear resolves by the whole discard-by ladder, in this order:
+//   (a) a jar that has MOVED gets no date, and this stays first: recipeUseBy counts from the put-up day
+//       and knows nothing of a move, so it would date the jar as if it sat at the recipe's place throughout;
+//   (b) the recipe's "how long, and where", when `recipe` (loaded by patchJar, only while clearing) names
+//       the kind of place the jar is at: what Put it up gives the same jar at create (putUp.js planPutUp);
 //   (c) the engine; (d) no date.
-// `recipe` is read only while clearing: a correction that is not a clear never consults it.
 export function correctionUseBy(stored, next, { clearing = false, recipe = null } = {}) {
   const basis = stored.use_by_basis ?? null;
   if (!clearing) {
@@ -148,11 +136,11 @@ export function correctionUseBy(stored, next, { clearing = false, recipe = null 
   return fromRecipe ?? resolveJarUseBy({ ...factsOf(next, stored.storage_kind), precision }, anchor);
 }
 
-// ── V4: "A Move (a change of storage kind, a thaw included) nulls every date that is not typed —
-// table, house AND recipe — and stamps storage_moved_at. It never re-derives. Exception: house-sourced
-// rows (candy) re-derive from the move date with the destination leg." A move within one kind (Chest
-// Freezer 1 → Chest Freezer 2) is not a change of storage kind: the date and storage_moved_at stay, so
-// a later correction can still re-derive from the anchor. Returns { kindChanged, useBy|null }.
+// V4: a Move (a change of storage kind, a thaw included) nulls every date that is not typed — table,
+// house AND recipe — and stamps storage_moved_at; it never re-derives, except house-sourced rows (candy),
+// which re-derive from the move date with the destination leg. A move within one kind keeps the date and
+// storage_moved_at, so a later correction can still re-derive from the anchor.
+// Returns { kindChanged, useBy|null }.
 export function moveUseBy(stored, destKind, moveDate) {
   const kindChanged = (stored.storage_kind ?? null) !== destKind;
   if (!kindChanged) return { kindChanged, useBy: null };
@@ -164,24 +152,19 @@ export function moveUseBy(stored, destKind, moveDate) {
   return { kindChanged, useBy: { use_by_target: null, use_by_basis: 'none' } };
 }
 
-// ── PATCH /api/preservation/:id ─────────────────────────────────────────────────────────────────
-// Presence-sentinel (V4 API table): label, container_label, is_raw, in_oil, texture, the pH pair,
-// method (+ method_other_text), discard_by (a date / "none" / "clear"), notes (full replace),
-// notes_append, the quantity pair (05 §6: "so the zucchini fix has a writer"), and the where-from pair
-// (R2a: source_kind with source_label, always both). Absent = unchanged;
-// an explicit null clears where the column is nullable. Anything else is refused: this is not the
-// full-replace PUT, and a key it does not know is a client bug, never something to ignore.
+// PATCH /api/preservation/:id — presence-sentinel: absent = unchanged, an explicit null clears where the
+// column is nullable, and a key not in JAR_PATCH_KEYS is refused (this is not the full-replace PUT).
+// discard_by is a date / "none" / "clear"; notes replaces, notes_append appends; the quantity pair and
+// the where-from pair (source_kind with source_label) always travel together.
 export const JAR_PATCH_KEYS = [
   'label', 'container_label', 'is_raw', 'in_oil', 'texture', 'ph_reading', 'ph_read_at',
   'method', 'method_other_text', 'discard_by', 'notes', 'notes_append', 'quantity_value', 'quantity_unit',
-  // Release F (contract-F §2.6): the jar's typed heat estimate and "Cooked after blending?".
+  // The jar's typed heat estimate and "Cooked after blending?".
   'shu_est_low', 'shu_est_high', 'cooked',
-  // Integrator request (A3 follow-up): the jar editor's size AND count in the same write, so one
-  // failed request can never leave half an edit.
+  // The jar editor's size AND count in the same write, so one failed request cannot leave half an edit.
   'package_count',
-  // Put-Up R2a: where it's from, corrected in Edit. A PAIR, always both, like the quantity pair
-  // (`null, null` un-chooses). Judged twice: its own shape in validateJarPatch, and against the
-  // STORED planting and harvest link in patchJar, by provenance.js's rules both times.
+  // Where it's from: a PAIR, always both (`null, null` un-chooses). Judged twice by provenance.js: its own
+  // shape in validateJarPatch, and against the STORED planting and harvest link in patchJar.
   'source_kind', 'source_label',
 ];
 
@@ -205,9 +188,8 @@ export function validateJarPatch(body) {
   if (has(body, 'method') && (!body.method || !VALID_METHODS.includes(body.method))) {
     return `method must be one of: ${VALID_METHODS.join(', ')}`;
   }
-  // A3: method_other_text may be sent on its own (the editor sends it when the method is Other);
-  // nonblank, at most 120. Whether it means anything is judged against the EFFECTIVE method in
-  // patchJar, which can see the stored one.
+  // method_other_text may be sent alone (the editor sends it when the method is Other); whether it means
+  // anything is judged against the EFFECTIVE method in patchJar, which can see the stored one.
   if (has(body, 'method_other_text') && body.method_other_text != null) {
     const e = jarLabelError(body.method_other_text, 'method_other_text');
     if (e) return e;
@@ -265,8 +247,7 @@ async function patchJar(sql, jarId, body, userId, householdIds) {
     texture: has(body, 'texture') ? body.texture : jar.texture,
   };
   // chk_preservation_log_texture_method: a texture only on a dried food. A method corrected AWAY from
-  // dried clears a stored texture it did not mention (the texture described the dried food it no
-  // longer is); a texture SENT with a non-dried method is the client's mistake and is refused.
+  // dried clears a stored texture it did not mention; a texture SENT with a non-dried method is refused.
   if (next.texture != null && !JAR_TEXTURE_METHODS.includes(next.method)) {
     if (has(body, 'texture')) return bad('texture only applies to a dried food (dehydrate or powder)');
     next.texture = null;
@@ -289,9 +270,9 @@ async function patchJar(sql, jarId, body, userId, householdIds) {
   } else if (corrected) {
     useBy = correctionUseBy(jar, next);
   }
-  // WHERE IT'S FROM (R2a). provenance.js's rules, on the pair as sent and the planting and harvest link
-  // AS STORED: a put-up tied to a planting or a pick is from our garden, so any other source is refused
-  // in the validator's words. The body's own plant_id would decide nothing (it is not a PATCH key).
+  // Where it's from: provenance.js's rules on the pair as sent and the planting and harvest link AS STORED.
+  // A put-up tied to a planting or a pick is from our garden, so any other source is refused; the body's
+  // own plant_id decides nothing (it is not a PATCH key).
   const writeSource = has(body, 'source_kind');
   const sourceKind = writeSource ? (body.source_kind ?? null) : null;
   if (writeSource) {
@@ -320,15 +301,13 @@ async function patchJar(sql, jarId, body, userId, householdIds) {
   const methodOther = !writeMethodOther ? null
     : method === 'other' ? normalizeJarText(has(body, 'method_other_text') ? body.method_other_text : jar.method_other_text)
       : null;
-  // THE COUNT, with the legacy PUT's delta rule (V4 "From 1a"): a changed package_count moves
-  // remaining_count by the same delta from COALESCE(remaining_count, package_count) — what has been
-  // used stays used — refused (409, countRefusal's words) below 0 or above the new count, decided in
-  // the UPDATE's WHERE on the row it locks. The PUT's stale-tab race needs a STALE remaining_count
-  // echoed beside the count; this route never takes remaining_count, so that race cannot arise here.
-  // A count change moves remaining_count, so it stamps delta_at (06 §1.3 item 5).
+  // The count, with the legacy PUT's delta rule: a changed package_count moves remaining_count by the same
+  // delta from COALESCE(remaining_count, package_count), so what was used stays used; below 0 or above the
+  // new count is refused (409, countRefusal's words) in the UPDATE's WHERE on the row it locks. This route
+  // never takes remaining_count, so the PUT's stale-tab race cannot arise. A count change stamps delta_at.
   const packageCount = has(body, 'package_count') ? Number(body.package_count) : null;
   const phReading = has(body, 'ph_reading') && body.ph_reading != null ? String(body.ph_reading).trim() : null;
-  // A reading edited later defaults its time to now (V4 pH section: "today (a later Edit)").
+  // A reading edited later defaults its time to now.
   const phReadAt = phReading == null ? null : (body.ph_read_at ?? new Date().toISOString());
   const shuLow = body.shu_est_low == null ? null : Number(body.shu_est_low);
   const shuHigh = shuLow == null ? null : Number(body.shu_est_high ?? body.shu_est_low);
@@ -396,10 +375,10 @@ async function patchJar(sql, jarId, body, userId, householdIds) {
   return { status: 200, body: projectRow(rows[0]) };
 }
 
-// ── POST /api/preservation/:id/move ─────────────────────────────────────────────────────────────
-// `{ place: {id} | {kind, label}, when?: 'YYYY-MM-DD' | {date} }`. A new place is found-or-created in
-// the SAME statement as the move (household-first, then the caller's own; label trimmed — 05 §6a), and
-// only while the jar is still the one that was read, so a stale move leaves no place behind. storage_moved_at is the move's When (default now).
+// POST /api/preservation/:id/move — { place: {id} | {kind, label}, when?: 'YYYY-MM-DD' | {date} }.
+// A new place is found-or-created in the SAME statement as the move (household-first, then the caller's
+// own; label trimmed), and only while the jar is still the one read, so a stale move leaves no place
+// behind. storage_moved_at is the move's When (default now).
 export function validatePlace(place) {
   if (!place || typeof place !== 'object' || Array.isArray(place)) return 'place must be {id} or {kind, label}';
   if (place.id != null) {

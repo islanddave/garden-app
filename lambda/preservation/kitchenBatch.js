@@ -1,57 +1,50 @@
-// V5-INFLIGHTBATCH-001 — vocabulary, validation and route parsing for /api/kitchen-batches.
+// Vocabulary, validation and route parsing for /api/kitchen-batches.
 //
-// DEPENDENCY-FREE ON PURPOSE, exactly like ./provenance.js, ./attribution.js and ./useBy.js:
-// index.js imports @neondatabase/serverless, @clerk/backend and @aws-sdk at module scope, so anything
-// defined THERE can only ever be asserted by its spelling. Everything in this file is importable by
-// the blocking `npm test` lane and is asserted by executing it. Do not add imports.
+// Dependency-free on purpose, like ./provenance.js, ./attribution.js and ./useBy.js: index.js imports
+// neon, clerk and aws at module scope, so anything defined THERE is asserted only by its spelling.
+// Everything here is importable by the blocking `npm test` lane and asserted by executing it. Do not add imports.
 //
-// Every vocabulary below duplicates a DB CHECK from migrations/v5-inflightbatch-001/0a-additive-ddl.sql
-// on purpose — the same belt-and-suspenders pattern VALID_METHODS uses. A raw 23514 surfaces as
-// `Constraint violation: chk_kitchen_batch_start_pairing`, which is not something a cook standing at a
-// counter can act on. The DB is the belt; these messages are the product.
+// Every vocabulary duplicates a DB CHECK from migrations/v5-inflightbatch-001/0a-additive-ddl.sql on
+// purpose (like VALID_METHODS): a raw 23514 reads `Constraint violation: chk_...`, which a cook cannot
+// act on. The DB is the belt; these messages are the product.
 
-// chk_kitchen_batch_kind. NULLABLE on purpose — the existing put-up picker has a 40% mis-file rate on
-// its live rows, and "something in the kitchen, started now, here is a photo" must be a COMPLETE,
-// VALID record. The method is pinned at close-out, against a DIFFERENT vocabulary (VALID_METHODS).
-// Never auto-map one to the other: one mash legitimately outputs both hot_sauce and ferment_mash jars.
+// chk_kitchen_batch_kind. NULLABLE on purpose: "something in the kitchen, started now, here is a photo"
+// must be a COMPLETE, VALID record. The method is pinned at close-out against a DIFFERENT vocabulary
+// (VALID_METHODS); never auto-map one to the other (one mash can output hot_sauce and ferment_mash jars).
 export const KITCHEN_BATCH_KINDS = ['ferment', 'dehydrate', 'candy', 'cure', 'infuse', 'age', 'other'];
 
 // chk_kitchen_batch_start_precision. 'hour' exists because a dehydrator run has no rung for "sometime
-// this afternoon"; grading that as `day` renders a 100%+ error as a confident figure.
+// this afternoon"; grading it as `day` renders a 100%+ error as a confident figure.
 export const KITCHEN_START_PRECISIONS = ['exact', 'hour', 'day', 'week', 'month', 'season', 'year', 'unknown'];
 
-// Put-Up release 1b — the estimated-date vocabulary widens by the two dated estimate words the estimate
-// chips store (V4 "Estimated dates": "2–3 months ago" → season, "Earlier this year" / "Last year" →
-// year). chk_kitchen_batch_start_precision and chk_ksl_entered_precision carry the same eight.
+// The estimated-date vocabulary includes the dated estimate words the chips store ("2–3 months ago" ->
+// season, "Earlier this year" / "Last year" -> year). chk_kitchen_batch_start_precision and
+// chk_ksl_entered_precision carry the same eight.
 export const KITCHEN_ENTERED_PRECISIONS = KITCHEN_START_PRECISIONS;
 
 export const KITCHEN_START_ANCHOR_KINDS = ['harvest', 'photo', 'purchase', 'memory', 'manual'];
 
-// The two anchor kinds that name a row this app can actually resolve — and therefore the only two an
-// id is accepted for. NARROWER THAN THE DDL ON PURPOSE: start_anchor_id has NO database FK (it is a
-// polymorphic uuid pointing at photos.id or harvest_log.id), so nothing enforces even existence, let
-// alone ownership. 'purchase' and 'manual' name no table here and 'memory' is defined as having no id,
-// so an id under those kinds is a uuid nothing can ever dereference — and one an ownership gate could
-// not check either. Refusing it is what lets the two remaining cases be gated exhaustively in
-// kitchenRoutes.js. Widen this the day a kind gains a real table, and gate it in the same commit.
+// The two anchor kinds that name a row this app can resolve, so the only two an id is accepted for.
+// NARROWER THAN THE DDL ON PURPOSE: start_anchor_id has no database FK (a polymorphic uuid for photos.id
+// or harvest_log.id), so nothing else enforces existence or ownership. 'purchase', 'manual' and 'memory'
+// name no table, so an id under them could never be dereferenced or ownership-checked. Widen this only
+// when a kind gains a real table, and gate it in kitchenRoutes.js in the same commit.
 export const VERIFIABLE_ANCHOR_KINDS = ['harvest', 'photo'];
 
-// chk_kitchen_batch_outcome. Six, and the four beyond the obvious two are load-bearing —
-// put_up_different because candying's commonest non-ideal result is a downgrade that still produces a
-// real storable product, and discarded_spoiled because in a two-user household "Jen cannot tell
-// whether the jar was eaten or thrown out" is the actual hazard.
+// chk_kitchen_batch_outcome. put_up_different: candying's commonest non-ideal result is a downgrade that
+// still makes a storable product. discarded_spoiled: in a two-user household "was the jar eaten or
+// thrown out" is the actual hazard.
 export const KITCHEN_OUTCOMES = [
   'put_up', 'put_up_different', 'consumed', 'given_away', 'discarded_spoiled', 'abandoned',
 ];
 
-// chk_ksl_stage_kind. ORDER IS NOT MONOTONIC: a `tended` row legitimately arrives after a `finished`
-// one (three of six documented candy recoveries re-enter the sequence). Nothing here may sort on it.
+// chk_ksl_stage_kind. ORDER IS NOT MONOTONIC: a `tended` row can arrive after a `finished` one (candy
+// recoveries re-enter the sequence). Nothing may sort on it.
 export const KITCHEN_STAGE_KINDS = ['started', 'tended', 'moved', 'finished', 'failed'];
 
-// Put-Up release 1b — chk_ksl_stage_kind as 1b widened it: every kind a stage row can CARRY, which is
-// every kind getBatch can send. KITCHEN_STAGE_KINDS above stays the five shipped kinds on purpose: it is
-// what the view's legacy current_stage_* LATERAL reads, and the shipped client's label maps are bound to
-// it (src/__tests__/PutUpBatchDetail.test.jsx) — the 1b client binds its maps to this list instead.
+// chk_ksl_stage_kind as 1b widened it: every kind a stage row can carry. KITCHEN_STAGE_KINDS above stays
+// the five shipped kinds on purpose: the view's legacy current_stage_* LATERAL reads it and the shipped
+// client's label maps are bound to it (src/__tests__/PutUpBatchDetail.test.jsx).
 export const KITCHEN_STAGE_KINDS_ALL = [
   'started', 'tended', 'moved', 'finished', 'failed',
   'reopened', 'paused', 'resumed', 'noted', 'put_up', 'void',
@@ -62,11 +55,10 @@ export const KITCHEN_STAGE_KINDS_ALL = [
 export const KITCHEN_STAGE_ROUTE_KINDS = [
   'started', 'tended', 'moved', 'finished', 'failed', 'reopened', 'paused', 'resumed', 'noted', 'void',
 ];
-// The kinds a stages-route void may point at (V4 Appendix A: "tended, moved, noted — the only kinds the
-// stages route voids").
+// The kinds a stages-route void may point at (V4 Appendix A).
 export const KITCHEN_VOIDABLE_KINDS = ['tended', 'moved', 'noted'];
-// The lifecycle kinds Undo that put-up reads when it decides whether to reopen (V4 "Undo that put-up":
-// "noted, tended, moved and void rows do not count").
+// The lifecycle kinds Undo that put-up reads when deciding whether to reopen; noted, tended, moved and
+// void rows do not count.
 export const KITCHEN_LIFECYCLE_KINDS = ['put_up', 'finished', 'failed', 'reopened', 'paused', 'resumed'];
 // The kinds that are a batch STATE change as well as a row: the stages route writes the row and moves
 // the batch column in ONE statement, so the column stays authoritative and the log cannot disagree.
@@ -74,27 +66,23 @@ export const KITCHEN_STATE_STAGE_KINDS = ['paused', 'resumed', 'reopened'];
 
 export const KITCHEN_INPUT_KINDS = ['harvest', 'purchased', 'pantry', 'other'];
 
-// chk_kbi_qty_unit as v5-inflightbatch-001 shipped it (14 values). Applied to kitchen_stage_log.amount_unit
-// TOO. Put-Up release 1b gives both columns (and preservation_log.quantity_unit, which had drifted —
-// 'quarts' beside harvest_log's 'qt', BUG-PRESERVUNITNOCHECK-001) a real CHECK: KITCHEN_UNITS, 25 values,
-// a superset of these 14. This list stays the 14 until release F widens the line writers (lane L2b).
+// chk_kbi_qty_unit as v5-inflightbatch-001 shipped it (14 values); also applied to
+// kitchen_stage_log.amount_unit. KITCHEN_UNITS below (25) is a superset; this list stays the 14 until
+// release F widens the line writers.
 export const KITCHEN_QTY_UNITS = [
   'g', 'kg', 'oz', 'lb', 'count', 'cup', 'tbsp', 'tsp', 'fl oz', 'qt', 'gal', 'ml', 'l', 'other',
 ];
 
-// ── Release F (contract-F.md conventions) ─────────────────────────────────────────────────────────
-// KITCHEN_UNITS — the one list (V4 "Units"), = chk_kbi_qty_unit / chk_ksl_amount_unit as 1b widened
-// them and chk_kitchen_batch_vessel_unit (F). Every F writer (keyed lines, line PATCH, stage PATCH,
-// vessel) takes these 25. KITCHEN_QTY_UNITS above stays the 14 the SHIPPED forms were built on, because
-// the shipped client mirror (src/components/putup/batchInputs.js) is bound to it; the un-keyed bulk form
-// keeps it.
+// KITCHEN_UNITS: the one list (V4 "Units"), = chk_kbi_qty_unit / chk_ksl_amount_unit as widened, and
+// chk_kitchen_batch_vessel_unit. Every F writer takes these 25. KITCHEN_QTY_UNITS above stays the 14 the
+// shipped forms were built on (the client mirror src/components/putup/batchInputs.js is bound to it).
 export const KITCHEN_UNITS = [
   'g', 'kg', 'oz', 'lb', 'ml', 'l', 'tsp', 'tbsp', 'fl oz', 'cup', 'pint', 'qt', 'gal',
   'count', 'clove', 'head', 'bunch', 'pinch', 'peck', 'bushel', 'half-bushel', 'flat', 'jar', 'bag', 'other',
 ];
-// Grams per unit — THE one mass table (06 §1.4). A unit not here is not a mass.
+// Grams per unit: the one mass table (06 §1.4). A unit not here is not a mass.
 export const MASS_G = Object.freeze({ g: 1, kg: 1000, oz: 28.3495, lb: 453.592 });
-// Grams per unit for a role='water' line ONLY (1 g/ml; 06's water-conversion rule). Every other volume is "no weight".
+// Grams per unit for a role='water' line ONLY (1 g/ml). Every other volume is "no weight".
 export const WATER_G = Object.freeze({
   ml: 1, l: 1000, tsp: 4.92892, tbsp: 14.7868, 'fl oz': 29.5735, cup: 236.588, pint: 473.176,
   qt: 946.353, gal: 3785.41,
@@ -118,77 +106,60 @@ export const KITCHEN_ACTS = ['topped_up', 'pushed_under', 'skimmed'];
 export const KITCHEN_ROLES = ['salt', 'water'];
 // chk_kbi_salt_base admits 'peppers' for a 1b-era row; no F writer writes it (06 §3.1).
 export const KITCHEN_SALT_BASES = ['produce', 'water', 'all'];
-// The kinds a line POST writes (contract-F §2.2). B′ release 3 adds 'pantry': a bought item from the
-// Pantry, named by pantry_item_id (chk_kbi_pantry_item_kind, v5-pantry-001).
+// The kinds a line POST writes (contract-F §2.2); 'pantry' names a bought item by pantry_item_id
+// (chk_kbi_pantry_item_kind).
 export const KITCHEN_LINE_KINDS = ['garden', 'harvest', 'put_up', 'purchased', 'other', 'pantry'];
 export const KITCHEN_SHU_BASES = ['computed', 'typed'];
 // chk_kitchen_batch_vessel_count.
 export const KITCHEN_VESSEL_COUNT_MAX = 50;
 
-// V5-PHRECORD-001. chk_ksl_ph_scale, mirrored — the pH scale's definitional range and nothing else.
+// chk_ksl_ph_scale, mirrored: the pH scale's definitional range and nothing else.
 //
-// ⚠ NOT A SAFETY BAND, and the distinction is the whole ruling. This range is symmetric, prefers no
-// reading to any other, and excludes nothing a meter or a strip can produce; its only job is to catch
-// a fat-finger before it is stored, exactly as the amount checks beside it do. The app RECORDS a
-// measured pH, PROMPTS someone to measure, and LINKS to how — it never derives, scores, colours,
-// gates on, or compares a reading to anything. There is no threshold constant in this file and there
-// must never be one. Adjudication: FOODSAFETY-RULING-V101.md §2 (gardening-docs project-state).
-// This is an original design choice, not a compliance posture: no published convention exists for
-// what home-preservation software should say, which the research records as a negative RESULT.
-//
-// Restated in three places on purpose — the DB CHECK, here, and the client — which is the same
-// belt-and-suspenders the vocabularies above use. A raw 23514 reads as
-// `Constraint violation: chk_ksl_ph_scale`, which is not something a cook at a counter can act on.
+// NOT A SAFETY BAND, and the distinction is the whole ruling. This range is symmetric, prefers no reading
+// to any other, and excludes nothing a meter or strip can produce; its only job is to catch a fat-finger.
+// The app RECORDS a measured pH, PROMPTS someone to measure, and LINKS to how; it never derives, scores,
+// colours, gates on, or compares a reading to anything. There is no threshold constant in this file and
+// there must never be one (FOODSAFETY-RULING-V101.md §2). Restated in the DB CHECK, here and the client.
 export const KITCHEN_PH_SCALE_MIN = 0;
 export const KITCHEN_PH_SCALE_MAX = 14;
 
-// The PUT allowlist — an EXPLICIT set, not a full replace, and the difference from
-// index.js:589-610 is deliberate. Closing goes through its own route, so closed_at/outcome are absent;
-// first_recorded_at is the honest floor a client must never be able to move; user_id is ownership.
+// The PUT allowlist: an EXPLICIT set, not a full replace. Closing has its own route, so closed_at/outcome
+// are absent; first_recorded_at is the honest floor a client must never move; user_id is ownership.
 export const KITCHEN_BATCH_EDITABLE_COLUMNS = [
   'label', 'kind', 'kind_other', 'started_at', 'start_precision', 'start_anchor_kind', 'start_anchor_id',
   'expected_days_min', 'expected_days_max', 'brine_note', 'cover_photo_id', 'notes', 'suspended_at',
-  // Release F (contract-F §2.1): the jar & heat facts and "Following a recipe?". shu_est_basis is NOT
-  // here — the merge PUT writes 'typed' whenever it writes a heat estimate, and only
-  // POST /:id/shu-estimate/save writes 'computed' (a body basis other than 'typed' is refused).
+  // Release F: the jar & heat facts and "Following a recipe?". shu_est_basis is NOT here: the merge PUT
+  // writes 'typed' whenever it writes a heat estimate, and only POST /:id/shu-estimate/save writes 'computed'.
   'vessel_label', 'vessel_size', 'vessel_unit', 'vessel_count', 'no_salt', 'shu_est_low', 'shu_est_high',
   'recipe_ref',
 ];
 
-// The complement, stated rather than implied. A column here reaching the PUT is a defect regardless of
-// how it got there, and naming them is what lets a test assert the boundary from both sides.
+// The complement, stated rather than implied, so a test can assert the boundary from both sides. A column
+// here reaching the PUT is a defect however it got there.
 export const KITCHEN_BATCH_SERVER_OWNED_COLUMNS = [
   'id', 'user_id', 'first_recorded_at', 'closed_at', 'outcome', 'outcome_note',
   'created_at', 'updated_at', 'deleted_at',
 ];
 
-// THE REVERSIBILITY CONTRACT, NAMED SO A TEST CAN BIND IT. close writes exactly this set; reopen
-// NULLs exactly this set. Under a mock driver a round-trip cannot be proven, only what each handler
-// SENDS — so the assertable form is set equality in BOTH directions against this one constant, which
-// is what stops close and reopen drifting apart later. Adding a fourth column to the close UPDATE
-// without adding it here reds; adding it here without adding it to both statements also reds.
+// THE REVERSIBILITY CONTRACT, named so a test can bind it: close writes exactly this set; reopen NULLs
+// exactly this set. A mock driver cannot prove a round-trip, only what each handler SENDS, so the
+// assertable form is set equality in BOTH directions against this constant.
 //
-// suspended_at is DELIBERATELY NOT IN THIS SET even though close writes it. It is not part of the
-// close's own record — it is the pause being cleared because chk_kitchen_batch_suspend_exclusive
-// forbids a suspended closed batch — and a reopen that NULLed it would be a no-op on a column that
-// is already NULL. Reopen therefore RESUMES a paused batch rather than restoring the pause, which is
-// stated rather than silent: a batch you closed by mistake is one you are picking back up.
+// suspended_at is deliberately NOT in this set though close writes it: that is the pause being cleared
+// (chk_kitchen_batch_suspend_exclusive forbids a suspended closed batch), not part of the close's record,
+// and a reopen that NULLed it would be a no-op. Reopen therefore RESUMES a paused batch.
 export const KITCHEN_BATCH_CLOSE_COLUMNS = ['closed_at', 'outcome', 'outcome_note'];
 
-// The predicate bulk-add's window ceiling, inclusive of both endpoints. NOT a performance bound — a
-// 1,212-row INSERT..SELECT is nothing to Postgres. It is a REPAIRABILITY bound: the undo for a
-// mis-tapped predicate is DELETE /:id/inputs/:inputId, one row at a time, and the predicate form
-// discards its RETURNING ids so even a targeted undo needs a full before/after GET diff. Measured on
-// live prod 2026-09-04: `{from:'2000-01-01', to:'2100-01-01'}` with no other term inserts 1,212 rows
-// in one tap.
+// The predicate bulk-add's window ceiling, inclusive of both endpoints. NOT a performance bound but a
+// REPAIRABILITY bound: the undo for a mis-tapped predicate is DELETE /:id/inputs/:inputId one row at a
+// time, and the predicate form discards its RETURNING ids.
 //
-// 366 and not less: the client's window comes from HarvestTimeframeChips, whose season chip spans a
-// full Nov-Oct grow year (365 days inclusive, 366 across a leap day). A cap that rejected a season
-// would break the one control the design ships for choosing the window.
+// 366 and not less: the client's window comes from HarvestTimeframeChips, whose season chip spans a full
+// Nov-Oct grow year (365 days inclusive, 366 across a leap day).
 export const KITCHEN_PREDICATE_MAX_SPAN_DAYS = 366;
 
-// Columns whose value is normalized to "meaningful string or null" before it reaches the column.
-// btrim() CHECKs exist on label / kind_other, and a whitespace-only brine_note is noise either way.
+// Columns normalized to "meaningful string or null" before reaching the column (btrim() CHECKs exist on
+// label / kind_other).
 const KITCHEN_TEXT_COLUMNS = new Set([
   'label', 'kind', 'kind_other', 'start_precision', 'start_anchor_kind', 'brine_note', 'notes',
   'vessel_label', 'vessel_unit', 'recipe_ref',
@@ -199,18 +170,15 @@ const KITCHEN_INTEGER_COLUMNS = new Set([
 ]);
 
 // ORDER KEYS, stated once. `id DESC` on the stage log is NOT decoration: two rows written in one
-// statement tie on entered_at AND created_at, which is the nondeterminism seed_lot_stage_log's readers
-// had until they took the same tiebreak (BUG-SEEDSTAGETZSHIFT-001) and this table's idx_ksl_batch was
-// built to remove. A "topped up + skimmed" double-tap hits it.
+// statement tie on entered_at AND created_at (a "topped up + skimmed" double-tap hits it).
 export const STAGE_LOG_ORDER = 'entered_at DESC, id DESC';
 export const INPUT_ORDER = 'added_at DESC, id DESC';
 // NULLS LAST is mandatory (SavedSeeds.jsx:594-613): an unknown start must not outrank a measured one
 // at the top of a "check this" list.
 export const BATCH_LIST_ORDER = 'started_at DESC NULLS LAST, first_recorded_at DESC';
 
-// Same literal as household.js / index.js. A malformed id must answer the SAME generic 400/404 a
-// foreign id gets — never a 22P02 falling through to an opaque 500, which is both a worse contract and
-// a weak "is this even a uuid" side channel.
+// Same literal as household.js / index.js. A malformed id must get the SAME generic 400/404 a foreign id
+// gets, never a 22P02 falling through to an opaque 500 or an "is this a uuid" side channel.
 export const KITCHEN_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Zoneless local calendar day. The predicate window is a CIVIL range a person types, never an instant.
@@ -225,23 +193,20 @@ export function normalizeText(v) {
 const isUuid = (v) => typeof v === 'string' && KITCHEN_UUID_RE.test(v);
 const has = (body, k) => Object.prototype.hasOwnProperty.call(body, k);
 
-// ── routing ──────────────────────────────────────────────────────────────────────────────────────
-// Returned as data rather than branched inline so the route table is executable by a test. The
-// literal sub-routes (`stages`, `inputs`, `close`) are matched by SHAPE, not by trying `:id` first —
-// the SEEDINV / whats-put-up precedent, one altitude up.
+// Returned as data so a test can execute the route table. The literal sub-routes (`stages`, `inputs`,
+// `close`) are matched by SHAPE, not by trying `:id` first.
 export function parseKitchenRoute(rawPath) {
   if (typeof rawPath !== 'string') return null;
   const path = rawPath.length > 1 && rawPath.endsWith('/') ? rawPath.slice(0, -1) : rawPath;
   if (path === '/api/kitchen-batches') return { kind: 'collection' };
-  // Release F: the line search is a LITERAL, matched BEFORE any :id capture, so 'line-search' can never
-  // be read as a batch id (API-I1).
+  // The line search is a LITERAL, matched BEFORE any :id capture, so 'line-search' is never a batch id.
   if (path === '/api/kitchen-batches/line-search') return { kind: 'line_search' };
-  // B′ release 3: How it was made → — a literal too, for the same reason.
+  // How it was made is a literal too, for the same reason.
   if (path === '/api/kitchen-batches/from-jars') return { kind: 'from_jars' };
   const m = path.match(/^\/api\/kitchen-batches\/([^/]+)(?:\/([^/]+))?(?:\/([^/]+))?(?:\/([^/]+))?$/);
   if (!m) return null;
   const [, id, sub, tail, fourth] = m;
-  // The four-segment shapes: Put-Up 1b's undo, F's line restore. Every other arm has no fourth segment.
+  // The four-segment shapes: Put-Up 1b's undo, F's line restore.
   if (sub === 'put-up' && tail && fourth === 'undo') return { kind: 'put_up_undo', id, stageId: tail };
   if (sub === 'inputs' && tail && fourth === 'restore') return { kind: 'input_restore', id, inputId: tail };
   if (fourth) return null;
@@ -260,21 +225,16 @@ export function parseKitchenRoute(rawPath) {
   return null;
 }
 
-// `state` defaults to `going`. `going` = closed_at IS NULL and INCLUDES suspended batches — the client
-// distinguishes them by suspended_at, because a frozen candy parent that resumes over months is not
-// the same claim as a day-2 syrup pot, and hiding it would be a third state nobody asked for.
+// `state` defaults to `going` (closed_at IS NULL, INCLUDING suspended batches: the client tells them apart
+// by suspended_at, since a frozen candy parent that resumes over months is not a day-2 syrup pot).
 export function parseBatchState(raw) {
   return raw === 'closed' || raw === 'all' ? raw : 'going';
 }
 
-// ── shared field rules ───────────────────────────────────────────────────────────────────────────
-
-// chk_kitchen_batch_start_pairing, mirrored:
-//   (started_at IS NOT NULL) = (start_precision IS NOT NULL AND start_precision <> 'unknown')
-// The four start states it makes exclusive are all real and all different claims — never asked, asked
-// and unknown, and a date with a grade. `requirePair` is what makes the merge PUT safe: a merge cannot
-// see the stored half, so a request that moves one half alone could only be validated by reading the
-// row first, and a read-then-write is a TOCTOU where a paired requirement is not.
+// chk_kitchen_batch_start_pairing, mirrored: (started_at IS NOT NULL) = (start_precision IS NOT NULL AND
+// start_precision <> 'unknown'). The four start states it makes exclusive are all real claims: never
+// asked, asked and unknown, a date with a grade. `requirePair` makes the merge PUT safe: it cannot see
+// the stored half, so a request moving one half alone could only be validated by read-then-write (TOCTOU).
 function startPairingError(body, { requirePair }) {
   const hasDate = has(body, 'started_at');
   const hasGrade = has(body, 'start_precision');
@@ -313,8 +273,8 @@ function anchorError(body) {
   return null;
 }
 
-// chk_kitchen_batch_expected_pairing + _order. A RANGE rather than a single expected_days, because a
-// single number makes "every derived number inherits the widest bound" uncomputable.
+// chk_kitchen_batch_expected_pairing + _order. A RANGE, because a single number makes "every derived
+// number inherits the widest bound" uncomputable.
 function expectedDaysError(body, { requirePair }) {
   const hasMin = has(body, 'expected_days_min');
   const hasMax = has(body, 'expected_days_max');
@@ -335,34 +295,31 @@ function expectedDaysError(body, { requirePair }) {
   return null;
 }
 
-// `kind` OWNS THE PAIR, the same contract source_kind has over source_label in index.js — a request
-// that names the kind names kind_other too, and one that omits it touches neither. Without that,
-// switching a batch from 'other' to 'candy' would strand the old free-text label on the row.
+// `kind` OWNS THE PAIR, as source_kind has over source_label in index.js: naming the kind names kind_other
+// too, omitting it touches neither. Otherwise switching 'other' to 'candy' would strand the old text.
 function kindError(body, { requirePair }) {
   if (!has(body, 'kind')) return null;
   const kind = normalizeText(body.kind);
   if (kind != null && !KITCHEN_BATCH_KINDS.includes(kind)) {
     return `kind must be one of: ${KITCHEN_BATCH_KINDS.join(', ')}`;
   }
-  // Put-Up release 1b: "Other" needs no text (chk_kitchen_batch_kind_other relaxed in place — it still
-  // refuses a BLANK name, which normalizeText turns into NULL before it can reach the column).
+  // "Other" needs no text (chk_kitchen_batch_kind_other); it still refuses a BLANK name, which
+  // normalizeText turns into NULL.
   if (requirePair && kind !== 'other' && normalizeText(body.kind_other) != null) {
     return "kind_other only applies when kind is 'other'";
   }
   return null;
 }
 
-// ── POST /api/kitchen-batches ────────────────────────────────────────────────────────────────────
-// `label` is the ONLY required field, and that is the entire point of the capture path: a batch with
-// nothing but a label and a photo is a complete, valid record.
+// POST /api/kitchen-batches: `label` is the only required field; a batch with nothing but a label and a
+// photo is a complete, valid record.
 export function validateBatchCreate(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return 'body required';
   if (normalizeText(body.label) == null) return 'label is required';
   const rejected = KITCHEN_BATCH_SERVER_OWNED_COLUMNS.filter((c) => has(body, c));
   if (rejected.length) return `these fields are set by the server, not the client: ${rejected.join(', ')}`;
-  // Put-Up release 1b (V4 API table, row "POST /api/kitchen-batches"): the key lives on the batch row
-  // (uq_kitchen_batch_idempotency_key). Release 4 lifts 1b's recipe_id refusal: a batch may name the recipe
-  // it follows (the route loads it household-scoped) and F's free-text recipe_ref rides the create too.
+  // The idempotency key lives on the batch row (uq_kitchen_batch_idempotency_key). A batch may name the
+  // recipe it follows (the route loads it household-scoped); F's free-text recipe_ref rides the create too.
   return kindError(body, { requirePair: false })
     ?? uuidFieldError(body, 'recipe_id')
     ?? recipeRefError(body)
@@ -385,23 +342,21 @@ function uuidFieldError(body, field) {
   return v == null || isUuid(v) ? null : `${field} must be a uuid`;
 }
 
-// ── PUT /api/kitchen-batches/:id ─────────────────────────────────────────────────────────────────
-// A MERGE, not the full replace index.js:589-610 performs. Absent keys are left alone; an explicit
-// null clears. That distinction is why this cannot be written with COALESCE — see kitchenRoutes.js.
+// PUT /api/kitchen-batches/:id: a MERGE, not the full replace in index.js. Absent keys are left alone; an
+// explicit null clears, which is why this cannot use COALESCE (see kitchenRoutes.js).
 export function validateBatchUpdate(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return 'body required';
   const rejected = KITCHEN_BATCH_SERVER_OWNED_COLUMNS.filter((c) => has(body, c));
   if (rejected.length) return `these fields cannot be edited here: ${rejected.join(', ')}`;
-  // A heat estimate typed on the merge PUT is 'typed', by definition. 'computed' is written only by
-  // POST /:id/shu-estimate/save, which recomputes it server-side (06 §2.1; contract-F §2.1).
+  // A heat estimate typed on the merge PUT is 'typed'; 'computed' is written only by POST
+  // /:id/shu-estimate/save, which recomputes it server-side.
   if (has(body, 'shu_est_basis')) {
     if (body.shu_est_basis !== 'typed') return "shu_est_basis can only be 'typed' here — use Work it out to save a computed estimate";
   }
   const unknown = Object.keys(body).filter((k) => k !== 'shu_est_basis' && !KITCHEN_BATCH_EDITABLE_COLUMNS.includes(k));
   if (unknown.length) return `unknown field(s): ${unknown.join(', ')}`;
   if (!Object.keys(body).length) return 'nothing to update';
-  // A label may be changed but never emptied — chk_kitchen_batch_label_nonblank, and a batch with no
-  // label is unfindable in the one list it appears in.
+  // A label may be changed but never emptied (chk_kitchen_batch_label_nonblank).
   if (has(body, 'label') && normalizeText(body.label) == null) return 'label cannot be empty';
   return fBatchFieldsError(body)
     ?? kindError(body, { requirePair: true })
@@ -448,9 +403,8 @@ function fBatchFieldsError(body) {
   return null;
 }
 
-// Split a validated PUT body into "which columns did the request mention" and "what value for each".
-// Two parallel objects rather than one sparse object because the values are frequently null and a
-// merge must tell an explicit null from an absent key — the exact distinction a `?? null` destroys.
+// Split a validated PUT body into "which columns were mentioned" and "what value for each": two objects,
+// because a merge must tell an explicit null from an absent key, which `?? null` destroys.
 export function batchUpdatePatch(body) {
   const present = {};
   const value = {};
@@ -470,21 +424,17 @@ export function batchUpdatePatch(body) {
   return { present, value };
 }
 
-// ── POST /api/kitchen-batches/:id/stages ─────────────────────────────────────────────────────────
-// No DELETE on a stage row, and that absence IS the design: the off-log repair path is what produced
-// the seed-lot divergence this schema refuses to copy. (Release F's in-place edit is kitchenLines.js
-// stagePatchError + kitchenRoutes.js patchStage.)
-//
-// Put-Up release 1b widens what it takes (V4 API table, row "POST /:id/stages"): reopened, paused,
-// resumed, noted and void, and entered_precision. There is still no PUT or DELETE — an Undo is a VOID
-// row appended beside the row it undoes, which is what keeps the log readable afterwards.
+// POST /api/kitchen-batches/:id/stages. No DELETE on a stage row, and that absence IS the design: an
+// off-log repair path produced the seed-lot divergence this schema refuses to copy (Release F's in-place
+// edit is kitchenLines.js stagePatchError + kitchenRoutes.js patchStage). No PUT either: an Undo is a VOID
+// row appended beside the row it undoes, which keeps the log readable.
 export function validateStage(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return 'body required';
   const kind = normalizeText(body.stage_kind);
   if (kind == null || !KITCHEN_STAGE_ROUTE_KINDS.includes(kind)) {
     return `stage_kind must be one of: ${KITCHEN_STAGE_ROUTE_KINDS.join(', ')}`;
   }
-  // "A void row carries nothing else" (V4 Appendix A) — a writer rule, not a CHECK, so it is here.
+  // "A void row carries nothing else" (V4 Appendix A): a writer rule, not a CHECK.
   if (kind === 'void') {
     const extra = Object.keys(body).filter((k) => k !== 'stage_kind' && k !== 'voids_id');
     if (extra.length) return `an undo carries only the row it undoes (voids_id), not: ${extra.join(', ')}`;
@@ -492,16 +442,16 @@ export function validateStage(body) {
     return null;
   }
   if (body.voids_id != null) return "voids_id only goes with stage_kind 'void'";
-  // Rows written "now, exact" (V4 Appendix A): a note, a pause, a resume, a reopen. Nothing retrospective
-  // may be stamped on them, so a date or a precision sent with one is refused rather than ignored.
+  // Rows written "now, exact" (a note, a pause, a resume, a reopen) take nothing retrospective, so a date
+  // or precision sent with one is refused rather than ignored.
   if (kind === 'noted' || KITCHEN_STATE_STAGE_KINDS.includes(kind)) {
     if (body.entered_at != null || body.entered_precision != null) {
       return `a '${kind}' row is stamped when it is written — send no entered_at or entered_precision`;
     }
   }
   if (kind === 'noted' && normalizeText(body.note) == null) return "a 'noted' row needs the note";
-  // Release F: what he did at a check-in (Dave 16:30) — tended only, from the three words
-  // (chk_ksl_acts, chk_ksl_acts_on_tended); the route de-duplicates.
+  // Release F: what was done at a check-in. Tended only, from the three words (chk_ksl_acts,
+  // chk_ksl_acts_on_tended); the route de-duplicates.
   if (has(body, 'acts') && body.acts != null) {
     if (kind !== 'tended') return 'what you did goes on a check-in';
     if (!Array.isArray(body.acts) || !body.acts.length) return 'acts must be a non-empty list, or absent';
@@ -510,8 +460,8 @@ export function validateStage(body) {
   }
   const precErr = enteredPrecisionError(body);
   if (precErr) return precErr;
-  // chk_ksl_moved_needs_location. Placement is a RATE input, not a milestone — a 'moved' row with no
-  // destination records that something changed while destroying the only thing that changed.
+  // chk_ksl_moved_needs_location. Placement is a RATE input, not a milestone: a 'moved' row with no
+  // destination destroys the only thing that changed.
   if (kind === 'moved' && !isUuid(body.storage_location_id ?? null)) {
     return "a 'moved' stage needs a storage_location_id — where did it go?";
   }
@@ -529,8 +479,8 @@ export function validateStage(body) {
 }
 
 // chk_ksl_entered_precision + chk_ksl_entered_pairing, mirrored: `unknown` iff there is no date, and a
-// dated precision needs its date. ABSENT precision is the pre-1b writer's shape and stays legal forever
-// (the route then stamps entered_at as it always did, with a NULL precision) — "never tightened".
+// dated precision needs its date. An ABSENT precision is the pre-1b writer's shape and stays legal forever
+// (the route stamps entered_at with a NULL precision).
 function enteredPrecisionError(body) {
   const prec = normalizeText(body.entered_precision);
   const at = body.entered_at ?? null;
@@ -545,14 +495,12 @@ function enteredPrecisionError(body) {
 }
 
 // chk_ksl_ph_pairing + chk_ksl_ph_scale, mirrored. A reading always carries the instant it was read:
-// a cook measures at the counter and logs from the sofa, so entered_at ("when did you log this") and
-// ph_read_at ("when did you read it") are different facts, and DEFAULTING one from the other would
-// stamp a time onto a measurement nobody took then. There is no default anywhere in this path — not
-// here, not in the route, not on the column — so the pair is required together or omitted together.
+// entered_at ("when did you log this") and ph_read_at ("when did you read it") are different facts, and
+// defaulting one from the other would stamp a time onto a measurement nobody took then. No default
+// anywhere (here, the route, the column), so the pair is required together or omitted together.
 //
-// NOTHING BELOW LOOKS AT THE VALUE'S MEANING. It is checked for being a number on the pH scale and
-// then passed through untouched, as the STRING the client sent: a Number round-trip drops a trailing
-// zero the meter displayed, so the route never coerces it either.
+// Nothing here looks at the value's meaning. It is passed through as the STRING the client sent (a Number
+// round-trip drops a trailing zero the meter displayed), so the route never coerces it.
 function phError(body) {
   const reading = body.ph_reading ?? null;
   const readAt = body.ph_read_at ?? null;
@@ -565,27 +513,24 @@ function phError(body) {
   if (n < KITCHEN_PH_SCALE_MIN || n > KITCHEN_PH_SCALE_MAX) {
     return `a pH reading has to be on the pH scale — ${KITCHEN_PH_SCALE_MIN} to ${KITCHEN_PH_SCALE_MAX}`;
   }
-  // Checked here rather than left to ::timestamptz, which would surface a typo as a 22007 falling
-  // through to an opaque 500 — the same reason KITCHEN_UUID_RE exists a few lines up.
+  // Checked here rather than left to ::timestamptz, which would surface a typo as a 22007 and an opaque 500.
   if (Number.isNaN(new Date(String(readAt)).getTime())) {
     return 'ph_read_at has to be a timestamp';
   }
   return null;
 }
 
-// ── POST /api/kitchen-batches/:id/inputs ─────────────────────────────────────────────────────────
-// Two forms, one route. The PREDICATE form is required, not a nice-to-have: the measured fan-in for
-// one five-week pepper mash is 139 harvest_log rows across 30 plantings, and a 139-row hand-pick is a
-// discoverability failure arriving through the schema.
+// POST /api/kitchen-batches/:id/inputs: two forms, one route. The PREDICATE form is required: one
+// five-week pepper mash fans in 139 harvest_log rows across 30 plantings, and a 139-row hand-pick is a
+// discoverability failure.
 export function validateInputPayload(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return 'body required';
   const hasList = has(body, 'inputs');
   const hasPredicate = has(body, 'predicate');
   if (hasList === hasPredicate) return 'send either inputs or predicate, not both and not neither';
-  // `preview` is the dry-run flag and it belongs to the predicate form ONLY. The explicit form is
-  // already reviewable — the client built the rows — so a preview there would be an arm with nothing
-  // to resolve, and accepting it silently is how a client ends up believing it dry-ran a write that
-  // committed. Strict boolean for the same reason is_byproduct is: "true" must not read as true.
+  // `preview` is the dry-run flag and belongs to the predicate form ONLY: the explicit form is already
+  // reviewable, and silently accepting preview there is how a client believes it dry-ran a write that
+  // committed. Strict boolean, so "true" must not read as true.
   if (has(body, 'preview')) {
     if (!hasPredicate) return 'preview only applies to the predicate form';
     if (typeof body.preview !== 'boolean') return 'preview must be true or false';
@@ -624,8 +569,7 @@ function inputRowError(row) {
   }
   const qty = row.qty ?? null;
   const unit = normalizeText(row.qty_unit);
-  // A NULL pair means "unrecorded, assume the whole thing" — the house idiom from
-  // chk_harvest_log_weight_pairing. It never means zero.
+  // A NULL pair means "unrecorded, assume the whole thing" (chk_harvest_log_weight_pairing's idiom), never zero.
   if ((qty == null) !== (unit == null)) return 'qty and qty_unit must both be set, or both be empty';
   if (qty != null) {
     if (!Number.isFinite(Number(qty)) || Number(qty) <= 0) return 'qty must be greater than 0';
@@ -634,11 +578,9 @@ function inputRowError(row) {
   return null;
 }
 
-// Inclusive day count between two YYYY-MM-DD literals. Date.parse of a date-only ISO string is
-// specified as UTC, so both ends land on a UTC midnight and the difference is an exact multiple of
-// 86_400_000 — no DST hour to round off, in any zone the runner happens to sit in. Callers must have
-// shape-checked both literals first; a non-date reaches NaN here and NaN > cap is false, which is why
-// predicateError runs DATE_RE before this and not after.
+// Inclusive day count between two YYYY-MM-DD literals. Date.parse of a date-only string is UTC, so the
+// difference is an exact multiple of 86_400_000 in any zone. Callers must shape-check first: a non-date
+// gives NaN and NaN > cap is false, so predicateError runs DATE_RE before this.
 export function predicateSpanDays(p) {
   const from = Date.parse(`${p.from}T00:00:00Z`);
   const to = Date.parse(`${p.to}T00:00:00Z`);
@@ -647,15 +589,13 @@ export function predicateSpanDays(p) {
 
 function predicateError(p) {
   if (!p || typeof p !== 'object' || Array.isArray(p)) return 'predicate must be an object';
-  // Zoneless local calendar days, both required. A window is what makes the bulk add reviewable
-  // before it runs; an open-ended one is not a predicate, it is "everything".
+  // Zoneless local calendar days, both required: a window makes the bulk add reviewable; an open-ended
+  // one is "everything".
   if (!DATE_RE.test(String(p.from ?? ''))) return 'predicate.from must be a YYYY-MM-DD date';
   if (!DATE_RE.test(String(p.to ?? ''))) return 'predicate.to must be a YYYY-MM-DD date';
   if (String(p.to) < String(p.from)) return 'predicate.to must be on or after predicate.from';
-  // The span ceiling. The module already refuses an OPEN-ENDED window on the grounds that it "is not
-  // a predicate, it is 'everything'" — this applies the same reasoning to a window wide enough to
-  // mean the same thing. Both endpoints are ET calendar days, so the count is inclusive: from == to
-  // is a span of 1.
+  // The span ceiling applies the same reasoning to a window wide enough to mean "everything". Both
+  // endpoints are ET calendar days, so the count is inclusive (from == to is 1).
   const span = predicateSpanDays(p);
   if (span > KITCHEN_PREDICATE_MAX_SPAN_DAYS) {
     return `that window covers ${span} days — a bulk add takes at most ${KITCHEN_PREDICATE_MAX_SPAN_DAYS}, so narrow it or add the picks in two passes`;
@@ -668,9 +608,8 @@ function predicateError(p) {
   return null;
 }
 
-// Normalized column arrays for the unnest'd bulk INSERT. Harvest ids are DEDUPED here as well as
-// guarded by uq_kbi_batch_harvest — the index makes a repeat a no-op either way, but a request that
-// names the same pick twice should not report two inserts when one row lands.
+// Normalized column arrays for the unnest'd bulk INSERT. Harvest ids are DEDUPED here as well as by
+// uq_kbi_batch_harvest, so naming the same pick twice does not report two inserts.
 export function normalizeInputRows(inputs) {
   const seenHarvest = new Set();
   const out = [];
@@ -698,17 +637,13 @@ export function harvestIdsIn(inputs) {
   return [...new Set(inputs.map((r) => r.harvest_log_id).filter((v) => v != null))];
 }
 
-// ── POST /api/kitchen-batches/:id/close ──────────────────────────────────────────────────────────
-// chk_kitchen_batch_close_pairing makes closed_at and outcome inseparable, so outcome is required
-// here and is the only thing that is.
+// POST /api/kitchen-batches/:id/close. chk_kitchen_batch_close_pairing makes closed_at and outcome
+// inseparable, so outcome is the only required field.
 //
-// `cue_observed` rides on this body and is NOT validated, deliberately. The close is the most
-// consequential transition in the feature — "I decided it is done" — and it was the one transition
-// that could not record the observation that decided it, while every lesser one could
-// (kitchen_stage_log.cue_observed, there since INFLIGHTBATCH). For a dehydrate batch the published
-// endpoint IS the cue: NCHFP's own test is "brittle or crisp… shatter if hit with a hammer", not an
-// elapsed time. So it is free text, never a picklist, never range-checked, and never read back into
-// any decision — that is exactly what keeps it a RECORD and not an assessment.
+// `cue_observed` rides on this body and is deliberately NOT validated: it is the observation that decided
+// "it is done" (for a dehydrate batch the endpoint IS the cue, e.g. NCHFP's "brittle or crisp"). Free text,
+// never a picklist, never range-checked, never read back into any decision, which keeps it a RECORD and
+// not an assessment.
 export function validateClose(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return 'body required';
   const outcome = normalizeText(body.outcome);
@@ -727,14 +662,10 @@ export function outputIdsIn(body) {
   return [...new Set(body.output_preservation_log_ids ?? [])];
 }
 
-// ── POST /api/kitchen-batches/:id/outputs ────────────────────────────────────────────────────────
-// LINKING IS DECOUPLED FROM CLOSING, and that is the ruling this route exists to carry. Before it,
-// close was the only writer of preservation_log.batch_id, so a jar could not be linked to a batch
-// without ENDING the batch — and the commonest real event in both of Dave's processes is a partial
-// draw-off from a batch that keeps going (two quarts of sauce off a mash whose crock continues;
-// three trays jarred while a fourth goes back in). The DDL anticipates exactly that — "one mash
-// batch legitimately outputs both hot_sauce and ferment_mash jars" — and the only route that could
-// record it was terminal. close keeps output_preservation_log_ids for the terminal case.
+// POST /api/kitchen-batches/:id/outputs. LINKING IS DECOUPLED FROM CLOSING: close was once the only writer
+// of preservation_log.batch_id, so a jar could not be linked without ENDING the batch, yet the commonest
+// real event is a partial draw-off from a batch that keeps going (two quarts off a mash whose crock
+// continues). close keeps output_preservation_log_ids for the terminal case.
 export function validateOutputsPayload(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return 'body required';
   const ids = body.preservation_log_ids;
@@ -750,9 +681,8 @@ export function outputLogIdsIn(body) {
   return [...new Set(body.preservation_log_ids ?? [])];
 }
 
-// ── error surfacing ──────────────────────────────────────────────────────────────────────────────
-// Every CHECK this schema ships, given words. Returns null for anything not ours, so index.js's
-// existing PG-code map keeps its behaviour unchanged for the preservation routes.
+// Every CHECK this schema ships, given words. Returns null for anything not ours, so index.js's PG-code
+// map keeps its behaviour for the preservation routes.
 const CONSTRAINT_MESSAGES = {
   chk_kitchen_batch_kind: 'that is not a kind this app knows',
   chk_kitchen_batch_kind_other: "name the kind when you pick 'other'",
@@ -781,12 +711,11 @@ const CONSTRAINT_MESSAGES = {
   chk_ksl_label_nonblank: 'a stage label cannot be blank',
   chk_ksl_amount_pairing: 'an amount needs a unit, and a unit needs an amount',
   chk_ksl_amount_positive: 'an amount has to be greater than zero',
-  // V5-PHRECORD-001. Both messages describe the SHAPE of the record, never the value's meaning.
+  // Both messages describe the SHAPE of the record, never the value's meaning.
   chk_ksl_ph_pairing: 'a pH reading needs the time it was read, and a time needs a reading',
   chk_ksl_ph_scale: 'that is not a reading on the pH scale',
-  // The two-truths guard on the fan-out. A jar either came from a batch (whose inputs live on the
-  // batch) or directly from one harvest — never both.
-  // Put-Up release 1b (v5-putupmake-001).
+  // 1b CHECKs (v5-putupmake-001). The last entry guards the two-truths fan-out: a jar comes from a batch
+  // or from one harvest, never both.
   chk_ksl_entered_precision: 'that is not a date precision this app knows',
   chk_ksl_entered_pairing: "a date always carries its precision, and 'unknown' always comes without a date",
   chk_ksl_void_pairing: 'an undo row points at the row it undoes, and nothing else does',

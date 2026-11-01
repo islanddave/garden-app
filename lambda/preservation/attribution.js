@@ -1,24 +1,15 @@
-// V4-PUTUPLINK-001 — planting-attribution pure functions for the preservation Lambda.
+// Planting-attribution pure functions for the preservation Lambda.
 //
-// DEPENDENCY-FREE ON PURPOSE. index.js imports @neondatabase/serverless, @clerk/backend and
-// @aws-sdk/client-secrets-manager, none of which are in the ROOT package.json — they resolve on a
-// dev machine (hoisted from a lambda-local install) but `npm ci` in CI does NOT install them, so a
-// unit test importing index.js fails at collect time in CI while passing locally. That is the exact
-// local-green/CI-red trap this repo has been bitten by before. Keeping these here lets
-// src/__tests__/preservationAttribution.test.js cover the L7 rules with zero Lambda deps.
-// Sibling modules ship with the function bundle (same pattern as household.js).
+// Dependency-free on purpose: index.js imports packages that resolve locally but are not installed
+// by `npm ci` in CI, so a unit test importing it passes locally and fails in CI. Kept here so
+// src/__tests__/preservationAttribution.test.js covers the rules with zero Lambda deps.
 
-// ── L7 cross-field integrity ─────────────────────────────────────────────────
-// The design (V101 L7) required "planting_id's crop must match", but a cross-TABLE rule cannot be a
-// column CHECK — chk_preservation_log_attribution only knows "crop OR variety". This is the sole
-// enforcement point, and it runs on both POST and PUT.
-//
-//   * planting null        → caller could not resolve it (missing OR out of household — the caller
-//                            must not distinguish, or the error becomes an existence oracle).
-//   * crop/variety omitted → DERIVED from the planting, so picking a wave is complete attribution
-//                            and the DB CHECK is always satisfied by the time the row lands.
-//   * crop/variety given   → must MATCH. Rejecting rather than overwriting is deliberate: silently
-//                            "fixing" a mismatch would rewrite what the user explicitly picked.
+// Cross-table rule (planting's crop/variety must match), so it cannot be a column CHECK; this is the
+// sole enforcement point, on both POST and PUT.
+//   * planting null        -> caller could not resolve it (missing OR out of household); the caller
+//                             must not distinguish, or the error becomes an existence oracle.
+//   * crop/variety omitted -> derived from the planting, so the DB attribution CHECK is satisfied.
+//   * crop/variety given   -> must match; rejecting rather than overwriting keeps what the user picked.
 export function reconcilePlantAttribution(body, planting) {
   if (!planting) return { error: 'plant_id does not match a planting you can log against' };
   const pCrop = planting.crop_type_slug ?? null;
@@ -37,10 +28,9 @@ export function reconcilePlantAttribution(body, planting) {
   };
 }
 
-// Human label for a planting group. Successions are the whole reason to group by planting — three
-// waves of one variety are name-identical, so the ordinal and sown date are what make them
-// distinguishable. UTC formatting is required: the neon driver returns `date` columns as JS Date
-// objects at UTC midnight, and a local-timezone render shifts them a day behind west of Greenwich.
+// Human label for a planting group; ordinal and sown date tell successions of one variety apart.
+// UTC formatting is required: the neon driver returns `date` columns as Date objects at UTC
+// midnight, and a local-timezone render shifts them a day behind west of Greenwich.
 export function plantingLabel(r) {
   const base = r.planting_name || r.planting_variety_name || 'Planting';
   const bits = [];

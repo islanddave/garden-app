@@ -1,36 +1,36 @@
-// Release F — a batch's LINES: the keyed add (with draws), the line PATCH, take-out, restore, and the
-// one read projection every route returns (contract-F §2.1 / §2.2; 06 §1.3-§1.4, §3.11).
+// A batch's LINES: the keyed add (with draws), the line PATCH, take-out, restore, and the one read
+// projection every route returns (contract-F §2.1 / §2.2; 06 §1.3-§1.4, §3.11).
 //
-// Importable for the same reason kitchenRoutes.js is (index.js cannot be imported by vitest); takes
-// `sql` as an argument and imports only dependency-free siblings. kitchenRoutes.js dispatches here.
+// Importable for the same reason kitchenRoutes.js is (vitest cannot import index.js); takes `sql` as an
+// argument and imports only dependency-free siblings. kitchenRoutes.js dispatches here.
 //
-// STOCK, IN ONE PLACE PER STATEMENT (06 §1.4, boss conditions F1-F2):
+// Stock, in one place per statement (06 §1.4):
 //   * A jar's stock mode is decided at draw time: WEIGHED when package_count = 1 and it was logged in a
-//     mass unit, else COUNTED. A counted draw writes a pantry_use (count, fate 'batch', the line) and
-//     moves remaining_count; a weighed draw writes NO pantry_use and moves remaining_amount (grams).
-//     So "was this line a weighed draw" is read back as "a put_up line with no pantry_use at all".
-//   * No guard predicate on a draw's UPDATE: chk_preservation_log_remaining_count / _remaining_amount
-//     (>= 0) abort the WHOLE statement, so a line never lands without its draw. Both 23514s map to 409
+//     mass unit, else COUNTED. A counted draw writes a pantry_use (count, fate 'batch', the line) and moves
+//     remaining_count; a weighed draw writes NO pantry_use and moves remaining_amount (grams). So "was this
+//     line a weighed draw" is read back as "a put_up line with no pantry_use at all".
+//   * No guard predicate on a draw's UPDATE: chk_preservation_log_remaining_count / _remaining_amount (>= 0)
+//     abort the WHOLE statement, so a line never lands without its draw. Both 23514s map to 409
 //     only_n_left / only_g_left by constraint name.
-//   * F1: every statement moves each jar ONCE — the movements are aggregated `GROUP BY
-//     x.preservation_log_id` first, then one UPDATE per jar. Postgres applies only one of several updates
-//     one statement makes to the same row, so an un-aggregated join silently loses all but one.
-//   * F2: a weighed draw that reaches 0 g also sets remaining_count 0, consumed_at and delta_at. Giving
-//     grams back un-consumes the bag ONLY when it was at 0 g before and no use-route tap (a pantry_use
-//     with no line) exists for it — a bag Dave marked used up stays used up.
-//   * delta_at is stamped by every UPDATE here that moves remaining_count (06 §1.3 item 5); a weighed
-//     draw that does not touch the count does not stamp it (DS-B1).
-//   * Grams are computed IN SQL from one bound copy of MASS_G, never in JS: a JS float bound into a
-//     numeric column drifts, and a reversal must add back exactly what the draw took.
-// AUDIT: kitchen_batch_input (F) and preservation_log (1b) carry statement-level audit triggers, so
-// every write here runs through withActor, whose batch leads with the actor GUC.
+//   * Every statement moves each jar ONCE: the movements are aggregated `GROUP BY x.preservation_log_id`
+//     first, then one UPDATE per jar. Postgres applies only one of several updates one statement makes to
+//     the same row, so an un-aggregated join silently loses all but one.
+//   * A weighed draw that reaches 0 g also sets remaining_count 0, consumed_at and delta_at. Giving grams
+//     back un-consumes the bag ONLY when it was at 0 g before and no use-route tap (a pantry_use with no
+//     line) exists for it: a bag marked used up stays used up.
+//   * delta_at is stamped by every UPDATE here that moves remaining_count; a weighed draw that does not
+//     touch the count does not stamp it.
+//   * Grams are computed IN SQL from one bound copy of MASS_G, never in JS: a JS float bound into a numeric
+//     column drifts, and a reversal must add back exactly what the draw took.
+// Audit: kitchen_batch_input and preservation_log carry statement-level audit triggers, so every write
+// here runs through withActor, whose batch leads with the actor GUC.
 import { withActor } from './audit-actor.js';
 import { randomUUID } from 'node:crypto';
 import { MASS_G, KITCHEN_UUID_RE, normalizeText } from './kitchenBatch.js';
 import {
   linesError, inputsForm, drawPlan, jarIsWeighed, linePatchError, LINE_PATCH_KEYS, lineColumns,
 } from './kitchenLines.js';
-// B′ (release 2): a line may name a pantry item; its household loader lives with the item rules.
+// A line may name a pantry item; its household loader lives with the item rules.
 import { loadPantryItems } from './pantryItems.js';
 
 export { LINE_COLUMNS, lineColumns } from './kitchenLines.js';
@@ -44,9 +44,9 @@ const refuse = (status, code, error, extra = {}) => ({ status, body: { error, co
 const keyConflict = refuse(409, 'key_conflict', 'That key is already in use.');
 const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 
-// ── the read projection (contract-F §2.1) ─────────────────────────────────────────────────────────
-// Every §1.2 column except idempotency_key, plus from_garden and count_drawn. The `_`-prefixed columns
-// feed the heat estimate and are stripped by publicLine before anything leaves the Lambda.
+// The read projection (contract-F §2.1): every §1.2 column except idempotency_key, plus from_garden and
+// count_drawn. The `_`-prefixed columns feed the heat estimate and are stripped by publicLine before
+// anything leaves the Lambda.
 export async function readLines(sql, batchId, { ids = null, includeDeleted = false } = {}) {
   return sql`
     SELECT i.id, i.batch_id, i.input_kind, i.harvest_log_id, i.label, i.qty, i.qty_unit, i.is_byproduct,
@@ -104,10 +104,10 @@ export function shuLine(row) {
   };
 }
 
-// ── the household loaders a line needs (V4 §5.3: every body-settable FK has one) ──────────────────
-// Contract, same as household.js: a row on success, nothing on ANY failure, so the caller answers a
-// foreign id with the same 400 as a malformed one (no existence oracle). A jar comes back even when
-// soft-deleted — "That jar was removed" is a household fact, never a foreign one.
+// The household loaders a line needs (V4 §5.3: every body-settable FK has one). Contract, as household.js:
+// a row on success, nothing on ANY failure, so a foreign id gets the same 400 as a malformed one (no
+// existence oracle). A jar comes back even when soft-deleted: "That jar was removed" is a household fact,
+// never a foreign one.
 const uuids = (xs) => [...new Set(xs.filter((v) => v != null))].filter((v) => KITCHEN_UUID_RE.test(String(v)));
 
 export async function loadPlantings(sql, ids, householdIds) {
@@ -285,11 +285,11 @@ export async function drawRefusal(err, sql, jarIds, householdIds) {
   return refuse(409, 'only_g_left', `Only about ${left} g left in that one.`, { g: left });
 }
 
-// ── POST /:id/inputs, the keyed form (contract-F §2.2) ────────────────────────────────────────────
-// NO ON CONFLICT (boss F3). A 23505 on uq_kbi_idempotency_key is a replay (every key found in this
-// batch → 200 replayed, else 409 key_conflict); on uq_kbi_batch_harvest it is 409 already_in.
-// ONE statement: the lines, then their draws from the INSERT's RETURNING — the pantry_use rows and ONE
-// aggregated movement per jar — and a salt line clears the batch's "No salt" in the same statement.
+// POST /:id/inputs, the keyed form (contract-F §2.2). NO ON CONFLICT (boss F3): a 23505 on
+// uq_kbi_idempotency_key is a replay (every key found in this batch -> 200 replayed, else 409 key_conflict);
+// on uq_kbi_batch_harvest it is 409 already_in. ONE statement: the lines, then their draws from the INSERT's
+// RETURNING (the pantry_use rows and ONE aggregated movement per jar), and a salt line clears the batch's
+// "No salt" in the same statement.
 export async function addKeyedLines(sql, batchId, body, userId, householdIds) {
   const inputs = body.inputs;
   const form = inputsForm(inputs);
@@ -436,11 +436,10 @@ async function loadLine(sql, batchId, lineId) {
   return rows[0] ?? null;
 }
 
-// ── PATCH /:id/inputs/:lineId (06 §3.7; contract-F §2.2) ──────────────────────────────────────────
-// Presence-sentinel over the allowlist; stamps edited_at. A weighed draw's qty stays in a mass unit and
-// the SAME statement moves the jar by the change in grams (over-draw → 409 only_g_left); guarded on the
-// qty it read, so two phones editing one draw cannot both apply their difference. A counted draw's qty
-// is free — it is what went in the pot and moves no stock.
+// PATCH /:id/inputs/:lineId (06 §3.7; contract-F §2.2). Presence-sentinel over the allowlist; stamps
+// edited_at. A weighed draw's qty stays in a mass unit and the SAME statement moves the jar by the change in
+// grams (over-draw -> 409 only_g_left); guarded on the qty it read, so two phones editing one draw cannot
+// both apply their difference. A counted draw's qty is free: it is what went in the pot and moves no stock.
 export async function patchLine(sql, batchId, lineId, body, userId, householdIds) {
   const line = await loadLine(sql, batchId, lineId);
   if (!line || line.deleted_at != null) return notFound;
@@ -528,12 +527,12 @@ export async function patchLine(sql, batchId, lineId, body, userId, householdIds
   return { status: 200, body: { input: out[0] ? publicLine(out[0]) : null } };
 }
 
-// ── DELETE /:id/inputs/:lineId (06 §3.11; contract-F §2.2) ────────────────────────────────────────
-// A pick line stays a HARD delete (uq_kbi_batch_harvest is not partial and harvest_log_id is RESTRICT);
-// every other line is TAKEN OUT: soft-deleted, its draw reversed from that same UPDATE's RETURNING —
-// a counted draw writes the reversing pantry_use (−n, reverses_use_id = its live forward use) and gives
-// the count back; a weighed draw gives the grams back (F2's un-consume rule). A second take-out matches
-// nothing and answers 200 already:true with no second reversal; reverses_use_id UNIQUE is the backstop.
+// DELETE /:id/inputs/:lineId (06 §3.11; contract-F §2.2). A pick line stays a HARD delete
+// (uq_kbi_batch_harvest is not partial and harvest_log_id is RESTRICT); every other line is TAKEN OUT:
+// soft-deleted, its draw reversed from that same UPDATE's RETURNING (a counted draw writes the reversing
+// pantry_use and gives the count back; a weighed draw gives the grams back, per the un-consume rule). A
+// second take-out matches nothing and answers 200 already:true with no second reversal; reverses_use_id
+// UNIQUE is the backstop.
 export async function takeOutLine(sql, batchId, lineId, userId) {
   const line = await loadLine(sql, batchId, lineId);
   if (!line) return notFound;
@@ -617,12 +616,11 @@ export async function takeOutLine(sql, batchId, lineId, userId) {
   return { status: 200, body: { ok: true, input: out[0] ? publicLine(out[0]) : null } };
 }
 
-// ── POST /:id/inputs/:lineId/restore (06 §3.11; contract-F §2.2) ──────────────────────────────────
-// State-idempotent, no key: `SET deleted_at = NULL WHERE ... deleted_at IS NOT NULL`, the re-draw from
-// its RETURNING (a new forward use for the count it last drew, or the grams again). The draw CHECKs
-// abort everything if the jar was used in between (409 only_n_left / only_g_left); a jar since marked
-// used up or removed is refused before the statement (jar_used_up / jar_removed). A salt line coming
-// back clears "No salt" in the same statement (a salt line wins).
+// POST /:id/inputs/:lineId/restore (06 §3.11; contract-F §2.2). State-idempotent, no key: `SET deleted_at =
+// NULL WHERE ... deleted_at IS NOT NULL`, the re-draw from its RETURNING (a new forward use for the count it
+// last drew, or the grams again). The draw CHECKs abort everything if the jar was used in between (409
+// only_n_left / only_g_left); a jar since marked used up or removed is refused before the statement
+// (jar_used_up / jar_removed). A salt line coming back clears "No salt" in the same statement.
 export async function restoreLine(sql, batchId, lineId, userId, householdIds) {
   const line = await loadLine(sql, batchId, lineId);
   if (!line) return notFound;

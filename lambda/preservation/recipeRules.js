@@ -1,12 +1,11 @@
-// Put-Up release 4 — the rules for a RECIPE, its lines and its type (V4 §2.6, §4.5; F §1.5; recipe types per
-// Dave 2026-09-30). PURE: shape and cross-field rules, the route table and the column arrays a write binds.
-// Executed by recipeRoutes.test.js. What needs a row (is that type the household's? is that batch?) is
-// recipeRoutes.js's, after these pass.
+// The rules for a RECIPE, its lines and its type (V4 §2.6, §4.5; F §1.5). PURE: shape and cross-field rules,
+// the route table and the column arrays a write binds. Executed by recipeRoutes.test.js. What needs a row
+// (is that type the household's? is that batch?) is recipeRoutes.js's, after these pass.
 //
 // Every rule mirrors a CHECK in migrations/v5-recipes-001/0a-additive-ddl.sql, the belt-and-suspenders the
 // kitchen modules use: a raw 23514 is not something a cook at a counter can act on.
 //
-// ⚠ NO pH HERE, EVER (V4 "pH"). His target pH is text inside `notes`, stored verbatim and rendered only on
+// NO pH HERE, EVER (V4 "pH"). The target pH is text inside `notes`, stored verbatim and rendered only on
 // recipe detail. Nothing in this module reads, parses or validates a number out of the notes.
 import {
   KITCHEN_UUID_RE, KITCHEN_UNITS, KITCHEN_FORMS, KITCHEN_ROLES, KITCHEN_SALT_METHODS, KITCHEN_BASE_FROM,
@@ -31,12 +30,11 @@ export const RECIPE_LINE_NAME_MAX = 200;
 export const RECIPE_AMOUNT_TEXT_MAX = 500;
 export const RECIPE_MAX_LINES = 60;
 export const RECIPE_TYPE_LABEL_MAX = 60;
-// chk_ri_salt_base: 'peppers' only because "Save as recipe" copies a 1b-era batch line as it is; no body here
-// may write it (the same rule F's line POST keeps).
+// chk_ri_salt_base: 'peppers' is admitted by the DB only because "Save as recipe" copies a 1b-era batch line
+// as it is; no body here may write it (the rule F's line POST keeps).
 export const RECIPE_SALT_BASES = ['produce', 'water', 'all'];
 
-// The sixteen built-in types, in Dave's order (2026-09-30; "Sambal & chili relish" added the same day), with the fixed ids 0a inserts. A parity test binds
-// this list to the migration.
+// The sixteen built-in types with the fixed ids 0a inserts. A parity test binds this list to the migration.
 export const RECIPE_BUILTIN_TYPES = Object.freeze([
   ['7ec1be00-0000-4000-8000-000000000001', 'Hot sauce', 10],
   ['7ec1be00-0000-4000-8000-000000000002', 'Chili paste', 20],
@@ -56,9 +54,8 @@ export const RECIPE_BUILTIN_TYPES = Object.freeze([
   ['7ec1be00-0000-4000-8000-000000000016', 'Other', 160],
 ].map(([id, label, sort_order]) => Object.freeze({ id, label, sort_order })));
 
-// ── routing ──────────────────────────────────────────────────────────────────────────────────────
-// The literals (`types`, `from-batch`) are matched BEFORE any :id capture, so neither can be read as a recipe
-// id; an :id must be uuid-shaped or the path is not ours.
+// Routing. The literals (`types`, `from-batch`) are matched BEFORE any :id capture, so neither can be read
+// as a recipe id; an :id must be uuid-shaped or the path is not ours.
 export function parseRecipeRoute(rawPath) {
   if (typeof rawPath !== 'string') return null;
   const path = rawPath.length > 1 && rawPath.endsWith('/') ? rawPath.slice(0, -1) : rawPath;
@@ -73,7 +70,6 @@ export function parseRecipeRoute(rawPath) {
   return null;
 }
 
-// ── field rules ──────────────────────────────────────────────────────────────────────────────────
 function textError(v, field, max, { allowNull = true } = {}) {
   if (v == null) return allowNull ? null : `${field} is required`;
   if (typeof v !== 'string') return `${field} must be text`;
@@ -144,8 +140,8 @@ function vesselError(body) {
     ?? bottleError(body);
 }
 
-// The FINAL container (Dave 2026-09-30): the Put it up rows' default container and cooked flag. A make can be
-// multi-vessel — the vessel_* above is the process jar, this is what it is bottled in.
+// The FINAL container: the Put it up rows' default container and cooked flag. A make can be multi-vessel:
+// the vessel_* above is the process jar, this is what it is bottled in.
 function bottleError(body) {
   if (has(body, 'bottle_label')) {
     const e = textError(body.bottle_label, 'the bottle name', 120);
@@ -165,7 +161,6 @@ function bottleError(body) {
   return null;
 }
 
-// ── lines ────────────────────────────────────────────────────────────────────────────────────────
 export const RECIPE_LINE_KEYS = [
   'ordinal', 'name', 'amount_text', 'qty', 'qty_unit', 'at_the_end', 'form', 'brand', 'role', 'note',
   'shu_rating_low', 'shu_rating_high', 'salt_pct', 'salt_base', 'base_g', 'salt_method', 'base_from',
@@ -271,7 +266,6 @@ export function recipeLineColumns(lines) {
   return Object.fromEntries(RECIPE_LINE_COLUMNS.map((k) => [k, rows.map((r) => r[k])]));
 }
 
-// ── the recipe body ──────────────────────────────────────────────────────────────────────────────
 // The columns a body may set (never user_id, idempotency_key after create, created_at, updated_at, deleted_at).
 export const RECIPE_BODY_KEYS = [
   'name', 'kind', 'recipe_type_id', 'link_url', 'notes', 'keeps', 'vessel_label', 'vessel_size', 'vessel_unit',
@@ -365,10 +359,10 @@ export function recipeCreateValues(body) {
   return recipePatchPlan(Object.fromEntries(RECIPE_BODY_KEYS.filter((k) => has(body, k)).map((k) => [k, body[k]])));
 }
 
-// Notes are stored VERBATIM (his text, including his own target pH): no trim of inner whitespace, no
+// Notes are stored VERBATIM (the cook's text, including a target pH): no trim of inner whitespace, no
 // rewrite. Only a wholly blank value is refused (chk_recipe_notes_nonblank); leading/trailing space is kept.
 
-// ── "Save as recipe" (POST /api/recipes/from-batch/:batchId) ─────────────────────────────────────
+// "Save as recipe" (POST /api/recipes/from-batch/:batchId).
 export function validateFromBatch(body) {
   if (!isObj(body)) return 'body required';
   const unknown = Object.keys(body).filter((k) => !['idempotency_key', 'name', 'recipe_type_id'].includes(k));
@@ -378,7 +372,6 @@ export function validateFromBatch(body) {
   return textError(body.name, 'the name', RECIPE_NAME_MAX);
 }
 
-// ── types ────────────────────────────────────────────────────────────────────────────────────────
 export function validateTypeCreate(body) {
   if (!isObj(body)) return 'body required';
   const unknown = Object.keys(body).filter((k) => k !== 'label');

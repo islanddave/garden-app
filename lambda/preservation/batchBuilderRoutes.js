@@ -1,12 +1,10 @@
-// B′ release 3 (the batch builder) — two routes, importable for the reason kitchenRoutes.js is (index.js
-// cannot be imported by vitest). kitchenRoutes.js dispatches here; this file imports only
-// dependency-free siblings and takes `sql` as an argument.
-//
-//   POST /api/kitchen-batches/from-jars   How it was made → (V4 §2.2, §5.1)
-//   GET  /api/kitchen-batches?plant_id=   the planting read (V4 §2.5 "Planting page", §5.1)
-//
-// AUDIT: preservation_log and kitchen_batch_input carry statement-level audit triggers, so the write runs
-// in sql.transaction([set_config('app.actor_clerk_sub', <sub>, true), <the one statement>]).
+// Two batch-builder routes, importable for the reason kitchenRoutes.js is (vitest cannot import
+// index.js): this file imports only dependency-free siblings and takes `sql` as an argument.
+// kitchenRoutes.js dispatches here.
+//   POST /api/kitchen-batches/from-jars   How it was made (V4 §2.2, §5.1)
+//   GET  /api/kitchen-batches?plant_id=   the planting read (V4 §2.5, §5.1)
+// Audit: preservation_log and kitchen_batch_input carry statement-level audit triggers, so the write
+// runs under withActor (the actor is set in the same transaction as the one statement).
 import { withActor } from './audit-actor.js';
 import { randomUUID } from 'node:crypto';
 import { KITCHEN_UUID_RE, normalizeText } from './kitchenBatch.js';
@@ -24,24 +22,18 @@ const notFound = { status: 404, body: { error: 'Not found' } };
 const NO_JAR = 'jar_ids must name put-ups you can use';
 const uuids = (xs) => [...new Set(xs.filter((v) => v != null))].filter((v) => KITCHEN_UUID_RE.test(String(v)));
 
-// ── POST /api/kitchen-batches/from-jars ──────────────────────────────────────────────────────────
-// Body: { idempotency_key, label, started:{date, precision}, kind?, kind_other?, inputs?, jar_ids, made_count?,
-//         next_time? }
-// → 201 <the batch detail, GET /:id's shape> · replay 200 { ...detail, replayed: true }.
+// POST /api/kitchen-batches/from-jars → 201 <the batch detail> · replay 200 { ...detail, replayed: true }.
 // Refusals: 400 (shape; a jar that is not the household's or was removed — one answer), 409 jar_has_batch,
 // 409 jar_from_harvest, 409 made_count_lower, 409 only_n_left / only_g_left (a draw), 409 key_conflict.
 //
 // ONE STATEMENT (V4 §5.1), all or nothing:
-//   locked    the chosen jars, household-scoped, live, batchless and not harvest-linked, FOR UPDATE — so a
-//             concurrent link cannot slip between the check and the link;
-//   b         the batch, CLOSED as put_up, keyed — inserted only when EVERY chosen jar is locked, and
-//             every other CTE hangs off it, so a partial answer writes nothing at all;
-//   st        started (the sheet's start) · put_up · finished (the jars' date) · noted (each "Next time…"),
-//             created_at stepped 1 µs per plan tick so the write order survives the one statement;
-//   ins/draws/moved/uses   the lines and their draws, exactly as the keyed line POST writes them;
-//   linked    the jars get batch_id — and NOT put_up_stage_id: these jars existed before this batch,
-//             and a sitting's jars are what "Undo that put-up" soft-deletes (see the README);
-//   made      "How many did you make?" raises package_count and pins remaining_count to what was left.
+//   locked  the chosen jars, household-scoped, live, batchless, not harvest-linked, FOR UPDATE, so a
+//           concurrent link cannot slip between the check and the link;
+//   b       the batch, inserted only when EVERY chosen jar is locked; every other CTE hangs off it, so a
+//           partial answer writes nothing;
+//   st      stage rows, created_at stepped 1 µs per plan tick so the write order survives one statement;
+//   linked  jars get batch_id and NOT put_up_stage_id: they existed before this batch, and a sitting's
+//           jars are what "Undo that put-up" soft-deletes (see the README).
 // The jars' own where-from (source_kind / source_label / plant_id / crop / variety) is never written.
 export async function fromJars(sql, body, userId, householdIds, readDetail) {
   const verr = validateFromJars(body);
@@ -240,17 +232,14 @@ export async function fromJars(sql, body, userId, householdIds, readDetail) {
   return { status: 201, body: await readDetail(batchId) };
 }
 
-// ── GET /api/kitchen-batches?plant_id= ───────────────────────────────────────────────────────────
-// → 200 { plant_id, batches: [...], kept_fresh: [...] } · 404 when the planting is not the household's.
-//   batches: every live batch that used the planting — directly (a live garden or pick line naming it) or
-//            through stock from it (a live draw line on a jar whose plant_id is it, or a live pantry line
-//            on a "Fresh, as picked" item from it). Each is the
-//            view row plus: used_via ('garden' | 'jar' | 'both'), single_planting (every planting its
-//            lines name is this one), output_ids (its live jars), next_time ([{ id, note, entered_at }],
-//            its un-voided noted rows, oldest first). Newest start first, unknown starts last.
-//   kept_fresh: the household's live pantry items with this plant_id ("Fresh, as picked"): { id, name,
-//            place_label, acquired_at, acquired_precision, used_up_at, notes, next_time: [text] }.
-// A LIST, never a sum or a percentage (V4 §2.5; reward-UX ambient only).
+// GET /api/kitchen-batches?plant_id= → 200 { plant_id, batches, kept_fresh } · 404 when the planting is
+// not the household's.
+//   batches: every live batch that used the planting directly (a garden or pick line) or through stock
+//            from it (a draw on a jar of it, or a pantry line on a "Fresh, as picked" item); each is the
+//            view row plus used_via, single_planting, output_ids and next_time (un-voided noted rows).
+//            Newest start first, unknown starts last.
+//   kept_fresh: the household's live pantry items with this plant_id.
+// A LIST, never a sum or a percentage (reward-UX ambient only).
 export async function plantingBatches(sql, plantId, householdIds) {
   if (!KITCHEN_UUID_RE.test(String(plantId ?? ''))) return notFound;
   const owned = await sql`

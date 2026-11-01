@@ -1,22 +1,22 @@
-// Release F — the estimated heat (SHU), Dave's recipe convention (06-ferment-path §2.6; coordination
-// 15:55, 17:1x). PURE: no driver, no clock. kitchenRoutes.js loads the lines and ratings and calls this.
+// Release F: the estimated heat (SHU) by the recipe-card convention (06-ferment-path §2.6). PURE: no
+// driver, no clock; kitchenRoutes.js loads the lines and ratings and calls this.
 //
-// THE CONVENTION, as Dave writes it on his cards:
-//   * a line contributes  grams × form factor × rating;
-//   * the form factor is ×1 for fresh, frozen and cooked and ×7 (low) to ×10 (high) for DRIED;
-//   * the rating is the line's typed "listed heat" — which is ALWAYS the FRESH pepper's rating, the app
-//     applies the dried factor (Dave 17:1x) — otherwise the variety's scoville_min..max;
-//   * the result is contributions ÷ a denominator in grams, rounded half-up to whole SHU.
+// The convention:
+//   * a line contributes grams x form factor x rating;
+//   * the form factor is x1 for fresh, frozen and cooked and x7 (low) to x10 (high) for DRIED;
+//   * the rating is the line's typed "listed heat", always the FRESH pepper's (the app applies the dried
+//     factor), otherwise the variety's scoville_min..max;
+//   * the result is contributions / a denominator in grams, rounded half-up to whole SHU.
 // NEVER 0 FROM ABSENCE (§2.6.2). The answer is exactly one of: a figure (every heat line has grams and a
 // rating), "can't work it out" naming each heat line that lacks either, or "nothing with a listed heat".
-// A line typed 0 counts as 0 — that is a rating, not an absence.
+// A line typed 0 counts as 0: that is a rating, not an absence.
 import { gramsOf, isMassUnit } from './kitchenBatch.js';
 
-// Dried chilies are counted ×7 (low) to ×10 (high) the fresh figure (recipes-v3.md l.3).
+// Dried chilies count x7 (low) to x10 (high) the fresh figure.
 export const DRIED_FACTOR = Object.freeze({ low: 7, high: 10 });
-// The crop_types slugs that ARE peppers (pinned from crop_types: the catalogue has one, 'pepper').
+// The crop_types slugs that ARE peppers (the catalogue has one, 'pepper').
 export const PEPPER_CROP_SLUGS = Object.freeze(['pepper']);
-// The lane-pinned chili words (§2.6.2): a typed line naming one of these is a heat line.
+// The chili words (§2.6.2): a typed line naming one of these is a heat line.
 export const CHILI_WORDS = Object.freeze(['chili', 'chile', 'chilli', 'pepper', 'gochugaru', 'cayenne', 'paprika', 'flakes']);
 
 export const halfUp = (x) => Math.floor(x + 0.5);
@@ -125,9 +125,8 @@ function figure(c, denom, extra = {}) {
   };
 }
 
-// ── the three scopes (contract-F §2.5) ────────────────────────────────────────────────────────────
-// input: { lines (LIVE lines of the batch, with variety_rating / draw resolved), about, sittings:
-//   [{id, made_g, mash_in_g}] (LIVE put_up rows), sitting_id?, jar?: {id, put_up_stage_id,
+// The three scopes (contract-F §2.5). input: { lines (LIVE, with variety_rating / draw resolved), about,
+//   sittings: [{id, made_g, mash_in_g}] (LIVE put_up rows), sitting_id?, jar?: {id, put_up_stage_id,
 //   quantity_value, quantity_unit}, pepperNames }
 export function estimateShu({ scope, lines, about = null, sittings = [], sitting_id = null, jar = null, pepperNames = [] }) {
   const opts = { pepperNames };

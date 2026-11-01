@@ -1,15 +1,15 @@
-// Release F — the salt arithmetic (06-ferment-path, the salt sections). PURE. The helper's numbers, stated once so
-// the server, the client mirror and the golden table agree.
+// Release F: the salt arithmetic (06-ferment-path, the salt sections). PURE; stated once so the server,
+// the client mirror and the golden table agree.
 //
-// THE BASES (the % is "of" one of these; 'peppers' is a 1b-era word no F writer writes):
+// The bases (the % is "of" one of these; 'peppers' is a 1b-era word no F writer writes):
 //   produce = every live weighed line with no role and no put_up_stage_id (spices and sugar included);
 //   water   = the role='water' lines, volume at 1 g/ml;
-//   all     = produce + water ("Veg + water" — Dave's "3.5% of water+ingr").
+//   all     = produce + water ("Veg + water").
 // Salt lines and sitting lines are never in a base. A line in no mass unit is "no weight" (named, never
-// guessed). base_from 'scale' is one typed reading (a rinsed soak's water is always that — it is never a
-// line, so it is in no base, no denominator and no placeholder).
-// Salt grams are computed in decimal and stored unrounded (15.68); the display rounds to one decimal.
-// The aimed % is what he aimed for; the actual % is always re-derived: qty ÷ base_g.
+// guessed). base_from 'scale' is one typed reading (a rinsed soak's water is never a line, so it is in no
+// base, denominator or placeholder).
+// Salt grams are computed in decimal and stored unrounded (15.68); display rounds to one decimal. The
+// aimed % is what was aimed for; the actual % is always re-derived: qty / base_g.
 import { gramsOf } from './kitchenBatch.js';
 
 export function saltBase(lines, base) {
