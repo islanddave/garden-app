@@ -18,6 +18,7 @@ import { normalizeViewTier, viewTierKey, PHOTO_VIEW_TIERS } from './viewTier.js'
 // assertions. See photoDelete.js's header.
 import { softDeletePhoto, restorePhoto, listDeletedPhotos } from './photoDelete.js';
 import { checkRateLimit, withRetryAfter } from './rate-limit.js';
+import { withActor } from './audit-actor.js';
 
 // photo-access.js reads the CloudFront signing key through this client; the kit holds its own for garden-app/secrets.
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
@@ -134,8 +135,11 @@ async function getViewUrl(storagePath) {
 // V4-SPACEPHOTO-001 adds a FIFTH arm (spaces), gated on opts.spaceEnabled. The gate is a prod-safety
 // control, not a feature toggle: prod has no spaces.featured_photo_id column, so an ungated arm would
 // 42703 straight into the swallowed catch below and nothing would ever be visibly wrong — the space
-// would just silently never get a hero. `opts` is optional so existing 3-arg call sites are unchanged.
-async function autoPromoteFeatured(sql, photo, householdIds, opts) {
+// would just silently never get a hero. `opts` is optional; the PUT/PATCH call passes none.
+//
+// The garden_node and spaces arms go through withActor because their audit triggers read the actor GUC
+// (lambda/audit-actor-guc.test.js); container, locations and inventory_items have no actor trigger and stay bare.
+async function autoPromoteFeatured(sql, photo, householdIds, userId, opts) {
   try {
     if (photo.project_id) {
       await sql`
@@ -148,7 +152,7 @@ async function autoPromoteFeatured(sql, photo, householdIds, opts) {
       `;
     }
     if (photo.plant_id) {
-      await sql`
+      await withActor(sql, userId, () => [sql`
         UPDATE public.garden_node p
            SET featured_photo_id = ${photo.id}
           FROM public.container pp
@@ -157,7 +161,7 @@ async function autoPromoteFeatured(sql, photo, householdIds, opts) {
            AND pp.created_by = ANY(${householdIds})
            AND p.featured_photo_id IS NULL
            AND p.deleted_at IS NULL
-      `;
+      `]);
     }
     if (photo.location_id) {
       // BUG-PHOTOLOCAUTHZ-001: ownership predicate added to match the 3 sibling arms. Was the
@@ -187,13 +191,13 @@ async function autoPromoteFeatured(sql, photo, householdIds, opts) {
     // has no deleted_at column (verified live). Asserting one would 42703 into the catch below, so
     // a space photo would silently never auto-feature — the exact failure this arm exists to avoid.
     if (opts?.spaceEnabled && photo.space_id) {
-      await sql`
+      await withActor(sql, userId, () => [sql`
         UPDATE spaces
            SET featured_photo_id = ${photo.id}
          WHERE id = ${photo.space_id}
            AND created_by = ANY(${householdIds})
            AND featured_photo_id IS NULL
-      `;
+      `]);
     }
   } catch (promoteErr) {
     console.error('auto-promote non-fatal failure', promoteErr?.message ?? promoteErr);
@@ -835,13 +839,13 @@ export const handler = async (event) => {
           return resp(400, REJECT);
         }
       }
-      const updated = await sql`
+      const [, updated] = await withActor(sql, userId, () => [sql`
         UPDATE spaces
            SET featured_photo_id = ${photoId}, updated_at = now()
          WHERE id = ${spaceId}
            AND created_by = ANY(${householdIds})
         RETURNING id AS space_id, featured_photo_id
-      `;
+      `]);
       if (!updated.length) return resp(400, REJECT);
       return resp(200, updated[0]);
     }
@@ -1534,7 +1538,7 @@ export const handler = async (event) => {
         return resp(200, { ...inserted, duplicate: true, unhonored_parents: unhonored });
       }
 
-      await autoPromoteFeatured(sql, inserted, householdIds, { spaceEnabled: spacePhotosEnabled });
+      await autoPromoteFeatured(sql, inserted, householdIds, userId, { spaceEnabled: spacePhotosEnabled });
 
       // DRG-ENGINE-003 V1.1 — auto-capture on photo log (Dave 2026-06-21): a photo logged against a
       // planting is first-party observational evidence. Resolve the canonical entity_id (entity registry,
@@ -1698,7 +1702,7 @@ export const handler = async (event) => {
         console.error('evidence caption sync non-fatal failure', evErr?.message ?? evErr);
       }
       if (prevIntakeStatus === 'pending_tag') {
-        await autoPromoteFeatured(sql, updated, householdIds);
+        await autoPromoteFeatured(sql, updated, householdIds, userId);
       }
       return resp(200, updated);
     }
@@ -1717,6 +1721,7 @@ export const handler = async (event) => {
       const { status, body } = await restorePhoto(sql, {
         photoId: restoreMatch[1],
         householdIds,
+        userId,
         spaceEnabled: spacePhotosEnabled,
       });
       return resp(status, body);

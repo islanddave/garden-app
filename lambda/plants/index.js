@@ -705,7 +705,9 @@ export const handler = async (event) => {
       // arm. `UPDATE ... FROM container pp` is an inner join by construction, so a project-less
       // planting matched zero rows and 404'd; EXISTS expresses the same container-ownership test
       // without forcing the row to have a container. Same predicate as the other five sites.
-      const write = sql`
+      // One withActor batch either way, the template written inside it so audit-actor-guc.test.js can see it is
+      // batched: [GUC, write] for an archive, [GUC, write, unarchive] for an unarchive.
+      const [, rows] = await withActor(sql, userId, () => [sql`
         UPDATE public.garden_node p
         SET archived_at = CASE WHEN ${archived} THEN NOW() ELSE NULL END
         WHERE p.id = ${plantId}
@@ -718,14 +720,10 @@ export const handler = async (event) => {
           )
           AND p.deleted_at IS NULL
         RETURNING p.id, p.archived_at
-      `;
+      `, ...(archived ? [] : [unarchiveContainerOfLivePlanting(sql, plantId, householdIds)])]);
       // BUG-PLANTSLISTARCHIVEDCONTAINER-001: an UNarchive also brings back the planting's container if
-      // it is archived, in one transaction with the UPDATE above and after it (see
-      // unarchiveContainerOfLivePlanting). An archive sends that one UPDATE exactly as before, on its
-      // own, and never touches the container.
-      const rows = archived
-        ? await write
-        : (await sql.transaction([write, unarchiveContainerOfLivePlanting(sql, plantId, householdIds)]))[0];
+      // it is archived, in the same transaction as the UPDATE above and after it (see
+      // unarchiveContainerOfLivePlanting). An archive never touches the container.
       if (!rows.length) return resp(404, { error: 'Not found' });
       return resp(200, rows[0]);
     }
@@ -1653,7 +1651,7 @@ export const handler = async (event) => {
         //
         // Loss on undelete is acceptable and self-healing: the cache is derivable from event_log,
         // and the deployed forward writer recreates the row on the next plant-anchored event.
-        const _delRows = await sql`
+        const [, _delRows] = await withActor(sql, userId, () => [sql`
           WITH gone AS (
             UPDATE public.garden_node p
             SET deleted_at = NOW()
@@ -1677,7 +1675,7 @@ export const handler = async (event) => {
              WHERE em.plant_id = gone.id
           )
           SELECT id FROM gone
-        `;
+        `]);
         if (!_delRows.length) return resp(404, { error: 'Not found' });
         return resp(200, { ok: true });
       }
@@ -2380,13 +2378,13 @@ export const handler = async (event) => {
       // Postgres cannot DEFAULT a self-reference; canonical pattern is INSERT then
       // UPDATE WHERE succession_group_id IS NULL.
       if (body.succession_group_id == null && body.parent_plant_id == null) {
-        const updated = await sql`
+        const [, updated] = await withActor(sql, userId, () => [sql`
           UPDATE public.garden_node
           SET succession_group_id = id
           WHERE id = ${newPlant.id}
             AND succession_group_id IS NULL
           RETURNING id, container_id AS project_id, display_name AS name, quantity, notes, status, planted_at, created_by, created_at, updated_at, deleted_at, location_id, featured_image_id, cultivar_id AS variety_id, source_inventory_item_id, metadata, featured_photo_id, sown_at, germinated_at, transplanted_at, planted_out_at, sown_at_approx, germinated_at_approx, transplanted_at_approx, planted_out_at_approx, qty_initial, qty_current, qty_harvested, qty_lost, loss_cause, seeds_sown, seeds_germinated, source_type, source_ref, source_generation, parent_plant_id, divergence_type, lineage_note, succession_group_id, succession_order, container_type, container_size, acquired_mature, acquired_mature_source, acquired_mature_set_at, kind, workspace_id, last_seen_at, attr_override, version, source_id, acquired_from_source_id
-        `;
+        `]);
         if (updated.length) return resp(201, updated[0]);
       }
       return resp(201, newPlant);
