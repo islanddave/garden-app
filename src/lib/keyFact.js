@@ -1,17 +1,14 @@
-// src/lib/keyFact.js — V200 Slice 5b. Pure, dependency-free helpers for the planting
-// photo-hero overlay. Two exports:
+// src/lib/keyFact.js — pure, dependency-free helpers for the planting photo-hero overlay. Two exports:
 //   selectKeyFact(planting)  -> a single short "key fact" string for the gold hero pill,
 //                               or null (the pill is then NOT rendered — graceful reflow).
 //   formatBotanical(varietyRef) -> { text, italic } | null for the Basics-tab botanical row.
 // Both read JSON fields defensively (optional-chaining + type guards): the cultivar substrate
 // is sparse and heterogeneous, so any missing/garbage field must degrade to "skip", never throw.
 //
-// "dependency-free" above is now three imports short of literal: V4-CONSUMABLECLASS-001 (BD-042) added
-// lib/harvestTracked.js, which is itself pure, constant-only and imports nothing; the determinacy and sun
-// rungs read lib/varietySpec.js (determinacyLabel, sunLabel), which imports nothing either; and the
-// crop-type chip words its crop type with lib/projectTree.js's cropTypeLabel (projectTree imports only
-// constants.js and does nothing at import). The property that mattered — no React, no network, no
-// clock, unit-testable in isolation — is intact.
+// "Dependency-free" is loose: it imports lib/harvestTracked.js (pure, constant-only), lib/varietySpec.js
+// (shuLabel, determinacyLabel, sunLabel; imports nothing) and lib/projectTree.js's cropTypeLabel
+// (imports only constants.js and does nothing at import). The property that matters — no React, no
+// network, no clock, unit-testable in isolation — holds.
 import { cropTypeLabel } from './projectTree.js'
 import { plantingIsHarvestTracked } from './harvestTracked.js'
 import { shuLabel, determinacyLabel, sunLabel } from './varietySpec.js'
@@ -40,17 +37,14 @@ export function cropFamilyGlyph(planting) {
   return 'lifecycle.sprout'
 }
 
-// V4-ABOVEFOLD-001 — a short crop-TYPE label for the hero (surfaced above the fold, distinct
-// from the key-fact pill which carries a per-crop attribute like SHU/DTM). Pure + fetch-free:
-// prefers an explicit structured crop field on the cultivar, then the cultivar's crop type, then
-// null (the chip is simply omitted). Title-cased for display; long values are clamped so the pill
-// stays compact.
+// A short crop-TYPE label for the hero (surfaced above the fold, distinct from the key-fact pill which
+// carries a per-crop attribute like SHU/DTM). Pure + fetch-free: prefers an explicit structured crop
+// field on the cultivar, then the cultivar's crop type, then null (the chip is simply omitted).
+// Title-cased for display; long values are clamped so the pill stays compact.
 //
-// Its words are the cultivar's crop type (variety_ref.crop_type_slug, worded as the plantings list words
-// its crop groups). Until 2026-09-25 name detectors (isPepper / isTomato) chose the words, so both live
-// tomatillos wore "Tomato" and Peppermint (crop type mint) wore "Pepper"; until 2026-10-12 they still chose
-// WHERE it showed (16 of 246 live plantings). It now shows on every planting whose cultivar has a crop type
-// (V5-PLANTPAGEDESIGNQS-001, Dave 2026-10-11: "crop chip on all") and the detectors are gone. No crop type
+// Its words are the cultivar's crop type (variety_ref.crop_type_slug, worded as the plantings list
+// words its crop groups), and it shows on every planting whose cultivar has a crop type. It is NOT a
+// name match: a name detector wears "Tomato" on tomatillos and "Pepper" on Peppermint. No crop type
 // (no cultivar) is no chip, whatever the name says.
 const clampChip = (s) => (s.length > 22 ? s.slice(0, 21).trimEnd() + '…' : s)
 
@@ -85,49 +79,42 @@ function attr(planting, key) {
 export function selectKeyFact(planting) {
   if (!planting) return null
 
-  // (1) Pepper heat, in the CropCard SHU chip's own words (shuLabel on the same variety_ref), so the hero
-  // and the card name the same range: "2.5K–8K SHU", "855K–1.04M SHU", "est. …" for a guessed figure.
-  // Until 2026-09-25 this rung read `shu` / `scoville` keys that no column, writer or plants read carries
-  // (the wire has scoville_min / scoville_max) and found peppers by name (isPepper, which matched 10 of 42
-  // live peppers, and "Peppermint"), so it fired on none. "Pepper" is the cultivar's crop type, as in rung
-  // (2); a name alone never makes one. A sweet pepper's
-  // 0–0 is a reading, not a gap: "Sweet · 0 SHU" answers the question this pill asks of a pepper (how
-  // hot?), as the card does. No range: on to the next rung.
+  // (1) Pepper heat, in the CropCard SHU chip's own words (shuLabel on the same variety_ref), so the
+  // hero and the card name the same range: "2.5K–8K SHU", "855K–1.04M SHU", "est. …" for a guessed
+  // figure. "Pepper" is the cultivar's crop type, as in rung (2); a name alone never makes one (a name
+  // match also catches "Peppermint"). A sweet pepper's 0–0 is a reading, not a gap: "Sweet · 0 SHU"
+  // answers the question this pill asks of a pepper (how hot?), as the card does. No range: on to the
+  // next rung.
   if (planting?.variety_ref?.crop_type_slug === 'pepper') {
     const heat = shuLabel(planting.variety_ref)
     if (heat) return heat
   }
 
-  // (2) Tomato determinacy: one of the three words, or on to the next rung — never the prose. Until
-  // 2026-09-25 a habit that did not START with determ/indeterm came back whole, capitalised, so two
-  // live tomatillos wore a sentence in this nowrap pill (the longest 113 characters, "Bushy upright;
-  // 3-5 in jalapeño-size fruit, …") and "semi-determinate, …" printed in full. determinacyLabel is the
-  // CropCard pill's reader, so the hero and the card name the same class.
+  // (2) Tomato determinacy: one of the three words, or on to the next rung — never the prose (a habit
+  // that does not START with determ/indeterm would otherwise print a sentence in this nowrap pill).
+  // determinacyLabel is the CropCard pill's reader, so the hero and the card name the same class.
   // "Tomato" is the crop type the cultivar carries (variety_ref.crop_type_slug, which rung 3's harvest
-  // gate also reads), not a name match. Plantings are named by cultivar, so the name test (isTomato) found
-  // 2 of 46 live tomatoes ("Cherokee Green" never says tomato) and took in two tomatillos. No crop type
-  // (no cultivar) means not a tomato here, whatever the name says.
+  // gate also reads), not a name match: plantings are named by cultivar ("Cherokee Green" never says
+  // tomato) and a name test takes in tomatillos. No crop type (no cultivar) means not a tomato here,
+  // whatever the name says.
   //
-  // V5-PLANTPAGEDESIGNQS-001 part 1 (Dave 2026-10-12, "Green pill on the card") — the growth type shows
-  // once on the planting page, as the CropCard's green pill, so this rung steps aside whenever that pill
-  // says the same word and the tomato's pill is the next rung (its days, then sun, then none). The card's
-  // pill is determinacyLabel over the cultivar's own growth_habit, and a card with that pill always
-  // renders (a spec chip earns the card), on the one page that mounts this hero. The word stays HERE only
-  // when the card cannot say it: it comes from the planting (metadata / attr_override, which the card
-  // does not read) and the cultivar's prose names no class or a different one. Once, not zero.
+  // The growth type shows once on the planting page, as the CropCard's green pill, so this rung steps
+  // aside whenever that pill says the same word and the tomato's pill is the next rung (its days, then
+  // sun, then none). The card's pill is determinacyLabel over the cultivar's own growth_habit, and a
+  // card with that pill always renders (a spec chip earns the card), on the one page that mounts this
+  // hero. The word stays HERE only when the card cannot say it: it comes from the planting (metadata /
+  // attr_override, which the card does not read) and the cultivar's prose names no class or a
+  // different one. Once, not zero.
   if (planting?.variety_ref?.crop_type_slug === 'tomato') {
     const det = determinacyLabel({ growth_habit: attr(planting, 'growth_habit') })
     if (det && det !== determinacyLabel(planting.variety_ref)) return det
   }
 
-  // (3) Days to maturity window.
-  //
-  // V4-CONSUMABLECLASS-001 (BD-042) — skipped for a not-harvest-tracked crop. "75–95 days" next to
-  // a violet is the same claim as the "Est. harvest" window plantingMaturity.js now suppresses,
-  // just in a shorter sentence: days-to-MATURITY is a harvest figure, and the pill sits on a hero
-  // photo where it reads as one. This is a SKIP, not a blank — the chain falls through to sun
-  // requirement, which is the genuinely useful key fact for an ornamental. That fall-through is why
-  // the gate is here rather than at the render site.
+  // (3) Days to maturity window. Skipped for a not-harvest-tracked crop: "75–95 days" next to a violet
+  // is the same claim as the "Est. harvest" window plantingMaturity.js suppresses, just in a shorter
+  // sentence, and the pill sits on a hero photo where it reads as one. This is a SKIP, not a blank: the
+  // chain falls through to sun requirement, the genuinely useful key fact for an ornamental. That
+  // fall-through is why the gate is here rather than at the render site.
   const v = planting?.variety_ref || {}
   const dmin = Number.isFinite(v.days_to_maturity_min) ? v.days_to_maturity_min : null
   const dmax = Number.isFinite(v.days_to_maturity_max) ? v.days_to_maturity_max : null
@@ -136,8 +123,8 @@ export function selectKeyFact(planting) {
     return `${dmin ?? dmax} days`
   }
 
-  // (4) Sun requirement (short). The column holds a code ('part_shade'); until 2026-09-25 this pill
-  // printed it as-is on 45 live plantings. sunLabel gives the editor's words ('Part shade').
+  // (4) Sun requirement (short). The column holds a code ('part_shade'); sunLabel gives the editor's
+  // words ('Part shade').
   const sun = sunLabel(v.sun_requirements)
   if (sun) {
     // Keep it pill-short: take the first clause / few words.
