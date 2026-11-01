@@ -5,27 +5,24 @@ import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { householdScope, loadOwnedSpace, loadOwnedLocation, loadOwnedInventoryItem, warnRejectedFk } from './household.js';
 import { requestContext } from './request-context.js';
-// BUG-PARENTOWN-001: body-supplied PARENT-id loaders for the five photo parents household.js does
-// not cover. See lambda/authz-parents.js for the contract and for why they live in a separate file.
+// Loaders for the body-supplied PARENT ids of the five photo parents household.js does not cover
+// (contract: authz-parents.js).
 import { loadOwnedProject, loadOwnedPlantingRef, loadOwnedEvent } from './authz-parents.js';
 import { resolvePhotoViewUrl } from './photo-access.js';
 import { isAllowedUploadKey } from './uploadKeyPolicy.js';
 import { isAllowedStoragePath } from './uploadKeyPolicy.js';
 import { SAFE_KEY_SEGMENT } from './uploadKeyPolicy.js';
 import { normalizeViewTier, viewTierKey, PHOTO_VIEW_TIERS } from './viewTier.js';
-// W-DEL — the soft-delete + restore core lives in its own module BECAUSE this file is not
-// importable from the repo root, so anything written here can only be covered by SQL-text
-// assertions. See photoDelete.js's header.
+// The soft-delete + restore core lives in photoDelete.js because this file is not importable from
+// the repo root, so code written here could only be covered by SQL-text assertions.
 import { softDeletePhoto, restorePhoto, listDeletedPhotos } from './photoDelete.js';
 import { checkRateLimit, withRetryAfter } from './rate-limit.js';
 import { withActor } from './audit-actor.js';
 
 // photo-access.js reads the CloudFront signing key through this client; the kit holds its own for garden-app/secrets.
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
-// requestChecksumCalculation/responseChecksumValidation: newer SDK v3 versions (3.679+) default
-// to injecting x-amz-checksum-mode=ENABLED into GetObject presigned URLs as a query param.
-// S3 only accepts that header on actual requests, not presigned URL query strings — causes 403.
-// WHEN_REQUIRED suppresses the injection entirely for presigned GET URLs.
+// SDK v3 3.679+ injects x-amz-checksum-mode=ENABLED into presigned GetObject URLs as a query param;
+// S3 accepts that header only on real requests, so the URL 403s. WHEN_REQUIRED suppresses the injection.
 const s3 = new S3Client({
   region: process.env.AWS_REGION ?? 'us-east-1',
   requestChecksumCalculation: 'WHEN_REQUIRED',
@@ -40,22 +37,22 @@ const SECRETS_TTL_MS = 5 * 60 * 1000;
 
 const CORS = {}; // Lambda URL config is sole CORS source — handler must not duplicate
 
-// V4-PHOTOBULK-001 batch-presign limits/validators. These guard values that become an S3 KEY or a
-// signed ContentType, so they are allowlists, not sanitizers — anything not matching is rejected.
+// Batch-presign limits/validators. These guard values that become an S3 KEY or a signed
+// ContentType, so they are allowlists, not sanitizers: anything not matching is rejected.
 const MAX_BATCH = 20;
 // Mirrors the photos_intake_status_valid CHECK. Only these two are stored; every other state in
 // the design (tagged / skipped) is DERIVED, so a third value here would be a bug, not a feature.
 const INTAKE_STATUSES = ['pending_tag', 'upload_failed'];
 // SAFE_KEY_SEGMENT (imported above, uploadKeyPolicy.js) — Clerk subs look like user_3D2gM0hIl03gjW3JM2DjtPzm0jI
-// BUG-PHOTOUPLOADRELAY-001 caps. Lambda URLs cap request payloads at 6MB and base64 inflates 4/3:
-// these keep base64 + JSON envelope safely under it. A downscaled photo runs ~300-600KB decoded.
+// Relay caps. Lambda URLs cap request payloads at 6MB and base64 inflates 4/3; these keep base64
+// plus the JSON envelope under it. A downscaled photo runs ~300-600KB decoded.
 const RELAY_MAX_B64_CHARS = 5_200_000;      // ≈3.9MB decoded
 const RELAY_THUMB_MAX_B64_CHARS = 700_000;  // ≈525KB decoded; thumbs run 80-260KB
 const SAFE_EXT = /^[a-z0-9]{1,8}$/;
 const SAFE_CONTENT_TYPE = /^image\/[a-zA-Z0-9.+-]{1,32}$/;
-// V4-SPACEPHOTO-001: space/photo ids reach uuid-typed columns. An unparseable value raises 22P02,
-// which isUpstream() does not classify — it would surface as an opaque 500 on what is really a bad
-// request. Shape-check first so every rejection is a 400 with the same generic body.
+// Space/photo ids reach uuid-typed columns. An unparseable value raises 22P02, which isUpstream()
+// does not classify, so it would surface as an opaque 500. Shape-check first so every rejection is
+// a 400 with the same generic body.
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function resp(statusCode, body) {
@@ -72,9 +69,8 @@ function secretsUnavailable(err) {
   return resp(503, { error: 'Service temporarily unavailable' });
 }
 
-// V3-PHOTODBG-001: classify transient upstream failures (DB / Secrets Manager / network unreachable) so the
-// client receives a retryable 503 with a proper JSON+CORS envelope rather than a generic 500 — or worse, a
-// raw CORS-less 502 from an unhandled throw that the frontend can't even read.
+// Classify transient upstream failures (DB / Secrets Manager / network unreachable) so the client
+// gets a retryable 503 with a JSON+CORS envelope, not a generic 500 or a CORS-less 502 it cannot read.
 function isUpstream(err) {
   const m = `${err?.code ?? ''} ${err?.name ?? ''} ${err?.message ?? ''}`.toLowerCase();
   return /econn|etimedout|enotfound|getaddrinfo|fetch failed|socket hang up|timeout|throttl|serviceunavailable|connection terminated/.test(m);
@@ -92,21 +88,21 @@ async function getUploadUrl(photoId, ext, contentType) {
   return { url, key };
 }
 
-// I34/I35 (BUG-AUTHZLAMBDA-001): the S3 key grammar has no owner segment, so a caller holding another
-// household's key could re-sign it (upload-url, thumb-upload-url), overwrite it (relay-upload) or
-// register it as their own row (POST) and read it back. True when a photos row OUTSIDE the caller's
-// household already holds this key. Deliberately NO deleted_at: a soft-deleted row keeps its S3 bytes
-// and can be restored (read-paths-deletedat.test.js names this exemption). No try/catch — a DB error
-// must fail closed through the handler's outer catch. Unindexed scan, ~2k rows (OPS-UNBOUNDEDQUERIES-001).
+// The S3 key grammar has no owner segment, so a caller holding another household's key could re-sign
+// it (upload-url, thumb-upload-url), overwrite it (relay-upload) or register it as their own row
+// (POST). True when a photos row OUTSIDE the caller's household already holds this key. Deliberately
+// NO deleted_at: a soft-deleted row keeps its S3 bytes and can be restored (read-paths-deletedat.test.js
+// names this exemption). No try/catch: a DB error must fail closed through the handler's outer catch.
+// Unindexed scan of a small table.
 async function foreignStorageKey(sql, key, householdIds) {
   const rows = await sql`SELECT 1 FROM photos WHERE storage_path = ${key} AND NOT (created_by = ANY(${householdIds})) LIMIT 1`;
   return rows.length > 0;
 }
 
-// SEC-13b: every upload URL issued and every object accepted counts one against the caller's hour (a batch one
+// Every upload URL issued and every object accepted counts one against the caller's hour (a batch one
 // per file), spent after the request is validated and before anything is signed or PUT. POST /api/photos
-// (register) is never limited: its bytes are already in S3, so a 429 there would strand them. Returns the 429
-// to send, or null. Tests: storage-key-guard.test.js; real Postgres: tests/integration/photos-intake.int.test.js.
+// (register) is never limited: its bytes are already in S3, so a 429 there would strand them. Returns
+// the 429 to send, or null. Tests: storage-key-guard.test.js; real Postgres: tests/integration/photos-intake.int.test.js.
 const UPLOAD_LIMIT_PER_HOUR = 2500;
 async function uploadLimitRefusal(sql, userId, objects) {
   if (await checkRateLimit(sql, userId, 'photos.upload', UPLOAD_LIMIT_PER_HOUR, objects)) return null;
@@ -119,23 +115,22 @@ async function getViewUrl(storagePath) {
   return getSignedUrl(s3, cmd, { expiresIn: 900 });
 }
 
-// Featured-photo auto-promote: parent-by-parent, only if the photo has the linkage AND the
-// parent's featured_photo_id IS NULL AND the caller owns the parent. Each UPDATE is a separate
-// atomic statement; the WHERE clauses guard race conditions (only the first to commit wins).
-// Best-effort + NON-FATAL by contract: the photo row is already persisted before this runs, so a
-// promote failure must never fail the request.
+// Featured-photo auto-promote: parent by parent, only if the photo carries the linkage AND the
+// parent's featured_photo_id IS NULL AND the caller owns the parent. Each UPDATE is its own atomic
+// statement; the WHERE clauses settle races (the first to commit wins). Best-effort and NON-FATAL:
+// the photo row is already persisted before this runs, so a promote failure must never fail the request.
 //
 // Called from TWO paths, which are not the same event:
 //   POST            — first upload of a photo that already carries its parent.
 //   PUT/PATCH       — ONLY when the row was previously intake_status='pending_tag'. A bulk-uploaded
 //                     photo's POST had no parent, so the TAG is its first deposit; without this the
-//                     plant silently stays photo-less. A re-tag of an already-tagged photo is still
-//                     a correction, not a deposit, and still does NOT promote.
+//                     plant silently stays photo-less. A re-tag of an already-tagged photo is a
+//                     correction, not a deposit, and does NOT promote.
 //
-// V4-SPACEPHOTO-001 adds a FIFTH arm (spaces), gated on opts.spaceEnabled. The gate is a prod-safety
-// control, not a feature toggle: prod has no spaces.featured_photo_id column, so an ungated arm would
-// 42703 straight into the swallowed catch below and nothing would ever be visibly wrong — the space
-// would just silently never get a hero. `opts` is optional so a 3-arg call keeps the spaces arm inert.
+// The spaces arm is the fifth, gated on opts.spaceEnabled. The gate is a prod-safety control, not a
+// feature toggle: where spaces.featured_photo_id is absent, an ungated arm would 42703 straight into
+// the swallowed catch below and the space would silently never get a hero. `opts` is optional so a
+// 3-arg call keeps the spaces arm inert.
 //
 // The garden_node and spaces arms go through withActor because their audit triggers read the actor GUC
 // (lambda/audit-actor-guc.test.js); container, locations and inventory_items have no actor trigger and stay bare.
@@ -167,10 +162,8 @@ async function autoPromoteFeatured(sql, photo, householdIds, opts) {
       `]);
     }
     if (photo.location_id) {
-      // BUG-PHOTOLOCAUTHZ-001: ownership predicate added to match the 3 sibling arms. Was the
-      // only arm without it — any authenticated user POSTing a photo with another household's
-      // location_id could set that location's featured photo. No backfill gate: locations has
-      // 0 NULL created_by across all 29 live rows (W0.2-r1 locations-census).
+      // Ownership predicate matches the three sibling arms; without it any authenticated user POSTing a
+      // photo with another household's location_id could set that location's featured photo.
       await sql`
         UPDATE locations
            SET featured_photo_id = ${photo.id}
@@ -190,9 +183,8 @@ async function autoPromoteFeatured(sql, photo, householdIds, opts) {
            AND deleted_at IS NULL
       `;
     }
-    // V4-SPACEPHOTO-001. Mirrors the inventory_items arm, MINUS the deleted_at predicate: `spaces`
-    // has no deleted_at column (verified live). Asserting one would 42703 into the catch below, so
-    // a space photo would silently never auto-feature — the exact failure this arm exists to avoid.
+    // Mirrors the inventory_items arm MINUS deleted_at: `spaces` has no deleted_at column, and asserting
+    // one would 42703 into the catch below, so a space photo would silently never auto-feature.
     if (opts?.spaceEnabled && photo.space_id) {
       await withActor(sql, userId, () => [sql`
         UPDATE spaces
@@ -207,33 +199,23 @@ async function autoPromoteFeatured(sql, photo, householdIds, opts) {
   }
 }
 
-// V4-SPACEPHOTO-001 — the photos upsert exists in TWO literal variants and that duplication is a
-// deliberate prod-safety control, not an oversight. A neon tagged template's SQL text is STATIC: a
-// JS `if` inside one template cannot keep `space_id` out of the emitted statement. When this code
-// promoted, prod had no photos.space_id column, so a single widened template would have 42703'd
-// EVERY upload the moment it landed — regardless of the flag. The flag-OFF branch below is
-// byte-identical to the pre-V4 statement; the widened branch is only ever constructed when
-// SPACE_PHOTOS_ENABLED=true.
-// STATUS 2026-08-01: the columns ARE now in prod (migrations/v4-spacephoto-001 applied), so this
-// split no longer guards against a live 42703. KEEP IT ANYWAY: it is what makes flag-OFF a true
-// byte-identical rollback lever, and it is the pattern any FUTURE additive space column must reuse
-// (code may promote ahead of its DDL again). Do not collapse the two templates into one.
+// The photos upsert exists in TWO literal variants, a deliberate prod-safety control. A neon tagged
+// template's SQL text is STATIC: a JS `if` inside one template cannot keep `space_id` out of the
+// emitted statement, so a single widened template would 42703 EVERY upload wherever photos.space_id
+// is absent, regardless of the flag. The flag-OFF branch is byte-identical to the pre-space statement,
+// which is what makes flag-OFF a true rollback lever, and it is the pattern any FUTURE additive space
+// column must reuse (code may promote ahead of its DDL). Do not collapse the two templates into one.
 //
 // ADD-PARENT on conflict: the dedupe returns the EXISTING row, so a bare `DO UPDATE SET updated_at`
-// silently drops the parent the caller asked for and still answers 200. A "grand photo" is by
-// definition an image already attached to a planting, so a plain INSERT would never attach it to the
-// space. COALESCE keeps an existing parent (re-attaching elsewhere is a re-tag, not an upload) and
-// fills a NULL one.
-// BUG-PHOTODEDUPDROP-001 — the same COALESCE now covers EVERY parent slot, not space_id alone.
-// photos carries six independent parent columns, so ONE row genuinely attaches to a planting AND an
-// event AND an inventory item at once: re-uploading the same bytes against a slot the existing row
-// leaves NULL is exactly the second-target case, and it was being discarded. Column references only
-// — no new bound parameter, so the flag-OFF/flag-ON parameter parity below is unchanged.
-// WHAT THIS DOES NOT FIX (deliberately, and it needs schema): a SECOND value for an ALREADY-OCCUPIED
-// slot (bytes on planting A re-uploaded against planting B) still cannot be stored — one column
-// holds one id. COALESCE keeps A. That case is V4-PHOTOTAG-001's many-to-many attachment table; here
-// it stops being SILENT instead (see unhonoredParents at the duplicate return). Do not widen this
-// into a re-point: overwriting A would trade a silent drop for a silent MOVE.
+// would silently drop the parent the caller asked for and still answer 200. COALESCE keeps an existing
+// parent (re-attaching elsewhere is a re-tag, not an upload) and fills a NULL one, in EVERY parent slot:
+// photos carries six independent parent columns, so one row can attach to a planting AND an event AND
+// an inventory item at once. Column references only, no new bound parameter, so flag-OFF/flag-ON
+// parameter parity holds.
+// NOT FIXED here (needs schema): a SECOND value for an ALREADY-OCCUPIED slot (bytes on planting A
+// re-uploaded against planting B) cannot be stored, since one column holds one id. COALESCE keeps A,
+// and unhonoredParents at the duplicate return makes that visible instead of silent. Do not widen
+// this into a re-point: overwriting A would trade a silent drop for a silent MOVE.
 function buildPhotoInsert(sql, body, userId, spaceEnabled) {
   if (spaceEnabled) {
     return sql`
@@ -313,14 +295,12 @@ function buildPhotoInsert(sql, body, userId, spaceEnabled) {
   `;
 }
 
-// BUG-PHOTODEDUPDROP-001 — the honest half of the dedupe fix. COALESCE above fills every EMPTY
-// parent slot; this names the requests it could NOT honour, so an occupied slot stops being a 200
-// that quietly means "no". PURE (body + the row the upsert returned, no I/O) so it is unit-testable
-// by extraction, the way every other guard in this dir tests index.js internals.
-// Compares against the RETURNED row, never against the pre-upsert state: the row is post-COALESCE,
-// so a slot this very call filled correctly reads as honoured.
-// space_id is included only when the flag is on — the row has no such column otherwise, and a
-// flag-off caller cannot send one (the body gate at the space_id pre-read rejects it).
+// The honest half of the dedupe fix: COALESCE above fills every EMPTY parent slot; this names the
+// requests it could NOT honour, so an occupied slot stops being a 200 that quietly means "no". PURE
+// (body + the row the upsert returned, no I/O) so it is unit-testable by extraction. Compares against
+// the RETURNED row, never the pre-upsert state: that row is post-COALESCE, so a slot this very call
+// filled reads as honoured. space_id is included only when the flag is on: otherwise the row has no
+// such column and the body gate at the space_id pre-read rejects a flag-off caller's value.
 const PHOTO_PARENT_COLUMNS = ['project_id', 'event_id', 'location_id', 'plant_id', 'inventory_item_id'];
 function unhonoredParents(body, row, spaceEnabled) {
   const cols = spaceEnabled ? [...PHOTO_PARENT_COLUMNS, 'space_id'] : PHOTO_PARENT_COLUMNS;
@@ -329,18 +309,15 @@ function unhonoredParents(body, row, spaceEnabled) {
     .map((c) => ({ column: c, requested: body[c], kept: row[c] ?? null }));
 }
 
-// ── V4-PHOTOUNTAG-001 — return a tagged photo to the untagged inbox ───────────────────────────────
+// ── Return a tagged photo to the untagged inbox ───────────────────────────────────────────────────
 //
-// THE DEFECT THIS PAIR EXISTS FOR: the re-tag PUT derived intake_status ENTIRELY from setsParent and
-// never read body.intake_status, so the route could drain the inbox but could not refill it. Tagging
-// a pending_tag row cleared intake_status to NULL correctly; CLEARING the parents again made
-// setsParent false, so the CASE fell to `ELSE p.intake_status` and the row kept NULL — parentless AND
-// non-pending, which photos_must_have_parent forbids. Postgres answers 23514, isUpstream() does not
-// classify it, and the client gets an opaque 500. There was no request body that meant "put this back
-// in the inbox".
+// WHY: the re-tag PUT derived intake_status ENTIRELY from setsParent and never read body.intake_status,
+// so it could drain the inbox but not refill it. CLEARING a row's parents made setsParent false, the
+// CASE fell to `ELSE p.intake_status`, and the row kept NULL: parentless AND non-pending, which
+// photos_must_have_parent forbids. Postgres answers 23514, isUpstream() does not classify it, and the
+// client got an opaque 500.
 //
-// THE LIVE CHECKS, read 2026-08-30 via pg_get_constraintdef on prod AND staging (both convalidated;
-// migrations/ lags manual ALTERs and was deliberately not consulted):
+// THE CHECKS (pg_get_constraintdef on prod and staging; migrations/ lags manual ALTERs):
 //   photos_intake_status_valid — intake_status IS NULL OR intake_status IN ('pending_tag','upload_failed')
 //   photos_must_have_parent    — event_id OR project_id OR location_id OR plant_id OR
 //                                inventory_item_id OR space_id IS NOT NULL,
@@ -348,15 +325,15 @@ function unhonoredParents(body, row, spaceEnabled) {
 // 'pending_tag' is therefore the ONLY status a parentless row may carry, which is why it is the only
 // value this route accepts.
 //
-// 'upload_failed' IS REJECTED HERE THOUGH POST ACCEPTS IT, and that narrowing is deliberate — do not
-// "fix" this to reuse INTAKE_STATUSES. It is an upload-pipeline state that the second CHECK requires a
-// parent for; asserting it from a RE-TAG has no meaning, and on the un-tag it would most plausibly
-// accompany it is a guaranteed 23514. Same reasoning as the POST guard: reject the value we can name
-// rather than let Postgres answer with a 500 the client cannot act on.
+// 'upload_failed' IS REJECTED HERE THOUGH POST ACCEPTS IT, deliberately: do not "fix" this to reuse
+// INTAKE_STATUSES. It is an upload-pipeline state that the second CHECK requires a parent for;
+// asserting it from a RE-TAG has no meaning, and on an un-tag it is a guaranteed 23514. Same reasoning
+// as the POST guard: reject the value we can name rather than let Postgres answer with a 500 the
+// client cannot act on.
 //
-// null AND undefined both mean "not requested" — the POST guard's `!= null` idiom, not a new dialect.
-// An explicitly-null intake_status leaves the CASE on its pre-existing arms, which can only preserve
-// or clear, never violate a CHECK.
+// null AND undefined both mean "not requested" — the POST guard's `!= null` idiom. An explicitly-null
+// intake_status leaves the CASE on its existing arms, which can only preserve or clear, never violate
+// a CHECK.
 //
 // PURE (body only, no I/O) so the mock-sql suite can EXECUTE it: index.js is not importable from the
 // repo root, so a module-level function is the only shape these tests can drive for real.
@@ -366,28 +343,26 @@ function resolveIntakeRequest(body) {
   return { error: "intake_status must be 'pending_tag' or omitted" };
 }
 
-// The re-tag UPDATE, lifted out of the route for the same reason buildPhotoInsert is a function: it
-// is the only way the mock-sql suite can assert on the statement and the parameters this route
-// actually emits rather than on a string that resembles them.
+// The re-tag UPDATE, lifted out of the route (like buildPhotoInsert) so the mock-sql suite can assert
+// on the statement and parameters this route actually emits, not on a string that resembles them.
 //
 // ARM ORDER IS THE CONTRACT, not formatting. setsParent is tested FIRST, so a body that sets a parent
-// drains the inbox exactly as it did before — even if it also asks for 'pending_tag'. That keeps the
-// primary tag flow byte-identical for a client that echoes the row's current intake_status back in a
-// full-replace save, which this route's semantics invite. A tagged row is not in the inbox; the
-// parent assignment is the stronger signal, and the response carries the resulting status back.
+// drains the inbox as it always did, even if it also asks for 'pending_tag'. That keeps the primary tag
+// flow unchanged for a client that echoes the row's current intake_status back in a full-replace save.
+// The parent assignment is the stronger signal, and the response carries the resulting status back.
 //
-// The third arm is unchanged: with restoresInbox false the CASE reduces to the shipped
-// `WHEN setsParent THEN NULL ELSE p.intake_status`, so a body that omits intake_status behaves
-// identically to before — including the "an un-tagged pending_tag row STAYS pending_tag" case.
+// The third arm is unchanged: with restoresInbox false the CASE reduces to
+// `WHEN setsParent THEN NULL ELSE p.intake_status`, so a body that omits intake_status behaves as
+// before, including "an un-tagged pending_tag row STAYS pending_tag".
 //
-// space_id is deliberately absent (the route's flag-off byte-identity invariant — see the setsParent
-// pre-read at the call site), and so are event_id / inventory_item_id: this route never set them, so
-// a row parented by one keeps satisfying photos_must_have_parent on its own.
+// space_id is deliberately absent (the route's flag-off byte-identity invariant; see the setsParent
+// pre-read at the call site), and so are event_id / inventory_item_id: this route never set them, so a
+// row parented by one keeps satisfying photos_must_have_parent on its own.
 //
 // POSITIONAL ARGUMENTS, NOT AN OPTIONS OBJECT, and that is load-bearing: the extractFunction helper
 // every test in this dir copies brace-balances from the first `{` after the function header, so a
-// destructured parameter list makes it return the SIGNATURE ALONE and the whole file fails to
-// instantiate. Same shape as buildPhotoInsert for the same reason.
+// destructured parameter list returns the SIGNATURE ALONE and the file fails to instantiate. Same
+// shape as buildPhotoInsert for the same reason.
 function buildRetagUpdate(sql, photoId, body, householdIds, setsParent, restoresInbox) {
   return sql`
     WITH prev AS (
@@ -422,34 +397,31 @@ function buildRetagUpdate(sql, photoId, body, householdIds, setsParent, restores
   `;
 }
 
-// ── V4-SPACEPHOTO-001 space-hero reads ────────────────────────────────────────────────────────────
-// Both helpers below take `spaceEnabled` and return EARLY when it is false. That is the same
-// prod-safety property buildPhotoInsert's two-template split buys, obtained the cheaper way: a neon
-// tagged template's SQL text comes into existence only when the tagged expression is EVALUATED, so a
-// function that returns before its template is never a statement at all. At promote time prod had
-// neither photos.space_id nor spaces.featured_photo_id, so with the flag off nothing here could
-// 42703. (Both columns landed in prod 2026-07-31; the early return is retained as the rollback
-// lever and as the pattern for the next code-ahead-of-DDL column.)
-// The guard lives INSIDE the helpers (rather than only at the two call sites) so that a future
-// caller cannot reintroduce the hazard by forgetting the outer `if`.
+// ── Space-hero reads ──────────────────────────────────────────────────────────────────────────────
+// Both helpers below take `spaceEnabled` and return EARLY when it is false. That is the same prod-safety
+// property as buildPhotoInsert's two-template split, obtained more cheaply: a neon tagged template's
+// SQL text exists only when the tagged expression is EVALUATED, so a function that returns before its
+// template never builds a statement. With the flag off nothing here can 42703 on a missing
+// photos.space_id or spaces.featured_photo_id (both exist in prod now; the early return stays as the
+// rollback lever and as the pattern for the next code-ahead-of-DDL column).
+// The guard lives INSIDE the helpers (not only at the two call sites) so a future caller cannot
+// reintroduce the hazard by forgetting the outer `if`.
 
-// Resolve the caller's OWN household space with no id supplied — the discovery path. Without this
-// every space route needs a :spaceId the client has no way to obtain: there is no /api/spaces, and
-// no shipped read shape leaks workspace_id.
+// Resolve the caller's OWN household space with no id supplied (the discovery path). Without it every
+// space route needs a :spaceId the client cannot obtain: there is no /api/spaces, and no shipped read
+// shape leaks workspace_id.
 //
-// OWNERSHIP RULE = spaces.created_by, deliberately the SAME predicate loadOwnedSpace() and every
-// other space route uses. The tempting alternative — walking the de-facto garden_node.workspace_id
-// -> spaces.id link (verified live: every garden_node/container row carries the single space's id,
-// but there is NO declared FK either way) — describes ASSOCIATION, not ownership, and would hand the
-// client a space that the very next PUT /space-featured then 400s as unowned. One resolution rule,
-// one authz predicate, no route can disagree with another.
+// OWNERSHIP RULE = spaces.created_by, deliberately the SAME predicate loadOwnedSpace() and every other
+// space route uses. The tempting alternative, walking the de-facto garden_node.workspace_id ->
+// spaces.id link (no declared FK either way), describes ASSOCIATION, not ownership, and would hand the
+// client a space that the very next PUT /space-featured then 400s as unowned. One resolution rule, one
+// authz predicate, no route can disagree with another.
 //
 // MULTI-SPACE: deterministic oldest-first, never an error. created_at never changes, so the pick is
-// stable across calls; id breaks a same-instant tie. Erroring on >1 would take a household's hero
-// down the moment it gained a second space — a regression triggered by unrelated data. COUNT(*)
-// OVER () is evaluated before LIMIT, so one round trip yields both the pick and the true total, and
-// the total is returned to the caller so the day the one-space assumption breaks is VISIBLE instead
-// of silently arbitrary.
+// stable across calls; id breaks a same-instant tie. Erroring on >1 would take a household's hero down
+// the moment it gained a second space. COUNT(*) OVER () is evaluated before LIMIT, so one round trip
+// yields both the pick and the true total, and the total is returned so the day the one-space
+// assumption breaks is VISIBLE instead of silently arbitrary.
 async function resolveHouseholdSpace(sql, householdIds, spaceEnabled) {
   if (!spaceEnabled) return [];
   return sql`
@@ -461,22 +433,19 @@ async function resolveHouseholdSpace(sql, householdIds, spaceEnabled) {
   `;
 }
 
-// The space-hero read itself, shared verbatim by the /:spaceId form and the no-id form so the two
-// can never drift.
+// The space-hero read, shared verbatim by the /:spaceId form and the no-id form so the two cannot drift.
 //
-// SOFT-DELETE FALLBACK (the reason this is not a one-line lookup): photos are soft-deleted, and
-// spaces.featured_photo_id -> photos(id) is ON DELETE SET NULL, which only fires on a HARD delete.
-// So a soft-deleted hero leaves the FK intact and pointing at a row whose S3 object the gallery no
-// longer shows — presigning it yields a dead URL. The stored hero is therefore joined WITH the
-// deleted_at filter, and falls back to the space's newest surviving photo.
+// SOFT-DELETE FALLBACK: photos are soft-deleted, and spaces.featured_photo_id -> photos(id) is ON
+// DELETE SET NULL, which fires only on a HARD delete. A soft-deleted hero leaves the FK pointing at a
+// row whose S3 object the gallery no longer shows, so presigning it yields a dead URL. The stored hero
+// is therefore joined WITH the deleted_at filter, and falls back to the space's newest surviving photo.
 //
-// featured_photo_id is the EFFECTIVE hero, not the raw column, so the id and the url can never
-// disagree — but that alone makes the response AMBIGUOUS, and the ambiguity had a real cost: the
-// client's set-featured control has an identity no-op guard, so tapping "set as feature photo" on
-// the photo that merely HAPPENS to be the fallback matched the returned id, no-oped, and never
-// persisted the designation — the hero silently reverted on the next upload.
-// featured_is_explicit closes that: TRUE iff the returned id came from spaces.featured_photo_id
-// (alive + household-owned), FALSE whenever it came from the fallback or there is no hero at all.
+// featured_photo_id is the EFFECTIVE hero, not the raw column, so id and url cannot disagree. That
+// alone makes the response ambiguous: the client's set-featured control has an identity no-op guard,
+// so tapping "set as feature photo" on the photo that merely happens to be the fallback matched the
+// returned id, no-oped, and never persisted the designation. featured_is_explicit closes that: TRUE
+// iff the returned id came from spaces.featured_photo_id (alive + household-owned), FALSE whenever it
+// came from the fallback or there is no hero at all.
 async function fetchSpaceHero(sql, spaceId, householdIds, spaceEnabled) {
   if (!spaceEnabled) return [];
   return sql`
@@ -516,11 +485,10 @@ async function fetchSpaceHero(sql, spaceId, householdIds, spaceEnabled) {
   `;
 }
 
-// The shape a hero response takes when there is nothing to show. Used for the no-id form ONLY —
-// the /:spaceId form still 404s an unknown/foreign space, because there the caller named an id and
-// a 200 would confirm nothing either way. With no id there is nothing to probe FOR, so "your
-// household has no space" is an empty state, not an error: a 404 here is indistinguishable from a
-// broken scope and would force the client to treat a normal condition as a failure.
+// The hero response when there is nothing to show. Used for the no-id form ONLY: the /:spaceId form
+// still 404s an unknown/foreign space, because there the caller named an id. With no id there is
+// nothing to probe FOR, so "your household has no space" is an empty state, not an error; a 404 would
+// be indistinguishable from a broken scope and force the client to treat a normal condition as a failure.
 const EMPTY_SPACE_HERO = {
   space_id: null,
   name: null,
@@ -538,37 +506,34 @@ export function logSafePath(text) {
 }
 
 export const handler = async (event) => {
-  // A-Pending-4 (T1-6, default-in): single method+path route log — makes CloudWatch invocation
-  // evidence per-route (3.9/0A.6 dead-surface sheets) instead of per-function. No payloads logged.
+  // Single method+path route log: per-route CloudWatch invocation evidence instead of per-function.
+  // No payloads logged.
   console.log('route', logSafePath(event.requestContext?.http?.method ?? 'GET'), logSafePath(event.rawPath ?? ''));
   // The kit answers OPTIONS, a secrets failure (secretsUnavailable) and every sign-in refusal (401, the household
   // gate's 403) before any statement, and refetches secrets on SECRETS_TTL_MS.
   const ctx = await requestContext(event, { resp, neon, onSecretsError: secretsUnavailable, secretsTtlMs: SECRETS_TTL_MS });
   if (ctx.response) return ctx.response;
   const { userId, sql } = ctx;
-  // HOUSEHOLD-MODE: widened at V3-ROLES teardown (photos scope SWITCHED uploaded_by -> created_by). Its own line,
-  // after the kit's empty-sub 401: household-mode.test.js pins it here.
+  // Household scope keys on created_by. Its own line, after the kit's empty-sub 401: household-mode.test.js pins it here.
   const householdIds = householdScope(userId);
   const method = event.requestContext?.http?.method ?? 'GET';
   const rawPath = event.rawPath ?? '/api/photos';
-  // V4-SPACEPHOTO-001 kill-flag, default OFF (absent env == disabled). Read per-invocation, matching
-  // the CARE_RAIN_CREDIT_ENABLED / CARE_RAIN_MAXDAYS_ENABLED house pattern in lambda/daily-plan.
-  // PROMOTE SAFETY: photos.space_id and spaces.featured_photo_id now exist in BOTH prod and staging
-  // (migrations/v4-spacephoto-001 applied to prod 2026-07-31). They did not when this handler
-  // promoted, which is why every surface below is gated by SELECTING A DIFFERENT SQL TEMPLATE, never
-  // by a runtime `if` inside one template — a tagged template's text is fixed at construction. That
-  // invariant STILL HOLDS and must be preserved: it is what makes flag OFF byte-identical to the
-  // pre-V4-SPACEPHOTO handler (including the two new routes, which do not exist at all), i.e. a real
-  // rollback lever rather than a code path that merely returns early.
+  // Space-photos kill-flag, default OFF (absent env == disabled). Read per-invocation, matching the
+  // CARE_RAIN_CREDIT_ENABLED house pattern in lambda/daily-plan.
+  // Every flagged surface below is gated by SELECTING A DIFFERENT SQL TEMPLATE, never by a runtime `if`
+  // inside one template, because a tagged template's text is fixed at construction. That is what makes
+  // flag OFF byte-identical to the pre-space handler (the two space routes do not exist at all): a real
+  // rollback lever, not a code path that merely returns early. Preserve it. (photos.space_id and
+  // spaces.featured_photo_id now exist in both prod and staging.)
   const spacePhotosEnabled = process.env.SPACE_PHOTOS_ENABLED === 'true';
 
   try {
     // GET /api/photos/upload-url — returns pre-signed S3 PUT URL for browser upload
     // Query params: key (caller-generated via src/lib/photoKeys.js), content_type (MIME type)
-    // SECURITY (A0.1) — the caller names the key, so the key is confined to the closed
-    // buildPhotoKey grammar (uploadKeyPolicy.js) and the signed ContentType to image/*.
-    // Anything else — inbox/* (server-derived only, per the batch route), traversal, absolute
-    // keys, foreign prefixes, non-image types — 403s before any presign happens.
+    // SECURITY — the caller names the key, so it is confined to the closed buildPhotoKey grammar
+    // (uploadKeyPolicy.js) and the signed ContentType to image/*. Anything else (inbox/*, which is
+    // server-derived only; traversal; absolute keys; foreign prefixes; non-image types) 403s before any
+    // presign happens.
     if (rawPath === '/api/photos/upload-url' && method === 'GET') {
       const key = event.queryStringParameters?.key;
       const contentType = event.queryStringParameters?.content_type ?? 'image/jpeg';
@@ -576,7 +541,7 @@ export const handler = async (event) => {
       if (!isAllowedUploadKey(key) || !SAFE_CONTENT_TYPE.test(contentType)) {
         return resp(403, { error: 'Forbidden' });
       }
-      // I35: a key another household already registered is theirs — never re-sign it.
+      // A key another household already registered is theirs — never re-sign it.
       if (await foreignStorageKey(sql, key, householdIds)) {
         warnRejectedFk(userId, 'photos', 'storage_path', key);
         return resp(403, { error: 'Forbidden' });
@@ -590,23 +555,21 @@ export const handler = async (event) => {
 
     // GET /api/photos/thumb-upload-url — presign the PUT for a new photo's 800px thumbnail.
     //
-    // WHY THIS EXISTS: the read path below derives thumb_url by CONVENTION (thumbs/<storage_path>)
-    // and 913 existing photos were backfilled with macOS `sips`, but nothing generated a thumb for
-    // a NEW upload — so every photo taken after the backfill fell back to its full-size original.
-    // The client makes the thumb (it has the decoded bitmap already) and PUTs it here.
+    // WHY: the read path derives thumb_url by CONVENTION (thumbs/<storage_path>) and nothing else
+    // generates a thumb for a NEW upload, so new photos would fall back to their full-size original. The
+    // client makes the thumb (it already has the decoded bitmap) and PUTs it here.
     //
-    // SECURITY — this does NOT widen the A0.1 closed grammar. The caller names the ORIGINAL key,
-    // which is validated by the very same isAllowedUploadKey it must already pass to upload the
-    // photo at all; the `thumbs/` prefix is applied SERVER-SIDE and is not caller-nameable. So the
-    // only object this can ever sign is the thumb OF a key the caller is already permitted to
-    // write. A caller-supplied `thumbs/...` key still 403s on the route above, unchanged.
-    // ContentType is pinned to image/jpeg because the thumb is always JPEG (matching the sips
-    // backfill) regardless of the original's type.
+    // SECURITY — this does NOT widen the closed upload-key grammar. The caller names the ORIGINAL key,
+    // validated by the same isAllowedUploadKey it must already pass to upload the photo at all; the
+    // `thumbs/` prefix is applied SERVER-SIDE and is not caller-nameable. So the only object this can ever
+    // sign is the thumb OF a key the caller may already write. A caller-supplied `thumbs/...` key still
+    // 403s on the route above. ContentType is pinned to image/jpeg because the thumb is always JPEG,
+    // whatever the original's type.
     if (rawPath === '/api/photos/thumb-upload-url' && method === 'GET') {
       const key = event.queryStringParameters?.key;
       if (!key) return resp(400, { error: 'key is required' });
       if (!isAllowedUploadKey(key)) return resp(403, { error: 'Forbidden' });
-      // I35: the thumb of a foreign-registered original is theirs too.
+      // The thumb of a foreign-registered original is theirs too.
       if (await foreignStorageKey(sql, key, householdIds)) {
         warnRejectedFk(userId, 'photos', 'storage_path', key);
         return resp(403, { error: 'Forbidden' });
@@ -622,18 +585,17 @@ export const handler = async (event) => {
       return resp(200, { upload_url, key: `thumbs/${key}` });
     }
 
-    // POST /api/photos/batch — V4-PHOTOBULK-001. Presign-ONLY, up to MAX_BATCH at a time.
-    // There is deliberately no /confirm: POST /api/photos already IS the confirm, and per-photo
-    // confirms give the progress granularity the bulk UX wants. getSignedUrl is a local HMAC (no S3
-    // round trip), so signing 20 in one call is nearly free.
+    // POST /api/photos/batch — presign-ONLY, up to MAX_BATCH at a time.
+    // There is deliberately no /confirm: POST /api/photos already IS the confirm, and per-photo confirms
+    // give the progress granularity the bulk UX wants. getSignedUrl is a local HMAC (no S3 round trip), so
+    // signing 20 in one call is nearly free.
     //
-    // SECURITY — this route accepts NO caller-supplied key. The key is DERIVED from the
-    // authenticated Clerk sub: inbox/{userId}/{uuid}.{ext}. The older GET /api/photos/upload-url
-    // above still takes a caller-named key but confines it to the closed legacy grammar (A0.1,
-    // uploadKeyPolicy.js); inbox/* remains exclusively server-derived — the legacy route 403s any
-    // inbox key. A presigned URL always inherits the SIGNER's identity (this Lambda's role), so an
-    // IAM policy scoped to inbox/* is not the control here and would break every other prefix this
-    // same role signs — server-side derivation is.
+    // SECURITY — this route accepts NO caller-supplied key. The key is DERIVED from the authenticated
+    // Clerk sub: inbox/{userId}/{uuid}.{ext}. The older GET /api/photos/upload-url takes a caller-named key
+    // but confines it to the closed grammar (uploadKeyPolicy.js); inbox/* stays exclusively server-derived,
+    // and that route 403s any inbox key. A presigned URL inherits the SIGNER's identity (this Lambda's
+    // role), so an IAM policy scoped to inbox/* is not the control here and would break every other prefix
+    // this same role signs; server-side derivation is.
     if (rawPath === '/api/photos/batch' && method === 'POST') {
       const body = JSON.parse(event.body ?? '{}');
       const files = Array.isArray(body.files) ? body.files : null;
@@ -670,16 +632,15 @@ export const handler = async (event) => {
       return resp(200, { uploads, expires_in: 900 });
     }
 
-    // POST /api/photos/relay-upload — BUG-PHOTOUPLOADRELAY-001. The photo bytes travel THROUGH
-    // the Lambda instead of direct-to-S3. Exists because a client's route to S3 can be dead while
-    // its route to Lambda stays healthy (observed live 2026-07-28: TCP to s3.us-east-1 blackholed
-    // inside the ISP — device- and app-independent — while lambda-url/CloudFront traffic was
-    // fine). The client calls this ONLY after the direct presigned PUT failed its stall watchdog.
+    // POST /api/photos/relay-upload — the photo bytes travel THROUGH the Lambda instead of direct-to-S3.
+    // Exists because a client's route to S3 can be dead while its route to Lambda stays healthy (seen
+    // live: TCP to s3.us-east-1 blackholed inside an ISP, device- and app-independent). The client calls
+    // this ONLY after the direct presigned PUT failed its stall watchdog.
     //
-    // SECURITY — the same closed grammar as upload-url, not a widening: the caller names the
-    // ORIGINAL key only (isAllowedUploadKey; a caller-supplied thumbs/… key 403s), ContentType is
-    // allowlisted, and decoded sizes are hard-capped (Lambda URLs cap payloads at 6MB; these caps
-    // keep base64+JSON under it). The thumb key is derived SERVER-side, mirroring thumb-upload-url.
+    // SECURITY — the same closed grammar as upload-url, not a widening: the caller names the ORIGINAL key
+    // only (isAllowedUploadKey; a caller-supplied thumbs/… key 403s), ContentType is allowlisted, and
+    // decoded sizes are hard-capped (keeping base64+JSON under the 6MB Lambda URL payload cap). The thumb
+    // key is derived SERVER-side, mirroring thumb-upload-url.
     if (rawPath === '/api/photos/relay-upload' && method === 'POST') {
       let relayBody;
       try {
@@ -693,7 +654,7 @@ export const handler = async (event) => {
       if (!isAllowedUploadKey(key) || !SAFE_CONTENT_TYPE.test(relayType)) return resp(403, { error: 'Forbidden' });
       if (typeof dataB64 !== 'string' || dataB64.length > RELAY_MAX_B64_CHARS) return resp(413, { error: 'Photo too large to relay' });
       if (thumbB64 != null && (typeof thumbB64 !== 'string' || thumbB64.length > RELAY_THUMB_MAX_B64_CHARS)) return resp(413, { error: 'Thumb too large to relay' });
-      // I35: never overwrite (or thumb) an object another household registered.
+      // Never overwrite (or thumb) an object another household registered.
       if (await foreignStorageKey(sql, key, householdIds)) {
         warnRejectedFk(userId, 'photos', 'storage_path', key);
         return resp(403, { error: 'Forbidden' });
@@ -710,8 +671,8 @@ export const handler = async (event) => {
       const refusal = await uploadLimitRefusal(sql, userId, thumbBytes?.length ? 2 : 1);
       if (refusal) return refusal;
       await s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: key, Body: bytes, ContentType: relayType }));
-      // Thumb is best-effort, same contract as step 2b: the read path falls back to view_url
-      // when thumbs/<key> is absent, so a thumb failure must never fail the relay.
+      // Thumb is best-effort: the read path falls back to view_url when thumbs/<key> is absent, so a thumb
+      // failure must never fail the relay.
       let thumbStored = false;
       if (thumbBytes && thumbBytes.length) {
         try {
@@ -726,10 +687,10 @@ export const handler = async (event) => {
 
     // GET /api/photos/view-url/:id — returns pre-signed GET URL for a photo record.
     //
-    // V4-TIERBLINDMINT-001 — `?tier=thumb` re-mints the THUMB derivative instead of the original,
-    // and the 200 body NAMES the tier it minted. Absent tier => 'full', i.e. the pre-change response
-    // plus one additive field, so every already-deployed client is unaffected. See viewTier.js for
-    // why the tier is an enum rather than a caller-supplied key fragment.
+    // `?tier=thumb` re-mints the THUMB derivative instead of the original, and the 200 body NAMES the tier
+    // it minted. Absent tier => 'full', the previous response plus one additive field, so every deployed
+    // client is unaffected. See viewTier.js for why the tier is an enum rather than a caller-supplied key
+    // fragment.
     const viewMatch = rawPath.match(/^\/api\/photos\/view-url\/([^/]+)$/);
     if (viewMatch && method === 'GET') {
       const photoId = viewMatch[1];
@@ -744,11 +705,10 @@ export const handler = async (event) => {
           AND deleted_at IS NULL
       `;
       if (!rows.length) return resp(404, { error: 'Not found' });
-      // A missing thumb object presigns fine and fails on GET — the SAME hint contract both list
-      // paths already publish (BUG-PHOTONEWTHUMB-001: thumb_url is a non-empty string on all 1094
-      // rows, only 913 of which have an object), and the client's degrade chain already answers it
-      // by falling back to the full source. Deliberately no HEAD probe: it would spend an S3 round
-      // trip on every heal to learn what the next <img> error reports for free.
+      // A missing thumb object presigns fine and fails on GET: the same hint contract both list paths
+      // publish (thumb_url is a non-empty string on every row, though not every row has an object), and the
+      // client's degrade chain answers it by falling back to the full source. Deliberately no HEAD probe: it
+      // would spend an S3 round trip on every heal to learn what the next <img> error reports for free.
       // Keyed on its own line, not inlined into the call: lambda/photo-access.test.js census
       // requires every resolvePhotoViewUrl call to read `(<arg>, { presign, sm })` with no nested
       // parens, so that one well-formed call cannot vouch for a malformed sibling.
@@ -757,12 +717,12 @@ export const handler = async (event) => {
       return resp(200, { view_url: viewUrl, expires_in: 900, tier });
     }
 
-    // ── V4-SPACEPHOTO-001 space routes (all inert unless SPACE_PHOTOS_ENABLED=true) ───────────────
-    // There is deliberately NO /api/spaces Lambda. A new function would need a Function URL, CORS,
-    // a repo variable, entries in three deploy matrices and an Infrastructure-Sync doc update —
-    // disproportionate for a ONE-ROW table. The cost is the smell noted on space-hero below.
-    // The id-free space-hero form below is what makes that affordable: it is the DISCOVERY path, so
-    // the client never needs a spaces list just to learn its own space id.
+    // ── Space routes (all inert unless SPACE_PHOTOS_ENABLED=true) ──────────────────────────────────────
+    // There is deliberately NO /api/spaces Lambda. A new function would need a Function URL, CORS, a repo
+    // variable, entries in three deploy matrices and an Infrastructure-Sync doc update: disproportionate
+    // for a ONE-ROW table. The cost is the smell noted on space-hero/:spaceId below. The id-free space-hero
+    // form is what makes that affordable: it is the DISCOVERY path, so the client never needs a spaces
+    // list just to learn its own space id.
 
     // Turns hero rows into the response body: strips the internal storage path and presigns.
     // A presign failure leaves the url null rather than 500ing the hero read.
@@ -778,15 +738,13 @@ export const handler = async (event) => {
       return { ...hero, featured_photo_view_url };
     };
 
-    // GET /api/photos/space-hero — the id-free form. THE DISCOVERY FIX: every other space route
-    // needs a :spaceId, and before this there was no shipped surface from which a client could
-    // obtain one (no /api/spaces; the plants list SELECT omits workspace_id; the daily-plan read
-    // model drops it). The frontend's stopgap was a VITE_SPACE_ID build variable that is unset in
-    // every environment, i.e. the feature was unreachable even with the flag on.
+    // GET /api/photos/space-hero — the id-free form, the DISCOVERY path: every other space route needs a
+    // :spaceId and no other surface hands a client one (no /api/spaces; the plants list SELECT omits
+    // workspace_id; the daily-plan read model drops it).
     //
     // Resolution rule, zero-space and multi-space behaviour: see resolveHouseholdSpace above.
-    // The response carries space_id, which is exactly what the client then feeds to
-    // ?space_id / space-featured / space-hero/:spaceId — one round trip bootstraps all of them.
+    // The response carries space_id, which the client then feeds to ?space_id / space-featured /
+    // space-hero/:spaceId, so one round trip bootstraps all of them.
     if (spacePhotosEnabled && rawPath === '/api/photos/space-hero' && method === 'GET') {
       const owned = await resolveHouseholdSpace(sql, householdIds, spacePhotosEnabled);
       const household_space_count = owned.length ? Number(owned[0].household_space_count) : 0;
@@ -800,11 +758,10 @@ export const handler = async (event) => {
       return resp(200, { ...(body ?? EMPTY_SPACE_HERO), household_space_count });
     }
 
-    // GET /api/photos/space-hero/:spaceId — the explicit form. Unchanged contract apart from the
-    // additive featured_is_explicit field; still 404s an unknown or out-of-household space.
-    // SMELL, acknowledged and priced in: this returns spaces.name, which is not photos-domain data.
-    // It is here only because standing up a spaces Lambda costs more than the smell. If `spaces`
-    // ever grows real CRUD, this route moves.
+    // GET /api/photos/space-hero/:spaceId — the explicit form; still 404s an unknown or out-of-household space.
+    // SMELL, acknowledged and priced in: this returns spaces.name, which is not photos-domain data. It is
+    // here only because standing up a spaces Lambda costs more than the smell. If `spaces` ever grows real
+    // CRUD, this route moves.
     const spaceHeroMatch = rawPath.match(/^\/api\/photos\/space-hero\/([^/]+)$/);
     if (spacePhotosEnabled && spaceHeroMatch && method === 'GET') {
       const spaceId = spaceHeroMatch[1];
@@ -815,15 +772,15 @@ export const handler = async (event) => {
     }
 
     // PUT /api/photos/space-featured/:spaceId — body { photo_id } designates the Space hero;
-    // { photo_id: null } clears it. RE-DESIGNATION is the point: unlike autoPromoteFeatured (which
-    // only fills a NULL), this is an explicit choice and overwrites whatever is there, so the
-    // first-uploaded photo is never permanently locked in.
+    // { photo_id: null } clears it. RE-DESIGNATION is the point: unlike autoPromoteFeatured (which only
+    // fills a NULL), this is an explicit choice and overwrites whatever is there, so the first-uploaded
+    // photo is never permanently locked in.
     //
     // AUTHZ: two independent gates, both anchored on created_by — the space must be household-owned
     // (loadOwnedSpace) AND the photo must already carry space_id = :spaceId and be household-owned.
-    // NOT uploaded_by: that is the stale pattern (V-C1); every other featured-photo validator in the
-    // repo uses created_by. Every rejection returns the SAME generic 400 — a distinct "not found"
-    // would itself be an existence oracle for another household's ids.
+    // NOT uploaded_by: that is the stale pattern; every other featured-photo validator in the repo uses
+    // created_by. Every rejection returns the SAME generic 400 — a distinct "not found" would itself be an
+    // existence oracle for another household's ids.
     const spaceFeaturedMatch = rawPath.match(/^\/api\/photos\/space-featured\/([^/]+)$/);
     if (spacePhotosEnabled && spaceFeaturedMatch && method === 'PUT') {
       const spaceId = spaceFeaturedMatch[1];
@@ -861,37 +818,32 @@ export const handler = async (event) => {
       return resp(200, updated[0]);
     }
 
-    // PUT /api/photos/:id/space — body { space_id: uuid|null } attaches an existing photo to the
-    // Space, or detaches it. This is the ATTACH path; designating a hero is space-featured above.
+    // PUT /api/photos/:id/space — body { space_id: uuid|null } attaches an existing photo to the Space,
+    // or detaches it. This is the ATTACH path; designating a hero is space-featured above.
     //
-    // WHY A DEDICATED SUB-RESOURCE rather than adding space_id to the general re-tag PUT (crucible
-    // 2026-08-02, boss-technical). Three independent reasons, in order of weight:
-    //   1. The general PUT's template EXECUTES WITH THE FLAG OFF. Naming space_id in it would break
-    //      the byte-identical-rollback invariant this whole feature is architected around (see
-    //      buildPhotoInsert's two-template split) and would 42703 in any environment lacking the
-    //      column. A flag-gated route cannot execute flag-off, so the hazard cannot arise here.
-    //   2. The general PUT replaces a fixed field set: an omitted key means "cleared". space_id
-    //      cannot join that rule without silently detaching on every ordinary re-tag from the
-    //      shipped client (which never sends it) — and there would then be no way to express
-    //      "clear" distinguishably from "didn't mention it". On a single-field route PUT genuinely
-    //      IS replace, so the key is REQUIRED: absent is a 400, explicit null is the clear.
-    //   3. The general PUT is the last write path in this handler unswept by V4-AUTHZSWEEP-001 (no
-    //      ownership loader; its `prev` CTE lacks deleted_at). Building here inherits none of that.
+    // WHY A DEDICATED SUB-RESOURCE rather than adding space_id to the general re-tag PUT, in order of weight:
+    //   1. The general PUT's template EXECUTES WITH THE FLAG OFF. Naming space_id in it would break the
+    //      byte-identical-rollback invariant this whole feature is architected around (see buildPhotoInsert's
+    //      two-template split) and would 42703 in any environment lacking the column. A flag-gated route
+    //      cannot execute flag-off, so the hazard cannot arise here.
+    //   2. The general PUT replaces a fixed field set: an omitted key means "cleared". space_id cannot join
+    //      that rule without silently detaching on every ordinary re-tag from the shipped client (which
+    //      never sends it), and there would then be no way to express "clear" distinguishably from "didn't
+    //      mention it". On a single-field route PUT genuinely IS replace, so the key is REQUIRED: absent is
+    //      a 400, explicit null is the clear.
     //
-    // Deliberately does NOT call autoPromoteFeatured. Attaching a batch of photos to the property
-    // must not silently make the first one the hero — attach and designate are separate acts, which
-    // is the entire reason there are two routes. The upload path still auto-promotes (POST, 4-arg,
-    // guarded on featured_photo_id IS NULL); that is unchanged.
+    // Deliberately does NOT call autoPromoteFeatured. Attaching a batch of photos to the property must not
+    // silently make the first one the hero — attach and designate are separate acts, which is the entire
+    // reason there are two routes. The upload path still auto-promotes (POST, 4-arg, guarded on
+    // featured_photo_id IS NULL).
     //
-    // It DOES drain the quick-tag inbox (V4-SPACECLIENTGAP-001, 2026-08-02 — this clause previously
-    // read "does NOT touch intake_status", which was a description of the code as first built and
-    // never had a justification behind it). Attaching the Space IS filing the photo, so leaving the
-    // row at 'pending_tag' would keep idx_photos_intake_pending matching and the carousel would
-    // re-serve a photo the user already filed. Narrowly guarded — see `drainsInbox` below: attach
-    // only (never detach), and only out of 'pending_tag' (never 'upload_failed').
+    // It DOES drain the quick-tag inbox. Attaching the Space IS filing the photo, so leaving the row at
+    // 'pending_tag' would keep idx_photos_intake_pending matching and the carousel would re-serve a photo
+    // the user already filed. Narrowly guarded — see `drainsInbox` below: attach only (never detach), and
+    // only out of 'pending_tag' (never 'upload_failed').
     //
-    // Every rejection returns the SAME generic 400, matching space-featured: a distinct 404 would
-    // be an existence oracle for another household's photo ids.
+    // Every rejection returns the SAME generic 400, matching space-featured: a distinct 404 would be an
+    // existence oracle for another household's photo ids.
     const photoSpaceMatch = rawPath.match(/^\/api\/photos\/([^/]+)\/space$/);
     if (spacePhotosEnabled && photoSpaceMatch && method === 'PUT') {
       const photoId = photoSpaceMatch[1];
@@ -934,21 +886,19 @@ export const handler = async (event) => {
         return resp(400, { error: 'cannot detach the only parent — attach it elsewhere first' });
       }
 
-      // V4-SPACECLIENTGAP-001 — DRAIN THE INBOX on attach. Same rule the general PUT applies (see
-      // its comment block: clear intake_status only when a parent is actually being SET), extended
-      // to the parent this route owns. Without it a bulk-uploaded photo whose only tag is the Space
-      // keeps intake_status='pending_tag' forever: idx_photos_intake_pending keeps matching, so the
-      // quick-tag carousel re-serves a photo the user already filed and the inbox cannot drain.
+      // DRAIN THE INBOX on attach. Same rule the general PUT applies (clear intake_status only when a parent
+      // is actually being SET), extended to the parent this route owns. Without it a bulk-uploaded photo
+      // whose only tag is the Space keeps intake_status='pending_tag' forever: idx_photos_intake_pending keeps
+      // matching, so the quick-tag carousel re-serves a photo the user already filed and the inbox cannot drain.
       //
       // Guarded three ways, deliberately:
-      //   - ONLY on attach (nextSpaceId !== null). Detach is the "un-tag" case, and the general PUT
-      //     already establishes that an un-tagged pending row must STAY pending — clearing there
-      //     would mark a row filed that nobody has filed.
-      //   - ONLY from 'pending_tag'. 'upload_failed' is a different state with its own recovery
-      //     path (and its own CHECK clause at the POST validator); attaching a space does not mean
-      //     the failed upload succeeded.
-      //   - Computed in JS from the row we ALREADY read, so no extra round trip and no widening of
-      //     any shared template.
+      //   - ONLY on attach (nextSpaceId !== null). Detach is the "un-tag" case, and the general PUT already
+      //     establishes that an un-tagged pending row must STAY pending — clearing there would mark a row
+      //     filed that nobody has filed.
+      //   - ONLY from 'pending_tag'. 'upload_failed' is a different state with its own recovery path (and its
+      //     own CHECK clause at the POST validator); attaching a space does not mean the failed upload succeeded.
+      //   - Computed in JS from the row we ALREADY read, so no extra round trip and no widening of any shared
+      //     template.
       const drainsInbox = nextSpaceId !== null && p.intake_status === 'pending_tag';
 
       // No cast on the bound value: in an UPDATE assignment the column supplies the type, so a bare
@@ -967,30 +917,27 @@ export const handler = async (event) => {
       return resp(200, attached[0]);
     }
 
-    // GET /api/photos/deleted — W-RESTORE, the "Recently deleted" surface (DD8).
+    // GET /api/photos/deleted — the "Recently deleted" surface.
     //
-    // THIS ROUTE IS WHY THE DELETE CONFIRM MAY SAY "recoverable from Recently deleted". Until it
-    // existed the copy in EventDeleteConfirm.jsx was a promise about a place the user could not go:
-    // the data was recoverable, the AFFORDANCE was not. A destructive control must not ship ahead of
-    // the recovery path it advertises.
+    // THIS ROUTE IS WHY THE DELETE CONFIRM MAY SAY "recoverable from Recently deleted"
+    // (EventDeleteConfirm.jsx). A destructive control must not ship ahead of the recovery path it advertises.
     //
-    // The SELECT deliberately lives in photoDelete.js, not here — it is the one read that MUST
-    // return `deleted_at IS NOT NULL`, and index.js is where the 0A.6 enumeration guard asserts the
-    // opposite of every template. See the header comment on listDeletedPhotos.
+    // The SELECT lives in photoDelete.js, not here: it is the one read that MUST return
+    // `deleted_at IS NOT NULL`, and index.js is where the enumeration guard (read-paths-deletedat.test.js)
+    // asserts the opposite of every template. See the header comment on listDeletedPhotos.
     //
-    // Declared ABOVE the exact-match `/api/photos` GET for reading order only; the two cannot
-    // collide (that one is `===`, not a prefix). A DELETE to this path falls to the bare-:id arm and
-    // 404s on UUID_RE, which is the correct answer — there is no permanent-delete verb here and
-    // Soft-Delete-Only means there never will be.
+    // Declared ABOVE the exact-match `/api/photos` GET for reading order only; the two cannot collide (that
+    // one is `===`, not a prefix). A DELETE to this path falls to the bare-:id arm and 404s on UUID_RE,
+    // which is the correct answer — there is no permanent-delete verb here and Soft-Delete-Only means
+    // there never will be.
     if (rawPath === '/api/photos/deleted' && method === 'GET') {
       const rows = await listDeletedPhotos(sql, {
         householdIds,
         limit: event.queryStringParameters?.limit,
       });
-      // Same presign pair as the live list: the S3 object SURVIVES a soft delete (DD2), so a
-      // recently-deleted photo still renders its own thumbnail — which is the entire point. A user
-      // cannot decide what to put back from a grid of grey boxes. thumb_url stays a HINT (the client
-      // falls back to view_url) exactly as it is on the live list.
+      // Same presign pair as the live list: the S3 object SURVIVES a soft delete, so a recently-deleted photo
+      // still renders its own thumbnail — a user cannot decide what to put back from a grid of grey boxes.
+      // thumb_url stays a HINT (the client falls back to view_url) exactly as on the live list.
       const withUrls = await Promise.all(
         rows.map(async (photo) => {
           let view_url = null, thumb_url = null;
@@ -1011,161 +958,101 @@ export const handler = async (event) => {
     // GET /api/photos — list user's photos with optional filters
     if (rawPath === '/api/photos' && method === 'GET') {
       const projectId = event.queryStringParameters?.project_id ?? null;
-      // V4-PHOTOGALLERY-001: attachment-scoped gallery. ?attachedTo=<plantingId> returns every photo
-      // ATTACHED to that planting by ANY source — directly via photos.plant_id, OR through one of its
-      // events (photos.event_id -> event_log.plant_id). This is the canonical gallery membership rule
-      // (Dave 2026-07-09): project_id/location_id are NOT attachment sources, so the union is scoped to
-      // the PLANTING, not its container — a plant_id-attached photo living in a parent/sibling container
-      // still appears (fixes the project-scoped ?project_id fetch that hid such photos). Distinct from
-      // ?project_id (container gallery) — this does NOT overload it.
+      // Attachment-scoped gallery. ?attachedTo=<plantingId> returns every photo ATTACHED to that planting by
+      // ANY source — directly via photos.plant_id, OR through one of its events (photos.event_id ->
+      // event_log.plant_id). This is the canonical gallery membership rule: project_id/location_id are NOT
+      // attachment sources, so the union is scoped to the PLANTING, not its container (a plant_id-attached
+      // photo living in a parent/sibling container still appears). Distinct from ?project_id (container
+      // gallery); this does NOT overload it.
       const attachedTo = event.queryStringParameters?.attachedTo ?? null;
-      // V4-PHOTOLOCFIND-001: space gallery. ?location_id=<spaceId> returns photos attached to that
-      // space OR any descendant space (same recursive parent_id walk as the events By-Space filter,
-      // V4-LOGMANYLOC-001 — a leaf resolves to just itself). This is a CONTAINER-style filter like
-      // ?project_id, NOT an attachment source for planting galleries — the Dave 2026-07-09 rule
-      // behind ?attachedTo is unchanged.
+      // Space gallery. ?location_id=<spaceId> returns photos attached to that space OR any descendant space
+      // (same recursive parent_id walk as the events By-Space filter; a leaf resolves to just itself). A
+      // CONTAINER-style filter like ?project_id, NOT an attachment source for planting galleries: the
+      // ?attachedTo rule is unchanged.
       const locationId = event.queryStringParameters?.location_id ?? null;
-      // V4-SPACEPHOTO-001: the SPACE gallery (photos.space_id), which is NOT ?location_id above.
-      // ?location_id walks a WITH RECURSIVE loc_subtree — reusing that walk here is the original
-      // bug: a Space gallery would also show every descendant LOCATION's photos. This is an EXACT
-      // match on the space, nothing else. Parsed only when the flag is on, so with the flag off
-      // spaceId is unconditionally null, its branch is unreachable, and an unknown ?space_id param
-      // is ignored exactly as it is today.
+      // The SPACE gallery (photos.space_id), which is NOT ?location_id above: that walks a WITH RECURSIVE
+      // loc_subtree, and reusing the walk here would also show every descendant LOCATION's photos. This is an
+      // EXACT match on the space. Parsed only when the flag is on, so with the flag off spaceId is
+      // unconditionally null, its branch is unreachable, and an unknown ?space_id param is ignored as before.
       const spaceId = spacePhotosEnabled ? (event.queryStringParameters?.space_id ?? null) : null;
       if (spaceId !== null && !UUID_RE.test(spaceId)) return resp(400, { error: 'space_id must be a uuid' });
-      // Restored to 120 now that the grid takes ~200KB thumbs instead of full originals:
-      // 120 thumbs is ~24MB where 120 originals was ~369MB (both measured 2026-07-27). The
-      // interim 30 was a stopgap that traded a blank tab for a hard cut with no pagination.
+      // 120 thumbs (~200KB each) are ~24MB where 120 originals were ~369MB, so the grid can take 120 per
+      // page without pagination.
       const limit = Math.min(parseInt(event.queryStringParameters?.limit ?? '120', 10), 200);
 
-      // V4-ARCHIVEHIDE-001 (L2). Archived plantings must not be LOADED by an aggregate gallery, so
-      // the predicate is a WHERE-clause anti-join, not a client filter — a row filtered in the
-      // browser was still queried, serialised and shipped. Measured on prod 2026-08-13: 28 live
-      // photos hang off the 19 archived plantings (7 via photos.plant_id, 21 via photos.event_id ->
-      // event_log.plant_id — the second path is why there are TWO anti-joins and not one; a single
-      // predicate on p.plant_id closes a quarter of the leak and reads as if it closed all of it).
+      // Archived plantings must not be LOADED by an aggregate gallery, so the predicate is a WHERE-clause
+      // anti-join, not a client filter — a row filtered in the browser was still queried, serialised and
+      // shipped. There are TWO anti-joins, not one, because a photo reaches a planting two ways
+      // (photos.plant_id, and photos.event_id -> event_log.plant_id); a single predicate on p.plant_id closes
+      // only part of the leak and reads as if it closed all of it.
       //
-      // AXIS: archived_at, NOT deleted_at. The two are orthogonal (lambda/plants/index.js:269-281
-      // archives with `AND p.deleted_at IS NULL` still in the WHERE) and every template below keeps
-      // its existing deleted_at predicate untouched.
+      // AXIS: archived_at, NOT deleted_at. The two are orthogonal (lambda/plants/index.js archives with
+      // `AND p.deleted_at IS NULL` still in the WHERE) and every template below keeps its existing deleted_at
+      // predicate untouched.
       //
-      // NOT APPLIED to the ?attachedTo branch, deliberately. That branch is the planting's OWN
-      // gallery on PlantingDetail (src/pages/PlantingDetail.jsx:116) and its every row is by
-      // construction that one planting's. Filtering there does nothing when the planting is live
-      // and blanks the page when it is archived — which would delete the ONLY route an archived
-      // planting still has (lambda/events/index.js:658-661: "Deletion hides; archiving does not").
-      // The four branches below are aggregates over MANY plantings; those are the default views.
+      // NOT APPLIED to the ?attachedTo branch, deliberately. That branch is the planting's OWN gallery on
+      // PlantingDetail and its every row is by construction that one planting's. Filtering there does nothing
+      // when the planting is live and blanks the page when it is archived, which would delete the ONLY route
+      // an archived planting still has (lambda/events/index.js: "Deletion hides; archiving does not"). The
+      // four branches below are aggregates over MANY plantings; those are the default views.
       //
-      // PLANT AXIS ONLY. plant_projects also carries archived_at (3 archived projects in prod) but
-      // whether archiving a container hides its contents is an open Dave ruling (R3 recon §2
-      // DAVE-DECISION 3), and this lane does not guess it.
+      // PLANT AXIS ONLY. plant_projects also carries archived_at, but whether archiving a container hides its
+      // contents is an open Dave ruling (R3 recon §2 DAVE-DECISION 3), and this code does not guess it.
       //
-      // BUG-PHOTOARCHAXIS-001 — the event anti-join carries `ea.deleted_at IS NULL` because the
-      // hop it makes is through a row that has a lifecycle of its own. The plant anti-join is one
-      // hop and names the archive axis directly; the event anti-join is TWO hops, and without the
-      // scope on the intermediate it traverses a DEAD edge — a photo stranded on a soft-deleted
-      // event would be hidden by an ARCHIVE predicate, on the strength of a planting it reaches
-      // only through a row the user already deleted. The ?attachedTo branch below has always
-      // scoped the identical traversal (`e.deleted_at IS NULL` inside its event subquery); these
-      // four were the inconsistent ones, so this is the file agreeing with itself.
+      // The event anti-join carries `ea.deleted_at IS NULL` because it makes TWO hops and the intermediate
+      // row has a lifecycle of its own: without the scope it traverses a DEAD edge, and a photo stranded on a
+      // soft-deleted event would be hidden by an ARCHIVE predicate, on the strength of a planting it reaches
+      // only through a row the user already deleted. The ?attachedTo branch scopes the identical traversal
+      // (`e.deleted_at IS NULL`). It is inert as shipped: DELETE /api/events/:id DETACHES photos rather than
+      // deleting them (lambda/events/index.js: "photos -> DETACH, never delete"), so no live photo points at a
+      // soft-deleted event. There is deliberately no hiding predicate for that state: an orphaned photo should
+      // surface in the gallery, not vanish behind an unrelated planting's archive flag.
       //
-      // INERT AS SHIPPED, measured on prod 2026-08-14: zero live photos carry an event_id whose
-      // event is soft-deleted, and the guarantee behind that zero is not luck — DELETE
-      // /api/events/:id DETACHES photos rather than deleting them (lambda/events/index.js: "photos
-      // -> DETACH, never delete", nulling the dangling event_id and re-parenting). So the delete
-      // axis on THIS edge is enforced upstream by that cascade, and there is deliberately no new
-      // hiding predicate here to match: the state this scope excludes is an orphan, and an orphaned
-      // photo should surface in the gallery, not vanish behind an unrelated planting's archive flag.
-      // 86 soft-deleted events exist in prod, none with an archived planting and none retaining a
-      // photo — the shape is reachable only by a future cascade leak, which is what this guards.
+      // All five templates below project p.inventory_item_id and p.intake_status. Both were READ by the
+      // client and never SENT by the server, the one defect shape a green client-side test cannot see
+      // (photoModel's own unit tests supply the field the wire omitted).
       //
-      // BUG-PHOTOPARENTUNDELIVERED-001 — `p.inventory_item_id` and `p.intake_status` are projected by
-      // all five templates below. Both were READ by the client and never SENT by the server, which is
-      // the one defect shape a green client-side test cannot see: photoModel's own unit tests supply
-      // the field the wire omitted, so they passed throughout.
+      // THE PARENT SET IS SEVEN CLAUSES. photos_must_have_parent counts six FKs (event, project, location,
+      // plant, inventory_item, space) plus the escape hatch intake_status='pending_tag' that makes a parentless
+      // row legal. photoModel.js enumerates all six in PARENT_KINDS/PARENT_FIELDS and counts them off the raw
+      // row, so a column the query never selected is a parent the model cannot see:
+      //   inventory_item_id — a photo can hang off an inventory item and nothing else. Undelivered, it reads
+      //     parentCount=0 -> isAttached=false, so PhotoLibrary's Untagged chip flags it as unfinished work on
+      //     every visit.
+      //   intake_status — a legal 'pending_tag' row has all six FKs null. Undelivered, photoModel's
+      //     `pendingTag` is permanently false and the row classifies PARENTAGE.ORPHAN, the state the CHECK
+      //     forbids: a legal photo reported as impossible.
+      // This is the third recurrence of one defect (select-columns.test.js records BUG-PHOTOPARENT-001
+      // recurring because a parent column was missed). gallery-intake-status.test.js closes the class by
+      // enumeration: every PARENT_FIELDS entry must be reachable on every gallery template, so a seventh
+      // parent kind added to photoModel cannot silently reopen it.
       //
-      // THE PARENT SET IS SEVEN CLAUSES, and these SELECTs delivered four of them. photos_must_have_parent
-      // counts six FKs — event, project, location, plant, inventory_item, space — plus the seventh
-      // escape hatch intake_status='pending_tag' that makes a parentless row legal. photoModel.js:28/32
-      // enumerates all six in PARENT_KINDS/PARENT_FIELDS and :66-70 counts them off the raw row, so a
-      // column the query never selected is a parent the model cannot see. Two were missing here:
+      // WHY COLUMNS AND NOT A DECORATING QUERY like the space_id block below. That block spends an extra round
+      // trip to buy a property these two do not need: byte-identical flag-off rollback. space_id is
+      // code-ahead-of-DDL behind SPACE_PHOTOS_ENABLED; these two have no flag, are already named by the INSERT
+      // templates, and are pinned in select-columns.test.js's evidence-derived list (verified against prod
+      // information_schema by scripts/dev-main-schema-audit.py). With no rollback invariant to protect, a
+      // second query is pure cost and a second source of truth.
       //
-      //   inventory_item_id — the WORSE one. 6 live photos hang off an inventory item and NOTHING else
-      //     (measured prod 2026-08-31: 6 rows with inventory_item_id NOT NULL, all 6 with plant_id,
-      //     event_id, project_id and location_id all NULL). Undelivered, every one reads parentCount=0
-      //     -> isAttached=false, so PhotoLibrary's Untagged chip (:417) flags them as unfinished work on
-      //     every visit and the app cannot represent the only relationship they have. photoModel.js:15-17
-      //     already names these six as "fully attached", and PhotoLibrary.jsx:411-416 already claims to
-      //     have fixed them by switching to isAttached — the MODEL was fixed, the WIRE was not.
+      // ALL FIVE templates, including ?attachedTo (whose rows carry a parent by construction and can never be
+      // pending): uniformity is the point, so the next branch added by copy-paste inherits both columns.
       //
-      //   intake_status — 1 live row, 54777683-2244-449c-bbbb-4a65396963e8, intake_status='pending_tag'
-      //     with all six parent FKs null. Undelivered, photoModel.js:72's `pendingTag` is permanently
-      //     false, so :74-76 classifies it PARENTAGE.ORPHAN — the state photoModel.js:45 documents as
-      //     "an INVALID state that the CHECK forbids". A legal photo reported as impossible.
+      // p.space_id is NOT projected here: the decorating query below supplies it only when SPACE_PHOTOS_ENABLED
+      // is on, and projecting it here would break the flag-off rollback invariant space-photos.test.js pins.
       //
-      // THIS IS THE THIRD INSTANCE OF ONE RECURRENCE. select-columns.test.js:8-10 records that
-      // BUG-PHOTOPARENT-001 "recurred TWICE because a parent column was missed — inventory_item_id
-      // first, then space_id". Both earlier fixes were applied to the WRITE path and the client model;
-      // this projection was never revisited, so inventory_item_id has been missing here the whole time.
-      // gallery-intake-status.test.js closes the class by enumeration rather than by naming columns:
-      // every PARENT_FIELDS entry must be reachable on every gallery template, so a seventh parent kind
-      // added to photoModel cannot silently reopen this.
+      // p.taken_at IS DELIVERED, ordered as COALESCE(p.taken_at, p.created_at). taken_at is EXIF
+      // DateTimeOriginal, read off the original file before the downscale and before the privacy strip
+      // (useUploadPhoto.js; the order is load-bearing there). It had no reader only because this route
+      // withheld it, so the app kept sorting a photograph by when the file arrived instead of when it was
+      // shot, while the public site already publishes on coalesce(e.event_date, p.taken_at, p.created_at)
+      // (gam-site/tools/generate_candidates.py). The COALESCE is the whole feature for rows where taken_at is
+      // NULL (most of them: the upload path did not always read the tag), not a defensive nicety: sorting on
+      // the bare column would sink those rows to the end of every gallery.
       //
-      // WHY COLUMNS AND NOT A DECORATING QUERY like the space_id block below. That block spends an extra
-      // round trip to buy ONE property these two do not need: byte-identical flag-off rollback. space_id
-      // was code-ahead-of-DDL behind SPACE_PHOTOS_ENABLED, so naming it here would have 42703'd wherever
-      // the column was absent and would have inverted space-photos.test.js's flag-off assertions.
-      // Neither of these has a flag; both have been in prod for the life of the feature; both are already
-      // named by the INSERT templates (:213, :252) and pinned in select-columns.test.js's evidence-derived
-      // list, which scripts/dev-main-schema-audit.py verifies against prod information_schema. With no
-      // rollback invariant to protect, a second query is pure cost and a second source of truth. Both
-      // columns take the SAME route deliberately — fixing one by projection and one by decoration would
-      // leave the next reader with two patterns and no rule.
-      //
-      // ALL FIVE, including ?attachedTo, whose rows carry a parent by construction and so can never be
-      // PENDING. Uniformity is the point: a reader comparing the templates should not have to work out
-      // which one may omit a column, and the next branch added by copy-paste inherits both.
-      //
-      // STILL NOT DELIVERED HERE, deliberate and measured rather than assumed:
-      //   p.space_id  — gated. The decorating query below supplies it only when SPACE_PHOTOS_ENABLED
-      //     is on, and that gating is the point (see its header); projecting it here would break the
-      //     flag-off rollback invariant space-photos.test.js pins.
-      //
-      // p.taken_at IS NOW DELIVERED, and this note is the record of why the previous one was wrong.
-      // It used to read "consumed by NOTHING" and cite a repo-wide search for a reader — a true
-      // observation that was being used as a reason. It was the wrong way round: the column had no
-      // reader BECAUSE this route withheld it, so the absence of a reader kept justifying the
-      // absence of the data, and the app went on sorting a photograph by when the file arrived.
-      //
-      // V4-PHOTOTAKENAT-002. taken_at is EXIF DateTimeOriginal, read off the original file before the
-      // downscale and before the privacy strip (useUploadPhoto.js, order documented as load-bearing
-      // there). Measured against live prod 2026-09-09: 315 of 1,584 rows carry one, and 150 of those
-      // 315 were CAPTURED ON A DIFFERENT DAY THAN THEY WERE UPLOADED — the widest 36 days apart, a
-      // frame shot 2026-08-04 and uploaded 2026-09-08. Every one of those 150 sorted, and sectioned
-      // on the Photos wall, under its upload month. The public site had already been publishing them
-      // correctly on `coalesce(e.event_date, p.taken_at, p.created_at)`
-      // (gam-site/tools/generate_candidates.py), so the app and the website disagreed about the date
-      // of the same photograph — that disagreement is what this closes.
-      //
-      // ORDER BY COALESCE(p.taken_at, p.created_at), NOT taken_at alone. The column is NULL on 1,269
-      // of 1,584 rows, so sorting on it bare sinks four rows in five to the end of every gallery.
-      // The COALESCE is the whole feature for those rows, not a defensive nicety.
-      //
-      // AND THOSE ROWS ARE MOSTLY RECOVERABLE, which is worth knowing before anyone treats the
-      // fallback as permanent. Censused 2026-09-09 across all 1,269 objects: 926 (73%) still carry a
-      // readable EXIF DateTimeOriginal in S3. They are NULL because the upload path did not read the
-      // tag yet, not because the data was absent. The 343 that truly lost it were re-encoded through
-      // a canvas by the client-side downscale (ee2f6ec, 2026-07-27); the privacy strip shipped
-      // 2026-08-20, AFTER the last affected upload, and never touched this population.
-      // A backfill (V4-PHOTOEXIF-001) would move 313 of the 926 into a different day-section here.
-      //
-      // NOT INDEX-BACKED, and that is a measured choice rather than an oversight: the expression
-      // defeats the (created_by, taken_at) index the P1 migration added, so these queries sort in
-      // memory. At 1,584 live rows against a LIMIT of 120 that is noise. It stops being noise
-      // somewhere in the tens of thousands — the fix then is an expression index on
-      // COALESCE(taken_at, created_at), not a retreat to created_at.
-      // Full field-by-field census of what photoModel reads vs what these templates send, with the
-      // supplied-post-query cases separated out, is asserted in gallery-parent-projection.test.js.
+      // NOT INDEX-BACKED, a measured choice: the expression defeats the (created_by, taken_at) index, so these
+      // queries sort in memory. At this table size against a LIMIT of 120 that is noise; if it stops being
+      // noise, add an expression index on COALESCE(taken_at, created_at) rather than retreating to created_at.
+      // Field-by-field census of what photoModel reads vs what these templates send: gallery-parent-projection.test.js.
 
       let rows;
       if (attachedTo) {
@@ -1190,10 +1077,10 @@ export const handler = async (event) => {
             LIMIT ${limit}
           `;
       } else if (locationId) {
-        // T3b archive leftover: the location, space and unscoped branches also hide a photo whose
-        // CONTAINER (photos.project_id) is archived — `pp.archived_at IS NULL` on the existing LEFT
-        // JOIN, so a photo with no container passes. NOT on ?project_id= (the container's own page)
-        // or ?attachedTo (the planting's own gallery): an archived thing keeps its own page.
+        // The location, space and unscoped branches also hide a photo whose CONTAINER (photos.project_id) is
+        // archived — `pp.archived_at IS NULL` on the existing LEFT JOIN, so a photo with no container passes.
+        // NOT on ?project_id= (the container's own page) or ?attachedTo (the planting's own gallery): an
+        // archived thing keeps its own page.
         rows = await sql`
             SELECT
               p.id, p.project_id, p.event_id, p.location_id, p.plant_id,
@@ -1283,17 +1170,15 @@ export const handler = async (event) => {
             LIMIT ${limit}
           `;
       } else {
-        // V5-SEEDVENDORPHOTOFILTER-001 — the UNSCOPED gallery (the Photo Library's default page and its
-        // quick-tag source, the Space attach picker) leaves out SUPPLIER PACKET IMAGES: the vendor's
-        // catalog picture attached to a seed lot so My seeds has a thumbnail. They are the supplier's
-        // photographs, not Dave's, and 305 of them arrived in one batch on 2026-09-19 and filled the
-        // whole first page. They stay on the seed pages, which read them through the lot.
-        // The four scoped branches above need no filter: a supplier image's only parent is its
-        // inventory item, which none of them reads. Marker: our own ingest names the file
-        // vendor-image--* (there is no provenance column); COALESCE because original_filename is
-        // NULL on most rows, and a bare NOT LIKE on NULL would drop them all. Header search
-        // (lambda/dashboard/handlers.js searchPhotos) carries the same predicate;
-        // supplier-image-marker-sync.test.js holds the two equal.
+        // The UNSCOPED gallery (the Photo Library's default page and its quick-tag source, the Space attach
+        // picker) leaves out SUPPLIER PACKET IMAGES: the vendor's catalog picture attached to a seed lot so My
+        // seeds has a thumbnail. They are the supplier's photographs, not ours, and a bulk import of them filled
+        // the whole first page. They stay on the seed pages, which read them through the lot.
+        // The four scoped branches above need no filter: a supplier image's only parent is its inventory item,
+        // which none of them reads. Marker: our own ingest names the file vendor-image--* (there is no
+        // provenance column); COALESCE because original_filename is NULL on most rows, and a bare NOT LIKE on
+        // NULL would drop them all. Header search (lambda/dashboard/handlers.js searchPhotos) carries the same
+        // predicate; supplier-image-marker-sync.test.js holds the two equal.
         rows = await sql`
             SELECT
               p.id, p.project_id, p.event_id, p.location_id, p.plant_id,
@@ -1321,32 +1206,28 @@ export const handler = async (event) => {
           `;
       }
 
-      // V4-SPACEPHOTO-001: decorate the list with space_id when the gate is open.
+      // Decorate the list with space_id when the gate is open.
       //
       // WHY A SEPARATE QUERY rather than adding `p.space_id` to the four SELECTs above. The client's
-      // "untagged" filter treats a photo with no parent as unfinished work, and space_id is one of
-      // the seven parents the CHECK recognises — but only the ?space_id branch selected the column,
-      // so the field was `undefined` on every row the Photos page ever saw and its space conjunct
-      // could never fire. Once photos carry a space_id, every one of them renders as "untagged"
-      // (the exact V002-E2 defect the filter's own comment claims to have fixed).
+      // "untagged" filter treats a photo with no parent as unfinished work, and space_id is one of the seven
+      // parents the CHECK recognises, but only the ?space_id branch selected the column. The field was then
+      // `undefined` on every row the Photos page saw and its space conjunct could never fire, so once photos
+      // carry a space_id every one of them would render as "untagged".
       //
-      // The obvious fix — add the column to all four templates — costs the byte-identical-rollback
-      // invariant: those templates EXECUTE WITH THE GATE CLOSED, so naming space_id in them makes
-      // flag-off no longer byte-identical to the pre-V4 handler, reds the template-count tripwire in
-      // space-photos.test.js, and inverts an existing flag-off assertion (int:291 asserts the
-      // property is ABSENT). Splitting each into a pair fixes that at the price of eight near-
-      // identical SELECTs — the drift cost buildPhotoInsert's own header calls out.
+      // The obvious fix, naming the column in all four templates, costs the byte-identical-rollback invariant:
+      // those templates EXECUTE WITH THE GATE CLOSED, so flag-off would no longer match the pre-space handler,
+      // the template-count tripwire in space-photos.test.js would go red, and an existing flag-off assertion
+      // (the property must be ABSENT) would invert. Splitting each into a pair fixes that at the price of
+      // eight near-identical SELECTs, the drift cost buildPhotoInsert's own header calls out.
       //
-      // This gets all three properties at once: the four templates are untouched (so rollback stays
-      // byte-identical and every existing assertion stays valid), the ONE template that names
-      // space_id is constructed only when the gate is open, and the field appears exactly when the
-      // feature is live. Cost is one indexed PK lookup over at most `limit` ids, against a list call
-      // that already awaits N presign round trips — noise.
+      // This keeps all three properties: the four templates are untouched, the ONE template that names
+      // space_id is constructed only when the gate is open, and the field appears exactly when the feature is
+      // live. Cost is one indexed PK lookup over at most `limit` ids, against a list call that already awaits
+      // N presign round trips.
       if (spacePhotosEnabled && rows.length) {
-        // deleted_at IS NULL is redundant here (every id came from a query that already filtered it)
-        // and is present anyway: the 0A.6 enumeration guard closes the CLASS, so a serving SELECT on
-        // photos carries the filter whether or not this particular caller needs it. That is the point
-        // of a class-closing guard — it must not require per-site reasoning to stay true.
+        // deleted_at IS NULL is redundant here (every id came from a query that already filtered it) and is
+        // present anyway: the enumeration guard closes the CLASS, so a serving SELECT on photos carries the
+        // filter whether or not this caller needs it, and the guard never needs per-site reasoning.
         const spaceRows = await sql`
           SELECT id, space_id FROM photos
            WHERE id = ANY(${rows.map((r) => r.id)})
@@ -1358,14 +1239,11 @@ export const handler = async (event) => {
 
       // Attach pre-signed view URLs to each photo record.
       //
-      // BUG-PHOTOBLANK-001 — thumb_url. The grid was serving 4080x3072 ORIGINALS: 30 of them is
-      // ~90MB, and because concurrent downloads progress in lockstep nothing rendered for minutes
-      // and then everything appeared at once. Thumbnails are ~200KB (11-23x smaller, measured).
-      //
-      // The thumb key is SERVER-DERIVED (thumbs/<storage_path>), never caller-supplied — that
-      // deliberately avoids widening the A0.1 closed upload-key grammar above. Backfilled for all
-      // 913 existing photos; a photo uploaded before its thumb exists simply presigns to a missing
-      // object, so the client treats thumb_url as a HINT and falls back to view_url on error.
+      // thumb_url: the grid used to serve full-size ORIGINALS (~3MB each), so nothing rendered for a long
+      // time and then everything appeared at once; thumbnails are ~200KB (11-23x smaller). The thumb key is
+      // SERVER-DERIVED (thumbs/<storage_path>), never caller-supplied, which avoids widening the closed
+      // upload-key grammar above. A photo uploaded before its thumb exists presigns to a missing object, so
+      // the client treats thumb_url as a HINT and falls back to view_url on error.
       const withUrls = await Promise.all(
         rows.map(async (photo) => {
           let view_url = null, thumb_url = null;
@@ -1387,20 +1265,17 @@ export const handler = async (event) => {
     // POST /api/photos — register a photo record after browser has uploaded to S3
     // Browser: PUT to upload_url (from upload-url endpoint), then POST here with storage_path.
     //
-    // V2-PHOTO-F1 AUTO-PROMOTE (Dave decision 2026-05-13, YES):
-    //   After insert, if the new photo links to exactly one featurable parent
-    //   (project / plant / location / inventory_item) AND that parent's
-    //   featured_photo_id IS NULL, PATCH it to this photo's id. Single transaction.
-    //   Race-safe: the UPDATE's `WHERE featured_photo_id IS NULL` predicate guards
-    //   against concurrent uploads — only the first to commit wins; later inserts
-    //   no-op on the auto-promote.
+    // AUTO-PROMOTE: after the insert, if the new photo links to a featurable parent (project / plant /
+    // location / inventory_item) AND that parent's featured_photo_id IS NULL, set it to this photo's id
+    // (autoPromoteFeatured). The UPDATE's `WHERE featured_photo_id IS NULL` predicate is race-safe: with
+    // concurrent uploads only the first to commit wins; later inserts no-op on the auto-promote.
     if (rawPath === '/api/photos' && method === 'POST') {
       const body = JSON.parse(event.body ?? '{}');
       if (!body.storage_path) return resp(400, { error: 'storage_path is required' });
-      // I34 (BUG-AUTHZLAMBDA-001): storage_path was bound straight into the INSERT, so a caller could
-      // register thumbs/…, another sub's inbox, or another household's key and then view-url it. One
-      // body for both rejects (grammar, foreign row): the only signal left is "this exact key is
-      // registered elsewhere", to a caller who already holds the full uuid key (accepted residual).
+      // storage_path was bound straight into the INSERT, so a caller could register thumbs/…, another sub's
+      // inbox, or another household's key and then view-url it. One body for both rejects (grammar, foreign
+      // row): the only signal left is "this exact key is registered elsewhere", to a caller who already holds
+      // the full uuid key (accepted residual).
       if (!isAllowedStoragePath(body.storage_path, userId)) {
         warnRejectedFk(userId, 'photos', 'storage_path', body.storage_path);
         return resp(400, { error: 'storage_path is not a valid upload key' });
@@ -1418,20 +1293,18 @@ export const handler = async (event) => {
       }
       // photos_must_have_parent admits a parentless row ONLY for 'pending_tag'. An 'upload_failed'
       // row with no parent is therefore a guaranteed constraint violation; 400 it explicitly.
-      // V4-SPACEPHOTO-001: the CHECK is 7-clause and counts space_id as a parent in BOTH prod and
-      // staging (convalidated 2026-07-31). This guard still counts it only when the flag is on, so
-      // that flag-off stays byte-identical to the pre-V4 expression — the client cannot send a
-      // space_id the server would honour while the gate is closed.
+      // The CHECK counts space_id as a parent, but this guard counts it only when the flag is on, so that
+      // flag-off stays byte-identical to the pre-space expression — the client cannot send a space_id the
+      // server would honour while the gate is closed.
       const spaceParent = spacePhotosEnabled ? (body.space_id ?? null) : null;
       if (body.intake_status === 'upload_failed'
           && !(body.project_id || body.event_id || body.location_id || body.plant_id || body.inventory_item_id || spaceParent)) {
         return resp(400, { error: "intake_status 'upload_failed' requires a parent" });
       }
 
-      // AUTHZ (V4-AUTHZSWEEP-001 class): space_id is a cross-entity FK set straight from the body.
-      // The DB FK proves the space EXISTS, not that the caller owns it — an ungated attach both
-      // writes a cross-household FK and, via the ?space_id gallery above, turns into a live
-      // cross-household READ. Generic 400, no existence oracle.
+      // AUTHZ: space_id is a cross-entity FK set straight from the body. The DB FK proves the space EXISTS,
+      // not that the caller owns it: an ungated attach both writes a cross-household FK and, via the
+      // ?space_id gallery above, turns into a live cross-household READ. Generic 400, no existence oracle.
       if (spacePhotosEnabled && body.space_id != null) {
         if (!UUID_RE.test(String(body.space_id)) || !await loadOwnedSpace(sql, body.space_id, householdIds)) {
           warnRejectedFk(userId, 'photos', 'space_id', body.space_id);
@@ -1439,39 +1312,27 @@ export const handler = async (event) => {
         }
       }
 
-      // ── AUTHZ: the OTHER FIVE parents (BUG-PARENTOWN-001, 4th instance of the pattern) ──────────
-      // space_id (above) was the only gated parent on this verb. photos carries SIX body-settable
-      // parent FKs — enumerated from pg_constraint, not assumed: project_id, event_id, location_id,
-      // plant_id, inventory_item_id, space_id — and the five below were stored exactly as sent. A
-      // foreign key proves the referenced row EXISTS, never that the caller OWNS it, so an
-      // authenticated non-member could write a cross-household FK — and that FK is READABLE:
-      //   • all five gallery branches LEFT JOIN the container UNSCOPED and return
-      //     `pp.display_name AS project_name` (index.js ~857/876/903). So the attacker POSTs a photo
-      //     carrying the victim's project_id, GETs /api/photos, and reads back the VICTIM'S
-      //     CONTAINER NAME. Same shape as the plants `LEFT JOIN garden_node parent` leak
-      //     (parent_plant_name / parent_project_id) the assessment doc flags.
-      //   • event_id is the widest column: 735 of 993 live photos are event-attached and the
-      //     planting gallery unions `photos.event_id -> event_log.plant_id`, so a foreign event_id
-      //     reaches a planting relationship without ever naming the planting.
+      // ── AUTHZ: the OTHER FIVE parents ───────────────────────────────────────────────────────────────
+      // space_id (above) is the only flag-gated parent on this verb. photos carries SIX body-settable parent
+      // FKs (project_id, event_id, location_id, plant_id, inventory_item_id, space_id; enumerated from
+      // pg_constraint) and the five below were stored exactly as sent. A foreign key proves the referenced
+      // row EXISTS, never that the caller OWNS it, so an authenticated non-member could write a cross-household
+      // FK — and that FK is READABLE:
+      //   • every gallery branch LEFT JOINs the container UNSCOPED and returns `pp.display_name AS
+      //     project_name`. So the attacker POSTs a photo carrying the victim's project_id, GETs /api/photos,
+      //     and reads back the VICTIM'S CONTAINER NAME.
+      //   • event_id is the widest column: most photos are event-attached and the planting gallery unions
+      //     `photos.event_id -> event_log.plant_id`, so a foreign event_id reaches a planting relationship
+      //     without ever naming the planting.
       //
-      // WHAT IT IS *NOT* — checked, because an overstated impact is a claim that fails the next
-      // grep: the row does NOT appear in the victim's gallery (every branch carries
-      // `p.created_by = ANY(householdIds)`), and it does NOT become the victim's hero
-      // (autoPromoteFeatured's four arms are each household-scoped on the parent — the BUG-
-      // PHOTOLOCAUTHZ-001 fix closed the last ungated one). The defect is the cross-household FK
-      // write plus the read-back leak above, which is enough.
+      // What it is NOT: the row does NOT appear in the victim's gallery (every branch carries
+      // `p.created_by = ANY(householdIds)`), and it does NOT become the victim's hero (each autoPromoteFeatured
+      // arm is household-scoped on the parent). The defect is the cross-household FK write plus the read-back
+      // leak, which is enough.
       //
-      // Same loaders, same generic 400s, no existence oracle — one pattern, and identical to the
-      // space_id gate directly above rather than a new dialect. Runs BEFORE buildPhotoInsert so a
-      // rejected write leaves no row and no evidence/auto-promote side effects.
-      //
-      // NARROWING, measured read-only against live prod 2026-08-04 before shipping (live photos that
-      // would still be creatable by a HOUSEHOLD MEMBER / by an authenticated NON-MEMBER):
-      //   plant_id 251/251 → 0 · event_id 735/735 → 0 · location_id 9/9 → 0 · inventory_item_id 6/6 → 0
-      //   project_id 970 → 968 / 0.
-      // The two project_id losses are both photos attached to ONE container that was soft-deleted a
-      // week AFTER they were uploaded. Rejecting a new attachment to a soft-deleted container is the
-      // intended behaviour and matches index.js:1045 + findings/index.js:83, which already filter it.
+      // Same loaders, same generic 400s, no existence oracle: identical to the space_id gate directly above.
+      // Runs BEFORE buildPhotoInsert so a rejected write leaves no row and no evidence/auto-promote side
+      // effects. Rejecting a new attachment to a soft-deleted container is intended.
       if (body.project_id != null) {
         if (!await loadOwnedProject(sql, body.project_id, householdIds)) {
           warnRejectedFk(userId, 'photos', 'project_id', body.project_id);
@@ -1506,25 +1367,24 @@ export const handler = async (event) => {
       // neon serverless driver: tagged-template calls are auto-committed individually.
       // For atomicity, wrap in sql.transaction([...]) — multiple tagged templates
       // run in one BEGIN/COMMIT and roll back together on failure.
-      // V4-PHOTOBULK-001 — the capture-metadata columns are additive: every existing caller sends
-      // none of them, so they all bind NULL and behavior is byte-identical to before.
+      // The capture-metadata columns are additive: every existing caller sends none of them, so they all
+      // bind NULL and behavior is byte-identical to before.
       //
-      // ON CONFLICT targets idx_photos_content_hash_uniq, the PARTIAL unique index
-      // (created_by, content_hash) WHERE content_hash IS NOT NULL AND deleted_at IS NULL — so the
-      // predicate must be restated here for Postgres to match that index. Re-uploading the same
-      // bytes is expected in bulk intake (re-picking a photo, a retried batch); today that raises a
-      // 23505 which falls through isUpstream() to an opaque 500.
+      // ON CONFLICT targets idx_photos_content_hash_uniq, the PARTIAL unique index (created_by, content_hash)
+      // WHERE content_hash IS NOT NULL AND deleted_at IS NULL, so the predicate must be restated here for
+      // Postgres to match that index. Re-uploading the same bytes is expected in bulk intake (re-picking a
+      // photo, a retried batch); without the upsert that raises a 23505 which falls through isUpstream() to
+      // an opaque 500.
       // DO UPDATE, never DO NOTHING: DO NOTHING returns ZERO rows, so insertedRows[0] is undefined
       // and the very next line TypeErrors into the same 500 it was meant to fix.
       // (xmax = 0) distinguishes a real insert from a conflict-update in the same round trip.
       //
-      // NOT wrapped in sql.transaction with the auto-promote below, and that is deliberate — see
-      // buildPhotoInsert. neon's HTTP transaction is NON-INTERACTIVE: every statement must be built
-      // before any of them runs, so the promote arms (which need the RETURNING id) could only join
-      // the transaction with a client-generated id — and on the ON CONFLICT dedupe path that id is
-      // never inserted, so `SET featured_photo_id = <that id>` FK-violates and rolls back the whole
-      // upsert, turning today's 200-duplicate into a 500 on exactly the grand-photo flow add-parent
-      // exists to serve. It would also invert the documented NON-FATAL promote contract above.
+      // NOT wrapped in sql.transaction with the auto-promote below, deliberately — see buildPhotoInsert.
+      // neon's HTTP transaction is NON-INTERACTIVE: every statement must be built before any of them runs,
+      // so the promote arms (which need the RETURNING id) could only join with a client-generated id, and on
+      // the ON CONFLICT dedupe path that id is never inserted, so `SET featured_photo_id = <that id>`
+      // FK-violates and rolls back the whole upsert, turning a 200-duplicate into a 500 on exactly the
+      // grand-photo flow add-parent exists to serve. It would also invert the NON-FATAL promote contract above.
       const insertQuery = buildPhotoInsert(sql, body, userId, spacePhotosEnabled);
 
       const insertedRows = await insertQuery;
@@ -1534,12 +1394,10 @@ export const handler = async (event) => {
       // auto-promote and BEFORE the evidence-capture block below, or a re-upload appends a second
       // first-party evidence row for the same photo and inflates DrG's confidence off one observation.
       if (wasInserted === false) {
-        // BUG-PHOTODEDUPDROP-001 — buildPhotoInsert's COALESCE has already added every parent the
-        // existing row left empty, so `inserted` is the post-merge truth and the response is no
-        // longer a 200 that lost the caller's target. Anything left over is an ALREADY-OCCUPIED
-        // slot, which one column cannot hold twice (V4-PHOTOTAG-001's job): disclose it rather than
-        // imply success. warn-to-CloudWatch mirrors warnRejectedFk — the class is invisible today
-        // precisely because nothing ever recorded it. Additive response key; no client reads it yet.
+        // buildPhotoInsert's COALESCE has already added every parent the existing row left empty, so
+        // `inserted` is the post-merge truth and the response is no longer a 200 that lost the caller's target.
+        // Anything left over is an ALREADY-OCCUPIED slot, which one column cannot hold twice: disclose it
+        // rather than imply success. warn-to-CloudWatch mirrors warnRejectedFk. Additive response key.
         const unhonored = unhonoredParents(body, inserted, spacePhotosEnabled);
         if (unhonored.length) {
           console.warn(JSON.stringify({
@@ -1551,13 +1409,13 @@ export const handler = async (event) => {
 
       await autoPromoteFeatured(sql, inserted, householdIds, { spaceEnabled: spacePhotosEnabled, userId });
 
-      // DRG-ENGINE-003 V1.1 — auto-capture on photo log (Dave 2026-06-21): a photo logged against a
-      // planting is first-party observational evidence. Resolve the canonical entity_id (entity registry,
-      // DRG-ENGINE-002) and append ONE evidence row mirroring the evidence-ingest contract. Canonical
-      // source = lambda/evidence-ingest/{index,validate}.js (per-dir Lambda zips cannot import it, so the
-      // enum literals are duplicated here — keep in sync). Best-effort + non-fatal (same posture as the
-      // auto-promote block above): the photo is already persisted; an evidence-write failure must never
-      // 500 the upload. Household-scoped (entity's container.created_by) + append-only (Soft-Delete-Only).
+      // DRG auto-capture on photo log: a photo logged against a planting is first-party observational evidence.
+      // Resolve the canonical entity_id (entity registry) and append ONE evidence row mirroring the
+      // evidence-ingest contract. Canonical source = lambda/evidence-ingest/{index,validate}.js (per-dir
+      // Lambda zips cannot import it, so the enum literals are duplicated here — keep in sync). Best-effort +
+      // non-fatal (same posture as the auto-promote block above): the photo is already persisted; an
+      // evidence-write failure must never 500 the upload. Household-scoped (entity's container.created_by)
+      // + append-only (Soft-Delete-Only).
       if (inserted.plant_id) {
         try {
           const entRows = await sql`
@@ -1572,12 +1430,11 @@ export const handler = async (event) => {
              LIMIT 1
           `;
           if (entRows.length > 0) {
-            // V2 evidence schema requires the generalized NOT-NULL columns (evidence_class,
-            // entity_type, claim_scope, evidence_kind, claim, source_tier, trust_rank,
-            // strength_weight, captured_at, provenance). The old V1-shaped INSERT omitted them,
-            // so this "non-fatal" capture silently failed on EVERY plant photo (evidence_class
-            // NOT NULL) -> DrG got zero photo evidence. Mirror lambda/evidence-ingest/validate.js:
-            // first_party_log -> source_tier 'first_party_obs', trust_rank 4, strength_weight 0.700.
+            // The evidence schema requires the generalized NOT-NULL columns (evidence_class, entity_type,
+            // claim_scope, evidence_kind, claim, source_tier, trust_rank, strength_weight, captured_at,
+            // provenance); omitting them makes this "non-fatal" capture fail silently on EVERY plant photo.
+            // Mirror lambda/evidence-ingest/validate.js: first_party_log -> source_tier 'first_party_obs',
+            // trust_rank 4, strength_weight 0.700.
             await sql`
               INSERT INTO public.evidence
                 (entity_id, schema_version, tier, axis, polarity, finding_type, observed_at, note, photo_ref, source, created_by,
@@ -1598,17 +1455,15 @@ export const handler = async (event) => {
       return resp(201, inserted);
     }
 
-    // PUT|PATCH /api/photos/:id — re-tag an existing photo: update project / location /
-    // plant linkage + caption. Owner-scoped (only the uploader can re-tag). Backs the
-    // Photo Library tag modal. The ABSENCE of this route was bug I1 — a re-tag PUT fell
-    // through to the 405 below and the raw "Method not allowed" string surfaced in the
-    // modal. Full-replace semantics (not partial-merge): the tag modal submits the full
-    // {project_id, location_id, plant_id, caption} set every save, so a missing field
-    // means "cleared", not "unchanged".
-    // V4-PHOTOBULK-001 — this route is ALSO the bulk-intake tag path (the quick-tag carousel), not
-    // just the Photo Library tag modal. Two behaviors are conditional on the row's PRIOR
-    // intake_status, captured via a CTE snapshot (the CTE sees the pre-UPDATE row; RETURNING sees
-    // the post-UPDATE row):
+    // PUT|PATCH /api/photos/:id — re-tag an existing photo: update project / location / plant linkage +
+    // caption. Household-scoped (`created_by = ANY(householdIds)`). Backs the Photo Library tag modal.
+    // Full-replace semantics (not partial-merge): the tag modal submits the full
+    // {project_id, location_id, plant_id, caption} set every save, so a missing field means "cleared",
+    // not "unchanged".
+    //
+    // This route is ALSO the bulk-intake tag path (the quick-tag carousel). Two behaviors are conditional
+    // on the row's PRIOR intake_status, captured via a CTE snapshot (the CTE sees the pre-UPDATE row;
+    // RETURNING sees the post-UPDATE row):
     //
     //   1. DRAIN THE INBOX. Tagging clears intake_status, returning the row to the strict
     //      "must have a parent" invariant. Without this, idx_photos_intake_pending keeps matching
@@ -1619,46 +1474,42 @@ export const handler = async (event) => {
     //      photos_must_have_parent CHECK rejects (a 500 on a legitimate un-tag). A pending_tag row
     //      that is un-tagged must STAY pending_tag.
     //   2. AUTO-PROMOTE, but only if the row WAS 'pending_tag' — see autoPromoteFeatured. A re-tag
-    //      of an already-tagged photo remains a correction and still does not promote, preserving
-    //      the original V1.2a-3 Increment A semantics exactly for every legacy row.
+    //      of an already-tagged photo remains a correction and still does not promote.
     //
     // V4-PHOTOUNTAG-001 adds the INVERSE of (1): `intake_status: 'pending_tag'` in the body puts an
-    // ALREADY-TAGGED photo back in the inbox. Drain-only was a one-way door — a row tagged by mistake
-    // could have its parents cleared but never its status restored, so it left the carousel forever.
-    // See resolveIntakeRequest / buildRetagUpdate for the validated contract and the live CHECKs.
+    // ALREADY-TAGGED photo back in the inbox. Drain-only was a one-way door — a row tagged by mistake could have its parents
+    // cleared but never its status restored, so it left the carousel forever. See resolveIntakeRequest /
+    // buildRetagUpdate for the validated contract and the live CHECKs.
     const idMatch = rawPath.match(/^\/api\/photos\/([^/]+)$/);
     if (idMatch && (method === 'PUT' || method === 'PATCH')) {
       const photoId = idMatch[1];
       const body = JSON.parse(event.body ?? '{}');
-      // V4-PHOTOUNTAG-001. First, and I/O-free: an invalid status is rejected before any loader runs,
-      // so a rejected request costs nothing and mutates nothing.
+      // First, and I/O-free: an invalid status is rejected before any loader runs, so a rejected request
+      // costs nothing and mutates nothing.
       const intake = resolveIntakeRequest(body);
       if (intake.error) return resp(400, { error: intake.error });
       // Only the parents this route can actually set. event_id / inventory_item_id are untouched
       // here, so a legacy row parented by one of those keeps satisfying the CHECK on its own.
       // `||` not `??`: an empty-string id must read as "no parent", not as a present value.
       //
-      // V4-SPACECLIENTGAP-001 adds the space tier — via a SEPARATE gated pre-read, NOT by naming
-      // space_id in the UPDATE below. That template is NOT flag-gated: it executes flag-off, so a
-      // space_id reference in it would 42703 in any environment lacking the column and would break
-      // the byte-identical-rollback invariant this feature is built on (the same reasoning that
-      // produced buildPhotoInsert's two-template split and the dedicated attach route). The pre-read
+      // The space tier comes via a SEPARATE gated pre-read, NOT by naming space_id in the UPDATE below.
+      // That template is NOT flag-gated: it executes flag-off, so a space_id reference in it would 42703 in
+      // any environment lacking the column and would break the byte-identical-rollback invariant (the same
+      // reasoning as buildPhotoInsert's two-template split and the dedicated attach route). The pre-read
       // costs one indexed PK lookup, flag-ON only, on a route that is already doing a write.
       //
-      // Why it belongs in setsParent at all: this route has full-replace semantics, so a save from
-      // the tag modal with every field cleared is an "un-tag". For a row whose surviving parent is
-      // the SPACE, that un-tag still leaves a properly parented photo — so it must drain the inbox
-      // exactly like any other parented row. Without this, a space-attached photo re-tagged through
-      // the modal silently falls back into the quick-tag carousel. Note space_id is read from the
-      // ROW, not the body: this route neither accepts nor SETs space_id, so the persisted value is
-      // what the photos_must_have_parent CHECK will see after the UPDATE.
-      // ── AUTHZ: the re-tag verb re-parents from the body too (BUG-PARENTOWN-001) ────────────────
-      // The photo itself is household-scoped (`created_by = ANY(householdIds)` in prev/UPDATE), but
-      // the three parents it MOVES the photo to were not — so a member could re-tag their own photo
-      // INTO another household's container/planting/location gallery, which is the POST gap reached
-      // by a second request instead of one. Gating POST alone would have left this open. Same
-      // loaders, same generic 400s; null still means "clear the parent" (full-replace semantics) and
-      // is deliberately not gated. Runs before the UPDATE so a rejected re-tag mutates nothing.
+      // Why it belongs in setsParent at all: this route has full-replace semantics, so a save from the tag
+      // modal with every field cleared is an "un-tag". For a row whose surviving parent is the SPACE, that
+      // still leaves a properly parented photo, so it must drain the inbox like any other parented row;
+      // otherwise a space-attached photo re-tagged through the modal silently falls back into the quick-tag
+      // carousel. space_id is read from the ROW, not the body: this route neither accepts nor SETs space_id,
+      // so the persisted value is what the photos_must_have_parent CHECK will see after the UPDATE.
+      // ── AUTHZ: the re-tag verb re-parents from the body too ──────────────────────────────────────
+      // The photo itself is household-scoped (`created_by = ANY(householdIds)` in prev/UPDATE), but the three
+      // parents it MOVES the photo to were not — so a member could re-tag their own photo INTO another
+      // household's container/planting/location gallery, which is the POST gap reached by a second request.
+      // Same loaders, same generic 400s; null still means "clear the parent" (full-replace semantics) and is
+      // deliberately not gated. Runs before the UPDATE so a rejected re-tag mutates nothing.
       if (body.project_id != null) {
         if (!await loadOwnedProject(sql, body.project_id, householdIds)) {
           warnRejectedFk(userId, 'photos', 'project_id', body.project_id);
@@ -1694,11 +1545,10 @@ export const handler = async (event) => {
       );
       if (!updatedRows.length) return resp(404, { error: 'Photo not found' });
       const { prev_intake_status: prevIntakeStatus, ...updated } = updatedRows[0];
-      // V4-PHOTOCAPTION-001 — evidence caption sync: the upload-time auto-capture snapshots the
-      // caption into an evidence row (note + claim, source='photo_log'). Caption became editable
-      // via this PUT, so the snapshot must follow or DrG reads stale evidence forever. Owner-scoped
-      // to the household like the photo UPDATE above; best-effort non-fatal like the capture itself;
-      // 0-row match (photo never linked to a planting) is a clean no-op.
+      // V4-PHOTOCAPTION-001 evidence caption sync: the upload-time auto-capture snapshots the caption into an evidence row
+      // (note + claim, source='photo_log'). Caption is editable via this PUT, so the snapshot must follow
+      // or DrG reads stale evidence forever. Household-scoped like the photo UPDATE above; best-effort
+      // non-fatal like the capture itself; a 0-row match (photo never linked to a planting) is a clean no-op.
       try {
         await sql`
           UPDATE public.evidence
@@ -1718,15 +1568,14 @@ export const handler = async (event) => {
       return resp(200, updated);
     }
 
-    // POST /api/photos/:id/restore — W-DEL / DD8. Declared BEFORE the bare-:id DELETE so the more
-    // specific path wins; `[^/]+` in the id match would otherwise never see it, but relying on that
-    // is exactly the kind of ordering assumption that breaks when someone loosens a regex.
+    // POST /api/photos/:id/restore. Declared BEFORE the bare-:id DELETE so the more specific path wins;
+    // `[^/]+` in the id match would otherwise never see it, but relying on that is exactly the kind of
+    // ordering assumption that breaks when someone loosens a regex.
     //
-    // Durable recovery, not a 5-second window. The soft delete is recoverable forever (DD2), so a
-    // toast that asserts "gone" after 5s would leave the user's belief WORSE than the system's
-    // state — the V3-ARCHIVE-001 failure, whose accepted fix was a durable Unarchive affordance and
-    // not a longer toast. It also removes the WCAG 2.2.1 (Timing Adjustable) exposure a
-    // sole-recovery timer would carry.
+    // Durable recovery, not a 5-second window. The soft delete is recoverable forever, so a toast that
+    // asserts "gone" after 5s would leave the user's belief WORSE than the system's state; the accepted
+    // fix is a durable Unarchive-style affordance, not a longer toast. It also removes the WCAG 2.2.1
+    // (Timing Adjustable) exposure a sole-recovery timer would carry.
     const restoreMatch = rawPath.match(/^\/api\/photos\/([^/]+)\/restore$/);
     if (restoreMatch && method === 'POST') {
       const { status, body } = await restorePhoto(sql, {
@@ -1738,26 +1587,22 @@ export const handler = async (event) => {
       return resp(status, body);
     }
 
-    // DELETE /api/photos/:id — W-DEL, closing defect D2 (no user-facing photo delete existed
-    // ANYWHERE: no route, no control, which is the only reason the §0 incident was unrecoverable).
+    // DELETE /api/photos/:id. Before this route no user-facing photo delete existed anywhere, which is
+    // the only reason the original incident was unrecoverable.
     //
     // SOFT DELETE ONLY. `deleted_at = now()`; the row survives, the S3 object survives, every
     // relation survives, and restore above brings it back. See photoDelete.js.
     //
     // HOUSEHOLD-SCOPED, and that is a DECISION, not an inheritance: `created_by = ANY(householdIds)`
-    // means Dave and Jen can delete each other's photos. Confirmed correct as-is 2026-08-12;
-    // sharding permissions to two or more levels is V5-PERMSHARD-001 and is deliberately NOT built
-    // here. (The PUT route's header comment two blocks up still says "Owner-scoped (only the
-    // uploader can re-tag)" and has been stale since the V3-ROLES teardown widened it — anchor to
-    // the code, not to that line.)
+    // means either household member can delete the other's photos. Finer-grained permission levels
+    // (V5-PERMSHARD-001) are deliberately NOT built here.
     //
-    // KNOWN AND INTENDED SIDE EFFECT: nulling a hero returns the parent to
-    // `featured_photo_id IS NULL`, which is exactly autoPromoteFeatured's precondition — so the
-    // NEXT photo POSTed to that parent silently becomes its hero. With the read-side effective-hero
-    // derivation shipped, the parent never even APPEARS hero-less in between: the fallback arm
-    // substitutes the newest surviving photo immediately, with featured_is_explicit false. The
-    // delete feedback copy must account for a hero that visibly replaces itself rather than
-    // disappearing.
+    // KNOWN AND INTENDED SIDE EFFECT: nulling a hero returns the parent to `featured_photo_id IS NULL`,
+    // which is exactly autoPromoteFeatured's precondition — so the NEXT photo POSTed to that parent silently
+    // becomes its hero. With the read-side effective-hero derivation, the parent never even APPEARS
+    // hero-less in between: the fallback arm substitutes the newest surviving photo immediately, with
+    // featured_is_explicit false. The delete feedback copy must account for a hero that visibly replaces
+    // itself rather than disappearing.
     if (idMatch && method === 'DELETE') {
       const { status, body } = await softDeletePhoto(sql, {
         photoId: idMatch[1],
