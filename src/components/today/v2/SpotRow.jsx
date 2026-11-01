@@ -5,23 +5,23 @@ import Icon from '../../Icon.jsx'
 import { TASKS, TASK_LABEL } from '../../../lib/todayV2/spots.js'
 import { outlineBtn } from './PlantCareRow.jsx'
 
-// SpotRow — one spot of the redesigned Needs care, whole (V5-TODAYREDESIGN-001 S4; plan-v2 §4 "Spot row",
-// §5, Dave's D3 / D6 / D10, §13 SF7). A row card: the disclosure is an <h4><button> (never nested: Not today
-// and Water all are its siblings, 8 px of dead space before and between), line 1 "Pasture › Bag Area 97 ▸",
-// line 2 the counts with zeros dropped (SF7) and the fast-drying note. Water all logs the whole spot's
-// candidates; "Water the other N" once a plant in it was handled.
-// The panel (SpotBody) mounts only while open. After a spot's Water all or Not today empties it, the row
-// shrinks to its done line in place — held for the visit, Undo on it (D10) — see SpotDoneLine.
-// MF3 (S4g): a write that failed stays on the SPOT, open or closed — one line under the header, "3 not logged"
-// with its Retry (the plant rows inside say it too, each with its own). The failed rows are out of Water all
-// (the spot's candidates exclude them), so only Retry re-posts them; while it runs it reads "Retrying 1 of 3…".
+// One spot of the redesigned Needs care, whole. A row card: the disclosure is an <h4><button> (never
+// nested: Not today and Water all are its siblings, 8 px of dead space before and between), line 1
+// "Pasture › Bag Area 97 ▸", line 2 the counts with zeros dropped and the fast-drying note. Water all
+// logs the whole spot's candidates; "Water the other N" once a plant in it was handled.
+// The panel (SpotBody) mounts only while open. After a spot's Water all or Not today empties it, the
+// row shrinks to its done line in place, held for the visit, Undo on it (see SpotDoneLine).
+// A write that failed stays on the SPOT, open or closed: one line under the header, "3 not logged"
+// with its Retry (the plant rows inside say it too, each with its own). The failed rows are out of
+// Water all (the spot's candidates exclude them), so only Retry re-posts them; while it runs it
+// reads "Retrying 1 of 3…".
 export default function SpotRow({ spot, open, onToggle, children, busy, groupBusy, handled, onNotToday, onWater, partial, failedN = 0, onRetry, writesHeld = false }) {
   const panelId = useId()
   const total = spot.counts.water + spot.counts.feed + spot.counts.check
   const n = spot.candidates.size
   const line2 = TASKS.filter((t) => spot.counts[t] > 0).map((t) => `${TASK_LABEL[t]} ${spot.counts[t]}`)
   if (spot.dryFastest > 0) line2.push(`${spot.dryFastest} dry fastest`)
-  // Inert while the group runs, and while the page holds its writes (review 4160.2 IMPORTANT-2, TodayV2 writesHeld).
+  // Inert while the group runs, and while the page holds its writes (TodayV2 writesHeld).
   const disabled = !!groupBusy || writesHeld
   const verb = handled || failedN > 0 ? 'Water the other' : 'Water all'
   // A run of the spot's that is not its Water all (a per-product Feed all, `tag`) speaks through its own button.
@@ -89,9 +89,9 @@ const hit = {
   gap: 2, textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', color: P.dark, overflowWrap: 'anywhere',
 }
 const zone = { display: 'flex', alignItems: 'center', gap: 8, paddingRight: 6, flexShrink: 0 }
-// The action column is one width on every spot (finish plan D-8: Not today moved from spot to spot): the water slot
-// is a fixed width, and stays empty when the spot has nothing to water. A longer label ("Water the other 12",
-// "Watering 3 of 12…") wraps inside it rather than pushing Not today left.
+// The action column is one width on every spot (so Not today does not move from spot to spot): the
+// water slot is a fixed width, and stays empty when the spot has nothing to water. A longer label
+// ("Water the other 12", "Watering 3 of 12…") wraps inside it rather than pushing Not today left.
 export const SPOT_SLOT_W = 110
 export const tinted = {
   flexShrink: 0, minHeight: T.tapMinHeight, padding: '0 12px', background: P.greenPale, border: 'none', borderRadius: T.radiusButton,
@@ -99,6 +99,6 @@ export const tinted = {
 }
 const slotBtn = { ...tinted, width: SPOT_SLOT_W, padding: '0 8px', whiteSpace: 'normal', overflowWrap: 'anywhere', lineHeight: 1.2 }
 const slotEmpty = { flexShrink: 0, width: SPOT_SLOT_W }
-// One 48px line under the header, the done line's anatomy: the failure in words, then its Retry (§5.10 "Failed:
-// 'Not logged' text" — the words carry it, not the colour).
+// One 48px line under the header, the done line's anatomy: the failure in words, then its Retry (the
+// words carry it, not the colour).
 const failLine = { display: 'flex', alignItems: 'center', gap: 8, minHeight: 48, padding: '0 6px 0 10px', borderTop: '1px solid ' + P.border }

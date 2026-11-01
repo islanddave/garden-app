@@ -6,23 +6,23 @@ import { cohortCapNote, COHORT_CAP } from '../../../lib/todayV2/spots.js'
 import PlantCareRow from './PlantCareRow.jsx'
 import { removeLogged } from './needsCareStore.js'
 
-// RainHold — what rain did to today's watering, in the glance card's OPEN state (BUG-DEFERNOSTRESSOVERRIDE-001,
-// Design A; Dave 2026-10-09: a held plant he finds dry, he waters on the spot). Two lines, never one:
+// What rain did to today's watering, in the glance card's OPEN state. A held plant the user finds
+// dry, they water on the spot. Two lines, never one:
 //   "Rain already watered M plantings."     the ones rain that fell took care of. No control. One plain advisory
-//                                           line of the open card's list, before the rows (finish plan §3.2);
+//                                           line of the open card's list, before the rows;
 //   "Waiting for rain · N"  [Show / Hide]   the plantings the engine holds on a FORECAST, each a PlantCareRow
-//                                           with the ordinary Water chip — no Skip, no Moist.
-// A line whose count is 0 is omitted (the waiting line stays while a row watered this visit keeps its done
-// line and Undo under it). The list shows itself at RAIN_HOLD_AUTO_SHOW or fewer; a Show / Hide tap is the
-// visit's from then on (record.rain.shown). Shown, it draws COHORT_CAP rows and the page's "Show N more" for
-// the rest (SpotBody's cohort cap, record.rain.all): a same-day forecast can hold ~150 plantings at once, and
-// the heading's count stays the true N.
+//                                           with the ordinary Water chip: no Skip, no Moist.
+// A line whose count is 0 is omitted (the waiting line stays while a row watered this visit keeps its
+// done line and Undo under it). The list shows itself at RAIN_HOLD_AUTO_SHOW or fewer; a Show / Hide
+// tap is the visit's from then on (record.rain.shown). Shown, it draws COHORT_CAP rows and the page's
+// "Show N more" for the rest (SpotBody's cohort cap, record.rain.all): a same-day forecast can hold
+// ~150 plantings at once, and the heading's count stays the true N.
 //
-// The rows and the write path are the page's (useNeedsCare → useCareActions, V2 options): Water here is
-// NeedsCare.jsx's one-tap plantRun over the same hook, so it posts the same `watering` body, takes the same
-// in-flight and today-logged guards, and leaves the same done line, "Not logged" + Retry, and Undo. What this
-// adds is the visit's — record.rain { shown, rowsDone, failed } — and nothing here raises a toast: results
-// speak through the page's one status region.
+// The rows and the write path are the page's (useNeedsCare → useCareActions, V2 options): Water here
+// is NeedsCare.jsx's one-tap plantRun over the same hook, so it posts the same `watering` body, takes
+// the same in-flight and today-logged guards, and leaves the same done line, "Not logged" + Retry, and
+// Undo. What this adds is the visit's (record.rain { shown, rowsDone, failed }), and nothing here
+// raises a toast: results speak through the page's one status region.
 //
 // With no `care` (the card drawn without the page's care state) the two lines print from the plan alone.
 const NOOP = () => {}
@@ -37,7 +37,7 @@ export default function RainHold({ plan, care = null, record = null, update = NO
   const setRain = useCallback((fn) => update((r) => ({ ...r, rain: fn(r.rain || {}) })), [update])
   const [undoing, setUndoing] = useState(null)
   const [focusId, setFocusId] = useState(null)
-  // A Water chip that became a done line, or a Retry, took the focused node with it: focus follows (§5.5).
+  // A Water chip that became a done line, or a Retry, took the focused node with it: focus follows.
   useEffect(() => {
     if (!focusId || !rootRef.current) return
     const [kind, ...rest] = focusId.split(':')

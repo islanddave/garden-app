@@ -9,32 +9,33 @@ import { careReasons, careTrigger } from '../../../lib/todayV2/triggers.js'
 import { loggedKey, readLogged, filtersKey, readFilters, writeFilters } from './needsCareStore.js'
 import { useTodayLogged } from './useTodayLogged.js'
 
-// useNeedsCare — the redesigned Today's Needs care STATE, owned by the page (V5-TODAYREDESIGN-001 S4). The
-// page needs it above the section: the header count and summary, the auto-open trigger and the visit's held
-// order are all taken at the ready point (§6.4), before the body mounts — and the body (NeedsCare.jsx) is
-// unmounted while the section is closed, so the care state cannot live there.
+// The redesigned Today's Needs care STATE, owned by the page. The page needs it above the section:
+// the header count and summary, the auto-open trigger and the visit's held order are all taken at the
+// ready point, before the body mounts, and the body (NeedsCare.jsx) is unmounted while the section is
+// closed, so the care state cannot live there.
 //
-// Rows: buildCareNeeded(plan) (careNeeded.js decides WHICH plantings need WHAT), minus cold rows (Protect
-// tonight's alone, §2.4) and minus the keys held elsewhere in this tab — logged today before this mount, or
-// claimed by a run an earlier mount started (useTodayLogged over needsCareStore: a Back remount can paint
-// the last good plan before the refetch — §6.3). The write paths and the optimistic fades are
-// useCareActions', with the V2 options (S4). /api/plants + /api/locations join the rows to spots and groups
-// (spots.js); both are read through useCachedFetch, so Protect and Heads-up (S5) share the one request.
+// Rows: buildCareNeeded(plan) (careNeeded.js decides WHICH plantings need WHAT), minus cold rows
+// (Protect tonight's alone) and minus the keys held elsewhere in this tab: logged today before this
+// mount, or claimed by a run an earlier mount started (useTodayLogged over needsCareStore: a Back
+// remount can paint the last good plan before the refetch). The write paths and the optimistic fades
+// are useCareActions', with the V2 options. /api/plants + /api/locations join the rows to spots and
+// groups (spots.js); both are read through useCachedFetch, so Protect and Heads-up share the one
+// request.
 //
-// WAITING FOR RAIN (BUG-DEFERNOSTRESSOVERRIDE-001): the plantings the engine holds on a forecast
-// (lib/rainHold.js) ride the SAME useCareActions as the care rows — one write path, one set of in-flight
-// guards, one today-logged guard — so a Water tap on one posts what a Water tap on a list row posts. They are
-// never Needs care rows: `rows`, the count, the chips, the spots and every Water all read the care rows only.
-// The glance card's open state lists them (RainHold.jsx), from `rain` below.
+// WAITING FOR RAIN: the plantings the engine holds on a forecast (lib/rainHold.js) ride the SAME
+// useCareActions as the care rows (one write path, one set of in-flight guards, one today-logged
+// guard), so a Water tap on one posts what a Water tap on a list row posts. They are never Needs care
+// rows: `rows`, the count, the chips, the spots and every Water all read the care rows only. The
+// glance card's open state lists them (RainHold.jsx), from `rain` below.
 const CARE_NEEDS = new Set(['water_due', 'no_history', 'fertilize', 'pest', 'overwintering'])
 const SILENT = { show() {}, showUndo() {} }
 const NOOP = () => {}
 
-//
-// `lists` (BUG-TODAYHOUSEHOLDREFETCH-001): the two reads of an owner already holding them — { plants, locations },
-// the `lists` this hook returns. A member's section (HouseholdSection) mounts at the ready point, after the page's
-// reads have settled, and useCachedFetch revalidates on every mount, so its own reads were a second /api/plants and
-// /api/locations per visit. Handed the page's, it reads nothing itself (a null path is useCachedFetch's IDLE mode).
+// `lists`: the two reads of an owner already holding them, { plants, locations }, the `lists` this
+// hook returns. A member's section (HouseholdSection) mounts at the ready point, after the page's
+// reads have settled, and useCachedFetch revalidates on every mount, so its own reads would be a
+// second /api/plants and /api/locations per visit. Handed the page's, it reads nothing itself (a null
+// path is useCachedFetch's IDLE mode).
 export function useNeedsCare({ plan, planDate, userId, stale, lists = null }) {
   const { fetch, getToken } = useApiFetch()
   const ownPlants = useCachedFetch(lists ? null : '/api/plants')
@@ -54,25 +55,26 @@ export function useNeedsCare({ plan, planDate, userId, stale, lists = null }) {
   // The list as it stands, care rows only (the hook's own array when nothing waits, so no row rebuilds).
   const active = useMemo(() => (waitAll.length ? actions.rows.filter((r) => r.need !== RAIN_HOLD_NEED) : actions.rows), [actions.rows, waitAll])
 
-  // A failed read is no read, for either list (review 4160.2 IMPORTANT-3): an errored /api/plants may still carry a
-  // body (an empty array), and read as "no plantings anywhere" it would put the whole garden in one Unplaced spot.
+  // A failed read is no read, for either list: an errored /api/plants may still carry a body (an
+  // empty array), and read as "no plantings anywhere" it would put the whole garden in one Unplaced spot.
   const plantList = Array.isArray(plants.data) && !plants.error ? plants.data : null
   const locPayload = locations.data && !locations.error ? locations.data : null
   const enrich = useCallback((rows) => enrichRows(rows, { plan, plants: plantList, locations: locPayload }), [plan, plantList, locPayload])
   const rows = useMemo(() => enrich(active), [enrich, active])
-  // Every row of the plan day, handled or not — a handled row keeps its place as a done line (§2.5).
+  // Every row of the plan day, handled or not: a handled row keeps its place as a done line.
   const allEnriched = useMemo(() => enrich(allRows), [enrich, allRows])
   const groupOrder = useMemo(() => locationIndex(locPayload).groupOrder, [locPayload])
-  // §3: the trigger reads the ACTIVE rows; a failed /api/plants means no container types, so small = false.
+  // The trigger reads the ACTIVE rows; a failed /api/plants means no container types, so small = false.
   const reasons = useMemo(() => careReasons({ rows, plan }), [rows, plan])
   const trigger = useMemo(() => careTrigger(reasons, { stale }), [reasons, stale])
   const spotCount = useMemo(() => new Set(rows.map((r) => r.spotKey)).size, [rows])
   const summary = useMemo(() => careSummary({ reasons, rows, spotCount }), [reasons, rows, spotCount])
 
-  // The FILTERS (§2.6; finish plan §3.5, Dave's D17): the page's, not the body's, since the jump bar's Water / Feed /
-  // Check cells are the task filter and show it while Needs care is closed (its body unmounted). Saved per session
-  // (needsCareStore), re-read when the plan day or the person changes. One task at a time or all: a saved pair
-  // from before the bar was the filter keeps its first task. Spot chips stay inside Needs care (OR within the row).
+  // The FILTERS: the page's, not the body's, since the jump bar's Water / Feed / Check cells are the
+  // task filter and show it while Needs care is closed (its body unmounted). Saved per session
+  // (needsCareStore), re-read when the plan day or the person changes. One task at a time or all: a
+  // saved pair from before the bar was the filter keeps its first task. Spot chips stay inside Needs
+  // care (OR within the row).
   const fKey = filtersKey(userId)
   const [saved, setSaved] = useState(() => ({ key: fKey, day: planDate, v: readFilters(fKey, planDate) }))
   let filters = saved.v
@@ -88,9 +90,9 @@ export function useNeedsCare({ plan, planDate, userId, stale, lists = null }) {
   // The task the list is filtered to: the saved one while it still has rows, else none (all).
   const task = filters.tasks.find((t) => TASKS.includes(t) && rows.some((r) => r.task === t)) || null
 
-  // The visit's held Needs care layout, taken at the ready point over "rows minus skipped, LOGGED KEPT"
-  // (BD-036's orderingRows): group + spot order, each spot's differing rows, the 3 largest spots the spot
-  // filter pins. Pure — useTodayVisit calls it during render.
+  // The visit's held Needs care layout, taken at the ready point over "rows minus skipped, LOGGED
+  // KEPT" (spots.js orderingRows): group + spot order, each spot's differing rows, the 3 largest
+  // spots the spot filter pins. Pure: useTodayVisit calls it during render.
   const snapshot = useCallback(() => {
     const ordering = enrich(allRows.filter((r) => !actions.skipped.has(r.key)))
     const order = takeOrder(ordering, groupOrder)
@@ -102,16 +104,17 @@ export function useNeedsCare({ plan, planDate, userId, stale, lists = null }) {
     return { order, exceptions, pinned, open: [], cohort: [], shown: {}, products: [], batches: {}, rowsDone: {} }
   }, [enrich, allRows, actions.skipped, groupOrder])
 
-  // Waiting for rain: every waiting row of the plan day (a watered one keeps its place as a done line), and the
-  // keys still waiting — not yet watered here.
+  // Waiting for rain: every waiting row of the plan day (a watered one keeps its place as a done
+  // line), and the keys still waiting, not yet watered here.
   const rain = useMemo(() => {
     const rs = enrich(waitAll)
     const on = new Set(actions.rows.map((r) => r.key))
     return { rows: rs, live: new Set(rs.filter((r) => on.has(r.key)).map((r) => r.key)) }
   }, [enrich, waitAll, actions.rows])
 
-  // §2.5 (S4g): the emptied header — "Needs care · all caught up" over "95 logged today, 3 waiting for rain, 70
-  // watered by rain". The store is read live (a cheap sessionStorage read): every log and Undo re-renders the page anyway.
+  // The emptied header: "Needs care · all caught up" over "95 logged today, 3 waiting for rain, 70
+  // watered by rain". The store is read live (a cheap sessionStorage read): every log and Undo
+  // re-renders the page anyway.
   const rainCovered = useMemo(() => rainSplit(plan).covered, [plan])
   const loggedToday = loggedTodayCount(plan, readLogged(logKey))
 
@@ -120,8 +123,8 @@ export function useNeedsCare({ plan, planDate, userId, stale, lists = null }) {
     lists: { plants, locations },
     rain, rainCovered, loggedToday, filters, setFilters, task,
     caughtUp: { title: CAUGHT_UP_TITLE, summary: caughtUpSummary({ logged: loggedToday, waiting: rain.live.size, rain: rainCovered }) },
-    // Spots are LOCATIONS only when both reads answered (enrichRows); otherwise they are projects, with no group
-    // header and no group Water all — the /api/locations fallback, now for a failed /api/plants too.
+    // Spots are LOCATIONS only when both reads answered (enrichRows); otherwise they are projects,
+    // with no group header and no group Water all (also the fallback for a failed /api/plants).
     snapshot, groupOrder, locationsOk: !!locPayload && !!plantList, outside: OUTSIDE,
     substrate: plan?.substrate?.msg && !plan?.substrate?.on_hold ? plan.substrate.msg : null,
   }
