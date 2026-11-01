@@ -1,7 +1,6 @@
 // src/components/putup/jarWords.js
-// THE WORDS A JAR IS DESCRIBED IN, in one place, so the
-// put-up list, the Put it up sheet's preview, its completion stub and batch detail's What came out
-// cannot say different things about the same row.
+// THE WORDS A JAR IS DESCRIBED IN, in one place, so the put-up list, the Put it up sheet's preview, its
+// completion stub and batch detail's What came out cannot say different things about the same row.
 //
 // Three families:
 //   · date words   — a put-up date at its stored precision ("sometime last month", "in 2025",
@@ -67,8 +66,8 @@ export function shortDay(v, now = new Date()) {
   return d.getFullYear() === now.getFullYear() ? base : `${base}, ${d.getFullYear()}`
 }
 
-// THE PUT-UP DATE AT ITS PRECISION. A row written before 1b has a NULL precision and renders exactly
-// as it always did (describeApprox over the shipped preserved_at_approx flag, §3.6 last bullet).
+// THE PUT-UP DATE AT ITS PRECISION. A row with a NULL precision renders exactly as it always did
+// (describeApprox over the preserved_at_approx flag, §3.6 last bullet).
 export function putUpDateWords(date, precision, { approx = false, now = new Date() } = {}) {
   const d = parseYmd(date)
   if (precision === 'unknown') return 'not sure'
@@ -132,8 +131,8 @@ export function discardWords({ date, basis, method, kind, status, estimated = fa
 }
 
 // ── Size words — contract-F amendment A3: QUANTITY IS THE TOTAL, everywhere ─────────────────────
-// preservation_log.quantity_value is the jar row's TOTAL contents (v4-putup-001: "package_count = #
-// of containers, distinct from quantity_value = total"; 1b's Put it up writes count × size). So a bare
+// preservation_log.quantity_value is the jar row's TOTAL contents ("package_count = # of containers,
+// distinct from quantity_value = total"; Put it up writes count × size). So a bare
 // quantity is never drawn as "N × Q" — that reads as per-container and would triple the zucchini's
 // 2.5 qt. With more than one container it reads "3 containers · 2.5 qt in all"; with one, "2.5 qt".
 // A container label that SAYS its own size ("8 oz woozy", "pint") is the per-container word, so it

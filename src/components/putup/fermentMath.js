@@ -1,14 +1,13 @@
 // src/components/putup/fermentMath.js
-// The ferment arithmetic and vocabulary the batch surface SHOWS before anything is
-// written: the salt helper's live line ("3.5% of veg + water (448 g) → 15.7 g"), what each salt line
-// says it was (aimed vs actual), the "About ___ in it" placeholder, and the heat estimate's words.
+// The ferment arithmetic and vocabulary the batch surface SHOWS before anything is written: the salt
+// helper's live line ("3.5% of veg + water (448 g) → 15.7 g"), what each salt line says it was (aimed
+// vs actual), the "About ___ in it" placeholder, and the heat estimate's words.
 //
 // CLIENT MIRRORS, bound by src/__tests__/fermentMathParity.test.js to the Lambda's own modules
 // (lambda/preservation/kitchenBatch.js MASS_G / WATER_G / KITCHEN_UNITS / the F vocabularies, and
-// saltMath.js) the moment they are on this branch — and to the golden table (06 §5.3) now, which both
-// lanes pin independently. The server stores its own facts; nothing here is trusted by a write. The
-// heat estimate itself is NEVER computed here: it is GET /:id/shu-estimate's (contract-F §2.5), and
-// this file only words its answer.
+// saltMath.js) and to the golden table (06 §5.3). The server stores its own facts; nothing here is
+// trusted by a write. The heat estimate itself is NEVER computed here: it is GET /:id/shu-estimate's
+// (contract-F §2.5), and this file only words its answer.
 //
 // PURE: no React, no clock, no fetch.
 
@@ -48,8 +47,8 @@ export const ACTS = Object.freeze(['topped_up', 'pushed_under', 'skimmed'])
 export const ACT_LABELS = Object.freeze({
   topped_up: 'Topped up brine', pushed_under: 'Pushed it back under', skimmed: 'Skimmed the top',
 })
-// Dried chilies count ×7 (low) to ×10 (high) the FRESH rating (Dave's card rule; 17:1x — a typed
-// rating is always the fresh pepper's).
+// Dried chilies count ×7 (low) to ×10 (high) the FRESH rating (the card rule): a typed rating is always
+// the fresh pepper's.
 export const DRIED_FACTOR = Object.freeze({ low: 7, high: 10 })
 
 // ── the salt helper (06, the salt sections) ──────────────────────────────────────────────────────────────────
@@ -119,9 +118,9 @@ export function saltAsideWords({ left_out: leftOut = [], no_weight: noWeight = [
 // "3.500" (numeric off the wire) → "3.5"; "10.000" → "10".
 const trimPct = (p) => String(Math.round(Number(p) * 1000) / 1000)
 
-// What a stored salt line says it was (06 §3.2, FS minor). Every salt line shows BOTH the aimed % and
-// the actual, re-derived from its grams — so editing the grams later keeps the aim and moves the
-// actual. A rinsed soak is never presented as the ferment's salt %. A grams-only line is its grams.
+// What a stored salt line says it was (06 §3.2). Every salt line shows BOTH the aimed % and the actual,
+// re-derived from its grams — so editing the grams later keeps the aim and moves the actual. A rinsed
+// soak is never presented as the ferment's salt %. A grams-only line is its grams.
 export function saltLineWords(line) {
   if (!line) return ''
   const qtyG = gramsOf(line.qty, line.qty_unit)

@@ -1,6 +1,7 @@
 // src/components/putup/lines.js
-// A batch LINE, as the surface says it and as a write sends it (contract-F §2.2). The rules for each line kind live here once so What went in, the line sheet, the
-// salt helper and Put it up's additions cannot build two different bodies for one answer.
+// A batch LINE, as the surface says it and as a write sends it (contract-F §2.2). The rules for each
+// line kind live here once so What went in, the line sheet, the salt helper and Put it up's additions
+// cannot build two different bodies for one answer.
 //
 // THE FOUR WAYS A LINE COMES IN (linking to existing plantings and to existing put-ups is kept):
 //   · a planting, no pick needed          → input_kind 'garden'  (plant_id)
@@ -23,7 +24,7 @@ import {
 
 export const LINE_SEARCH_PATH = '/api/kitchen-batches/line-search'
 export const lineSearchUrl = (q) => `${LINE_SEARCH_PATH}?q=${encodeURIComponent(String(q ?? '').trim())}`
-// The unit chips the add row offers (06 §4 item 3). Every one is in KITCHEN_UNITS.
+// The unit chips the add row offers. Every one is in KITCHEN_UNITS.
 export const QUICK_UNITS = Object.freeze(['g', 'oz', 'lb', 'ml', 'count'])
 export const FROM_GARDEN_WORDS = 'from the garden'
 
@@ -72,7 +73,7 @@ export function lineWords(line) {
   return parts.join(' · ')
 }
 
-// "counted 7–10× as dried" — shown beside a dried line's typed rating so the rule is visible (06 §6 Q1).
+// "counted 7–10× as dried" — shown beside a dried line's typed rating so the rule is visible.
 export const DRIED_NOTE = `counted ${DRIED_FACTOR.low}–${DRIED_FACTOR.high}× as dried`
 
 // ── line-search hits ────────────────────────────────────────────────────────────────────────────────
@@ -240,7 +241,7 @@ export function addedWords(body) {
 }
 
 // Listed heat is offered when a form is set or the line has no variety rating to fall back on
-// (06 §4 item 3). A typed line never has a variety; a planting or a jar might.
+// (a typed line never has a variety; a planting or a jar might).
 export function offerListedHeat(draft) {
   if (!draft) return false
   if (draft.role) return false

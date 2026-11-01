@@ -1,7 +1,6 @@
 // src/components/putup/SaltBlock.jsx
 // The salt helper (the cook "aims 3.5% of water+ingredients for peppers; needs % + which weight group;
-// brine optional"), INSIDE What went in and always
-// reachable (never gated on line grams).
+// brine optional"), INSIDE What went in and always reachable (never gated on line grams).
 //
 // ONE BLOCK PER SALT LINE, each saying both what was aimed and what went in ("aimed 3.5% · put in 13.5 g
 // = 3.0% of 448 g"); tap one to edit its grams or note, or take it out. Then a SALT STEP to add one:
@@ -41,8 +40,8 @@ export const SALT_ERRORS = Object.freeze({
 })
 const round4 = (x) => String(Math.round(Number(x) * 10000) / 10000)
 
-// A base is SUGGESTED, never assumed: veg + water when there is a water line (Dave's own convention),
-// veg only otherwise. The chip shows it and one tap changes it.
+// A base is SUGGESTED, never assumed: veg + water when there is a water line, veg only otherwise. The
+// chip shows it and one tap changes it.
 export function suggestedBase(lines) {
   return (lines ?? []).some(l => l?.role === 'water') ? 'all' : 'produce'
 }
@@ -110,11 +109,11 @@ function SaltStep({ step, onChange, lines, ferment, onWrite, pctRef, idPrefix, b
     ? (parseGrams(step.grams) != null ? `I put in ${oneDecimal(parseGrams(step.grams))} g` : 'I put in the salt')
     : (res.grams != null ? `I put in ${oneDecimal(res.grams)} g` : 'I put in the salt')
 
-  // THE PAYOFF STAYS IN VIEW while a field of the step has focus (the ferment walks, 426×492: with the
-  // % focused, "I put in" sat at y494-542, under the keyboard). "I put in" is brought up first — its
-  // scroll-margin clears the nav when the keyboard is down — then the focused field itself, so both are
-  // on screen whenever they fit. Again when the keyboard resizes the viewport, and when the step changes
-  // shape under the finger (the live line appears once the % is typed, and pushes "I put in" down).
+  // THE PAYOFF STAYS IN VIEW while a field of the step has focus (with the % focused, "I put in" would
+  // sit under the keyboard). "I put in" is brought up first — its scroll-margin clears the nav when the
+  // keyboard is down — then the focused field itself, so both are on screen whenever they fit. Again
+  // when the keyboard resizes the viewport, and when the step changes shape under the finger (the live
+  // line appears once the % is typed, and pushes "I put in" down).
   const writeRef = useRef(null)
   const [typing, setTyping] = useState(null)
   const shape = [pct != null && baseG > 0, rinsed, step.together, step.gramsOnly, !!(b && saltAsideWords(b))].join()

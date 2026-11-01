@@ -1,8 +1,8 @@
 // src/components/putup/StageEditSheet.jsx
 // Tap an entry in the Log and change it (notes and information can be added or edited as you go,
-// including at and after bottling). PATCH /api/kitchen-batches/:id/stages/:stageId (contract-F §2.3), presence-sentinel: ONLY
-// what changed is sent, and the host shows "Saved · Undo" in place, Undo sending back what this sheet
-// held. Accepted on a finished batch (06 §3.13).
+// including at and after bottling). PATCH /api/kitchen-batches/:id/stages/:stageId (contract-F §2.3),
+// presence-sentinel: ONLY what changed is sent, and the host shows "Saved · Undo" in place, Undo
+// sending back what this sheet held. Accepted on a finished batch.
 //
 // WHAT EACH ENTRY LETS YOU CHANGE is the route's allowlist, per kind:
 //   every entry — the note;
@@ -13,7 +13,7 @@
 //   the start — "About ___ in it".
 // An entry's kind, and when a start or put-up happened, never change here (the start's date is the
 // batch's own, set on the batch; a put-up's is its jars'). A void row, or a row that was undone, is
-// note-only (and is not in the Log anyway). Required at open: 0 (the census).
+// note-only (and is not in the Log anyway). Nothing is required at open.
 //
 // WHEN (stage dates are editable; contract-F §2.3 takes entered_at + entered_precision on tended,
 // moved and noted) is asked with the SAME chips as Start a batch — Today · Yesterday · Earlier… · Not
@@ -49,8 +49,8 @@ const eq = (a, b) => {
 const DATE_KEYS = ['entered_at', 'entered_precision']
 const instant = (v) => (v == null ? null : new Date(v).getTime())
 
-// What the sheet may send, per stored kind — the route's allowlist (06 §3.7; contract-F §2.3). The date
-// pair is offered on a check-in, a move and a noted entry; a start and a put-up keep theirs.
+// What the sheet may send, per stored kind — the route's allowlist (contract-F §2.3). The date pair is
+// offered on a check-in, a move and a noted entry; a start and a put-up keep theirs.
 export function editableKeys(stage) {
   if (!stage || stage.stage_kind === 'void' || stage.voided) return ['note']
   switch (stage.stage_kind) {
@@ -98,11 +98,11 @@ export function stagePatch(stored, next, { nowIso }) {
   }
   // The date travels as a pair (the route refuses one alone) and is compared as an instant, so the same
   // moment in another spelling is not a change.
-  // THE UNDO NAMES A PRECISION EVEN WHEN THE ROW HAS NONE. Every 1a-era row, and every
-  // check-in or move written without one, stores entered_precision NULL — and the PATCH refuses a date
-  // without its precision, so "Saved · Undo" sent back {entered_at, null} and got a 400 on exactly those
-  // rows. A stored date with no word was stamped when it was written: 'exact'. No date is 'unknown'
-  // (chk_ksl_entered_pairing: entered_at IS NULL ⇔ precision 'unknown'), so both branches are legal.
+  // THE UNDO NAMES A PRECISION EVEN WHEN THE ROW HAS NONE. A check-in or move written without one stores
+  // entered_precision NULL, and the PATCH refuses a date without its precision, so an Undo sending back
+  // {entered_at, null} would get a 400 on exactly those rows. A stored date with no word was stamped
+  // when it was written: 'exact'. No date is 'unknown' (chk_ksl_entered_pairing: entered_at IS NULL ⇔
+  // precision 'unknown'), so both branches are legal.
   if (keys.includes('entered_at') && ('entered_at' in next || 'entered_precision' in next)) {
     if (instant(stored.entered_at) !== instant(next.entered_at) || (stored.entered_precision ?? null) !== (next.entered_precision ?? null)) {
       patch.entered_at = next.entered_at ?? null; patch.entered_precision = next.entered_precision ?? null

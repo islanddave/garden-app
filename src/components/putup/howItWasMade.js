@@ -50,10 +50,10 @@ export function jarStart(jar) {
 }
 
 // The batch's start when SEVERAL jars came from it: the earliest date any of them carries (the sheet
-// must not keep the date of the jar that opened it however many were ticked). A
-// jar with no start anyone knows (jarStart's 'unknown') has no date to offer, so it is passed over; with
-// none dated the start is Not sure. Dates are YYYY-MM-DD, so they order as text; a tie keeps the first
-// jar handed in. The precision is that jar's own — the earliest may be "sometime in September".
+// must not keep the date of the jar that opened it however many were ticked). A jar with no start
+// anyone knows (jarStart's 'unknown') has no date to offer, so it is passed over; with none dated the
+// start is Not sure. Dates are YYYY-MM-DD, so they order as text; a tie keeps the first jar handed in.
+// The precision is that jar's own — the earliest may be "sometime in September".
 // ⚠ This picks the START only. The ids go to the server in the order the sheet holds them: the route
 // dates the put-up stage from the FIRST id (batchBuilderRoutes.js), so they are never re-ordered here.
 export function earliestStart(jars) {

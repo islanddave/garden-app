@@ -1,8 +1,7 @@
 // src/components/putup/PhReadingField.jsx
 // Writing down a pH someone measured. It is the CONTROLLED pH field inside Check on it
 // (CheckOnItSheet.jsx), on Ferment batches, and the sheet's Save writes the reading on the check-in's
-// one row. One pH
-// input primitive, so Put it up's rows can host the same field in release 1b.
+// one row. One pH input primitive, so Put it up's rows host the same field.
 //
 // ⚠ THE LINE THIS COMPONENT HOLDS:
 //   FORBIDDEN — derive, score, colour, gate, compare to a threshold, or infer from elapsed time.
