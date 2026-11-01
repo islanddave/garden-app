@@ -1,5 +1,5 @@
 // src/components/putup/placeKinds.js
-// Put-Up R2a — the ONE list of the kinds of place a put-up can live in, and the word each is shown by where
+// The ONE list of the kinds of place a put-up can live in, and the word each is shown by where
 // a person picks one. The six kinds are the server's (storage_location.kind: jarRoutes.PLACE_KINDS,
 // storage-location's VALID_KINDS); src/__tests__/placeKinds.test.js binds this list, jarWords.KIND_WORDS and
 // recipes.STORAGE_KIND_WORDS to them by key set, so a seventh kind cannot be added to one of the four alone.

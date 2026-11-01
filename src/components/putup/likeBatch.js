@@ -1,5 +1,5 @@
 // src/components/putup/likeBatch.js
-// B′ release 3 — "Like <batch>, except…" (V4 §2.2, Appendix C step 6), the PURE half.
+// "Like <batch>, except…" (V4 §2.2, Appendix C step 6), the PURE half.
 //
 // THE MECHANISM (the plainest one consistent with F's line routes): read the chosen past batch through
 // the shipped GET /api/kitchen-batches/:id, and copy its What-went-in lines — and its kind — into the new

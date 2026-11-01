@@ -1,5 +1,5 @@
 // src/components/putup/ShuSheet.jsx
-// Put-Up release F (06 §2.6; Dave 15:55 "your recipe way", 17:1x) — "Work it out": the estimated heat,
+// "Work it out": the estimated heat,
 // shown with what it was worked out from, and saved only when he says so.
 //
 // THE SERVER WORKS IT OUT (GET /:id/shu-estimate, contract-F §2.5); this sheet says the answer in

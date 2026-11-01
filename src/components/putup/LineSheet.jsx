@@ -1,5 +1,5 @@
 // src/components/putup/LineSheet.jsx
-// Put-Up release F (06 §4 item 3, §3.7, §3.11; contract-F §2.2) — tap a line in What went in and edit it,
+// Tap a line in What went in and edit it,
 // or take it out. Every stage and every line is editable, including after the batch is finished (Dave
 // 15:55, 06 §3.13).
 //

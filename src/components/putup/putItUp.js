@@ -1,5 +1,5 @@
 // src/components/putup/putItUp.js
-// Put-Up release 1b (V4 §2.4, §3.1–§3.6, §5.1, Appendix B) — the pure half of "Put it up": the chips it
+// The pure half of "Put it up": the chips it
 // offers, how a When answer becomes a stored date and precision, what each row may ask, the preview
 // of each row's discard-by, the ONE request body, and the words of the completion stub and label hint.
 // The sheet (PutItUpSheet.jsx) paints these; it decides nothing a test cannot pin here.
@@ -430,7 +430,7 @@ export function completionStub({ batch, rows, jars, now = new Date() }) {
   return [`${label || 'This batch'} — put up`, ...parts, hint].filter(Boolean).join(' · ')
 }
 
-// A sitting's jars AS THE ROWS THEY WERE, for the stub of a REPLAYED put-up (BUG-PUTUPREPLAYREST-001): the
+// A sitting's jars AS THE ROWS THEY WERE, for the stub of a REPLAYED put-up: the
 // sitting an earlier tap made is said as the server answered it — never as the form reads now. Put it up
 // writes one jar per row (lambda putUp.js): its label is the row's name or the batch's, with its container,
 // how many, and where it went (`storage_label`, the route's own join).

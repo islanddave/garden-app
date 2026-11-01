@@ -1,5 +1,5 @@
 // src/components/putup/LikeBatchPicker.jsx
-// B′ release 3 — "Like <batch>, except…" (V4 §2.2): a quiet door that lists past batches and, on a tap,
+// "Like <batch>, except…" (V4 §2.2): a quiet door that lists past batches and, on a tap,
 // reads that batch and hands its lines and kind to the host as a draft (likeBatch.js likeDraft). Used by
 // Start a batch and by How it was made →. Plain markup; no new visual design.
 //
@@ -19,7 +19,7 @@ import SelectChip from '../forms/SelectChip.jsx'
 import { mintKey } from '../kitchen/idempotencyKey.js'
 import { likeDraft, likeChoices, likeWords } from './likeBatch.js'
 
-// 48px tall (Put-Up UX pass R1, F16: height only — the size and weight are as they were).
+// 48px tall.
 const link = {
   display: 'inline-flex', alignItems: 'center', minHeight: T.buttonMinHeight, background: 'none', border: 'none',
   padding: '2px 8px 2px 0', cursor: 'pointer', fontFamily: 'inherit', color: P.green, fontSize: T.type.sm, fontWeight: 600,

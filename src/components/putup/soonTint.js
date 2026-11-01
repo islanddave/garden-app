@@ -1,5 +1,5 @@
 // src/components/putup/soonTint.js
-// Put-Up UX pass R1 (prep) — THE SOON TINT. A discard-date line whose status is "soon" or "past" is set on
+// THE SOON TINT. A discard-date line whose status is "soon" or "past" is set on
 // the warn background, in dark ink, at weight 600. The WORDS still carry the state ("… · soon", "discard
 // date passed …"); the tint and the weight are two more channels beside them, and none of the three is an
 // interrupt. One style object, so every surface that shows the line tints it the same way.

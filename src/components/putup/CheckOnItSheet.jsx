@@ -1,5 +1,5 @@
 // src/components/putup/CheckOnItSheet.jsx
-// Put-Up 1a item 3 (V4 §2.3 "Check on it", §6.2–§6.6) — looking at a batch, and writing down what you
+// Looking at a batch, and writing down what you
 // saw. Every kind: Moved it (the household's places) and a note. Ferment: also the ruled brine
 // question (All under · Something poking out) and the pH field. Dry (not Candy): also "In jars to
 // condition" · "Condensation → back in the dryer".
@@ -61,7 +61,7 @@ export function isCheckInDraft(d) {
     && (d.topUpUnit === undefined || TOP_UP_UNITS.includes(d.topUpUnit))
 }
 
-// "What you did" (release F, Dave 16:30). A MULTI-select — role="group" + aria-pressed, 48px chips — whose
+// "What you did". A MULTI-select — role="group" + aria-pressed, 48px chips — whose
 // pressed state is drawn differently from the single-select answer chips above it (an outline on the
 // pale green, not the filled green), so a done-it chip never reads as an answer to the brine question.
 // The top-up amount opens DIRECTLY BENEATH this row when Topped up brine is pressed, so nothing above
@@ -241,7 +241,7 @@ function CheckOnItOpen({ batch, onClose, onSaved, now }) {
     clearSheetDraft(draftKey)
     writingRef.current = false
     setSaving(false)
-    // The server's answer rides along (release 1b): its `stage.id` is what "Saved · Undo" voids.
+    // The server's answer rides along: its `stage.id` is what "Saved · Undo" voids.
     onSaved?.(res.body, first)
   }, [acts, batch, conditioning, draftKey, fetch, note, now, onSaved, ph, placeId, places, submersion, topUp, topUpUnit])
 

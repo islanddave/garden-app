@@ -1,5 +1,5 @@
 // src/components/putup/BatchCloseField.jsx
-// V5-KBCLOSE-001 — "what happened to it?", the one terminal act in the kitchen-batch feature.
+// "What happened to it?", the one terminal act in the kitchen-batch feature.
 //
 // ⚠ THE LINE THIS COMPONENT HOLDS (FOODSAFETY-RULING-V101, preservation seat):
 // The app RECORDS what happened. It never scores, colours, gates, compares, or asserts that the

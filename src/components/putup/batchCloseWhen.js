@@ -1,5 +1,5 @@
 // src/components/putup/batchCloseWhen.js
-// B′ release 3 — "A make with nothing kept" (V4 §2.2): Start a batch → lines → What happened to it? → No →
+// "A make with nothing kept" (V4 §2.2): Start a batch → lines → What happened to it? → No →
 // Ate it / Gave it away (the shipped close already offers the endings with no jars). What it lacked was
 // the close sheet's When (V4 Appendix A), so a make logged afterwards was dated the moment it was logged.
 // This turns the shared start chips' answer into the close body's optional `when`:

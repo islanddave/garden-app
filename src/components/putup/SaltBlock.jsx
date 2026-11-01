@@ -1,6 +1,6 @@
 // src/components/putup/SaltBlock.jsx
-// Put-Up release F (06, the salt sections and §4 item 4; Dave 15:05: "aims 3.5% of water+ingredients for peppers;
-// needs % + which weight group; brine optional") — the salt helper, INSIDE What went in and always
+// The salt helper (the cook "aims 3.5% of water+ingredients for peppers; needs % + which weight group;
+// brine optional"), INSIDE What went in and always
 // reachable (never gated on line grams).
 //
 // ONE BLOCK PER SALT LINE, each saying both what was aimed and what went in ("aimed 3.5% · put in 13.5 g

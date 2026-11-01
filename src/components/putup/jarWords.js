@@ -1,5 +1,5 @@
 // src/components/putup/jarWords.js
-// Put-Up release 1b (V4 §3.2, §3.6, §4.7) — THE WORDS A JAR IS DESCRIBED IN, in one place, so the
+// THE WORDS A JAR IS DESCRIBED IN, in one place, so the
 // put-up list, the Put it up sheet's preview, its completion stub and batch detail's What came out
 // cannot say different things about the same row.
 //

@@ -1,5 +1,5 @@
 // src/components/putup/MoveJarSheet.jsx
-// Put-Up release 1b (V4 §2.5 "Move it", §3.4, §5.1; contract-F §2.6) — the one door that changes where a
+// The one door that changes where a
 // jar lives. From 1b the list row stops echoing its place through the legacy PUT (a differing place
 // there is a 409 client_stale), so a move is its own write: POST /api/preservation/:id/move
 // {place, when}. The server applies the move rule and stamps storage_moved_at; this panel says what that

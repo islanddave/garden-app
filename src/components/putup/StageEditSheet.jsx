@@ -1,7 +1,6 @@
 // src/components/putup/StageEditSheet.jsx
-// Put-Up release F (06 §3.7, §4 item 6; Dave 15:55: "each stage should allow me to make notes and
-// add/edit the information … as we go", including at and after bottling) — tap an entry in the Log and
-// change it. PATCH /api/kitchen-batches/:id/stages/:stageId (contract-F §2.3), presence-sentinel: ONLY
+// Tap an entry in the Log and change it (notes and information can be added or edited as you go,
+// including at and after bottling). PATCH /api/kitchen-batches/:id/stages/:stageId (contract-F §2.3), presence-sentinel: ONLY
 // what changed is sent, and the host shows "Saved · Undo" in place, Undo sending back what this sheet
 // held. Accepted on a finished batch (06 §3.13).
 //
@@ -16,7 +15,7 @@
 // batch's own, set on the batch; a put-up's is its jars'). A void row, or a row that was undone, is
 // note-only (and is not in the Log anyway). Required at open: 0 (the census).
 //
-// WHEN (Dave: stage dates editable; contract-F §2.3 takes entered_at + entered_precision on tended,
+// WHEN (stage dates are editable; contract-F §2.3 takes entered_at + entered_precision on tended,
 // moved and noted) is asked with the SAME chips as Start a batch — Today · Yesterday · Earlier… · Not
 // sure, the estimate windows under Earlier… — so one answer means one thing. The chip the stored date
 // reads as is shown selected; the date is sent ONLY once a chip or the date is touched, as a pair.
@@ -99,7 +98,7 @@ export function stagePatch(stored, next, { nowIso }) {
   }
   // The date travels as a pair (the route refuses one alone) and is compared as an instant, so the same
   // moment in another spelling is not a change.
-  // THE UNDO NAMES A PRECISION EVEN WHEN THE ROW HAS NONE (review I-N1). Every 1a-era row, and every
+  // THE UNDO NAMES A PRECISION EVEN WHEN THE ROW HAS NONE. Every 1a-era row, and every
   // check-in or move written without one, stores entered_precision NULL — and the PATCH refuses a date
   // without its precision, so "Saved · Undo" sent back {entered_at, null} and got a 400 on exactly those
   // rows. A stored date with no word was stamped when it was written: 'exact'. No date is 'unknown'

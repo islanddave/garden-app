@@ -1,5 +1,5 @@
 // src/components/putup/fermentMath.js
-// Put-Up release F — the ferment arithmetic and vocabulary the batch surface SHOWS before anything is
+// The ferment arithmetic and vocabulary the batch surface SHOWS before anything is
 // written: the salt helper's live line ("3.5% of veg + water (448 g) → 15.7 g"), what each salt line
 // says it was (aimed vs actual), the "About ___ in it" placeholder, and the heat estimate's words.
 //

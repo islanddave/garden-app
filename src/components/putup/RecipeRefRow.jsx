@@ -1,5 +1,5 @@
 // src/components/putup/RecipeRefRow.jsx
-// Put-Up release F (06 §1.5; FOODSAFETY-RULING-V101 §3, approved there as record-and-prompt) — "Following
+// "Following
 // a recipe?": one quiet row on every batch — a text or URL field (kitchen_batch.recipe_ref, ≤ 500) and,
 // beneath it, the tested-recipe caution as REFERENCE CONTENT with a link-out. It is not a recipe
 // library (that is release B′) and it makes no claim about the batch: it records what he is following

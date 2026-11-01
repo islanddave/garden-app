@@ -1,8 +1,7 @@
 // src/components/putup/PhReadingField.jsx
-// V5-PHRECORD-001 — writing down a pH someone measured. Put-Up 1a item 3 MOVED it: it used to be an
-// inline recorder on the Going-now card with its own POST; it is now the CONTROLLED pH field inside
-// Check on it (CheckOnItSheet.jsx), on Ferment batches, and the sheet's Save writes the reading on
-// the check-in's one row. "The pH button moves into Check on it" (V4 §2.3 / the release note). One pH
+// Writing down a pH someone measured. It is the CONTROLLED pH field inside Check on it
+// (CheckOnItSheet.jsx), on Ferment batches, and the sheet's Save writes the reading on the check-in's
+// one row. One pH
 // input primitive, so Put it up's rows can host the same field in release 1b.
 //
 // ⚠ THE LINE THIS COMPONENT HOLDS:

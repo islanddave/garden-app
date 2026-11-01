@@ -1,5 +1,5 @@
 // src/components/putup/JarHeatRow.jsx
-// Put-Up release F (06 §4 item 5, §2.1, §2.6) — "Jar & heat": the vessel it is in, about how much is in
+// "Jar & heat": the vessel it is in, about how much is in
 // it, and the estimated heat. A collapsed summary row, placed after the Salt block, NEVER expanded by
 // itself and collapsed again when a line add starts:
 //     "Quart jar × 2 · about 448 g · heat est. 950–3.0k SHU (worked out)"

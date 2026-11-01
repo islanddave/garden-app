@@ -1,5 +1,5 @@
 // src/components/putup/howItWasMade.js
-// B′ release 3 — "How it was made →" (V4 §2.2), the PURE half. The sheet is HowItWasMadeSheet.jsx.
+// "How it was made →" (V4 §2.2), the PURE half. The sheet is HowItWasMadeSheet.jsx.
 //
 // From a jar row: the Start-a-batch sheet in retrospective posture. Label = the jar's name; start = the
 // earliest date among the jars chosen; What went in open; "Which jars came from this?" chips of other jars
@@ -49,8 +49,8 @@ export function jarStart(jar) {
   return { date: day, precision: p ?? 'day' }
 }
 
-// The batch's start when SEVERAL jars came from it: the earliest date any of them carries (Put-Up UX
-// pass R1, D15 — the sheet used to keep the date of the jar that opened it however many were ticked). A
+// The batch's start when SEVERAL jars came from it: the earliest date any of them carries (the sheet
+// must not keep the date of the jar that opened it however many were ticked). A
 // jar with no start anyone knows (jarStart's 'unknown') has no date to offer, so it is passed over; with
 // none dated the start is Not sure. Dates are YYYY-MM-DD, so they order as text; a tie keeps the first
 // jar handed in. The precision is that jar's own — the earliest may be "sometime in September".

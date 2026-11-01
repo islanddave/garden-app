@@ -1,5 +1,5 @@
 // src/components/putup/WhatWentIn.jsx
-// Put-Up release F — "What went in", reworked (06 §4 item 3; contract-F §2.2). Replaces the shipped
+// "What went in", reworked (06 §4 item 3; contract-F §2.2). Replaces the shipped
 // BatchInputsField as the body of batch detail's section. BatchInputsField is still mounted, but only
 // for LEGACY bulk pick rows (the shipped predicate path's "whole pick" rows, ordinal NULL), which keep
 // their count-and-reveal; every line written from release F on is always visible here.
@@ -18,7 +18,7 @@
 // The Salt block is the host's (BatchDetailView), rendered between the chips' row and the add row via
 // `saltSlot`, so it stays "inside What went in" and always reachable.
 //
-// THE ADD ROW COLLAPSES, the chips never do (Put-Up UX pass R1, D2). A batch with nothing written down
+// THE ADD ROW COLLAPSES, the chips never do. A batch with nothing written down
 // opens with the add row shown; one that has lines opens with "+ Add what went in" where the add row
 // sits. A tap on that door opens it and focuses the name; a tap on [Water] opens it with the Water preset
 // and focuses the amount. WHICH of the two is read ONCE, when this batch's detail first renders here, and
