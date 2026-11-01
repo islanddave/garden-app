@@ -14,6 +14,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { directSql, callHandler, testRunId, setTestUserId, insertProject } from './_harness.js'
 import { handler } from '../../lambda/plants/index.js'
+import { handler as eventsHandler } from '../../lambda/events/index.js'
 
 const RUN = testRunId()
 const USER = `user_int_plants_${RUN}`
@@ -583,5 +584,69 @@ describe('D2 withActor — a household mate\'s plants PUT is audited as the mate
       else process.env.GARDEN_HOUSEHOLD_IDS = saved
       await directSql`DELETE FROM public.audit_events WHERE actor_clerk_sub = ${MATE}`
     }
+  })
+})
+
+// OPS-AUDITGUCTABLES-001: archive, soft delete and the germination re-derive write plants through garden_node, whose
+// trg_audit_plants_upd watches archived_at, deleted_at and germinated_at. A bare write there records 'system'.
+describe('OPS-AUDITGUCTABLES-001 — a household mate\'s archive, soft delete and germination re-derive are audited as the mate', () => {
+  const MATE = `user_int_plants_mate_gt_${RUN}`
+  const memberPlanting = async (tag) => (await directSql`
+    INSERT INTO plants (project_id, name, created_by) VALUES (${projectId}, ${`${tag}-${RUN}`}, ${USER}) RETURNING id`)[0].id
+  async function asMate(fn) {
+    const saved = process.env.GARDEN_HOUSEHOLD_IDS
+    process.env.GARDEN_HOUSEHOLD_IDS = `${USER},${MATE}`
+    setTestUserId(MATE)
+    try { return await fn() } finally {
+      setTestUserId(USER)
+      if (saved === undefined) delete process.env.GARDEN_HOUSEHOLD_IDS
+      else process.env.GARDEN_HOUSEHOLD_IDS = saved
+    }
+  }
+  afterAll(async () => { await directSql`DELETE FROM public.audit_events WHERE actor_clerk_sub = ${MATE}` })
+
+  it('archive and unarchive: both plants audit rows name the mate', async () => {
+    const id = await memberPlanting('mate-archive')
+    for (const archived of [true, false]) {
+      const r = await asMate(() => callHandler(handler, { method: 'PATCH', path: `/api/plants/${id}/archive`, body: { archived } }))
+      expect(r.status, JSON.stringify(r.body)).toBe(200)
+    }
+    const rows = await directSql`
+      SELECT actor_clerk_sub FROM public.audit_events
+       WHERE table_name = 'plants' AND row_id = ${id} AND action = 'UPDATE'`
+    expect(rows.map((x) => x.actor_clerk_sub)).toEqual([MATE, MATE])
+  })
+
+  it('soft delete: the SOFT_DELETE row names the mate', async () => {
+    const id = await memberPlanting('mate-delete')
+    const r = await asMate(() => callHandler(handler, { method: 'DELETE', path: `/api/plants/${id}` }))
+    expect(r.status, JSON.stringify(r.body)).toBe(200)
+    const rows = await directSql`
+      SELECT actor_clerk_sub FROM public.audit_events
+       WHERE table_name = 'plants' AND row_id = ${id} AND action = 'SOFT_DELETE'`
+    expect(rows.map((x) => x.actor_clerk_sub)).toEqual([MATE])
+  })
+
+  it('germination date correction (events PUT): the re-derived anchor\'s audit row names the mate', async () => {
+    const id = await memberPlanting('mate-germ')
+    const day = (n) => new Date(Date.now() - n * 864e5).toISOString().slice(0, 10)
+    const made = await callHandler(eventsHandler, {
+      method: 'POST', path: '/api/events', userId: USER,
+      body: { project_id: projectId, plant_id: id, event_type: 'germination', event_date: day(10) },
+    })
+    expect(made.status, JSON.stringify(made.body)).toBe(201)
+    const eventId = made.body.id ?? made.body.eventId
+    const r = await asMate(() => callHandler(eventsHandler, {
+      method: 'PUT', path: `/api/events/${eventId}`,
+      body: { project_id: projectId, plant_id: id, event_type: 'germination', event_date: day(8) },
+    }))
+    expect(r.status, JSON.stringify(r.body)).toBe(200)
+    const [p] = await directSql`SELECT germinated_at FROM plants WHERE id = ${id}`
+    expect(new Date(p.germinated_at).toISOString().slice(0, 10)).toBe(day(8))
+    const rows = await directSql`
+      SELECT actor_clerk_sub FROM public.audit_events
+       WHERE table_name = 'plants' AND row_id = ${id} AND action = 'UPDATE'
+         AND after_jsonb->>'germinated_at' LIKE ${`${day(8)}%`}`
+    expect(rows.map((x) => x.actor_clerk_sub)).toEqual([MATE])
   })
 })
