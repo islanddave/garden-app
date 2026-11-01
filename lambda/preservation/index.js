@@ -73,7 +73,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 // reconcilePlantAttribution reject with the generic "does not match a planting you can log against"
 // (no existence oracle).
 //
-// Strict dialect (household.js loadOwnedPlanting / authz-parents.js loadOwnedPlantingRef): the bare own-
+// Strict dialect (authz-parents.js loadOwnedPlantingRef): the bare own-
 // created_by arm would reach a planting the caller created INSIDE another household's container, so the
 // `container_id IS NULL` conjunct guarding it is LOAD-BEARING. `garden_node.container_id` is the view's
 // name for `plants.project_id`; this loader stays on the views because it also reads cultivar columns.
@@ -552,7 +552,8 @@ export const handler = async (event) => {
 
       if (method === 'DELETE') {
         // Remove: refused on a jar that was used or that a live batch line draws from, with the reason and
-        // a path; otherwise the 1b soft delete, in the actor transaction (pantryRoutes.js removeJar).
+        // a path; otherwise the 1b soft delete, in the actor transaction (pantryRoutes.js removeJar, executed by
+        // pantryRoutes.test.js).
         const removed = await removeJar(sql, rowId, userId, householdIds);
         return resp(removed.status, removed.body);
       }

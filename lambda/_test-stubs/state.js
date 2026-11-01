@@ -2,7 +2,7 @@
 //
 // WHY STUBS AND NOT MOCKS. Handlers import their AWS/Clerk/Neon deps at module scope, and those deps live in
 // each Lambda's OWN package.json, not at the repo root, so the root vitest run cannot import a handler at
-// all. vitest.config.ts aliases those four specifiers here so a handler (e.g. lambda/facebook-share/index.js,
+// all. vitest.config.ts aliases those Lambda runtime deps here so a handler (e.g. lambda/facebook-share/index.js,
 // which publishes to a public Facebook Page) can be imported and actually run.
 //
 // A test drives behaviour by setting fields on `stubState` before importing/invoking the handler. Call
