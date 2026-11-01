@@ -1,77 +1,53 @@
 'use strict';
-// rainLog.js — V4-RAINAUTOLOG-001 part 2: decide whether tonight's run should turn yesterday's
-// gauge reading into rain EVENTS, and how much.
+// Decides whether tonight's run turns yesterday's gauge reading into rain EVENTS, and how much
+// (V4-RAINAUTOLOG-001 part 2).
 //
-// Pure by construction, exactly like frostEval.js: no clock read, no network, no DB. Everything
-// time-varying is an argument. The SQL lives in handler.js; every DECISION lives here so it can be
-// unit-tested without a database.
+// Pure by construction, like frostEval.js: no clock read, no network, no DB. Everything time-varying is an
+// argument. The SQL lives in handler.js; every DECISION lives here so it can be unit-tested without a
+// database.
 //
-// ── WHY THIS EXISTS ──────────────────────────────────────────────────────────────────────────────
-// 'rain' is READ in ten places across daily-plan, dashboard, doneEvents, overwinter and the events
-// undo cascade, and until 2026-08-28 was WRITTEN by nothing automatic. RAIN-EVENT-001 created the
-// type, DRG-WXSTATION-001 supplied the gauge, BUG-RAINACTUAL-001 pointed the precip FIELDS at the
-// gauge — and nobody built the bridge from a reading to an event row. Dave logged rain by hand until
-// 2026-07-18 and then stopped, believing it was automatic. migrations/v4-rainbackfill-001 repaired
-// the history; this file is what stops the gap reopening tomorrow.
+// Why it exists: 'rain' events are READ in many places (daily-plan, dashboard, doneEvents, overwinter, the
+// events undo cascade) but nothing automatic WROTE them; the gauge fed the precip fields and nobody
+// bridged a reading to an event row. migrations/v4-rainbackfill-001 repaired the history; this file keeps
+// the gap from reopening.
 //
-// ── DAVE'S CONSTRAINTS, VERBATIM ─────────────────────────────────────────────────────────────────
-//   "Once a day is fine, 11:55pm ET or so to run the day's total or whatever works best. Once a day
-//    at most."          -> ONCE A DAY IS A HARD CAP. The hour is explicitly negotiable.
-//   "above 0.10 inches measured. Below that is not an event."
-//                       -> strictly greater than 0.10, and MEASURED — see the gauge-only rule below.
+// Constraints from the product owner:
+//   * ONCE A DAY IS A HARD CAP; the hour is negotiable.
+//   * STRICTLY greater than 0.10 in, and MEASURED (see the gauge-only rule below).
 //
-// ── WHY THE NIGHTLY SLOT AND NOT 23:55 ET ────────────────────────────────────────────────────────
-// Three EventBridge rules invoke this Lambda: nightly cron(0 6) = 02:00 ET, intraday-am cron(30 9)
-// = 05:30 ET, intraday-pm cron(30 19) = 15:30 ET. All three pass an EMPTY detail (verified in AWS
-// 2026-08-04), so the run is identified from the ET hour index.js reads — the same mechanism
-// resolveFrostRun uses, and for the same reason.
+// WHY THE NIGHTLY SLOT AND NOT 23:55 ET. Three EventBridge rules invoke this Lambda (nightly 02:00 ET,
+// intraday-am 05:30 ET, intraday-pm 15:30 ET), all with an EMPTY detail, so the run is identified from the
+// ET hour index.js reads, the same way resolveFrostRun does it. Logging at 02:00 for the PREVIOUS ET day
+// beats 23:55: at 23:55 the day is not over, so late rain is lost and the next night would not pick it up,
+// while at 02:00 the day is closed and the gauge reading has settled.
 //
-// Logging at 02:00 ET for the PREVIOUS ET day is strictly better than Dave's suggested 23:55:
-//   * at 23:55 the day is not over, so any rain in the last five minutes is silently lost, and the
-//     following night would not pick it up either because the day would already be logged;
-//   * at 02:00 the previous day is complete and closed, and its gauge reading has settled.
-// Adding a fourth 23:55 rule would also have SPENT the once-a-day budget on a worse reading.
+// The window is 00:00-05:59 ET rather than one hour because the crons are fixed in UTC while ET shifts
+// (02:00 EDT, 01:00 EST). intraday-am at 05:30 ET is INSIDE the window, which is why the
+// day-already-logged guard in handler.js is load-bearing: only it keeps the cap at once a day.
 //
-// The window is 00:00–05:59 ET rather than a single hour because the crons are fixed in UTC while ET
-// shifts: cron(0 6) is 02:00 EDT and 01:00 EST. intraday-am at 05:30 ET is INSIDE that window and is
-// the reason the day-already-logged guard in handler.js is load-bearing rather than belt-and-braces:
-// the two runs are 3.5 hours apart, both in the window, and only that guard keeps the cap at once.
+// GAUGE-ONLY: a model day must not produce an event. A row whose precip_source is 'openmeteo_archive' or
+// 'openmeteo_live' is an ESTIMATE and the model is materially wrong at this site (it has said 1.00 in where
+// the gauge measured 2.22 in). A rain EVENT is a row in the user's own history that suppresses watering
+// reminders; logging one off an estimate would state something the instrument never said. See
+// migrations/v4-rainbackfill-001/README.md, "Known, deliberate gap".
 //
-// ── GAUGE-ONLY, AND WHY A MODEL DAY MUST NOT PRODUCE AN EVENT ────────────────────────────────────
-// Dave's threshold is "above 0.10 inches MEASURED". A row whose precip_source is 'openmeteo_archive'
-// or 'openmeteo_live' carries an ESTIMATE, not a measurement, and the model is materially wrong at
-// this site: on 2026-08-03 it said 1.00" where the gauge measured 2.22". Logging a rain EVENT — a
-// row in the user's own history, which suppresses watering reminders — off an estimate would state
-// something the instrument never said. 2026-08-01 is the live case: 0.12" model, no gauge record, no
-// event, deliberately. See migrations/v4-rainbackfill-001/README.md §Known, deliberate gap.
-//
-// ── NO REWARD SIDE EFFECTS. THIS IS BINDING, NOT A PREFERENCE ────────────────────────────────────
-// Auto-logged rain must NEVER award XP, roll a critter, advance a logging streak, evaluate an
-// achievement or emit app_events telemetry. reward-ux-guideline-V102 scopes reward surfaces to USER
-// activity, and its streaks rule permits streaks only on cadence-UTILITY surfaces with break
-// recovery. Rain the sky delivered is not something Dave did; crediting it would make the watering
-// streak partly a measure of the weather and would hand out rewards for staying indoors.
-// handler.js therefore writes the event rows and the CARE CACHE directly and does NOT call
-// lambda/events/batchSideEffects.js. If a future change routes this through POST /api/events/batch,
-// it re-introduces exactly that defect.
+// NO REWARD SIDE EFFECTS. THIS IS BINDING. Auto-logged rain must NEVER award XP, roll a critter, advance a
+// logging streak, evaluate an achievement or emit app_events telemetry: reward-ux-guideline-V102 scopes
+// rewards to USER activity, and rain the sky delivered is not something the user did. handler.js therefore
+// writes the event rows and the CARE CACHE directly and does NOT call lambda/events/batchSideEffects.js.
+// Routing this through POST /api/events/batch would reintroduce the defect.
 
-// All three env vars this module reads — RAIN_AUTOLOG_ENABLED, RAIN_LOG_THRESHOLD_IN and
-// RAIN_RUN_END_HOUR — are declared in scripts/lambda-config-expected.json. The two numeric ones are
-// declared expected-ABSENT (null), i.e. the defaults below are the shipped behaviour; the arming
-// flag is declared PRESENT and "true" as of BUG-RAINAUTOLOGCLIFF-001, because a switch whose live
-// state can only be read off an absence is a switch nobody can audit. That declaration is not
-// optional bookkeeping:
-// scripts/test_check_lambda_config.py walks this directory for process.env reads and fails CI on any
-// that are undeclared, because "a read-but-undeclared var is how CARE_WATER_LEDGER_ENABLED stayed
-// invisible". Note its regex only matches the dotted static form (process dot env dot THE_NAME), so
-// the two read through numEnv's bracket lookup were invisible to it and were declared by hand. If
-// you add another, add it there too — the manifest's own note claims to be the COMPLETE set.
-// (Spelled out in words above on purpose: that scanner reads COMMENTS too, so writing the dotted
-// form here would have declared a variable named NAME. It did, once.)
+// All three env vars this module reads (RAIN_AUTOLOG_ENABLED, RAIN_LOG_THRESHOLD_IN, RAIN_RUN_END_HOUR) are
+// declared in scripts/lambda-config-expected.json: the two numeric ones expected-ABSENT (the defaults
+// below are the shipped behaviour), the arming flag PRESENT and "true" (BUG-RAINAUTOLOGCLIFF-001), because
+// a switch whose live state can only be read off an absence cannot be audited.
+// scripts/test_check_lambda_config.py walks this directory and fails CI on any undeclared env read. Its
+// regex matches only the dotted static form and also scans COMMENTS, so never write that form in a comment
+// (it once declared a variable named NAME), and declare a bracket-read var such as numEnv's by hand.
 const THRESHOLD_IN = numEnv('RAIN_LOG_THRESHOLD_IN', 0.10);
 const RAIN_RUN_END_HOUR = numEnv('RAIN_RUN_END_HOUR', 5);   // inclusive; 00:00–05:59 ET is the nightly slot
 const GAUGE_SOURCE = 'gauge_merged';
-const BACKFILL_TAG = 'v4-rainbackfill-001';                 // shared with the migration, on purpose — see below
+const BACKFILL_TAG = 'v4-rainbackfill-001';                 // shared with the migration, on purpose (see rainMetadata)
 
 function numEnv(name, dflt) {
   const raw = process.env[name];
@@ -80,65 +56,48 @@ function numEnv(name, dflt) {
   return Number.isFinite(n) ? n : dflt;
 }
 
-// null / undefined / '' / booleans must NOT coerce. Number(null) and Number('') are both 0 and both
-// pass Number.isFinite, so a bare Number() here would read a DROPPED STATION READING as a dry day —
-// the single worst failure this module could have, because it is invisible: a silent 0 looks exactly
-// like a real measurement of no rain. Caught by rainLog.test.js's "a null precip is NOT treated as
-// zero", which failed against the first version of this function.
+// null / undefined / '' / booleans must NOT coerce. Number(null) and Number('') are both 0 and finite, so
+// a bare Number() would read a DROPPED STATION READING as a dry day, which is invisible: a silent 0 looks
+// exactly like a real measurement of no rain. rainLog.test.js pins it ("a null precip is NOT treated as
+// zero").
 function finite(v) {
   if (v == null || v === '' || typeof v === 'boolean') return null;
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
 }
 
-// ── Run identity — WHICH of the three daily runs may log rain ────────────────────────────────────
+// ── Run identity: which of the three daily runs may log rain ─────────────────────────────────────
 // `event.rainLog === true` forces logging and `=== false` suppresses it: the rehearsal lever, via
 // scripts/rerun-daily-plan.sh, mirroring event.frostEval. Neither can bypass the threshold, the
-// gauge-only rule or the already-logged guard — those are correctness, not scheduling.
-// RAIN_AUTOLOG_ENABLED is its OWN switch and is deliberately NOT CARE_WATER_LEDGER_ENABLED, even
-// though both features read weather_daily. That flag is unset on the prod Lambda and therefore
-// evaluates false, so reusing it would have shipped a feature that could never run — the failure
-// mode where everything looks wired and nothing happens.
+// gauge-only rule or the already-logged guard; those are correctness, not scheduling.
+// RAIN_AUTOLOG_ENABLED is its OWN switch, deliberately NOT CARE_WATER_LEDGER_ENABLED: that flag is unset
+// on the prod Lambda, so reusing it would ship a feature that could never run.
 //
-// It defaults ON and disarms only on the exact string 'false'. That is the opposite polarity to
-// CARE_WATER_LEDGER_ENABLED, which arms only on the exact string 'true', and the asymmetry is
-// intentional: that flag guards a read that could blank the nightly plan, so it fails safe by
-// staying off; this one guards a fail-open write that runs after the plan is durable, so it fails
-// safe by staying on. A typo in the env should not silently stop rain being logged for months —
-// which is the precise shape of the bug this whole ticket exists to fix.
+// It defaults ON and disarms only on the exact string 'false', the opposite polarity to
+// CARE_WATER_LEDGER_ENABLED (arms only on 'true'), and the asymmetry is intentional: that flag guards a
+// read that could blank the nightly plan, so it fails safe by staying off; this one guards a fail-open
+// write that runs after the plan is durable, so it fails safe by staying on. A typo in the env must not
+// silently stop rain being logged for months.
 //
-// ── BUG-RAINAUTOLOGCLIFF-001: ARMED BY A VALUE, NEVER BY AN ABSENCE ──────────────────────────────
-// The polarity above is right and is unchanged. What was wrong is that it used to be readable ONLY
-// as `!== 'false'`, so the live prod state — key ABSENT — armed the writer that authors the latest
-// water event for 217 of 239 live plantings, and NOTHING anywhere said so. Every prior discussion of
-// this defect aimed at CARE_WATER_LEDGER_ENABLED instead, because absence-arming is invisible to
-// recon: you cannot grep for a variable that is not set, the manifest declared it deliberately
-// ABSENT, and a reader who found the gate read `!== 'false'` against nothing and moved on.
+// BUG-RAINAUTOLOGCLIFF-001: ARMED BY A VALUE, NEVER BY AN ABSENCE. The polarity above is right. The
+// problem was that the gate read only as `!== 'false'`, so the live state (key ABSENT) armed the writer
+// with nothing anywhere saying so, and absence-arming is invisible to recon. So the state resolves into a
+// NAMED config source, carried through resolveRainRun into handler.js's structured `rain-log` line.
+// Absence still ARMS, but as 'default_key_absent', which is visible in CloudWatch, assertable in a test,
+// and distinct from a deliberate 'explicit_on'.
 //
-// So the state is now resolved into a NAMED config source, and the source is carried out through
-// resolveRainRun into handler.js's structured `rain-log` line. Absence still ARMS — that is the whole
-// point of shipping this at zero behaviour cost, see the fail-direction note — but it arms as
-// 'default_key_absent', which is a thing you can see in CloudWatch, assert in a test, and tell apart
-// from a deliberate 'explicit_on'. The defect was never the default; it was that the default was
-// indistinguishable from a decision.
-//
-// FAIL DIRECTION: OPEN. A missing or unrecognised value ARMS. Failing closed here would silently
-// stop ~217 event rows/day the moment this shipped, which is a behaviour change disguised as a
-// safety improvement — the exact trade this ticket exists to refuse. The key is declared PRESENT
-// ("true") in scripts/lambda-config-expected.json and ensured present by deploy-lambda.yml's
-// daily-plan env merge, so once that has run the absence branch is unreachable in prod and any
-// future reader gets an explicit value. Until it has run, absence is still correct AND still loud.
+// FAIL DIRECTION: OPEN. A missing or unrecognised value ARMS; failing closed would silently stop the
+// nightly event rows, a behaviour change disguised as a safety improvement. The key is declared PRESENT
+// ("true") in scripts/lambda-config-expected.json and ensured by deploy-lambda.yml's daily-plan env merge,
+// so in prod the absence branch is unreachable once that has run.
 const AUTOLOG_DEFAULT = true;
 
-// Returns { enabled, config } — `config` names WHERE the answer came from, which is the half that
-// was missing. Deliberately NOT a widened truthiness parse: '0', 'no', 'off' and '' all still ARM,
-// exactly as before, because a typo must not disarm a fail-open writer (rainLog.test.js pins that).
-// They are reported as 'default_unrecognised' rather than silently folded into the on-branch.
+// Returns { enabled, config }; `config` names WHERE the answer came from. Deliberately NOT a widened
+// truthiness parse: '0', 'no', 'off' and '' all still ARM, because a typo must not disarm a fail-open
+// writer (rainLog.test.js pins that); they report as 'default_unrecognised'.
 //
-// Read through the DOTTED static form on purpose, not through numEnv's bracket lookup: that is the
-// only form scripts/test_check_lambda_config.py's scanner can see, and a bracket read here would
-// drop this key out of the "daily-plan declares every env var it reads" guard — which is the same
-// class of invisibility this ticket is closing.
+// Read through the DOTTED static form on purpose, not numEnv's bracket lookup: only that form is visible
+// to scripts/test_check_lambda_config.py's "daily-plan declares every env var it reads" guard.
 function rainAutologState() {
   const raw = process.env.RAIN_AUTOLOG_ENABLED;
   if (raw === 'true') return { enabled: true, config: 'explicit_on' };
@@ -152,8 +111,8 @@ function rainAutologEnabled() {
 }
 
 function resolveRainRun(event, { etHour } = {}) {
-  // `flag` rides on EVERY return, not just the disabled one: "the writer ran" and "the writer ran
-  // because nobody had set the key" are different facts and only one of them is a decision.
+  // `flag` rides on EVERY return: "the writer ran" and "the writer ran because nobody set the key" are
+  // different facts and only one is a decision.
   const { enabled, config: flag } = rainAutologState();
   if (!enabled) return { log: false, slot: 'disabled', reason: 'flag_off', flag };
   if (event && event.rainLog === true) return { log: true, slot: 'forced', reason: 'event_override', flag };
@@ -170,9 +129,9 @@ function resolveRainRun(event, { etHour } = {}) {
 }
 
 // ── The decision, given one weather_daily row ────────────────────────────────────────────────────
-// Returns { log: boolean, amountIn: number|null, reason: string }. Every rejection carries a REASON
-// rather than a bare false, because "no rain was logged last night" and "the station was offline
-// last night" look identical from the outside and mean very different things.
+// Returns { log: boolean, amountIn: number|null, reason: string }. Every rejection carries a REASON,
+// because "no rain was logged last night" and "the station was offline last night" look identical from
+// outside.
 function rainDecision(row, { thresholdIn = THRESHOLD_IN } = {}) {
   if (!row) return { log: false, amountIn: null, reason: 'no_weather_row' };
   const src = row.precip_source;
@@ -182,16 +141,15 @@ function rainDecision(row, { thresholdIn = THRESHOLD_IN } = {}) {
   }
   const amt = finite(row.precip_in);
   if (amt == null) return { log: false, amountIn: null, reason: 'no_precip_value' };
-  // STRICTLY greater than. Dave's "above 0.10 inches"; an exact 0.10 day (2026-07-22 measured
-  // exactly that) is not an event.
+  // STRICTLY greater than: "above 0.10 inches"; an exact 0.10 day is not an event.
   if (!(amt > thresholdIn)) return { log: false, amountIn: amt, reason: 'below_threshold' };
   return { log: true, amountIn: amt, reason: 'above_threshold' };
 }
 
 // ── The day to log ──────────────────────────────────────────────────────────────────────────────
-// The PREVIOUS ET day. `today` is the plan date the handler is already working in ET terms, so this
-// is pure string arithmetic on YYYY-MM-DD and does no clock read of its own — which is what keeps
-// this module testable and keeps the answer stable across a run that straddles midnight.
+// The PREVIOUS ET day. `today` is the plan date the handler already works in ET terms, so this is pure
+// string arithmetic on YYYY-MM-DD with no clock read, which keeps it testable and stable across a run that
+// straddles midnight.
 function previousDay(today) {
   if (typeof today !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(today)) return null;
   const d = new Date(`${today}T12:00:00Z`);   // noon anchor: immune to DST and to off-by-one at the boundary
@@ -202,15 +160,11 @@ function previousDay(today) {
 
 // The metadata written onto every auto-logged rain row.
 //
-// It carries the SAME `rain_backfill` tag as the migration, deliberately, and this is worth stating
-// because it looks like a copy-paste error and is not: the tag's job is "this rain row was written
-// by a machine from a gauge reading, not by a person", and that is equally true of both. Anything
-// that needs to tell them apart can, without a second tag — the autologger's rows carry
-// `auto_logged: true`, and the migration's rows carry NEITHER `auto_logged` NOR `backfilled`
-// (0b-data.sql builds its metadata without either key). Do not key on `backfilled: true`: no
-// production caller passes `{ backfilled: true }`, so as of 2026-09-18 no prod row carries it —
-// verified by a read-only count grouped on both keys. Two tags for one meaning would mean every
-// future consumer has to remember both, and the one that forgets silently under-counts.
+// It carries the SAME `rain_backfill` tag as the migration, deliberately (it looks like a copy-paste
+// error and is not): the tag means "written by a machine from a gauge reading, not by a person", true of
+// both. Tell them apart without a second tag: autologger rows carry `auto_logged: true`; the migration's
+// rows carry neither `auto_logged` nor `backfilled`. Do not key on `backfilled: true`: no production
+// caller passes it. Two tags for one meaning would mean every future consumer must remember both.
 function rainMetadata(amountIn, { backfilled = false } = {}) {
   return {
     rain_backfill: BACKFILL_TAG,
