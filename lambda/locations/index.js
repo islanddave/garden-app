@@ -63,12 +63,9 @@ export const handler = async (event) => {
   const rawPath = event.rawPath ?? '/api/locations';
   const householdIds = householdScope(userId);
 
-  // Plural entity-tags debris route REMOVED 2026-07-28 (data-audit P1-code, evidence W0.6-r1:
-  // CONFIRMED-DEAD — this block was the sole consumer of the plural debris table; the frontend
-  // routes all /api/entity-tags traffic to the tags Lambda (src/lib/api.js -> VITE_API_TAGS,
-  // locked by src/__tests__/api.test.js), which uses singular entity_tag exclusively).
-  // Explicit 404 tombstone: without it the trailing unguarded GET list route would answer this
-  // path with the locations list (200), silently resurrecting a route contract.
+  // Plural entity-tags debris route REMOVED: the frontend routes all /api/entity-tags traffic to the tags
+  // Lambda (src/lib/api.js -> VITE_API_TAGS, locked by src/__tests__/api.test.js). Explicit 404 tombstone:
+  // without it the trailing unguarded GET list route would answer this path with the locations list.
   if (rawPath === '/api/entity-tags') return resp(404, { error: 'Not found' });
 
   const idMatch = rawPath !== '/api/locations/with-path'
@@ -76,21 +73,15 @@ export const handler = async (event) => {
     && rawPath.match(/^\/api\/locations\/([^/]+)$/);
 
   try {
-    // ── V4-RESTORESURFACE-001 — the recovery path for locations (audit I9) ───────────────────────
+    // ── Recovery path for locations (V4-RESTORESURFACE-001, audit I9) ──
+    // "A destructive control must not ship ahead of the recovery path it advertises" (lambda/photos is the
+    // reference). The DELETE arm below shipped with no way to see or undo it.
     //
-    // lambda/photos is the reference standard and states the governing principle: "A destructive
-    // control must not ship ahead of the recovery path it advertises." For locations the destructive
-    // control shipped long ago (the DELETE arm below) with no way to see or undo it, so this closes
-    // an existing gap rather than adding a new surface. 10 locations are soft-deleted in prod today
-    // with no affordance to bring any of them back.
-    //
-    // ORDERING IS LOAD-BEARING. `/api/locations/deleted` is a single trailing segment, so idMatch
-    // below would otherwise capture it as a location id and answer with a 404 from the by-id GET.
-    // Declared here, and excluded from idMatch, for the same reason /with-path already is — mirroring
-    // how photos declares its own /deleted above the bare-:id arm.
+    // ORDERING IS LOAD-BEARING. `/api/locations/deleted` is a single trailing segment, so idMatch below
+    // would capture it as a location id and answer 404 from the by-id GET. Declared here, and excluded from
+    // idMatch like /with-path, mirroring how photos declares its own /deleted above the bare-:id arm.
     if (rawPath === '/api/locations/deleted' && method === 'GET') {
-      // Clamped exactly like listDeletedPhotos: an unbounded limit on a recovery list is a foot-gun,
-      // and the surface is meant for recent deletions, not an archive trawl.
+      // Clamped like listDeletedPhotos: the surface is for recent deletions, not an archive trawl.
       const rawLimit = Number(event?.queryStringParameters?.limit);
       const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(Math.trunc(rawLimit), 1), 200) : 50;
       const rows = await sql`
@@ -104,16 +95,15 @@ export const handler = async (event) => {
       return resp(200, { locations: rows });
     }
 
-    // POST /api/locations/:id/restore — two segments, so idMatch cannot capture it; matched here to
-    // keep the whole recovery path in one place.
+    // POST /api/locations/:id/restore has two segments, so idMatch cannot capture it; matched here to keep
+    // the whole recovery path in one place.
     const restoreMatch = rawPath.match(/^\/api\/locations\/([^/]+)\/restore$/);
     if (restoreMatch && method === 'POST') {
       const locId = restoreMatch[1];
       if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(locId))) {
         return resp(404, { error: 'Not found' });
       }
-      // IDEMPOTENT, matching restorePhoto: restoring a live row is a 200 with already_restored rather
-      // than a 404, so a double-tap or a replayed request is not an error the user has to interpret.
+      // IDEMPOTENT, matching restorePhoto: restoring a live row is a 200 with already_restored, not a 404.
       const [existing] = await sql`
         SELECT id, deleted_at FROM locations
          WHERE id = ${locId} AND created_by = ANY(${householdIds})
@@ -132,10 +122,9 @@ export const handler = async (event) => {
         `;
         return resp(200, rows[0] ?? { id: locId, deleted_at: null, already_restored: true });
       } catch (err) {
-        // NOT inert here, unlike the photos equivalent. idx_locations_root_slug is UNIQUE over live
-        // root-level slugs, and a deleted location sits OUTSIDE it — so coming back collides if the
-        // slug was reused while it was gone. A typed 409 says something the user can act on (rename
-        // the current one, or the restored one); a 500 says the app is broken.
+        // idx_locations_root_slug is UNIQUE over live root-level slugs and a deleted location sits OUTSIDE
+        // it, so coming back collides if the slug was reused meanwhile. A typed 409 is actionable (rename
+        // one); a 500 says the app is broken.
         if (err?.code === '23505') {
           return resp(409, { error: 'A location with that slug already exists', code: 'location_slug_conflict' });
         }
@@ -188,11 +177,8 @@ export const handler = async (event) => {
                ) fb ON TRUE
           WHERE (l.slug = ${locId} OR l.id::text = ${locId}) AND l.deleted_at IS NULL AND l.created_by = ANY(${householdIds})
         `;
-        // BUG-LOCDELSLUG-001. `rows[0]` was an arbitrary pick over a predicate that is not
-        // single-valued (ref.js carries the index evidence). GET is the one verb that can apply the
-        // rule for FREE — it has already fetched every match, so the tiebreak is arithmetic on rows
-        // in hand rather than the extra round trip PUT and DELETE have to pay. Same rule, same
-        // module: an id match wins, a lone slug match resolves, several 409.
+        // BUG-LOCDELSLUG-001. GET can apply the ref.js rule for free: it already fetched every match, so the
+        // tiebreak is arithmetic on rows in hand (an id match wins, a lone slug match resolves, several 409).
         const picked = resolveLocationRow(rows, locId);
         if (picked.ambiguous) return resp(AMBIGUOUS_REF_STATUS, AMBIGUOUS_REF_BODY);
         if (!picked.row) return resp(404, { error: 'Not found' });
@@ -206,26 +192,17 @@ export const handler = async (event) => {
         const body = JSON.parse(event.body ?? '{}');
 
         // V2-PHOTO-F1: strict validation for featured_photo_id (linkage = photos.location_id).
-        // Resolve UUID first (route accepts slug OR uuid).
-        //
-        // BUG-LOCDELSLUG-001 made this resolution UNCONDITIONAL. It was already here, gated on
-        // `featured_photo_id` being present, and already took `idRows[0]` off the same
-        // not-single-valued predicate — so the PUT was paying for the round trip on its most common
-        // path and still ran the UPDATE against the raw ambiguous predicate, which writes SIX
-        // columns to EVERY match and reports rows[0] as the one that changed. Hoisting it out of
-        // the `if` costs one indexed lookup on the other paths and turns the whole verb
-        // single-target: everything below now keys on actualLocationId, never on locId.
+        // The ref is resolved UNCONDITIONALLY (BUG-LOCDELSLUG-001): the UPDATE would otherwise run against
+        // the ambiguous slug-or-uuid predicate and write SIX columns to EVERY match. Everything below keys
+        // on actualLocationId, never on locId.
         const picked = await loadLocationRef(sql, locId, householdIds);
         if (picked.ambiguous) return resp(AMBIGUOUS_REF_STATUS, AMBIGUOUS_REF_BODY);
         if (!picked.row) return resp(404, { error: 'Not found' });
         const actualLocationId = picked.row.id;
         if (Object.prototype.hasOwnProperty.call(body, 'featured_photo_id')) {
           if (body.featured_photo_id != null) {
-            // V4-AUTHZSWEEP-001: anchor on created_by, not uploaded_by. photos carries BOTH columns
-            // and every other featured-photo validator (inventory-items, projects, plants) uses
-            // created_by; this one was the odd surface out. They agree on all 977 live photo rows
-            // today, so this is consistency hardening rather than a live bug — but a divergence would
-            // have made this the one surface that accepted a photo the others rejected.
+            // Anchor on created_by, not uploaded_by (V4-AUTHZSWEEP-001): photos carries BOTH columns and
+            // every other featured-photo validator (inventory-items, projects, plants) uses created_by.
             const linkRows = await sql`
               SELECT 1 FROM photos
                WHERE id = ${body.featured_photo_id}
@@ -240,45 +217,28 @@ export const handler = async (event) => {
         }
         const hasFeatured = Object.prototype.hasOwnProperty.call(body, 'featured_photo_id');
 
-        // BUG-BLANKNAME-001 (2026-08-07). `name` is NOT NULL, so it looks protected — but the
-        // COALESCE only guards against NULL, and Locations.jsx:102 sends `editForm.name.trim()`.
-        // An emptied box therefore sends '', which is not NULL, sails past both the COALESCE and
-        // the NOT NULL constraint, and overwrites the name with an empty string.
-        //
-        // This USED to be a care regression too, not just cosmetics: daily-plan/handler.js derived
-        // `covered` partly from `l.name in ('Stable','House')`, so blanking (or renaming) either one
-        // silently reclassified 22 plantings as OUTDOOR — taking rain credit under a roof and
-        // dropping out of the frost pass's covered exclusion.
-        //
-        // V4-COVEREDNOTMODELLED-001 removed that coupling: coverage now reads the editable
-        // locations.covered flag, so neither blanking nor renaming touches the care engine any more,
-        // and the rename hazard this note flagged as "tracked separately" is closed. The guard stays
-        // regardless — a blank name is never legitimate on its own terms, it is reachable from the
-        // edit form, and varieties/validate.js:54 already refuses exactly this shape.
-        // 0 blank rows on prod.
-        //
-        // Deliberately NOT `!body.name` and NOT hasOwnProperty-alone: `name: null` and an absent
-        // key are the EXISTING no-op grammar of this COALESCE PUT, and every current caller relies
-        // on it. Rejecting those would convert a working request into a 400. The defect is
-        // specifically a present, non-null, whitespace-only string, so that is exactly what this
-        // refuses — the narrowest predicate that still closes it.
+        // BUG-BLANKNAME-001. `name` is NOT NULL but COALESCE only guards NULL, and Locations.jsx sends
+        // `editForm.name.trim()`: an emptied box sends '', which sails past both and blanks the name.
+        // The guard stays even though coverage no longer reads l.name (V4-COVEREDNOTMODELLED-001): a blank
+        // name is never legitimate, and varieties/validate.js refuses the same shape.
+        // Deliberately NOT `!body.name` and NOT hasOwnProperty-alone: `name: null` and an absent key are the
+        // EXISTING no-op grammar of this COALESCE PUT. The defect is a present, non-null, whitespace-only
+        // string, so that is exactly what this refuses.
         if (body.name != null && (typeof body.name !== 'string' || !body.name.trim())) {
           return resp(400, { error: 'name cannot be blank' });
         }
 
-        // BUG-COALESCECLEAR-001. Absent/[] is byte-identical to the prior behaviour, so this ships
-        // inert until a client opts in. Exactly one of the 5 arms is clearable — see validate.js
-        // for why the other four are not, in particular type_label, which is a care-engine input.
+        // BUG-COALESCECLEAR-001. Absent/[] is byte-identical to the prior behaviour. Exactly one of the 5 arms
+        // is clearable; validate.js says why the other four are not (type_label is a care-engine input).
         const _cerr = validateClear(body.clear, body);
         if (_cerr) return resp(400, { error: _cerr });
         const clear = Array.isArray(body.clear) ? body.clear : [];
 
-        // V5-LOCHEATEDUI-001 — heated.js carries both rules and why. The heated-implies-covered rule is
-        // judged on the row as it will be WRITTEN, which needs the row's current pair: a body carrying
-        // only covered=false breaks it on a location that is already heated. Read on every PUT, not
-        // only when a flag is sent, so a row that is already inconsistent (hand-written SQL — the
-        // standing gate reports it) answers with this plain 400 rather than the guard's zero-row 404
-        // below.
+        // heated.js carries both rules and why (V5-LOCHEATEDUI-001). Heated-implies-covered is judged on the
+        // row as it will be WRITTEN, so the row's current pair is read on every PUT: a body carrying only
+        // covered=false breaks it on an already-heated location. Reading always also means an already
+        // inconsistent row (hand-written SQL; the standing gate reports it) answers with this plain 400
+        // rather than the guard's zero-row 404 below.
         const _herr = validateHeatedType(body);
         if (_herr) return resp(400, { error: _herr });
         const [flags] = await sql`
@@ -325,36 +285,21 @@ export const handler = async (event) => {
                  OR COALESCE(${body.covered ?? null}, covered) IS TRUE)
           RETURNING *
         `;
-        // Still RETURNING-gated even though the row was just resolved: the resolve and the write are
-        // separate statements (neon runs each in its own transaction), so a concurrent DELETE in
-        // between makes this a real zero-row case rather than a redundant check.
+        // Still RETURNING-gated: resolve and write are separate statements (neon runs each in its own
+        // transaction), so a concurrent DELETE in between is a real zero-row case.
         if (!rows.length) return resp(404, { error: 'Not found' });
         return resp(200, rows[0]);
       }
 
       if (method === 'DELETE') {
-        // BUG-DELNOOPOK-001: RETURNING-gated. Was an unconditional {ok:true}, so a not-found /
-        // already-deleted / not-owned DELETE reported success; now 404, matching the GET (:220)
-        // and the PUT (:308) on this same path.
+        // BUG-DELNOOPOK-001: RETURNING-gated, so a not-found / already-deleted / not-owned DELETE is a 404
+        // like the GET and PUT, not a success. The ref accepts slug OR uuid like the other two verbs
+        // (a raw slug against the uuid column raised 22P02 and 500'd).
         //
-        // The predicate also gains the slug-or-uuid arm the other two verbs have always had. This
-        // route matcher is `/^\/api\/locations\/([^/]+)$/` and GET/PUT both resolve
-        // `(slug = ${locId} OR id::text = ${locId})`, but DELETE compared a raw text path segment
-        // against the `uuid` column. MEASURED against live Neon rather than assumed: a prepared
-        // `WHERE id = $1` bound with 'raised-bed' raises
-        // `22P02 invalid input syntax for type uuid`, which this file's catch (:415) turns into a
-        // 500 — so a DELETE by slug was never a silent no-op, it was an unhandled error. Nothing
-        // ships a slug here today (Locations.jsx:132 passes loc.id), so this is a latent trap
-        // being closed, not a live bug — but leaving one verb of three on a different key while
-        // that verb also starts returning 404 would make the asymmetry read as a real 404.
-        //
-        // BUG-LOCDELSLUG-001: that widening handed the verb a predicate that is not single-valued.
-        // `slug` carries no global unique index (ref.js has the measured index list), so a DELETE
-        // naming a duplicated child slug soft-deleted EVERY match and answered 200 {ok:true} — the
-        // `!rows.length` gate below distinguishes zero from non-zero, never one from five. Resolved
-        // to a single id FIRST, then keyed on that id, so the statement can only ever touch one row.
-        // Soft-Delete-Only makes this recoverable but not harmless: each extra row is a separate
-        // trip through POST /:id/restore that nobody knows to make, because the response said ok.
+        // BUG-LOCDELSLUG-001: that slug arm is not single-valued (ref.js has the index evidence), so a
+        // duplicated child slug soft-deleted EVERY match and answered 200 {ok:true}. Resolve to a single id
+        // FIRST, then key on it. Soft-Delete-Only makes the extra rows recoverable but not harmless: each is
+        // a separate POST /:id/restore nobody knows to make, because the response said ok.
         const picked = await loadLocationRef(sql, locId, householdIds);
         if (picked.ambiguous) return resp(AMBIGUOUS_REF_STATUS, AMBIGUOUS_REF_BODY);
         if (!picked.row) return resp(404, { error: 'Not found' });
@@ -366,8 +311,7 @@ export const handler = async (event) => {
             AND created_by = ANY(${householdIds})
           RETURNING id
         `;
-        // Kept: the resolve and the write are separate statements, so a concurrent delete between
-        // them is a genuine zero-row outcome and must still 404 rather than report ok.
+        // Kept: a concurrent delete between resolve and write is a genuine zero-row outcome and must 404.
         if (!rows.length) return resp(404, { error: 'Not found' });
         return resp(200, { ok: true });
       }
@@ -397,26 +341,21 @@ export const handler = async (event) => {
 
     if (method === 'POST') {
       const body = JSON.parse(event.body ?? '{}');
-      // BUG-LAMBDAVALIDATION-001 (I41): `!body.name` let '   ' through and 500'd on a number at the
-      // slug derivation below. Same rule as the PUT's blank guard; the POST keeps its own message.
+      // BUG-LAMBDAVALIDATION-001 (I41): `!body.name` let '   ' through and 500'd on a number at the slug
+      // derivation below. Same rule as the PUT's blank guard; the POST keeps its own message.
       if (typeof body.name !== 'string' || !body.name.trim()) return resp(400, { error: 'name is required' });
 
-      // V5-LOCHEATEDUI-001 — heated.js. A new row has only this body, so both rules are decided here
-      // with no read: heated:true without covered:true in the same request is refused.
+      // heated.js (V5-LOCHEATEDUI-001): a new row has only this body, so both rules are decided here with no
+      // read: heated:true without covered:true in the same request is refused.
       const _herr = validateHeatedType(body);
       if (_herr) return resp(400, { error: _herr });
       const _coverErr = heatedCoverError(nextFlagsForPost(body));
       if (_coverErr) return resp(400, { error: _coverErr });
 
-      // AUTHZ (BUG-AUTHZFKENUM-001): parent_id was NOT gated here, despite the household-scoped
-      // SELECT below looking like a gate. It only ever read the parent's `level`; a foreign or
-      // non-existent parent simply left `level = 0` and the INSERT then stored body.parent_id
-      // VERBATIM. That is a live cross-household READ, not merely a bad FK: `locations_with_path`
-      // is a recursive CTE view with NO created_by filter, so the attacker's own row's `full_path`
-      // comes back with the victim's ancestor names concatenated into it — and the GET above
-      // returns locations_with_path rows for every location the caller owns.
-      // Generic 400, no existence oracle. Measured on live prod: all 21 parented locations are
-      // single-owner, so this gate costs zero legitimate writes.
+      // AUTHZ (BUG-AUTHZFKENUM-001): parent_id must be a location the caller owns. The household-scoped
+      // SELECT below only reads the parent's `level`, so a foreign or absent parent would be stored VERBATIM
+      // and `locations_with_path` (a recursive view with NO created_by filter) would return the victim's
+      // ancestor names in the caller's own row's `full_path`. Generic 400, no existence oracle.
       if (body.parent_id != null) {
         if (!await loadOwnedLocation(sql, body.parent_id, householdIds)) {
           warnRejectedFk(userId, 'locations', 'parent_id', body.parent_id);
@@ -434,8 +373,8 @@ export const handler = async (event) => {
 
       const slug = body.slug?.trim() ||
         body.name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-      // I41: keyed on the COMPUTED slug, not on whether one was sent — a blank sent slug falls through
-      // to the derived one above, and a name with no A–Z letter or digit ('!!!', an emoji, '花园') derives ''.
+      // I41: keyed on the COMPUTED slug, not whether one was sent: a blank sent slug falls through to the
+      // derived one, and a name with no A-Z letter or digit ('!!!', an emoji) derives ''.
       if (slug === '') return resp(400, { error: 'name needs at least one A–Z letter or digit, or send a slug' });
 
       const rows = await sql`
@@ -468,19 +407,11 @@ export const handler = async (event) => {
   } catch (err) {
     logCaughtError('locations lambda error', err);
     if (err.code === '23505') return resp(409, { error: 'Slug already exists', code: 'location_slug_conflict' });
-    // BUG-COALESCECLEAR-001 audit finding: this catch mapped ONLY 23505. Every sibling handler
-    // (plants, projects, events) maps 23503 and 23514 too; locations was the one surface that never
-    // adopted it, so a caller-provokable constraint violation surfaced as "Internal server error"
-    // with no message. It USED to be reachable via the POST, which accepted a parent_id it could not
-    // verify ownership of and inserted it anyway, so a non-existent uuid raised 23503 here. That
-    // ownership hole is CLOSED as of BUG-AUTHZFKENUM-001 (the loadOwnedLocation gate in the POST
-    // above answers a foreign OR absent parent with a generic 400 before the INSERT), so this arm is
-    // now parity/defence-in-depth rather than the live path.
-    //
-    // Nothing on the clear allowlist can reach either code — `description` carries no CHECK and no
-    // FK, and the three CHECKs on this table (chk_lat_lng_co_null, locations_level_check,
-    // locations_zone_level_check) reference no PUT arm. Added for parity, not because the channel
-    // needs it. The two codes stay spelled out: lambda/locations/clear-fields.test.js pins them.
+    // This catch also maps 23503 and 23514 like every sibling handler (plants, projects, events) - parity
+    // and defence-in-depth (BUG-COALESCECLEAR-001 audit finding; the POST's parent_id hole that made 23503
+    // reachable is closed by BUG-AUTHZFKENUM-001). Nothing on the clear allowlist can reach either code
+    // (`description` has no CHECK or FK; the table's CHECKs reference no PUT arm). The two codes stay spelled
+    // out: lambda/locations/clear-fields.test.js pins them.
     if (err.code === '23503' || err.code === '23514') {
       const db = dbErrorReply(err, ['23503', '23514']);
       return resp(db.status, db.body);
