@@ -154,9 +154,7 @@ export const PLANTING_SORT_COLUMNS = [
 
 // Same principle as NATURAL_DIR above: picking a column gives you the direction that column is
 // actually useful in. Name reads A-Z; the two magnitude columns lead with the biggest; first pick
-// leads with the EARLIEST, because the question that column answers is "what came in first" — and
-// because ascending by date is the order the table already shipped in, so the default render does
-// not move under anyone who was used to it.
+// leads with the EARLIEST, because the question that column answers is "what came in first".
 export const PLANTING_NATURAL_DIR = { name: 'asc', count: 'desc', weight: 'desc', first_pick: 'asc' }
 export const PLANTING_DEFAULT_SORT = { key: 'name', dir: 'asc' }
 

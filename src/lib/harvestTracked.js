@@ -4,8 +4,11 @@
 // Harvest behaviour must not apply to plants that will never be harvested (a rescued violet showing
 // an "Est. harvest" countdown on its planting tab). This is NOT a new classification scheme; the
 // class-3 question (a sunflower is ornamental but MIGHT be harvested for seed) is open. It closes an
-// asymmetry in gating: lib/harvestReadiness.js and lambda/harvests/watch.js gate on harvest habit
-// (ornamentals excluded), and lib/plantingMaturity.js consults this list instead.
+// asymmetry in gating; every harvest projection must exclude ornamentals:
+//
+//   * lib/harvestReadiness.js      gates on harvest habit  -> ornamentals excluded  ✓
+//   * lambda/harvests/watch.js     gates on harvest habit  -> ornamentals excluded  ✓
+//   * lib/plantingMaturity.js      gates on THIS list      -> ornamentals excluded  ✓
 //
 // WHY A SLUG LIST AND NOT `harvest_habit IS NULL`. That inference is the obvious shortcut and it is
 // wrong: NULL-habit plantings include edible ones. NULL means "nobody has said", which is not the
