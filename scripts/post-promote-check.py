@@ -13,8 +13,8 @@ For every function scripts/lambda-config-expected.json gives a Function URL:
       so one header-less run pages. The rest get no Authorization header, keeping "no token -> 401" asserted.
       If the filter set cannot be read, every function gets the bearer and the no-header assertion is skipped;
   (b) CloudWatch Logs counts since --since, each of which must be 0:
-      denied   { $.msg = "household-membership-denied" }   the shared-state gate's JSON line; the pattern
-               household-observability.sh alarms on, so a line quoting the literal elsewhere never counts
+      denied   { $.msg = "household-membership-denied" }   every URL function's household-gate JSON line; the
+               pattern household-observability.sh alarms on, so a line quoting the literal elsewhere never counts
       errors   ERROR -"verifyToken failed"                 every console.error line (each handler's catch-all
                before its 500, the runtime's Invoke Error / Uncaught Exception on a throw or a failed load)
                except the 401 path, which every handler logs at ERROR, this tool's own probes included
