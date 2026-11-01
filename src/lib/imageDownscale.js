@@ -1,10 +1,8 @@
-// src/lib/imageDownscale.js
-// BUG-PHOTOBLANK-001 — client-side downscale before upload.
+// Client-side downscale before upload.
 //
-// WHY: nothing in the app ever constrained image size. Uploads PUT the raw camera file to S3
-// (a current phone shoots 3-12MB), and the Photos grid then re-downloads those originals —
-// 120 per page, measured at 369MB for one load. That saturates a mobile uplink on upload
-// ("Save" hangs) and never finishes decoding on display (empty placeholder boxes).
+// WHY: uploads would otherwise PUT the raw camera file to S3 (a current phone shoots 3-12MB), and the
+// Photos grid would re-download those originals. That saturates a mobile uplink on upload ("Save"
+// hangs) and never finishes decoding on display (empty placeholder boxes).
 //
 // FAIL-SAFE BY CONTRACT: this module NEVER blocks an upload. Every failure path — unsupported
 // codec (HEIC on a browser that can't decode it), missing canvas (jsdom/unit tests), a decode
@@ -20,9 +18,8 @@ export const MAX_EDGE_PX = 2048;   // long edge; ~4x a phone screen, still crisp
 export const JPEG_QUALITY = 0.85;  // visually lossless for foliage/soil texture at this scale
 export const MIN_BYTES = 512 * 1024; // below this, re-encoding costs more than it saves
 
-// BUG-PHOTOLAZY-001 / thumbs-for-new-uploads. Matches the macOS `sips -Z 800` + q80 recipe used to
-// backfill the 913 existing thumbs, so a new upload's thumb is indistinguishable from a backfilled
-// one (measured 11-23x smaller than the original: 170-257KB vs 1.9-6.2MB).
+// The thumb recipe matches the macOS `sips -Z 800` + q80 backfill of the existing thumbs, so a new
+// upload's thumb is indistinguishable from a backfilled one.
 export const THUMB_EDGE_PX = 800;
 export const THUMB_QUALITY = 0.8;
 
@@ -107,13 +104,10 @@ export async function downscaleWithThumb(file, opts = {}) {
     thumbQuality = THUMB_QUALITY,
   } = opts;
 
-  // V4-PHOTOUPLOADINSTR-001 — `outcome` names WHICH branch ran. Every early return below hands back
-  // the ORIGINAL file, and until now they were indistinguishable from each other and from a resize
-  // that simply wasn't worth doing. That is the whole reason BUG-PHOTOUPLOADSLOW-001 could be
-  // measured and not diagnosed: nine uploads of 5.8-10 MB were observed on prod, the same source
-  // file came through at 680 kB and 8,813 kB on the same day, and nothing recorded which of five
-  // fail-safe paths produced the big one. The value is telemetry only — no caller branches on it,
-  // and the fail-safe contract (never block an upload) is unchanged.
+  // `outcome` names WHICH branch ran. Every early return below hands back the ORIGINAL file, and they
+  // would otherwise be indistinguishable from each other and from a resize that simply wasn't worth
+  // doing, so a big upload could be measured but not diagnosed. The value is telemetry only — no caller
+  // branches on it, and the fail-safe contract (never block an upload) is unchanged.
   const asIs = (outcome) => ({ file, thumb: null, outcome });
   try {
     if (!file || typeof file.type !== 'string' || !file.type.startsWith('image/')) return asIs('skip:not-an-image');
