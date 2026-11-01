@@ -1062,44 +1062,28 @@ async function logRainEvents(pg, { today, dryRun, event, etHour, spaces = [] }) 
         slot: decisionRun.slot, spaces: perSpace });
     }
 
-    // ONCE per invocation, after the loop, and only when some Space wrote a row: a later run in the
-    // window inserts nothing (the per-planting term above) and leaves the cache alone, as the old
-    // database-wide cap did. The statements are Space-neutral (they recompute every cache row), so
-    // running them per Space would only repeat them.
+    // ONCE per invocation, after the loop, and only when some Space wrote a row: a later run in the window inserts nothing (the per-planting term above) and leaves the cache
+    // alone. The statements are Space-neutral (they recompute every cache row), so running them per Space would only repeat them.
     //
-    // Care cache, FORWARD ONLY (GREATEST), recomputed FROM event_log rather than from the amount
-    // above — so it stays correct even if the insert matched fewer rows than expected, and can never
-    // walk the cache backwards into V4-CARECACHEUNDO-001's territory.
+    // Care cache, FORWARD ONLY (GREATEST), recomputed FROM event_log rather than from the amount above — so it stays correct even if the insert matched fewer rows than expected,
+    // and can never walk the cache backwards (V4-CARECACHEUNDO-001's territory).
     //
-    // BOTH ARMS, and NEITHER touches next_water_at. entity_memory is keyed plant-first but also
-    // carries a project-keyed row, and they are not interchangeable. The first version of this code
-    // updated only the plant arm AND set next_water_at on it — wrong twice over, caught by the
-    // scheduled gate-invariants sweep (see migrations/v4-rainbackfill-001/0c-cachearms.sql):
-    //   * next_water_at is PROJECT-ARM-ONLY and belongs to the daily-plan engine, not to an event
-    //     writer. v4-carekey-001 pins plant-row next_water_at at zero.
-    //   * the rain rows carry project_id, so every container's latest event moves and its cache row
-    //     must move with it, or the cache sits BEHIND the log.
-    // UPSERTS, not UPDATEs. A plant or container whose FIRST event is this rain row has no cache row
-    // to update, and an UPDATE silently skips it — which is how staging failed
-    // post_every_non_deleted_planting_with_events_has_a_cache_row while prod (where every row already
-    // existed) stayed green. Shape mirrors the deployed batch writer's two upserts in
-    // lambda/events/index.js: ON CONFLICT (plant_id) WHERE plant_id IS NOT NULL, and
-    // ON CONFLICT (project_id).
+    // BOTH ARMS, and NEITHER touches next_water_at. entity_memory is keyed plant-first but also carries a project-keyed row, and they are not interchangeable
+    // (migrations/v4-rainbackfill-001/0c-cachearms.sql; caught by the scheduled gate-invariants sweep):
+    //   * next_water_at is PROJECT-ARM-ONLY and belongs to the daily-plan engine, not to an event writer. v4-carekey-001 pins plant-row next_water_at at zero.
+    //   * the rain rows carry project_id, so every container's latest event moves and its cache row must move with it, or the cache sits BEHIND the log.
+    // UPSERTS, not UPDATEs. A plant or container whose FIRST event is this rain row has no cache row to update, and an UPDATE silently skips it — which failed
+    // post_every_non_deleted_planting_with_events_has_a_cache_row on staging while prod (where every row already existed) stayed green. Shape mirrors the deployed batch writer's
+    // two upserts in lambda/events/index.js: ON CONFLICT (plant_id) WHERE plant_id IS NOT NULL, and ON CONFLICT (project_id).
     //
-    // BUG-CACHEORPHANREGRESS-001: LIVE parents only. A soft-deleted planting keeps its events (the
-    // Deleted-Planting History Rule) but not its cache row: lambda/plants/index.js deletes the row in
-    // the same statement as the soft-delete, and merge.js deletes the losers' (BUG-CACHEORPHANLEAK-001).
-    // Without the join below, this upsert put the row straight back on the next rain night. Seven such
-    // rows sat on prod from 2026-08-28 (created by v4-rainbackfill-001/0c-cachearms.sql, which had the
-    // same gap, and rewritten here every rain night since), each one an entity_memory_orphan in
-    // scripts/integrity-weekly-check.sh. The container arm gets the same filter: the container DELETE
-    // in lambda/projects/index.js leaves its cache row in place, and this upsert must not keep one alive.
-    //   * deleted_at ONLY. An ARCHIVED planting or container keeps its cache row
-    //     (v4-cachemissingrow-001's post_every_non_deleted_*_has_a_cache_row gates), so archived_at is
+    // LIVE parents only. A soft-deleted planting keeps its events (the Deleted-Planting History Rule) but not its cache row: lambda/plants/index.js deletes the row in the same
+    // statement as the soft-delete, and merge.js deletes the losers'. Without the join below, this upsert would put the row straight back on the next rain night (an
+    // entity_memory_orphan in scripts/integrity-weekly-check.sh). The container arm gets the same filter: the container DELETE in lambda/projects/index.js leaves its cache row in
+    // place, and this upsert must not keep one alive.
+    //   * deleted_at ONLY. An ARCHIVED planting or container keeps its cache row (v4-cachemissingrow-001's post_every_non_deleted_*_has_a_cache_row gates), so archived_at is
     //     deliberately absent.
-    //   * The filter sits in the WHERE, not in the join's ON: under a LEFT JOIN an ON-clause filter
-    //     only blanks the joined columns and the row is written anyway. The join key is the event's own
-    //     foreign key, so every event row finds its parent.
+    //   * The filter sits in the WHERE, not in the join's ON: under a LEFT JOIN an ON-clause filter only blanks the joined columns and the row is written anyway. The join key is
+    //     the event's own foreign key, so every event row finds its parent.
     //   * Aliases gn/ct, not p/pp, for the reason given at the rain INSERT above.
     // weatherdaily.test.js evaluates the statements run() actually sends, parent state by parent state.
     const { rowCount: cachedPlant } = await pg.query(
@@ -1115,9 +1099,8 @@ async function logRainEvents(pg, { today, dryRun, event, etHour, spaces = [] }) 
          last_watered_at = greatest(coalesce(entity_memory.last_watered_at, excluded.last_watered_at), excluded.last_watered_at),
          updated_at      = now()`);
 
-    // BUG-EMPROJGUARD-001: project_id IS NOT NULL in the subquery is load-bearing — a project-less
-    // planting would otherwise contribute a ZERO-parent row, violate entity_memory_exactly_one_parent
-    // and abort the statement.
+    // project_id IS NOT NULL in the subquery is load-bearing — a project-less planting would otherwise contribute a ZERO-parent row, violate entity_memory_exactly_one_parent and
+    // abort the statement.
     const { rowCount: cachedProject } = await pg.query(
       `insert into entity_memory (project_id, last_event_at, last_watered_at)
        select e.project_id,
@@ -1143,17 +1126,16 @@ async function logRainEvents(pg, { today, dryRun, event, etHour, spaces = [] }) 
   }
 }
 
-async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip, fetchRainForecast, fetchStation, publishAlert, etHour, event, flagOverrides = null }) {
+// `flagOverrides` is the SHADOW/PARITY seam: engine-flag overrides honored ONLY when this run is DRY (resolveInvokeOptions already refuses to emit it otherwise, and the guard
+// below re-checks so no future caller can arm a live A/B through it). An env flip arms the LIVE runs; this is the only safe replay path.
+async function run({ pg, today, dryRun = true,geocodeZip, fetchNWS, fetchPrecip, fetchRainForecast, fetchStation, publishAlert, etHour, event, flagOverrides = null }) {
   const _ovr = (dryRun === true && flagOverrides && typeof flagOverrides === 'object') ? flagOverrides : null;
   const _flag = (name, envOn) => (_ovr && typeof _ovr[name] === 'boolean' ? _ovr[name] : envOn);
   if (_ovr) console.log(JSON.stringify({ msg: 'flag-overrides (dry-run shadow)', overrides: _ovr }));
-  // DRG-NIGHTLYTIMEOUT-001 — cheap nightly progress markers (db-ready / station-fetched / space-wx)
-  // pin the stall site (Neon cold-resume vs fetch hang) in CloudWatch in one night. ms = since run() start.
+  // Cheap nightly progress markers (db-ready / station-fetched / space-wx) pin the stall site (Neon cold-resume vs fetch hang) in CloudWatch in one night. ms = since run() start.
   const t0 = Date.now();
-  // V4-COVEREDNOTMODELLED-001 phase 2 — read here rather than beside the other CARE_* flags below
-  // because this one shapes the plantings SELECT itself, which is the first statement of the run.
-  // The three fragments are derived from ONE boolean and used in one statement, so no future edit
-  // can arm the CTE without the arm that reads it (or vice versa) and emit SQL that references an
+  // Read here rather than beside the other CARE_* flags below because this one shapes the plantings SELECT itself, which is the first statement of the run. The three fragments
+  // are derived from ONE boolean and used in one statement, so no future edit can arm the CTE without the arm that reads it (or vice versa) and emit SQL that references an
   // undefined relation on the nightly run.
   const coverInheritEnabled = _flag('CARE_COVER_INHERIT_ENABLED', process.env.CARE_COVER_INHERIT_ENABLED === 'true');
   const cinhCte = coverInheritEnabled ? COVER_INHERIT_CTE : '';
@@ -1350,30 +1332,23 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
       and (pj.created_by = any(hh.members) or (p.project_id is null and p.created_by = any(hh.members)))`,
     [householdIds()]);
   console.log(JSON.stringify({ msg: 'db-ready', ms: Date.now() - t0, rows: plantings.length })); // first pool.query done — includes any Neon cold-resume stall
-  // V4-ANCHORSUPERSEDE-001. Here rather than at the end of the run: it is one indexed statement, it
-  // depends on nothing the run computes, and running it early means a fetch hang later in the night
+  // Here rather than at the end of the run: it is one indexed statement, it depends on nothing the run computes, and running it early means a fetch hang later in the night
   // cannot cost the invariant a day. Never throws (see sweepSupersededAnchors).
   if (!dryRun) await sweepSupersededAnchors(pg);
-  // V4-ANCHORRESWEEP-001, immediately after and never before: sweepSupersededAnchors retires the
-  // derivations a real date has contradicted, so by this line every remaining live derivation belongs
-  // to a planting that is still anchorless — which is the population the re-derivation is defined
-  // over. The dependency is an ordering nicety rather than a correctness one (the re-derive's own
-  // target CTE re-tests all three observed columns, so it stays correct even on a run where the
-  // sweep above threw), and it is here for the same reason that one is: it depends on nothing the
-  // run computes, so a fetch hang later in the night cannot cost it a day. Never throws.
+  // Immediately after and never before: sweepSupersededAnchors retires the derivations a real date has contradicted, so by this line every remaining live derivation belongs to a
+  // planting that is still anchorless — the population the re-derivation is defined over. The ordering is a nicety, not a correctness need (the re-derive's own target CTE re-tests
+  // all three observed columns), and it sits here for the same reason as the sweep above. Never throws.
   if (!dryRun) await sweepRederiveAnchors(pg);
-  // Guard: remap System-account assignees -> null so ownerFallback applies (stray-pick guard).
-  // Real System/bot account = user_3D7u…; the prior default here (user_3E2x…) is actually Jen in the live
-  // Clerk instance and wrongly nulled her assignments. Env override supports a comma-separated list. (DRG-ASSIGN-FIX)
+  // Guard: remap System-account assignees -> null so ownerFallback applies (stray-pick guard). The real System/bot account is user_3D7u…; a prior default (user_3E2x…) is actually
+  // Jen in the live Clerk instance and wrongly nulled her assignments. Env override supports a comma-separated list.
   const SYSTEM_SUBS = new Set(
     (process.env.SYSTEM_CLERK_SUB || 'user_3D7uvqWjyxdq3jgVwTZs0mKT7Xd')
       .split(',').map((s) => s.trim()).filter(Boolean));
   for (const p of plantings) { if (SYSTEM_SUBS.has(p.assignee_user_id)) p.assignee_user_id = null; }
   const { rows: spaces } = await pg.query(`select id, postal_code, weather_lat, weather_lng, created_by from spaces`);
-  // BUG-AUTHZLAMBDA-001 — each Space's household (householdScope.js), the same one the plantings SELECT
-  // computed in SQL. It decides three things below: which assignee a planting may keep, who gets the
-  // Space's unassigned plantings (its owner, spaces.created_by; there is no global fallback sub, so an
-  // unowned Space's go to __UNASSIGNED__), and which plantings the rain logger may write.
+  // Each Space's household (householdScope.js), the same one the plantings SELECT computed in SQL. It decides three things below: which assignee a planting may keep, who gets the
+  // Space's unassigned plantings (its owner, spaces.created_by; there is no global fallback sub, so an unowned Space's go to __UNASSIGNED__), and which plantings the rain logger
+  // may write.
   const scopeBySpace = {};
   for (const s of spaces) scopeBySpace[s.id] = spaceScope(s.created_by);
   for (const p of plantings) scopeBySpace[p.workspace_id] ||= spaceScope(null);   // names no Space: owns nothing
