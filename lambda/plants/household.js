@@ -103,10 +103,8 @@ export async function loadOwnedSpace(sql, spaceId, householdIds) {
 // column (photos ALSO carries a stale `uploaded_by`, which is NOT the owner column and must never be
 // used here; see the locations featured-photo assertion in authz-write-fk.test.js).
 //
-// Lifted verbatim from the module-private loadOwnedPhoto in lambda/preservation/index.js. preservation
-// keeps its own copy for now: it is byte-equivalent to this and asserted as such by the preservation arm
-// of authz-write-fk.test.js. Deleting it in favour of this import belongs to the consolidating sweep that
-// also collapses authz-parents.js.
+// Shared with lambda/preservation, which imports it; authz-write-fk.test.js ("preservation gets
+// loadOwnedPhoto from the shared household.js export") keeps a private copy from coming back there.
 export async function loadOwnedPhoto(sql, photoId, householdIds) {
   if (!UUID_RE.test(String(photoId))) return null;
   const rows = await sql`

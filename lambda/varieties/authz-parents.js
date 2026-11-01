@@ -38,7 +38,7 @@
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Verify a container/project id (plants.project_id, photos.project_id, event_log.project_id).
-// Byte-for-byte the predicate shipped as lambda/tags/index.js entityExists('project').
+// The same ownership predicate as lambda/tags/index.js entityExists('project').
 // Soft-deleted containers are rejected: attaching a NEW row to a deleted container is not a
 // legitimate flow, and photos and findings reject them too.
 export async function loadOwnedProject(sql, projectId, householdIds) {
@@ -101,16 +101,15 @@ export async function resolveContainerForCultivar(sql, cultivarId, householdIds)
 }
 
 // Verify a planting id (photos.plant_id, plants.parent_plant_id, plants.succession_group_id).
-// Byte-for-byte the predicate shipped as lambda/tags/index.js entityExists('plant') and as the
-// canonical by-id ownership predicate in lambda/plants/index.js (BUG-PLANTLESSWRITE-001).
+// The same predicate as lambda/tags/index.js entityExists('plant') and the by-id ownership predicate in
+// lambda/plants/index.js, written over the base tables (those two read the garden_node/container views).
 //
 // THE `project_id IS NULL` CONJUNCT IS LOAD-BEARING, NOT DECORATION. Without it, the own-created_by
 // arm reaches a planting the caller created INSIDE another household's container. Do not "simplify"
 // it away — see the long comment on the PUT predicate in lambda/plants/index.js.
 //
-// DELIBERATE DIVERGENCE from household.js loadOwnedPlanting(), which is the same query MINUS that
-// conjunct and is therefore strictly looser. This is the canonical form; the looser one should be
-// reconciled to it in the consolidating sweep (lambda/preservation is its remaining consumer).
+// household.js's looser loadOwnedPlanting (this query minus that conjunct) was deleted;
+// authz-write-fk.test.js ("the duplicate stays deleted") keeps it from coming back.
 // `project_id` is returned (BUG-EVENTPROJPLANTPAIR-001) because the planting owns the project on every
 // row that has one: event_log's writers derive their project_id from it rather than from the request
 // body, without a second round trip. Callers that only need the ownership verdict ignore it.
