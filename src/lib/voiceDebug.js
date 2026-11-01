@@ -1,21 +1,19 @@
-// src/lib/voiceDebug.js — BUG-VOICEDUPE-002 raw-event recorder.
+// src/lib/voiceDebug.js: BUG-VOICEDUPE-002 raw-event recorder.
 //
-// WHY THIS EXISTS. BUG-VOICEDUPE-001 shipped a fix that was code-level-verified only, never
-// microphone-tested, and it failed Dave's device test on 2026-08-13. There is no microphone in CI
-// and no way to synthesize Chrome-on-Android's real event cadence, so the ONLY way to stop guessing
-// is to record what the browser actually dispatches on Dave's device and read it back.
+// WHY THIS EXISTS. There is no microphone in CI and no way to synthesize Chrome-on-Android's real event
+// cadence, so the only way to stop guessing about duplicated words is to record what the browser actually
+// dispatches on a real device and read it back.
 //
-// This module captures the RAW SpeechRecognitionEvent sequence — per event: resultIndex,
-// results.length, and every result's index / isFinal / transcript — plus the start/end/error marks
-// around it. Read it at /admin/voice-debug.
+// This module captures the RAW SpeechRecognitionEvent sequence (per event: resultIndex, results.length,
+// and every result's index / isFinal / transcript) plus the start/end/error marks around it. Read it at
+// /admin/voice-debug.
 //
-// INERT WHEN OFF is a hard requirement, not a nicety. Every entry point returns on the flag check
-// BEFORE touching the event object, so a disabled recorder never reads `event.results` (the live
-// SpeechRecognitionResultList), never allocates a snapshot, and never touches the log. Pinned by
-// src/__tests__/voiceDebug.test.js with an event whose `results` getter throws.
+// INERT WHEN OFF is a hard requirement. Every entry point returns on the flag check BEFORE touching the
+// event object, so a disabled recorder never reads `event.results` (the live SpeechRecognitionResultList),
+// never allocates a snapshot, and never touches the log. Pinned by src/__tests__/voiceDebug.test.js with
+// an event whose `results` getter throws.
 //
-// Storage is per-browser localStorage (Dave's phone), capped, and holds only his own speech — it is
-// never uploaded and no other user's data can appear in it.
+// Storage is per-browser localStorage, capped, holds only that user's own speech, and is never uploaded.
 
 export const VOICE_DEBUG_FLAG_KEY = 'garden.voicedebug.v1'
 export const VOICE_DEBUG_LOG_KEY  = 'garden.voicedebug.log.v1'
@@ -118,9 +116,9 @@ export function recordVoiceMark(source, kind, detail) {
 }
 
 /**
- * Render the log as the plain text Dave copies out of /admin/voice-debug and pastes back.
- * One line per event; times are ms offsets from the first entry so a cadence is readable at a
- * glance (the duplication is cadence-dependent, so the gaps are evidence).
+ * Render the log as the plain text copied out of /admin/voice-debug. One line per event; times are ms
+ * offsets from the first entry so a cadence is readable at a glance (the duplication is cadence-dependent,
+ * so the gaps are evidence).
  */
 export function formatVoiceDebugLog(log) {
   const entries = Array.isArray(log) ? log : readVoiceDebugLog()
