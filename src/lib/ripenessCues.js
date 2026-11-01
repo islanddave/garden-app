@@ -1,40 +1,30 @@
-// V4-RIPECUE-001 — researched harvest ripeness cues, resolved for a planting's variety_ref.
+// Researched harvest ripeness cues, resolved for a planting's variety_ref. It answers "is full yellow
+// ripe on a Pick-N-Pop, does it go on to orange, should I leave it green?" instead of predicting a date.
 //
-// WHY THIS EXISTS. The 2026-08-04 harvest-window crucible
-// (`harvest-window-crucible-V100-20260804.md`) killed the maturity-window section on measurement —
-// window calibration was 11.8%, 30 of 34 tested plantings were picked BEFORE their window opened,
-// median 22 days early — and named ripeness cues on CropCard as the substitute with the highest
-// reach: 100% of plantings versus 6% for cues gated behind that section (§7.6, decision D3). This
-// module is that substitute. It answers the question Dave actually asked — "is full yellow ripe on
-// a Pick-N-Pop, does it go on to orange, should I leave it green?" — instead of predicting a date.
-//
-// WHY IT IS A CODE MODULE AND NOT A COLUMN. The crucible's Slice 1 sketched
-// `crop_types.ripeness_cue` + a `cultivar.ripeness_cue` override, reusing the LEFT JOIN already at
-// `lambda/plants/index.js:189`. That remains the right END state and this file is shaped to lift
-// into it unchanged (see EXPORT SHAPE below). It is deliberately NOT how the first slice ships:
+// WHY IT IS A CODE MODULE AND NOT A COLUMN. A `crop_types.ripeness_cue` column plus a cultivar
+// override is the right END state and this file is shaped to lift into it unchanged (see EXPORT SHAPE
+// below). It ships as code because:
 //   - A new column is fresh DDL, and `integration-test.yml` branches off staging WITHOUT applying
 //     migrations, so the migration must land on staging BEFORE the dev push or CI fails against a
-//     schema that has no such column (crucible §7.5). That is a cross-lane sequencing dependency.
-//   - Cue text is static reference content, not user data. It has no per-user state, never changes
-//     as a result of anything the app does, and wants to be reviewed in a diff. The repo already
-//     treats harvest reference content this way in `harvest-attributes-v1.json`.
-//   - Reverting is deleting one import rather than reversing DDL over authored prose that `0r`
-//     cannot recover.
+//     schema that has no such column. That is a cross-lane sequencing dependency.
+//   - Cue text is static reference content, not user data. It has no per-user state, never changes as a
+//     result of anything the app does, and wants to be reviewed in a diff. The repo already treats
+//     harvest reference content this way in `harvest-attributes-v1.json`.
+//   - Reverting is deleting one import rather than reversing DDL over authored prose.
 //
-// SOURCING RULE — the reason half this file is blank. Every cue below was read off the cited page.
-// A crop with no citable source gets NO ENTRY and renders NOTHING. That is the designed outcome,
-// not an omission: the crucible's own guidance is that a confidently wrong cue at cultivar grain is
-// worse than no cue, "because Dave will trust it against his own eyes" (§9 Slice 1). Do not fill a
-// gap here from general knowledge, and do not let an agent generate entries unsourced (D4).
+// SOURCING RULE. Every cue below was read off the cited page. A crop with no citable source gets NO
+// ENTRY and renders NOTHING. That is the designed outcome, not an omission: a confidently wrong cue at
+// cultivar grain is worse than no cue, because the grower will trust it against their own eyes. Do not
+// fill a gap here from general knowledge, and do not let an agent generate entries unsourced.
 //
-// TWO GRAINS, and the split is load-bearing (crucible §7.4 D4):
+// TWO GRAINS, and the split is load-bearing:
 //   by_crop_type -> the MECHANIC. Crop-level, stable, colour-AGNOSTIC. "Full size, firm, snaps off."
 //   by_cultivar  -> the TARGET STATE. Cultivar-level and sparse. "Full canary yellow; never reddens."
-// Crop-level colour claims are actively wrong for this garden and are banned from by_crop_type:
-// 16 of 41 live tomato cultivars do not ripen red (Cherokee Green ripens green; Black Krim keeps
-// green shoulders), and among peppers Shishito and Cubanelle are picked green on purpose while
-// Sweet Chocolate ripens brown and Chinese 5-Color passes through five colours. "Wait for red"
-// tells Dave to leave a ripe Cherokee Green on the vine until it rots.
+// Crop-level colour claims are actively wrong for this garden and are banned from by_crop_type: many
+// tomato cultivars do not ripen red (Cherokee Green ripens green; Black Krim keeps green shoulders),
+// and among peppers Shishito and Cubanelle are picked green on purpose while Sweet Chocolate ripens
+// brown and Chinese 5-Color passes through five colours. "Wait for red" tells the grower to leave a
+// ripe Cherokee Green on the vine until it rots.
 //
 // EXPORT SHAPE — mirrors the eventual DB rows so the lift is mechanical:
 //   { cue, source, source_url, confidence, asserted_on, caveat? }
@@ -43,14 +33,14 @@
 //   'medium' — the page states the substance, but the cue condenses/paraphrases it, or the source
 //              is weaker than an extension factsheet, or authorities conflict elsewhere on the crop.
 //   'low'    — the cue is DERIVED from the source rather than stated by it. A 'low' entry MUST
-//              carry a `caveat`, which renders on screen. A test enforces that, because the whole
-//              point is that the reader can see the difference between "the extension service says
-//              this" and "we worked this out". Silently ranking a derivation alongside a quotation
-//              is exactly the flattening this field exists to prevent.
+//              carry a `caveat`, which renders on screen; ripenessCues.test.js enforces that. The
+//              reader must be able to see the difference between "the extension service says this"
+//              and "we worked this out", and ranking a derivation alongside a quotation silently is
+//              the flattening this field exists to prevent.
 // `caveat` is optional at any tier and renders verbatim under the cue when present.
 
 const DAY = '2026-08-04'
-// The Patrick's order #7879 pass: every cue in it was re-read off its cited page on this date.
+// asserted_on for the second pepper pass: every cue in it was re-read off its cited page on this date.
 const DAY_0924 = '2026-09-24'
 
 // ── MECHANIC, crop-level, colour-agnostic ───────────────────────────────────────────────────────
@@ -71,14 +61,12 @@ export const CUES_BY_CROP_TYPE = {
   },
 
   // ── SQUASH IS TWO CROPS HERE, and the source agrees ──────────────────────────────────────────
-  // The research came back as ONE `squash` row whose cue read both ways ("summer squash should
-  // pierce easily, winter squash is ready when it resists"). This database splits them: `squash` is
-  // display_name 'Summer Squash' (harvest_habit 'repeat') and `winter_squash` is 'Winter Squash'
-  // ('single') — two rows, opposite harvest logic. Shipping the dual-reading cue under `squash`
-  // would put half a sentence about a different crop on every zucchini. Verified at the source
-  // before splitting: the UGA table carries them as two distinct entries, "Rind can be penetrated
-  // with thumbnail" (summer) and "Rind difficult to penetrate with thumbnail" (winter). So this is
-  // the source's own split restored, not a rewrite. Live today: 2 summer squash, 0 winter squash.
+  // One `squash` row whose cue read both ways ("summer squash should pierce easily, winter squash is
+  // ready when it resists") would put half a sentence about a different crop on every zucchini. This
+  // database splits them: `squash` is display_name 'Summer Squash' (harvest_habit 'repeat') and
+  // `winter_squash` is 'Winter Squash' ('single'), two rows with opposite harvest logic. The UGA table
+  // carries them as two distinct entries too: "Rind can be penetrated with thumbnail" (summer) and
+  // "Rind difficult to penetrate with thumbnail" (winter).
   squash: {
     cue: 'Press a thumbnail into the rind — it should pierce easily. A rind that resists has gone over and turned tough.',
     source: 'UGA Extension — When to Harvest Vegetables',
@@ -95,8 +83,7 @@ export const CUES_BY_CROP_TYPE = {
   },
 
   // ── WINEBERRY — the weakest entry in the file, and deliberately marked as such ────────────────
-  // This is the plant behind the harvest-band bug the crucible diagnosed (a `dormant` bramble
-  // ranked #1 at a 10.5x overdue ratio), so it matters that the cue not overstate itself.
+  // The cue must not overstate itself.
   // NEITHER source gives a harvest instruction. Both are botanical descriptions:
   //   NC State: "the fruit is enclosed in its calyx until just before it is ripe"
   //   UMD:      "like garden raspberries, the fruit has a hollow core when picked"
@@ -232,11 +219,6 @@ export const CUES_BY_CROP_TYPE = {
     confidence: 'high',
     asserted_on: DAY,
   },
-  // ── 20260804: three live harvestable crops that had NO mechanic at all ───────────────────────
-  // Found by counting coverage against Neon rather than against the last count written down: 212 of
-  // 217 live harvestable plantings had a cue, and the uncovered five were not all avocado. cilantro
-  // (2 plantings), spinach (1) and luffa (1) were simply missing, and all three source cleanly from
-  // extension services — they were a gap in the audit, not a gap in the literature.
   cilantro: {
     cue: 'Once plants are ~6 in. tall, cut leaves or take the whole plant an inch above ground; harvest before a flower stalk shoots up — bolted leaves taste off.',
     source: 'Wisconsin Horticulture (UW–Madison Extension)',
@@ -245,9 +227,9 @@ export const CUES_BY_CROP_TYPE = {
     asserted_on: DAY,
   },
   // Two-source composite: the leaf-size mechanic is Clemson, the bolting mechanic is UMN, and no
-  // single page states both — hence medium rather than high, though each half is near-verbatim.
-  // The bolting half is the actionable one: it says harvest the WHOLE planting off one plant's
-  // seed stalk, which is a different action from picking leaves as they size up.
+  // single page states both, hence medium rather than high (each half is near-verbatim). The bolting
+  // half is the actionable one: harvest the WHOLE planting off one plant's seed stalk, a different
+  // action from picking leaves as they size up.
   spinach: {
     cue: 'Pick outer leaves once they’re 3–6 in. long, letting inner ones size up; when one plant sends up a seed stalk, harvest them all — the rest follow fast.',
     source: 'Clemson HGIC / UMN Extension',
@@ -255,12 +237,12 @@ export const CUES_BY_CROP_TYPE = {
     confidence: 'medium',
     asserted_on: DAY,
   },
-  // The live planting is named 'Loofah Sponge', so this cue targets the SPONGE goal. Luffa has two
-  // genuinely exclusive harvest goals on a given fruit — eaten under 7 in. as a squash, or left the
-  // whole season to dry — and they must never be merged into one sentence, because following half
-  // of each instruction wastes the fruit either way. The source's "after first frost" is a seasonal
-  // marker, not a gate; the operative signals are weight, dryness and the rattle, which is what the
-  // cue leads with. 'Tan' dropped in keeping with the colour-agnostic rule for crop-level cues.
+  // Targets the SPONGE goal ('Loofah Sponge'). Luffa has two genuinely exclusive harvest goals on a
+  // given fruit — eaten under 7 in. as a squash, or left the whole season to dry — and they must never
+  // be merged into one sentence, because following half of each instruction wastes the fruit either
+  // way. The source's "after first frost" is a seasonal marker, not a gate; the operative signals are
+  // weight, dryness and the rattle, which is what the cue leads with. Colour is omitted, in keeping
+  // with the colour-agnostic rule for crop-level cues.
   luffa: {
     cue: 'For a sponge, leave it on the vine until the gourd feels light and dry in the hand and the seeds rattle when shaken — usually after first frost.',
     source: 'NC State Extension Gardener Plant Toolbox',
@@ -478,7 +460,7 @@ export const CUES_BY_CROP_TYPE = {
     confidence: 'medium',
     asserted_on: DAY,
   },
-  // ── AVOCADO — the gap this pass was opened to close ──────────────────────────────────────────
+  // ── AVOCADO ──────────────────────────────────────────────────────────────────────────────────
   // The awkward crop: an avocado does not soften on the tree, so "is it soft yet?" is unanswerable
   // in the field and every softness-based instinct is wrong. The only on-tree test UC ANR gives is
   // destructive — cut one open and read the SEED COAT — which is why the cue leads with the fact
@@ -497,20 +479,18 @@ export const CUES_BY_CROP_TYPE = {
 }
 
 // ── TARGET STATE, cultivar-level, sparse ────────────────────────────────────────────────────────
-// Populated only where the ripe appearance is NON-OBVIOUS and getting it wrong changes what Dave
-// does. An ordinary red slicer gets no entry — the crop mechanic above already covers it.
+// Populated only where the ripe appearance is NON-OBVIOUS and getting it wrong changes what the
+// grower does. An ordinary red slicer gets no entry — the crop mechanic above already covers it.
 export const CUES_BY_CULTIVAR = {
-  // Dave's own question, and the reason this slice exists: "for a Pick-N-Pop yellow pepper — is
-  // full yellow ripe? does it go on to orange? should it be left green?"
-  // SOURCED: the All-America Selections registry entry for this exact cultivar (2025 AAS Winner)
-  // states "Fruit Color (Harvest): Yellow" and describes "bright, canary yellow-colored" fruit.
-  // That settles half the question — yellow IS the harvest stage, so it is not unripe and should
-  // NOT be left green.
-  // DELIBERATELY NOT ASSERTED: that it will never advance to orange or red. No page consulted says
-  // so. The crucible reasoned it from Capsicum pigment genetics and flagged the cultivar-level
-  // confirmation as missing (§7.4), and a sibling listing rates "Orange and Red" as separate
-  // varieties in the same Pick-N-Pop series — suggestive, not a statement. So the cue says what the
-  // source says and stops. Answering "does it go orange?" with a confident guess is the exact
+  // The motivating case: "for a Pick-N-Pop yellow pepper — is full yellow ripe? does it go on to
+  // orange? should it be left green?"
+  // SOURCED: the All-America Selections registry entry for this exact cultivar states "Fruit Color
+  // (Harvest): Yellow" and describes "bright, canary yellow-colored" fruit. That settles half the
+  // question: yellow IS the harvest stage, so it is not unripe and should NOT be left green.
+  // DELIBERATELY NOT ASSERTED: that it will never advance to orange or red. No page consulted says so.
+  // Capsicum pigment genetics suggest it, and a sibling listing rates "Orange and Red" as separate
+  // varieties in the same Pick-N-Pop series, but that is suggestive, not a statement. The cue says
+  // what the source says and stops: answering "does it go orange?" with a confident guess is the exact
   // failure this file is built to prevent.
   picknpopyellow: {
     cue: 'Pick at bright canary yellow — that is this variety’s stated harvest colour, so yellow means ripe, not unripe.',
@@ -565,7 +545,7 @@ export const CUES_BY_CULTIVAR = {
     asserted_on: DAY,
   },
 
-  // ── 20260804 PEPPER PASS ──────────────────────────────────────────────────────────────────────
+  // ── PEPPER PASS ───────────────────────────────────────────────────────────────────────────────
   // Ordered by how badly the crop mechanic alone would mislead. Two shapes dominate, and both are
   // the shape this file exists for: pods picked deliberately IMMATURE (the whole New Mexican /
   // poblano / shishito family), and pods whose ripe colour is NOT red so that "wait for red" would
@@ -735,11 +715,11 @@ export const CUES_BY_CULTIVAR = {
   },
 
   // ── DERIVED FROM DAY-COUNTS, and marked accordingly ──────────────────────────────────────────
-  // Live record is 'Katana F1 (Shishito)', and this entry is keyed on the parenthetical-stripped
-  // form. It is NOT covered by the `shishito` entry above: that key is 'shishito' and resolves from
-  // neither 'katanaf1shishito' nor 'katanaf1', so this cultivar was silently getting no target cue
-  // despite a sourced shishito entry already sitting in the file. Sourced to its own listing rather
-  // than borrowed from the open-pollinated Shishito, which is a different cultivar.
+  // Live record is 'Katana F1 (Shishito)', and this entry is keyed on the parenthetical-stripped form.
+  // It is NOT covered by the `shishito` entry above: that key is 'shishito' and resolves from neither
+  // 'katanaf1shishito' nor 'katanaf1', so without its own entry this cultivar gets no target cue.
+  // Sourced to its own listing rather than borrowed from the open-pollinated Shishito, which is a
+  // different cultivar.
   katanaf1: {
     cue: 'A shishito type: pick pale green at around 60 days. Left on the plant it reddens by about 75.',
     source: 'High Mowing Organic Seeds',
@@ -776,23 +756,20 @@ export const CUES_BY_CULTIVAR = {
   // the record next to it. The crop mechanic ("full size, firm and glossy, you never have to wait
   // for red") is correct for every strain and is what these three should render. Pin the strain on
   // the variety row and these become high-confidence entries immediately.
-  // 20260924: Devil's Tongue's strain arrived as two NEW rows, not as a pin on the old one —
-  // 'Devil's Tongue White' and 'Devil's Tongue Peach', from Patrick's Pepper Patch order #7879.
-  // They carry entries in the pass below. The strain-less "Devil's Tongue" row is untouched, still
-  // names no strain, and so still gets nothing; a test pins that its key stays absent.
+  // Devil's Tongue White and Devil's Tongue Peach have their own entries in the pass below. The
+  // strain-less "Devil's Tongue" row still names no strain and so still gets nothing;
+  // ripenessCues.test.js pins that its key stays absent.
 
-  // ── 20260924 PEPPER PASS: Patrick's Pepper Patch order #7879 ─────────────────────────────────
-  // Twenty cultivars from that order were loaded and researched on 2026-09-24 (gardening-docs
-  // `seeds/_intake_patricks_20260924/deep_research/R1-R5.json`, each variety's pod.ripe_colour with
-  // its sources). This pass takes the ones whose ripe colour is not red, plus one red one whose
-  // name points at the unripe stage. Each cue was re-read off the cited page, not copied from the
-  // research notes, and the quotes are in the comment above each entry.
-  // SEED-ONLY WHEN WRITTEN. None of these had a planting, and CropCard on PlantingDetail is the only
-  // renderer, so they show nothing until one is planted. That is the footing the "pin the strain"
-  // promise above already assumed: an entry keys on the variety row, not on a planting.
-  // ALSO ABSENT, from the same order: Boia Quatrefoil Mustard. No page states its ripe colour in
-  // words. "Mustard" is only in the name, and the breeder's page (Drax Diego, via Wayback) and
-  // Patrick's both describe the cross, not the colour. A shade read off a photo is not a source.
+  // ── PEPPER PASS: Patrick's Pepper Patch order ────────────────────────────────────────────────
+  // Researched in gardening-docs `seeds/_intake_patricks_20260924/deep_research/R1-R5.json` (each
+  // variety's pod.ripe_colour with its sources). This pass takes the cultivars whose ripe colour is
+  // not red, plus one red one whose name points at the unripe stage. Each cue was re-read off the
+  // cited page, not copied from the research notes, and the quotes are in the comment above each entry.
+  // Entries key on the variety row, not on a planting; CropCard on PlantingDetail is the only
+  // renderer, so they show nothing until one is planted.
+  // ALSO ABSENT: Boia Quatrefoil Mustard. No page states its ripe colour in words ("Mustard" is only
+  // in the name; the breeder's page and the vendor's both describe the cross, not the colour). A shade
+  // read off a photo is not a source.
 
   // Pepper Joe's: "ripening from light lime green to a purple color, before finally changing to
   // white at its final stage. However, the chili does have a slight yellow tint when at full
@@ -878,9 +855,8 @@ export const CUES_BY_CULTIVAR = {
   },
 
   // ── TOMATOES that never turn red, or whose "unripe" look is actually ripe ────────────────────
-  // The highest-value entries in the file: each one corrects an intuition rather than confirming
-  // it, which is what Dave asked for with the Pick-N-Pop example. "Wait for red" on any of these
-  // means leaving ripe fruit on the vine until it rots.
+  // The highest-value entries in the file: each one corrects an intuition rather than confirming it.
+  // "Wait for red" on any of these means leaving ripe fruit on the vine until it rots.
   cherokeegreen: {
     cue: 'Ripens GREEN with an amber blush at the blossom end — it never turns red, and that blush is the tell.',
     source: 'Pinetree Garden Seeds',
@@ -924,10 +900,10 @@ export const CUES_BY_CULTIVAR = {
     asserted_on: DAY,
   },
 
-  // ── 20260804 TOMATO PASS ─────────────────────────────────────────────────────────────────────
+  // ── TOMATO PASS ──────────────────────────────────────────────────────────────────────────────
   // Same ordering principle as the peppers: how badly does "wait for red" mislead here. The
-  // green-shouldered types come first because a green shoulder reads as "not ready" to almost
-  // anyone, and they are the cues most likely to change what Dave actually picks.
+  // green-shouldered types come first because a green shoulder reads as "not ready" to almost anyone,
+  // and they are the cues most likely to change what actually gets picked.
   ukrainianpurple: {
     cue: 'Ripe is purple bordering on chocolate-brown, often with a little green left in the shoulders. That green is normal.',
     source: 'Thresh Seed Co.',
