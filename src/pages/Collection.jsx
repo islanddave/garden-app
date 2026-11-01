@@ -19,14 +19,13 @@ import { sortCritters, CRITTER_SORT_MODES, CRITTER_SORT_LABELS } from '../lib/cr
 //   • seen + bloom witnessed   → FULL presence (vivid themed bg, crisp colour art, name, "Seen" date).
 // One-time bloom (newly-seen critter the user hasn't visually witnessed yet):
 //   first time the card is scrolled FULLY into view (IntersectionObserver ≥0.9) OR tapped, it BLOOMS
-//   from quiet → full with a float-in + wing-flutter settle, then is full-static forever. Witnessed set
-//   persists in localStorage (per-device; server migration tracked as V4-BLOOM-001). prefers-reduced-motion
-//   snaps straight to full (no motion), still marks witnessed. Reward-UX: ambient, in-context, no interrupt.
+//   from quiet → full with a float-in + wing-flutter settle, then is full-static forever. The witnessed
+//   set persists in localStorage and is merged with the server set (see bloomSeenRef). prefers-reduced-motion
+//   snaps straight to full (no motion), still marks witnessed. Ambient, in-context, no interrupt.
 //
 // view_scale (tools/compute_view_scale.py) normalizes art weight; theme (tools/assign_critter_themes.py)
 // is the frozen per-critter candy-pastel tone read from the roster.
 
-// ─── 12-tone curated candy pastel palette (spec §3.1) ────────────────────────────
 const THEMES = {
   peach:      { bg: '#fbe6d6', strip: '#b9551f', name: '#5a2a16' },
   apricot:    { bg: '#fbe0c8', strip: '#b05420', name: '#5a2e15' },
@@ -55,7 +54,6 @@ function getTheme(c) {
   return THEMES[THEME_KEYS[hashKey(seed) % THEME_KEYS.length]] || THEMES.oat
 }
 
-// ─── Soft-veil colour derivation (mix a tone toward cream to quiet it) ────────────
 const CREAM = '#f4efe4'
 function hx(c) { return [1, 3, 5].map(i => parseInt(c.slice(i, i + 2), 16)) }
 function mix(a, b, t) {
@@ -66,7 +64,7 @@ function veilOf(theme) {
   return { bg: mix(theme.bg, CREAM, 0.5), strip: mix(theme.strip, CREAM, 0.34) }
 }
 
-// ─── Bloom "witnessed" persistence (localStorage; V4-BLOOM-001 = server migration) ─
+// Bloom "witnessed" persistence: localStorage is the instant cache; the server set is unioned in on mount
 const BLOOM_KEY = 'critter_bloom_seen_v1'
 function loadBloomSeen() {
   try { return new Set(JSON.parse(window.localStorage.getItem(BLOOM_KEY) || '[]')) }
@@ -78,7 +76,6 @@ function persistBloomSeen(set) {
 const REDUCE_MOTION = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
   && window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
-// ─── Group config ─────────────────────────────────────────────────────────────────
 const GROUP_ORDER  = ['wild', 'legacy', 'cryptid']
 const GROUP_LABEL  = { wild: 'Around the garden', legacy: 'Legacy', cryptid: 'Curiosities' }
 const GROUP_PREFIX = { wild: 'W', legacy: 'L', cryptid: 'C' }
@@ -86,17 +83,15 @@ const GROUP_PREFIX = { wild: 'W', legacy: 'L', cryptid: 'C' }
 const GOLD_FADE  = 'rgba(180, 130, 50, 0.40)'
 const LABEL_GOLD = '#ffcf7a'
 
-// ─── Card geometry ───────────────────────────────────────────────────────────────
 const TILE_H      = 212
 const STAGE_PCT   = '86%'
-const STAGE_MAX   = 100   // BUG-CROP-001 / no-ellipsis: cap art so 8+STAGE_MAX+8+NAME_H+CAPTION_H ≤ TILE_H reserves the name band at every column width
+const STAGE_MAX   = 100   // caps art so 8+STAGE_MAX+8+NAME_H+CAPTION_H ≤ TILE_H reserves the name band at every column width
 const NAME_H      = 44    // name band: up to 3 lines + length-responsive font so the longest roster name fits WITHOUT ellipsis
 const CAPTION_H   = 42
 const CARD_RADIUS = 14
 const CARD_SHADOW = '0 2px 4px rgba(40,30,10,.10), 0 6px 16px rgba(40,30,10,.16)'
 const BLOOM_MS    = 6000
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────────
 function formatSeenDate(iso) {
   if (!iso) return ''
   try {
@@ -117,7 +112,6 @@ function dexCode(group, idx) {
   return `${GROUP_PREFIX[group] || 'W'}${String(idx + 1).padStart(3, '0')}`
 }
 
-// ─── Single critter card ───────────────────────────────────────────────────────────
 function CritterCard({ c, code, got, entry, initiallyBloomed, onBloomed, onOpenFacts }) {
   const theme = getTheme(c)
   const veil = veilOf(theme)
@@ -134,20 +128,18 @@ function CritterCard({ c, code, got, entry, initiallyBloomed, onBloomed, onOpenF
     })
   }, [c.id, onBloomed])
 
-  // FIX-5: tap a collected critter -> open its Facts/Alt-Facts popover (ambient, reward-UX OK).
-  // A still-pending card blooms on first tap (existing reveal); once full, tap opens facts.
-  // Unseen (!got) silhouettes stay non-interactive.
+  // Tap a collected critter opens its Facts popover. A still-pending card blooms on first tap; once full,
+  // tap opens facts. Unseen (!got) silhouettes stay non-interactive.
   const handleCardClick = useCallback(() => {
     if (!got) return
     if (phase === 'pending') { trigger(); return }
     if (phase === 'full') onOpenFacts({ ...c, firstSeenAt: entry?.firstSeenAt })
   }, [got, phase, trigger, onOpenFacts, c, entry])
 
-  // BUG-A/BUG-B fix: useCritterCollection loads async, so the phase initializer above can
-  // run while `got` is still false (empty Map during load). When the row resolves, a stuck
-  // 'veil' card must leave the silhouette: promote earned critters to their real phase so the
-  // dim/blur resting look clears AND the pending->bloom trigger (gated on phase==='pending')
-  // can attach. No-op when `got` was already correct at mount.
+  // useCritterCollection loads async, so the phase initializer above can run while `got` is still false
+  // (empty Map during load). When the row resolves, promote earned critters out of 'veil' so the dim/blur
+  // resting look clears and the pending->bloom trigger (gated on phase==='pending') can attach. No-op when
+  // `got` was already correct at mount.
   useEffect(() => {
     if (got && phase === 'veil') setPhase(initiallyBloomed ? 'full' : 'pending')
   }, [got, initiallyBloomed, phase])
@@ -175,7 +167,7 @@ function CritterCard({ c, code, got, entry, initiallyBloomed, onBloomed, onOpenF
     return () => clearTimeout(t)
   }, [phase])
 
-  const animateArt = got && phase === 'full' && !REDUCE_MOTION  // V3-CRITANIM-001: ambient looping art only when fully revealed + motion allowed
+  const animateArt = got && phase === 'full' && !REDUCE_MOTION  // ambient looping art only when fully revealed and motion is allowed
   const artSrc = animateArt ? animatedArtUrl(c.image_url) : c.image_url
   const quiet = phase === 'veil' || phase === 'pending'   // soft-veil resting look
   const blooming = phase === 'blooming'
@@ -254,8 +246,8 @@ function CritterCard({ c, code, got, entry, initiallyBloomed, onBloomed, onOpenF
         <span title={got ? c.name : undefined} style={{
           display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical',
           overflow: 'hidden',
-          // Length-responsive size: short names large; long names shrink to fit the 3-line band
-          // with no ellipsis (longest roster name = 27 chars). No-ellipsis goal (Dave 2026-06-15).
+          // Length-responsive size: short names large; long names shrink to fit the 3-line band with no
+          // ellipsis (longest roster name = 27 chars).
           fontSize: (c.name || '').length <= 14 ? '0.86rem' : (c.name || '').length <= 20 ? '0.78rem' : '0.7rem',
           fontWeight: 700, lineHeight: 1.18, letterSpacing: '-0.005em',
           color: theme.name, textAlign: 'center',
@@ -296,18 +288,17 @@ function CritterCard({ c, code, got, entry, initiallyBloomed, onBloomed, onOpenF
   )
 }
 
-// ─── Component ───────────────────────────────────────────────────────────────────
 export default function Collection() {
   const { collected, loading, error } = useCritterCollection()
   const { getToken } = useApiFetch()
-  // V4-CRITTERSORT-001 — display sort (dex / A–Z / recently-seen). Frontend-only reorder.
+  // Display sort (dex / A–Z / recently-seen). Frontend-only reorder.
   const [sortMode, setSortMode] = useState('dex')
 
-  // V4-BLOOM-001: bloomSeen is now cross-device. localStorage stays the instant cache (the ref is
-  // seeded from it synchronously for first paint); on mount we UNION the server set in, write the
-  // union back (so a bloom witnessed on another device converges), and re-render so initiallyBloomed
-  // recomputes. Monotonic union — bloom is "first reveal," never un-set. A brand-new device may
-  // re-bloom a critter once before the merge lands; harmless and self-healing.
+  // bloomSeen is cross-device. localStorage stays the instant cache (the ref is seeded from it
+  // synchronously for first paint); on mount we UNION the server set in, write the union back (so a
+  // bloom witnessed on another device converges), and re-render so initiallyBloomed recomputes.
+  // Monotonic union: bloom is "first reveal", never un-set. A brand-new device may re-bloom a critter
+  // once before the merge lands; harmless and self-healing.
   const bloomSeenRef = useRef(null)
   if (bloomSeenRef.current === null) bloomSeenRef.current = loadBloomSeen()
   const [, forceBloomRerender] = useState(0)
@@ -344,8 +335,8 @@ export default function Collection() {
   const groups = GROUP_ORDER.filter(g => byGroup[g]?.length)
   const discovered = roster.filter(c => collected.has(c.id)).length
 
-  // V4-CRITTERSORT-001 — bind each critter's dex code to its CANONICAL (pre-sort) position within
-  // its group, so a display re-sort renumbers nothing. Rendered code = codeById[c.id].
+  // Bind each critter's dex code to its CANONICAL (pre-sort) position within its group, so a display
+  // re-sort renumbers nothing. Rendered code = codeById[c.id].
   const codeById = {}
   for (const g of GROUP_ORDER) {
     (byGroup[g] || []).forEach((c, idx) => { codeById[c.id] = dexCode(g, idx) })
@@ -362,10 +353,9 @@ export default function Collection() {
 
   // FIX-5: which critter's Facts popover is open (null = none).
   const [factsCritter, setFactsCritter] = useState(null)
-  // V4-COLLECTIONSPLIT-001: the facts dataset is fetched only once the popover is actually opened.
-  // peek() seeds from the module cache so a second open renders the text on the FIRST frame rather
-  // than flashing the no-facts state. A failed load leaves this null, which is the same branch a
-  // critter with no facts entry already takes.
+  // The facts dataset is fetched only once the popover is opened. peek() seeds from the module cache so a
+  // second open renders the text on the first frame instead of flashing the no-facts state. A failed load
+  // leaves this null, the same branch a critter with no facts entry already takes.
   const [facts, setFacts] = useState(() => peekCritterFacts())
   useEffect(() => {
     if (!factsCritter || facts) return
@@ -416,7 +406,7 @@ export default function Collection() {
       {!loading && <CritterOfDay collected={collected} />}
       {!loading && <TallyDisplay />}
 
-      {/* V4-CRITTERSORT-001 — display sort control. Reorders within each group; dex codes stay put. */}
+      {/* Display sort control. Reorders within each group; dex codes stay put. */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, margin: '4px 0 10px' }}>
         <label htmlFor="critter-sort" style={{ fontSize: '0.8rem', fontWeight: 600, color: P.mid }}>Sort</label>
         <select
@@ -436,7 +426,6 @@ export default function Collection() {
         </select>
       </div>
 
-      {/* Sticky jump-nav */}
       <nav aria-label="Jump to section" style={{
         position: 'sticky', top: 0, zIndex: 2,
         background: P.cream, padding: '10px 0 12px',

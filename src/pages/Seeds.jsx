@@ -1,31 +1,26 @@
-// src/pages/Seeds.jsx — V5-SEEDSTAB-001. ONE home for seed: My seeds · Saved seeds · Sow now.
+// ONE home for seed: My seeds, Saved seeds and Sow now (reached from a More-menu row).
 //
-// Dave, 2026-09-18: "consolidate Seeds into a single tab - save seeds, sow now, inventory seeds, etc
-// should have a home properly in the app." Design: project-state/design-seedshome-V102-20260918.md
-// (crucibled; D1 = a More-menu row, D2 = the change list approved as listed).
+// A shell, on HarvestLog's pattern: a title, the view's actions, a view switch, the ferment line, and
+// ONLY the active view mounted. Saved seeds and Sow now keep their own logic and render here with
+// `embedded`; My seeds is new.
 //
-// A SHELL, on HarvestLog's pattern: a title, the view's actions, a view switch, the ferment line, and
-// ONLY the active view mounted. Saved seeds and Sow now keep their own logic byte-for-byte and render
-// here with `embedded`; My seeds is new.
-//
-// WHAT THE SHELL OWNS, and why each lives here rather than in a view:
-//   · THE SEED ROWS (useSeedItems). My seeds, Saved seeds and the ferment line read the same ~330
-//     rows; one fetch, patched or reloaded on every write, keeps them from disagreeing one tap apart.
-//   · THE FRAME. One max-width and one 16 px inset for all three views, so the content column does not
-//     jump on a switch (Sow now's inset moved 20 -> 16 px; a named, re-baselined change).
-//   · "SOWN ✓". Switching views unmounts Sow now, and a confirmation held there died with it. Since
-//     slice 2a it is held with the planting each sow created, so the chip's "See the planting" link
-//     survives a view switch too.
-//   · SAVE SEED. The sheet opens from the header on My seeds and Saved seeds and confirms IN PLACE
+// What the shell owns, and why each lives here rather than in a view:
+//   · The seed rows (useSeedItems). My seeds, Saved seeds and the ferment line read the same rows; one
+//     fetch, patched or reloaded on every write, keeps them from disagreeing one tap apart.
+//   · The frame. One max-width and one 16 px inset for all three views, so the content column does not
+//     jump on a switch.
+//   · "Sown ✓". Switching views unmounts Sow now, so the confirmation is held here with the planting each
+//     sow created, and the chip's "See the planting" link survives a view switch too.
+//   · Save seed. The sheet opens from the header on My seeds and Saved seeds and confirms IN PLACE
 //     (onSaved): the new lot is outlined in the view you are on, and the page never switches view.
 //
-// THE URL IS THE VIEW (`?view=mine|saved|sow`), and view switches REPLACE: Android Back is Dave's
-// primary gesture, and a push per switch would make Back walk him through his own indecision instead
-// of leaving the page. A door that names a view opens it. A bare /seeds settles its view ONCE, while
-// the body is still loading, and writes it into the URL with replace BEFORE any view mounts — the
-// views' scroll restore keys on the history entry, and a replace after they mounted would re-key it
-// (and would delete an armed sheet's Back marker). After that nothing writes the URL except a switch
-// the user makes, which can only happen with no sheet open.
+// The URL is the view (`?view=mine|saved|sow`), and view switches REPLACE: on Android Back is the
+// primary gesture, and a push per switch would make Back walk through the switches instead of leaving
+// the page. A door that names a view opens it. A bare /seeds settles its view ONCE, while the body is
+// still loading, and writes it into the URL with replace BEFORE any view mounts: the views' scroll
+// restore keys on the history entry, and a replace after they mounted would re-key it (and would delete
+// an armed sheet's Back marker). After that nothing writes the URL except a switch the user makes,
+// which can only happen with no sheet open.
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import SegmentedControl from '../components/forms/SegmentedControl.jsx'
@@ -43,7 +38,7 @@ import MySeeds from './MySeeds.jsx'
 import SavedSeeds from './SavedSeeds.jsx'
 import SowNow from './SowNow.jsx'
 
-// A second orientation cue beside the switch, whose active state is weak (BUG-SEGCTRLCONTRAST-001).
+// A second orientation cue beside the switch, whose active state is weak.
 const QUESTION = {
   mine:  'What seed do I have?',
   saved: 'Where is the seed I’m saving?',
@@ -52,7 +47,7 @@ const QUESTION = {
 
 const MINE_HREF = seedsHref('mine')
 
-// §4.2 — the view a bare /seeds lands on: Saved seeds while any lot is fermenting or drying (the
+// The view a bare /seeds lands on: Saved seeds while any lot is fermenting or drying (the
 // likeliest task, and it stays stable for weeks), else My seeds; never Sow now. A failed load lands on
 // My seeds, which says so and offers Retry. Urgency is NOT carried by the landing — the ferment line
 // under the switch carries it on every view.
@@ -90,7 +85,6 @@ export default function Seeds() {
     }, { replace: true })
   }, [view, setParams])
 
-  // ── Outline a lot once (§4.6) ────────────────────────────────────────────────────────────────────
   // `?lot=` is the arrival hint (seq 0 — a view that restored a scroll position ignores it). A write
   // made here outlines its own row with a fresh seq, so the same lot can be outlined again.
   const seqRef = useRef(0)
@@ -114,8 +108,8 @@ export default function Seeds() {
     outline(id)
   }, [view, switchView, outline])
   // A switch the USER makes ends the last highlight: a view mounts fresh on every switch, and one still
-  // holding an old highlight cleared the filters the user had set there and scrolled back to the lot,
-  // on every return (pre-promote regression pass #2, finding D).
+  // holding an old highlight would clear the filters the user set there and scroll back to the lot on
+  // every return.
   const userSwitch = useCallback((next) => {
     if (next === view) return
     setHighlight(null)
@@ -179,14 +173,14 @@ export default function Seeds() {
 
         {view && view !== 'sow' && <StaleBand store={store} />}
 
-        {/* My seeds draws its own question line: it carries Expand all / Collapse all (V5-SEEDCARDS-001). */}
+        {/* My seeds draws its own question line: it carries Expand all / Collapse all. */}
         {view && view !== 'mine' && <p data-testid="seeds-question" style={questionStyle}>{QUESTION[view]}</p>}
 
         {!view && <AsyncRegion loading />}
 
         {/* One boundary PER VIEW, keyed on it, with the header and switch outside: a Sow now engine
-            throw (sowEngine.js:1391 documents one class) costs that view and leaves the other two one
-            tap away — the crash isolation /sow and /seeds/saved had as separate routes. */}
+            throw (see sowEngine.js) costs that view and leaves the other two one tap away, the crash
+            isolation /sow and /seeds/saved had as separate routes. */}
         {view && (
           <ErrorBoundary key={view} scope={`seeds-${view}`} fallback={<ViewFallback />}>
             {view === 'mine' && <MySeeds store={store} highlight={highlight} onGoToLot={goToLot} />}
@@ -197,18 +191,17 @@ export default function Seeds() {
       </div>
 
       {/* Opened with NO planting prop, deliberately: the sheet asks where the seed came from, and the
-          variety arrives through its picker — the projection that carries the F1 notice. A synthetic
-          planting here would switch the sheet to the planting branch and silence that notice. */}
+          variety arrives through its picker, the projection that carries the notice. A synthetic planting
+          here would switch the sheet to the planting branch and silence that notice. */}
       {saving && <SaveSeedSheet onClose={() => setSaving(false)} onSaved={onSaved} />}
     </div>
   )
 }
 
-// The ferment line (§4.5): the app's only overdue-ferment warning, under the switch on EVERY view, so
-// it cannot live only on the view you are not looking at. Ambient text — no toast, badge, push or
-// sound (Reward UX V102 puts interrupts out of scope, and this is operational either way). Once shown
-// it keeps its height for the rest of the visit, so a write that clears the last due ferment does not
-// jolt the list up under the outline that write is showing.
+// The ferment line: the app's only overdue-ferment warning, under the switch on EVERY view, so it cannot
+// live only on the view you are not looking at. Ambient text with no toast, badge, push or sound
+// (operational, not a reward). Once shown it keeps its height for the rest of the visit, so a write that
+// clears the last due ferment does not jolt the list up under the outline that write is showing.
 function FermentLine({ items, onGo }) {
   const due = useMemo(() => dueFerments(items), [items])
   const shownRef = useRef(false)
@@ -260,11 +253,9 @@ function ViewFallback({ retry }) {
   )
 }
 
-// ── Styles ─────────────────────────────────────────────────────────────────────────────────────────
-// Spacing above the list is budgeted, not guessed: at 360x640, with the ferment line showing, My seeds'
-// FOLDED first screen must hold >= 3 crop-group HEADERS fully between the top bar and the nav
-// (gate:seeds-page (e), UX spec §10 — it was ">= 3 rows" before the groups folded), and every px here
-// comes out of that. Measured 2026-09-19: Pepper, Tomato and Bean, the third ending 16px above the nav.
+// Spacing above the list is budgeted: at 360x640, with the ferment line showing, My seeds' FOLDED first
+// screen must hold >= 3 crop-group HEADERS fully between the top bar and the nav (gate:seeds-page (e)),
+// and every px here comes out of that.
 const frameStyle = { maxWidth: 720, margin: '0 auto', padding: '12px 16px 90px' }
 // Identical height on every view: the action slot is always there, empty on Sow now, so the switch
 // and everything under it sit at the same place whichever view is showing.
