@@ -1,33 +1,24 @@
-// src/lib/voiceShape.js — BUG-VOICEDUPE-003.
+// src/lib/voiceShape.js: BUG-VOICEDUPE-003 telemetry.
 //
-// WHY A THIRD FIX WAS NOT WRITTEN. Two shipped and the defect survived, and reading them explains
-// why: both are INDEX bookkeeping. transcribe.js keys consumed finals on `index + ':' + text`;
-// voiceResults.js keeps a monotonic high-water mark and cannot re-emit an index at all. Within one
-// recognizer session those are correct and duplication through them is structurally impossible.
+// WHY THIS EXISTS. The index bookkeeping in transcribe.js (finals slotted by index) and voiceResults.js
+// (monotonic high-water mark) is correct within one recognizer session, so a duplicate that survives both
+// is not a re-read of one index. The candidate neither can see is Chrome delivering the same word at TWO
+// DIFFERENT indices (two legitimately distinct finals, landing as "Chinese Chinese"). Content-level dedup
+// would be wrong: saying a word twice on purpose is real speech.
 //
-// So the surviving mechanism is not a re-read of one index. The candidate neither fix can see is
-// Chrome delivering the same word at TWO DIFFERENT indices — two legitimately distinct finals, which
-// a monotonic reader is right to emit and which land in the field as "Chinese Chinese". No amount of
-// index bookkeeping detects that, and content-level dedup would be wrong (saying a word twice on
-// purpose is real speech, and the -001 comment already refuses to delete words the user said).
+// Telling those apart needs the RESULT SEQUENCE from a real device. voiceDebug.js records it to
+// localStorage behind a flag (`VOICE_DEBUG_FLAG_KEY`) that has to be set, reproduced under and exported by
+// hand, and a capture that takes four manual steps from the reporter never happens. This module builds a
+// SHAPE summary that can ship automatically as telemetry instead.
 //
-// Distinguishing those requires the RESULT SEQUENCE from Dave's own device, which is what the
-// BUG-VOICEDUPE-002 acceptance test asked for and never got: voiceDebug.js writes to localStorage
-// on his phone, behind a flag (`VOICE_DEBUG_FLAG_KEY`) he has to know to set, reproduce under, and
-// export by hand. Three reports later that capture does not exist. A capture that requires four
-// manual steps from the person reporting the bug is a capture that never happens.
+// NO TRANSCRIPT TEXT EVER LEAVES THE DEVICE. Lengths, finality flags, and equality RELATIONS between
+// results, never the words: ux_events is a server-side telemetry table and dictated garden notes are not
+// telemetry. Equality is what diagnoses this bug ("were two finals identical, and at which indices") and
+// can be reported without the strings.
 //
-// This module builds a SHAPE summary that can ship automatically as telemetry instead.
-//
-// NO TRANSCRIPT TEXT EVER LEAVES THE DEVICE. Lengths, finality flags, and equality RELATIONS
-// between results — never the words. That is a deliberate line: ux_events is a server-side
-// telemetry table, and Dave's dictated garden notes are not telemetry. Equality is what diagnoses
-// this bug ("were two finals identical, and at which indices"), and equality can be reported
-// without the strings.
-
-// Normalized for comparison only — never stored, never sent. Trim + case-fold + collapse internal
-// whitespace, because the duplicate we are hunting may differ only in the capitalization or padding
-// Chrome revises between deliveries, and a raw === would then report "not a duplicate" wrongly.
+// Normalized for comparison only, never stored, never sent. Trim + case-fold + collapse internal
+// whitespace: the duplicate being hunted may differ only in the capitalization or padding Chrome revises
+// between deliveries, and a raw === would then report "not a duplicate" wrongly.
 function normalize(text) {
   return String(text || '').trim().toLowerCase().replace(/\s+/g, ' ')
 }
@@ -81,9 +72,8 @@ export function createVoiceShapeRecorder() {
     summary(emitted) {
       const finals = finalsSeen.filter(Boolean).length
       return {
-        // THE DISCRIMINATOR. dup_at/dup_of both non-null means the same text arrived at two
-        // DIFFERENT indices — the mechanism no index-keyed fix can catch, and the one this whole
-        // capture exists to confirm or rule out.
+        // THE DISCRIMINATOR. dup_at/dup_of both non-null means the same text arrived at two DIFFERENT
+        // indices, the mechanism no index-keyed fix can catch.
         dup_at_index: firstDupAtIndex,
         dup_of_index: firstDupOfIndex,
         distinct_dupe: firstDupAtIndex !== null,

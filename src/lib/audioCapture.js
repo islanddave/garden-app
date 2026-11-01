@@ -1,10 +1,8 @@
 /**
- * src/lib/audioCapture.js
+ * src/lib/audioCapture.js: audio capture wrapper.
  *
- * Bite 4 of Post-V2 UX overhaul Increment 2: audio capture wrapper.
- *
- * Wraps `navigator.mediaDevices.getUserMedia` + `MediaRecorder` with the
- * minimum surface FieldCapture needs:
+ * Wraps `navigator.mediaDevices.getUserMedia` + `MediaRecorder` with the minimum surface FieldCapture
+ * needs:
  *
  *   const handle = await startRecording()       // throws or returns handle
  *   const result = await handle.stop()           // → { blob, mime, durationMs }
@@ -126,7 +124,7 @@ export async function startRecording() {
     releaseStream()
   }
 
-  // Start recording. MediaRecorder API has a void start(); errors come via onerror.
+  // Start recording. MediaRecorder's start() is void; a synchronous throw is caught here.
   try {
     recorder.start()
   } catch {
