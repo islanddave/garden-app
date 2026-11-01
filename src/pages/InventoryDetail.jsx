@@ -1110,29 +1110,25 @@ function InventoryDetailPage() {
               />
             </Field>
 
-            {/* ── A SAVED lot's seed: how many, how they were counted, what they weigh ─────────────
-                Dave, 2026-09-25: "on a saved seed's detail page, it never surfaces the count. It seems
-                to default to showing 1 packet which is not correct ever." Every saved lot is one jar
-                (quantity_on_hand 1, SaveSeedSheet), so the Qty on hand / Unit pair read "1 packet" and
-                the count sat in columns this page never read. These fields edit those columns, and
-                they are written through PUT /seed-measure only (handleSave), never the wide PUT.
-                Labels and words are the other two writers': the Save-seed sheet's count/weight and the
-                shared counted/estimated switch. The count is WHOLE seeds (an integer column); blank is
-                "not counted", never 0. The weight is text, not a number box, so "250 mg" survives the
-                typing (SaveSeedSheet's reason); a bare number is grams. The count is text too — see its
-                box. */}
+            {/* A SAVED lot's seed: how many, how they were counted, what they weigh. Every saved lot is one jar
+                (quantity_on_hand 1, SaveSeedSheet), so the Qty on hand / Unit pair read "1 packet" and the count
+                would sit in columns this page never read. These fields edit those columns, and they are written
+                through PUT /seed-measure only (handleSave), never the wide PUT. Labels and words are the other two
+                writers': the Save-seed sheet's count/weight and the shared counted/estimated switch. The count is
+                WHOLE seeds (an integer column); blank is "not counted", never 0. The weight is text, not a number
+                box, so "250 mg" survives the typing (SaveSeedSheet's reason); a bare number is grams. The count is
+                text too — see its box. */}
             {seedMeasureForm && (
               <>
                 {/* One group, so the switch sits against the count it qualifies. It carries its own
                     14px bottom margin (set for a sheet with no flex gap); this card spaces its fields
                     with a 16px gap already, so the group hands those 14px back. */}
                 <div data-testid="inv-seed-count-group" style={{ marginBottom: -14 }}>
-                  {/* type="text" inputMode="numeric", the harvest year's pattern (BUG-SEEDYEARNOOP-001),
-                      and here it is what keeps a typo from ERASING a count. A type="number" box hands back
-                      "" for "175-", "175e" or "17-5" (badInput) with no message, and blank is this field's
-                      CLEAR — so one stray key saved the stored count away under "✓ Saved" (review
-                      BLOCKING-1, 2026-09-25, reproduced in Chrome). As text, parseSeedCount sees exactly
-                      what was typed and refuses anything but blank or digits, beside the field. */}
+                  {/* type="text" inputMode="numeric", the harvest year's pattern, and here it is what keeps a typo
+                      from ERASING a count. A type="number" box hands back "" for "175-", "175e" or "17-5" (badInput)
+                      with no message, and blank is this field's CLEAR, so one stray key would save the stored count
+                      away under "✓ Saved". As text, parseSeedCount sees exactly what was typed and refuses anything
+                      but blank or digits, beside the field. */}
                   <Field label="Seed count" htmlFor="inv-seed-count" error={errors.seed_count} optional
                     help="Leave it blank until it’s counted.">
                     <Input
@@ -1166,8 +1162,8 @@ function InventoryDetailPage() {
                     usedUp={Number(form.quantity_on_hand) === 0}
                     // Whether a used-up lot would REALLY file under Sowed previously: My seeds' own
                     // predicate, asked of this lot at 0. A lot still fermenting or drying stays under its
-                    // stage, and an own-seed lot never started stays "Not started" (review MINOR-3: 9 of
-                    // the 26 live saved lots were in process), so for them the sentence is left out.
+                    // stage, and an own-seed lot never started stays "Not started", so for them the sentence is
+                    // left out.
                     filesUnderSowedPreviously={isSowedPreviously({ ...liveLot(), quantity_on_hand: 0 })}
                     onChange={usedUp => set('quantity_on_hand', usedUp ? '0' : '1')}
                   />
@@ -1179,18 +1175,16 @@ function InventoryDetailPage() {
                 above (a saved lot holding any other amount keeps this pair; see usedUpToggle). */}
             {isConsumable && !usedUpToggle && (
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                {/* BUG-INVQTYROUNDTRIP-001 — step="any" on all four numeric(10,3) boxes (here,
-                    both reorder_* below, and Qty purchased), and it is not cosmetic. type="number"
-                    defaults to step=1, so a box holding 4.4 reports validity.stepMismatch and the
-                    form is INVALID: this <form> carries noValidate, which is the ONLY reason a
-                    fractional save still submits. Measured, not assumed — PlantForm's quantity input
-                    has the same implicit step and NO noValidate, and there a fractional prefill makes
-                    the whole planting form unsubmittable (see PlantingEditor.formFromPlant). Declaring
-                    the step the column actually has removes the dependence on that one attribute.
-                    The durable Quantity box below keeps step="1": inventory_items.quantity is an
-                    integer column. */}
-                {/* V5-SEEDCARDS-001 — for a packet this is now the ONE place its quantity is
-                    written, so the rule that used to sit beside the My seeds stepper sits here. */}
+                {/* step="any" on all four numeric(10,3) boxes (here, both reorder_* below, and Qty purchased), and
+                    it is not cosmetic. type="number" defaults to step=1, so a box holding 4.4 reports
+                    validity.stepMismatch and the form is INVALID: this <form> carries noValidate, which is the ONLY
+                    reason a fractional save still submits. PlantForm's quantity input has the same implicit step and
+                    NO noValidate, and there a fractional prefill makes the whole planting form unsubmittable (see
+                    PlantingEditor.formFromPlant). Declaring the step the column actually has removes the dependence
+                    on that one attribute. The durable Quantity box below keeps step="1": inventory_items.quantity
+                    is an integer column. */}
+                {/* For a packet this is the ONE place its quantity is written, so the rule that used to sit beside
+                    the My seeds stepper sits here. */}
                 <Field label="Qty on hand" error={errors.quantity_on_hand}
                   help={isSeedForm ? 'Set to 0 when the packet is used up — it moves to Sowed previously.' : undefined}>
                   <Input
@@ -1211,7 +1205,6 @@ function InventoryDetailPage() {
               </div>
             )}
 
-            {/* Durable quantity */}
             {!isConsumable && (
               <Field label="Quantity" error={errors.quantity}>
                 <Input
@@ -1224,7 +1217,6 @@ function InventoryDetailPage() {
             )}
           </div>
 
-          {/* ── Optional details ── */}
           <div style={card}>
             <div style={groupLabel}>Details</div>
 
@@ -1300,14 +1292,12 @@ function InventoryDetailPage() {
               </Field>
             </div>
 
-            {/* ── V4-SOURCEREG-001 — the EDIT half of the same three fields as /inventory/add ─────
-                Both halves or neither: the add form alone would leave every existing item stranded
-                on free text, which is where the 73 spellings of 35 places came from. `source` stays
-                and is relabelled to the order/lot reference it actually holds — 567 rows carry text
-                with no other column in this design and it was deliberately never overwritten.
-                V5-SEEDCARDS-001: a seed's is "Supplier" — the packet card beside it now shows a
-                "Country of origin", and two different "Origin"s on one page is a labelling defect.
-                Same column, same picker, same testid; every other category keeps "Origin". */}
+            {/* The EDIT half of the same three fields as /inventory/add. Both halves or neither: the add form
+                alone would leave every existing item stranded on free text. `source` stays and is relabelled to
+                the order/lot reference it actually holds; it carries text with no other column in this design and
+                is never overwritten. A seed's is "Supplier": the packet card beside it shows a "Country of origin",
+                and two different "Origin"s on one page is a labelling defect. Same column, same picker, same
+                testid; every other category keeps "Origin". */}
             <Field label={isSeedForm ? 'Supplier' : 'Origin'}
               help={isSeedForm ? 'Who sold, packed or gave it.' : 'Who grew, bred, packed or gave it.'}>
               <SourcePicker
@@ -1350,8 +1340,7 @@ function InventoryDetailPage() {
               />
             </Field>
 
-            {/* V5-SEEDCARDS-001 — Dave's words for it on a seed ("url of the packet"); the packet
-                card's "Packet page" link reads this field. */}
+            {/* A seed's "url of the packet"; the packet card's "Packet page" link reads this field. */}
             <Field label={isSeedForm ? 'Packet page (URL)' : 'Source URL'}>
               <Input
                 type="url"
@@ -1369,18 +1358,13 @@ function InventoryDetailPage() {
               />
             </Field>
 
-            {/* BUG-SEEDYEARNOOP-001 — the first surface in the app that renders year_harvested.
-                The column has been in prod since 2026-07-13 and reaches the browser on every
-                inventory read (all three GETs are SELECT i.*), but nothing has ever displayed it,
-                which is how it stayed inert long enough for a writer to ship against it and no-op
-                unnoticed.
-                It matters because germination decays with age: how old a lot is decides whether it
-                is worth sowing, and only 4 of 316 seed rows record it. All four are here rather
-                than on SavedSeeds because every one of them has a NULL seed_stage, and that page
-                lists tracked lots — /inventory/:id is the only surface that reaches an untracked
-                lot, which SavedSeeds' own comment states.
-                Seeds only: a harvest year on a trowel is noise, and buildChanges omits the key
-                entirely for non-seed rows so the column is left alone rather than written null. */}
+            {/* The first surface in the app that renders year_harvested (it reaches the browser on every
+                inventory read: all three GETs are SELECT i.*). It matters because germination decays with age: how
+                old a lot is decides whether it is worth sowing. It lives here rather than on SavedSeeds because
+                most seed rows have a NULL seed_stage, and that page lists tracked lots; /inventory/:id is the only
+                surface that reaches an untracked lot. Seeds only: a harvest year on a trowel is noise, and
+                buildChanges omits the key entirely for non-seed rows so the column is left alone rather than
+                written null. */}
             {form.category === 'seeds' && (
               <Field label="Seed harvest year" error={errors.year_harvested}
                 help="The year this seed was grown, not the year it was bought.">
@@ -1403,14 +1387,13 @@ function InventoryDetailPage() {
             </Field>
           </div>
 
-          {/* ── Actions ── */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 4 }}>
             <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
               <Button type="submit" variant="primary" loading={saving} loadingLabel="Saving…">
                 Save changes
               </Button>
               {item.category === 'seeds' ? (
-                // V5-SEEDSTAB-001 — Back to the Seeds view that opened this page, else to My seeds.
+                // Back to the Seeds view that opened this page, else to My seeds.
                 <button
                   type="button"
                   data-testid="inventory-detail-cancel"
@@ -1425,9 +1408,8 @@ function InventoryDetailPage() {
                 </Link>
               )}
             </div>
-            {/* BUG-SEEDPAGETAPFLOORS-001 — on the 44px floor (T.tapMinHeight). It was a bare text
-                button about 19px tall, the layout gate's `remove-item` exemption. Opening the dialog
-                starts it clean: a reason from an earlier attempt is not this attempt's. */}
+            {/* On the 44px floor (T.tapMinHeight). Opening the dialog starts it clean: a reason from an earlier
+                attempt is not this attempt's. */}
             <button
               type="button"
               data-testid="inventory-remove"
@@ -1443,7 +1425,6 @@ function InventoryDetailPage() {
           </div>
         </form>
 
-        {/* Delete confirmation */}
         {confirmDelete && (
           <div style={{
             position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)',
@@ -1459,8 +1440,8 @@ function InventoryDetailPage() {
               <p style={{ margin: '0 0 24px', fontSize: '0.88rem', color: P.mid }}>
                 "{item.name}" will be hidden from your inventory. This can't be undone from the app.
               </p>
-              {/* BUG-INVDELETEERROROFFSCREEN-001 — the reason sits directly above the buttons, in the
-                  dialog the tap came from, and is announced (role="alert"). */}
+              {/* The reason sits directly above the buttons, in the dialog the tap came from, and is announced
+                  (role="alert"). */}
               {deleteErr && (
                 <p role="alert" data-testid="inventory-remove-error" style={{
                   margin: '-8px 0 16px', padding: '10px 12px', borderRadius: 8,
@@ -1496,26 +1477,21 @@ function InventoryDetailPage() {
   )
 }
 
-// ── V5-SEEDSTAGEONEPLACE-001 — the wide-PUT strip lists used to live here ────────────────────────
-// PUT_DERIVED_KEYS / PUT_PRESENCE_GUARDED_KEYS / putPayloadFrom() were removed with the stage
-// control and count prompt that were this page's only wide-PUT writers. This page now reaches the
-// wide PUT solely through useInventory.updateItem(buildChanges()), which emits the edit form's own
-// projection and names no derived or presence-guarded key. A saved lot's seed measure goes the other
-// way, through PUT /seed-measure (handleSave), and updateItem strips the three measure keys its
-// list-row merge would otherwise carry onto the wide PUT (2026-09-25) — and, since
-// BUG-SEEDSTAGEHEADSHIP-001, the row's `seed_stage`, which that merge DID carry.
+// This page reaches the wide PUT solely through useInventory.updateItem(buildChanges()), which emits the edit
+// form's own projection and names no derived or presence-guarded key. A saved lot's seed measure goes the
+// other way, through PUT /seed-measure (handleSave), and updateItem strips the three measure keys its
+// list-row merge would otherwise carry onto the wide PUT, and the row's `seed_stage`, which that merge also
+// carried.
 //
-// The contract they documented is NOT gone — /seeds/saved still round-trips a whole row into that
-// PUT for the count, and LIST_ROW_PUT_STRIP in src/pages/SavedSeeds.jsx carries the same per-key
-// reasoning. Its guard is now anchored on the handler's own hasOwnProperty guards rather than on a
-// second hand-maintained copy here; see SavedSeeds.storedCount.test.jsx.
+// The per-key strip contract still applies where a whole row is round-tripped: /seeds/saved round-trips a
+// row into that PUT for the count, and LIST_ROW_PUT_STRIP in src/pages/SavedSeeds.jsx carries the same
+// per-key reasoning. Its guard is anchored on the handler's own hasOwnProperty guards; see
+// SavedSeeds.storedCount.test.jsx.
 
-// ── Shared primitives ─────────────────────────────────────────────────────────
-// Who gets "Sow this": seed rows with stock on hand — the rule the Plant-from-packet CTA it replaced
-// shipped with (VARIETY-REF S4b) — and NOT a lot still fermenting or drying. Sow now withholds those
-// (wet seed in a jar is not sowable), and this is the same sheet, so the two doors answer alike; the
-// page's "Change stage in Saved seeds" link is the way on for such a lot. `isInProcess` is the engine's
-// own predicate, not a copy. `?? 0`: an untracked (null) quantity shows no CTA.
+// Who gets "Sow this": seed rows with stock on hand, and NOT a lot still fermenting or drying. Sow now
+// withholds those (wet seed in a jar is not sowable), and this is the same sheet, so the two doors answer
+// alike; the page's "Change stage in Saved seeds" link is the way on for such a lot. `isInProcess` is the
+// engine's own predicate, not a copy. `?? 0`: an untracked (null) quantity shows no CTA.
 function canSowFrom(item) {
   return item?.category === 'seeds' && Number(item.quantity_on_hand ?? 0) > 0 && !isInProcess(item)
 }
@@ -1536,7 +1512,7 @@ function firstRefusedControl(form) {
   return controls.find(el => el.tagName !== 'BUTTON') ?? controls[0] ?? null
 }
 
-// ── A saved lot's seed measure (the form's Seed count / Weight (g), written via PUT /seed-measure) ──
+// A saved lot's seed measure (the form's Seed count / Weight (g), written via PUT /seed-measure).
 const MEASURE_KEYS = ['seed_count', 'seed_count_estimated', 'seed_weight_g']
 
 // The three measure keys a row or a form snapshot carries, and only those.
@@ -1582,10 +1558,10 @@ function seedMeasureChanges(from, to) {
   const nowWeight = parseSeedWeight(to?.seed_weight_g).value
   if (wasWeight !== nowWeight) out.seed_weight_g = nowWeight
   if (!Object.keys(out).length) return null
-  // V5-SEEDLOTADDITION-001 — what this page LOADED rides on every measure PUT, all three always: the
-  // count as a whole number or null, its basis as a boolean or null, the weight as a number or null
-  // (never the string the row arrives with; the route refuses one). null is "I loaded no value". The
-  // route compares each with the lot and refuses the write when one differs.
+  // What this page LOADED rides on every measure PUT, all three always: the count as a whole number or null,
+  // its basis as a boolean or null, the weight as a number or null (never the string the row arrives with;
+  // the route refuses one). null is "I loaded no value". The route compares each with the lot and refuses the
+  // write when one differs.
   out.expected_seed_count = was
   out.expected_seed_count_estimated = wasBasis
   out.expected_seed_weight_g = wasWeight
@@ -1637,10 +1613,10 @@ const usedUpMarkStyle = (on) => ({
   backgroundColor: on ? P.green : P.white, color: P.white, fontSize: '0.7rem', lineHeight: 1,
 })
 
-// V5-SEEDSTAB-001 slice 2a — the S4b card-button, re-pointed at the Sow sheet: same footprint (full
-// width, 56px, the 44px floor with room to spare at 360px), the colour registry sprout instead of the
-// 🌱 emoji (the same glyph BottomNav's "Sow from seed" and the packet box use). The accessible name
-// starts with the visible words ("Sow this"), so a voice command naming the button still reaches it.
+// The card-button for the Sow sheet: full width, 56px (the 44px floor with room to spare at 360px), the
+// colour registry sprout instead of the 🌱 emoji (the same glyph BottomNav's "Sow from seed" and the packet
+// box use). The accessible name starts with the visible words ("Sow this"), so a voice command naming the
+// button still reaches it.
 function SowThisCTA({ item, onClick }) {
   return (
     <button
@@ -1691,9 +1667,9 @@ const editSowDetailsLink = {
   display: 'inline-flex', alignItems: 'center', alignSelf: 'flex-start', minHeight: T.tapMinHeight,
   paddingRight: 8, color: P.green, fontSize: T.type.sm,
 }
-// V5-SEEDSTAB-001 slice 3 — "Sown from this packet": the germination panel's card and heading, so the
-// two records of this packet's sowings read as one family; each planting a full-width row link on the
-// 44px floor (the whole row is the target, not the name).
+// "Sown from this packet": the germination panel's card and heading, so the two records of this packet's
+// sowings read as one family; each planting a full-width row link on the 44px floor (the whole row is the
+// target, not the name).
 const sownFromCard = {
   marginBottom: 20, padding: '8px 16px',
   backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10,
@@ -1707,9 +1683,8 @@ const sownFromLink = {
   padding: '6px 0', color: P.green, fontSize: T.type.sm, textDecoration: 'none',
 }
 
-// ── V5-SEEDCARDS-001 — the packet card (UX spec §7.2) ─────────────────────────────────────────────
-// The row Dave tapped on My seeds, continued: the same 4px supplier stripe, the same chip, the same
-// fact words. NOT a hero — no scrim, no floating Back/Share; PhotoHero stays the app's one hero shell.
+// The packet card. The same 4px supplier stripe, chip and fact words as the row on My seeds. NOT a hero: no
+// scrim, no floating Back/Share; PhotoHero stays the app's one hero shell.
 //
 // THE IMAGE BOX is 3:4 portrait and CONTAIN on white, so a packet's printed name is never cropped.
 // FULL tier because the by-id GET signs only the original, and the viewer then opens on the same bytes.
@@ -1726,14 +1701,14 @@ function PacketCard({ item, saved, supplierName, packetUrl, onUploadComplete }) 
   const photo = lotPhoto(item)
   // No stripe without a supplier: a grey one would read as a disabled supplier (supplierPalette.js).
   const stripe = supplierColors(supplierName)?.primary ?? null
-  // How much seed LEADS (lotCountFact: "175 seeds", "approx. 40 seeds", or "Not counted yet" on a saved
-  // lot nobody has measured) — the amount this page is opened to read, and on a saved lot the only one
-  // (Dave, 2026-09-25). Then My seeds' words and order (seedFacts.js); the chip's short numbers, for a
-  // ~168 px column. `saved` is the page's live answer, the one its form uses.
+  // How much seed LEADS (lotCountFact: "175 seeds", "approx. 40 seeds", or "Not counted yet" on a saved lot
+  // nobody has measured): the amount this page is opened to read, and on a saved lot the only one. Then My
+  // seeds' words and order (seedFacts.js); the chip's short numbers, for a ~168 px column. `saved` is the
+  // page's live answer, the one its form uses.
   const count = lotCountFact(item, saved)
   const facts = [...(count ? [count] : []), ...seedFacts(item, { compact: true })]
-  // The lot's own packet page first. Only without one does the cultivar's reference URL stand in, and
-  // then it is named for where it goes — it usually points at another seller (UX spec P6).
+  // The lot's own packet page first. Only without one does the cultivar's reference URL stand in, and then
+  // it is named for where it goes — it usually points at another seller.
   const packet = linkTarget(packetUrl)
   const about = packet ? null : linkTarget(item.variety_source_url)
   const link = packet ? { ...packet, words: 'Packet page' }
