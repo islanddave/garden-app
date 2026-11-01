@@ -1,7 +1,7 @@
 // src/components/putup/JarHeatRow.jsx
-// "Jar & heat": the vessel it is in, about how much is in
-// it, and the estimated heat. A collapsed summary row, placed after the Salt block, NEVER expanded by
-// itself and collapsed again when a line add starts:
+// "Jar & heat": the vessel it is in, about how much is in it, and the estimated heat. A collapsed
+// summary row, placed after the Salt block, NEVER expanded by itself and collapsed again when a line
+// add starts:
 //     "Quart jar × 2 · about 448 g · heat est. 950–3.0k SHU (worked out)"
 // plus, when a worked-out figure no longer matches what went in (the server's shu_est_stale), in quiet
 // ink: "· worked out before later changes · Work it out again". A typed figure is never flagged.
@@ -10,7 +10,7 @@
 // went in); the heat: Work it out (the breakdown sheet) or Type it.
 //
 // Every write is one merge PUT of the batch (vessel_*, shu_est_*) or one stage PATCH (the started
-// row's amount), both accepted on a finished batch (06 §3.13). Required at open: 0 (the census).
+// row's amount), both accepted on a finished batch. Nothing is required at open.
 import React, { useCallback, useId, useRef, useState } from 'react'
 import { P } from '../../lib/constants.js'
 import { T } from '../../lib/tokens.js'
@@ -21,7 +21,7 @@ import { labelChrome, optionalMarkChrome, inputChrome } from '../forms/formStyle
 import ShuSheet from './ShuSheet.jsx'
 import { shuRangeWords, aboutPlaceholderGrams, wholeGrams } from './fermentMath.js'
 
-// The vessel presets (06 §2.1: "From the preset (quart jar → 1 qt)"); units all in KITCHEN_UNITS.
+// The vessel presets (quart jar → 1 qt); units all in KITCHEN_UNITS.
 export const VESSEL_PRESETS = Object.freeze([
   { label: 'Pint jar', size: 1, unit: 'pint' },
   { label: 'Quart jar', size: 1, unit: 'qt' },

@@ -1,6 +1,6 @@
 // src/components/putup/ShuSheet.jsx
-// "Work it out": the estimated heat,
-// shown with what it was worked out from, and saved only when he says so.
+// "Work it out": the estimated heat, shown with what it was worked out from, and saved only when the
+// cook says so.
 //
 // THE SERVER WORKS IT OUT (GET /:id/shu-estimate, contract-F §2.5); this sheet says the answer in
 // words. The answer is exactly one of:
@@ -10,10 +10,10 @@
 //   · "Can't work it out: <names> — no listed heat / no weight", with Type it one tap away;
 //   · "Nothing with a listed heat — type it".
 // NEVER 0 FROM ABSENCE. "Save this estimate" writes it (POST …/shu-estimate/save, basis 'computed', the
-// server recomputing); "Type it" writes his own figure (basis 'typed'), which nothing ever overwrites.
+// server recomputing); "Type it" writes the cook's own figure (basis 'typed'), which nothing ever overwrites.
 // Heat never ranks, tints or badges anything; the words are the only ink.
 //
-// Required at open: 0 (the census). <Sheet armsBack>, busy while writing.
+// Nothing is required at open. <Sheet armsBack>, busy while writing.
 import React, { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { P } from '../../lib/constants.js'
 import { T } from '../../lib/tokens.js'

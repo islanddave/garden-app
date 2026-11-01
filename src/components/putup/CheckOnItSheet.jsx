@@ -156,7 +156,7 @@ function CheckOnItOpen({ batch, onClose, onSaved, now }) {
   const [err, setErr] = useState(null)
   const [phErr, setPhErr] = useState(null)
   // Synchronous exclusion. `saving` disables Save only after React commits; two taps inside one frame
-  // would both read it false, and a check-in is not keyed in 1a, so both would land as two rows.
+  // would both read it false, and a check-in is not keyed, so both would land as two rows.
   const writingRef = useRef(false)
   // The focused field is kept clear of the pinned Save (gate:putup at 426×492 found the note under it).
   const footerRef = useRef(null)

@@ -39,7 +39,7 @@ export const FORM_LABELS = Object.freeze({ fresh: 'Fresh', frozen: 'Frozen', dri
 export const SALT_METHODS = Object.freeze(['dry', 'brine', 'rinsed'])
 export const SALT_METHOD_LABELS = Object.freeze({ dry: 'Dry', brine: 'Brine', rinsed: 'Salted then rinsed' })
 // The chips, in the order the design gives them (Veg only · Veg + water · Water only). 'peppers' is a
-// 1b-era word the CHECK still admits and no F writer writes; it is only ever READ back (06 §3.1).
+// older word the CHECK still admits and no writer writes now; it is only ever READ back (06 §3.1).
 export const SALT_BASES = Object.freeze(['produce', 'all', 'water'])
 export const SALT_BASE_LABELS = Object.freeze({ produce: 'Veg only', all: 'Veg + water', water: 'Water only' })
 export const SALT_BASE_WORDS = Object.freeze({ produce: 'veg', all: 'veg + water', water: 'water', peppers: 'the peppers' })

@@ -470,7 +470,7 @@ export function startPromptState(batch) {
   return batch.start_precision == null ? 'prompt' : 'silent'
 }
 
-// ── Check on it (Put-Up 1a, V4 §2.3) ─────────────────────────────────────────────────────────────
+// ── Check on it (V4 §2.3) ─────────────────────────────────────────────────────────────
 // The check-in sheet, on every kind. What it offers depends on the kind and on nothing else:
 //   every kind   — Moved it (the household's places) and a note
 //   ferment      — also the ruled brine question and the pH field
@@ -732,7 +732,7 @@ export function startPatchViolatesPairing(patch) {
   return hasDate !== hasGrade
 }
 
-// ── Put-Up UX pass R1 — the page shell: its segments, the way out of a mode, recipes in the search ──
+// ── the page shell: its segments, the way out of a mode, recipes in the search ──
 // The page (PutUp.jsx) holds ONE opener and the wiring, and asks here for everything a test can pin
 // without a router. Pure: a router state and the router's history index come in as arguments, never
 // off `window`.

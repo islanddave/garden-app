@@ -1,12 +1,12 @@
 // src/components/putup/LikeBatchPicker.jsx
-// "Like <batch>, except…" (V4 §2.2): a quiet door that lists past batches and, on a tap,
-// reads that batch and hands its lines and kind to the host as a draft (likeBatch.js likeDraft). Used by
-// Start a batch and by How it was made →. Plain markup; no new visual design.
+// "Like <batch>, except…" (V4 §2.2): a quiet door that lists past batches and, on a tap, reads that
+// batch and hands its lines and kind to the host as a draft (likeBatch.js likeDraft). Used by Start a
+// batch and by How it was made →. Plain markup.
 //
 // Props: onPick({ kind, lines, from }) · picked (the current { from, lines } or null) · onClear ·
 // exceptId (never offer this batch) · disabled · idPrefix.
 //
-// Put-Up UX pass R1 (PLAN-V3 D10, "Start from · a past batch") adds two OPTIONAL props, for a host that
+// "Start from · a past batch": two OPTIONAL props, for a host that
 // owns the door itself: `open` (a boolean) and `onOpenChange(next)`. With `open` given the picker is
 // CONTROLLED: it draws no toggle of its own, lists the batches while `open`, reads them the first time it
 // opens, and after a pick calls `onPick` and then `onOpenChange(false)`. What was picked still shows, with

@@ -42,7 +42,7 @@ export function likeLine(line, mint) {
   if (out.qty != null) out.qty = String(out.qty)
   if (out.role) { delete out.form; delete out.shu_rating_low; delete out.shu_rating_high }
   if (out.role === 'salt') for (const k of SALT_KEYS) if (line[k] != null) out[k] = typeof line[k] === 'number' ? String(line[k]) : line[k]
-  // A 1b-era 'peppers' base is not a word the F client writes (06 §3.1): the facts go, the grams stay.
+  // An older 'peppers' base is not a word the client writes now (06 §3.1): the facts go, the grams stay.
   if (out.salt_base === 'peppers') for (const k of SALT_KEYS) delete out[k]
   if (line.ordinal != null) out.ordinal = Number(line.ordinal)
   return out

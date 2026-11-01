@@ -108,7 +108,7 @@ const SITTING_ADDER = 'putup-sitting-added'
 function isPlace(p) {
   return p === null || (!!p && typeof p === 'object' && typeof p.label === 'string' && typeof p.key === 'string')
 }
-// A line in a draft: a release-F line body (it carries its own key), or the 1b typed shape.
+// A line in a draft: a whole line body (it carries its own key), or the older typed shape.
 function isLine(l) {
   return !!l && typeof l === 'object'
     && ((typeof l.input_kind === 'string' && typeof l.idempotency_key === 'string') || (typeof l.label === 'string' && typeof l.key === 'string'))
@@ -366,7 +366,7 @@ function RowEditorBlock({ row, shown, index, rows, method, batch, places, contai
             style={{ ...inputChrome(false), marginBottom: T.space.sm, scrollMarginBottom: FOOTER_PX }} />
           <AddedLines label="Added at the end" lines={row.lines} disabled={disabled} idPrefix={`putup-row-${index}-added`}
             batchLines={batchLines} excludeJarIds={excludeJarIds} guard={guard} onChange={lines => set({ lines })} />
-          {/* Release F (06 §3.6): cooked after blending is a RECORD — no date reads it. */}
+          {/* Cooked after blending is a RECORD — no date reads it. */}
           <div role="group" aria-label="Cooked after blending" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: T.space.sm }}>
             <SelectChip touch active={row.cooked === true} disabled={disabled} data-testid={`putup-row-${index}-cooked`}
               onClick={() => set({ cooked: row.cooked !== true })}>Cooked after blending</SelectChip>
@@ -438,7 +438,7 @@ function RowEditorBlock({ row, shown, index, rows, method, batch, places, contai
   )
 }
 
-// `lines` (release F): the batch's live lines, for the additions' unit preselect. Optional — the card's
+// `lines`: the batch's live lines, for the additions' unit preselect. Optional — the card's
 // door has no lines in hand and the additions then preselect g.
 export default function PutItUpSheet({ open, batch, lines = [], onClose, onDone, onChanged, now }) {
   if (!open || !batch) return null

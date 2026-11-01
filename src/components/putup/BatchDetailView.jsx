@@ -116,7 +116,7 @@ export function stageRowText(row, nowMs = Date.now()) {
     return at ? `pH ${row.ph_reading} · read ${at}` : `pH ${row.ph_reading}`
   }
   const label = row.label || STAGE_KIND_LABELS[row.stage_kind] || 'Logged'
-  // An estimated entry (1b's entered_precision) says its window, never an invented day; an undated one
+  // An estimated entry (entered_precision) says its window, never an invented day; an undated one
   // (precision `unknown`, entered_at NULL) is just its label.
   const at = ESTIMATED_PRECISIONS.has(row.entered_precision) && row.entered_at
     ? putUpDateWords(localYmd(row.entered_at), row.entered_precision, { now: new Date(nowMs) })
@@ -430,7 +430,7 @@ function Sitting({ batchId, stage, jars, lines, onChanged, nowMs, gardenNames, o
           </button>
         )
       )}
-      {/* B′: no Undo on a sitting that wrote no jars of its own — How it was made →'s, whose jars were
+      {/* No Undo on a sitting that wrote no jars of its own — How it was made →'s, whose jars were
           logged before the batch (the server says so with has_own_jars, and refuses nothing_put_up_here).
           An older server sends no flag: the Undo stays, as it always was. */}
       {stage.has_own_jars === false ? null : done ? (
