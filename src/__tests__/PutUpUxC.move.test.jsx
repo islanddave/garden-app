@@ -274,6 +274,13 @@ describe('after the move — one line at the top of the Pantry, from the row the
     return { line, onReload }
   }
   const words = (line) => line.querySelector('span').textContent
+  // The host moves on NOW, while the fake's projectRow judges status on the clock. A case that reads the
+  // status words pins the clock to NOW, or they read "passed" once real time overtakes the row's date.
+  const pinToNow = () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(NOW)
+    onTestFinished(() => vi.useRealTimers())
+  }
 
   it('a worked-out date at another kind of place: the line says the date is gone — the server\'s words, not the hint\'s', async () => {
     const { line, onReload } = await moveOnPantry(TABLE, 'id:loc-1')
@@ -287,6 +294,7 @@ describe('after the move — one line at the top of the Pantry, from the row the
   })
 
   it('a typed date stays', async () => {
+    pinToNow()
     const { line } = await moveOnPantry(TYPED, 'id:loc-1')
     expect(words(line)).toBe('Pesto cubes — moved to Chest Freezer 1 · discard by Mar 1, 2031 · set by hand')
   })
@@ -329,17 +337,14 @@ describe('after the move — one line at the top of the Pantry, from the row the
   })
 
   it('a move within one kind keeps the date and its basis words', async () => {
+    pinToNow()
     const { line } = await moveOnPantry(FROZEN, 'id:loc-2')
     expect(words(line)).toBe('Blueberries — moved to Chest Freezer 2 · discard by Jul 1, 2031 · general figure: whole freeze, deep freezer')
   })
 
   it('a house estimate is worked out again: the line carries the NEW date, from the answer', async () => {
-    // The host moves on NOW, so the new estimate lands a month after NOW, while the fake's projectRow
-    // judges its status on the clock. Pin the clock to NOW, or the line reads "passed" once real time
-    // overtakes that month.
-    vi.useFakeTimers({ toFake: ['Date'] })
-    vi.setSystemTime(NOW)
-    onTestFinished(() => vi.useRealTimers())
+    // The new estimate lands a month after NOW, so unpinned it reads "passed" once real time overtakes that month.
+    pinToNow()
     const { line } = await moveOnPantry(HOUSE, 'id:loc-3')
     // The exact day: the sheet's Today chip (NOW, Oct 1) + candy's fridge figure (1 month, shelfLife.js) = Nov 1,
     // this year, so no year. A move day that is not the chip's day reds here.
