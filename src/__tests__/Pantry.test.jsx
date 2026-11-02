@@ -115,7 +115,7 @@ describe('the Pantry segment (V4 §2.5, §6.1)', () => {
   // The server owns the status: it judges the ET day and "soon" as the last fraction of the preserved_at span,
   // neither of which the row carries (lambda/preservation/useBy.js classifyUseBy). So each row below disagrees
   // with the device's clock on purpose, and the chip must still say the server's word.
-  it('the discard chip says the server\'s status, never one worked out from the date on this device\'s clock', async () => {
+  it('the discard chip says the server\'s status, never one worked out from the date on this device\'s clock (OPS-WEAKDATETESTS-001)', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date('2026-10-15T12:00:00'))
     onTestFinished(() => vi.useRealTimers())
