@@ -199,7 +199,7 @@ describe('log injection: no way around rule (a) through an alias, a helper or th
     expect([...new Set(files)].flatMap(sinkBypasses)).toEqual([]);
   });
 
-  it('a helper a handler calls before the kit logs only literals, logSafe(...) or a comparison (OPS-LOGINJECTGUARD-001)', () => {
+  it('what a handler runs before the kit, its helpers included, logs only literals, logSafe(...) or a comparison (OPS-LOGINJECTGUARD-001)', () => {
     expect(pre.flatMap((s) => s.bad)).toEqual([]);
   });
 
