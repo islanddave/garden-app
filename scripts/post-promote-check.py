@@ -15,12 +15,16 @@ For every function scripts/lambda-config-expected.json gives a Function URL:
   (b) CloudWatch Logs counts since --since, each of which must be 0:
       denied   { $.msg = "household-membership-denied" }   every URL function's household-gate JSON line; the
                pattern household-observability.sh alarms on, so a line quoting the literal elsewhere never counts
-      errors   ERROR -"verifyToken failed"                 every console.error line (each handler's catch-all
-               before its 500, the runtime's Invoke Error / Uncaught Exception on a throw or a failed load)
-               except the 401 path, which every handler logs at ERROR, this tool's own probes included
-               (with or without the bearer the line starts "verifyToken failed:")
-      runtime  ?"Task timed out" ?"Status: timeout" ?"Status: error"   timeouts, out-of-memory, init failures;
-               one timeout can log two such lines
+      errors   [ts, rid, level=ERROR, ...] minus [ts, rid, level=ERROR, w1=verifyToken, ...], by event id:
+               every console.error line (each handler's catch-all before its 500, the runtime's Invoke Error /
+               Uncaught Exception on a throw or a failed load, an empty message too) except the 401 path, which
+               every handler logs at ERROR, this tool's own probes included (the line starts "verifyToken failed:")
+      runtime  the sum of "Task timed out", "Status: timeout" and "Status: error", each minus the three lines that
+               carry requester text before auth; timeouts, out-of-memory, init failures; one timeout can log two
+  Trap: requester text reaches the middle of a line (the 401 line quotes Clerk's message, which quotes the token's
+  kid; photos logs the path; http-response.js logs Accept-Encoding), so a bare term there is forgeable by anyone.
+  Text lines split into fields on tabs and the caller cannot move the first three (time, request id, level).
+  The runtime deny-list holds only while those three are the only pre-auth requester-text lines.
 Exit 0 PASS, 1 FAIL, 2 could not verify (a manifest or AWS read failed and nothing FAILed).
 Prints function names and counts only: never a URL, token, id or log message body. Read-only: no
 workflow calls it.
@@ -44,11 +48,19 @@ EXPECTED_URL_FUNCTIONS = 23
 REGION = "us-east-1"
 HTTP_TIMEOUT = 10
 AWS_TIMEOUT = 120
+# Each was proven with `aws logs test-metric-filter`: a real line matches, a forged one does not. The kit pattern
+# is subtracted, not excluded in one pattern: `w1!=verifyToken` needs a fourth field, so it misses an ERROR line
+# with an empty message. "route" (not "route GET") because the caller picks the method photos logs.
+_NOT_REQUESTER_TEXT = ' -"verifyToken failed" -"api-gzip" -"route"'
 PATTERNS = {
     "denied": '{ $.msg = "household-membership-denied" }',
-    "errors": 'ERROR -"verifyToken failed"',
-    "runtime": '?"Task timed out" ?"Status: timeout" ?"Status: error"',
+    "errors": "[ts, rid, level=ERROR, ...]",
+    "kit": "[ts, rid, level=ERROR, w1=verifyToken, ...]",
+    "timed-out": '"Task timed out"' + _NOT_REQUESTER_TEXT,
+    "status-timeout": '"Status: timeout"' + _NOT_REQUESTER_TEXT,
+    "status-error": '"Status: error"' + _NOT_REQUESTER_TEXT,
 }
+RUNTIME = ("timed-out", "status-timeout", "status-error")
 TOKENLESS_FILTER = "tokenless-request-401"
 # deploy.yml's smoke canary sends the same value. Its first segment does not base64-decode to JSON, so
 # verifyToken throws "Unexpected end of data" before any JWKS fetch, a line the tokenless filter does not match.
@@ -126,26 +138,38 @@ def probe(url, bearer=False):
         return f"no answer ({type(getattr(e, 'reason', e)).__name__})"
 
 
-def count(fn, pattern, start_ms):
+def event_ids(fn, key, start_ms):
     # Only event ids come back, so no message body ever reaches this process.
     out = aws("logs", "filter-log-events", "--log-group-name", f"/aws/lambda/{fn}", "--start-time", str(start_ms),
-              "--filter-pattern", pattern, "--query", "events[].eventId", "--output", "json")
+              "--filter-pattern", PATTERNS[key], "--query", "events[].eventId", "--output", "json")
     try:
         ids = json.loads(out)
     except ValueError:
         raise Unread("filter-log-events output is not JSON")
     if ids is None:
-        return 0
+        return []
     if not isinstance(ids, list):
         raise Unread("filter-log-events output is not a list")
-    return len(ids)
+    return ids
+
+
+def log_counts(fn, start_ms):
+    errors = event_ids(fn, "errors", start_ms)
+    # Read second, so every kit line the errors read saw is in this list: a kit line that lands between the two
+    # reads is only here, and the difference never cancels a real error.
+    kit = set(event_ids(fn, "kit", start_ms))
+    return {
+        "denied": len(event_ids(fn, "denied", start_ms)),
+        "errors": sum(1 for i in errors if i not in kit),
+        "runtime": sum(len(event_ids(fn, k, start_ms)) for k in RUNTIME),
+    }
 
 
 def check_function(fn, start_ms, bearer=False):
     """(verdict, detail) with verdict True PASS, False FAIL, None could not verify."""
     try:
         status = probe(function_url(fn), bearer)
-        counts = {k: count(fn, p, start_ms) for k, p in PATTERNS.items()}
+        counts = log_counts(fn, start_ms)
     except Unread as e:
         return None, f"could not verify: {e}"
     detail = f"GET {status} " + " ".join(f"{k}={v}" for k, v in counts.items())

@@ -46,7 +46,7 @@ class FakeAws:
     function; the metric-filter read is keyed by function "" since it names none."""
 
     def __init__(self, counts=None, fail=None, stdout=None):
-        self.counts = counts or {}      # (fn, pattern key) -> n
+        self.counts = counts or {}      # (fn, pattern key) -> n, or the exact event ids to return
         self.fail = fail or {}          # (fn, aws op) -> returncode or exception
         self.stdout = stdout or {}      # (fn, aws op) -> raw stdout
         self.calls = []
@@ -74,7 +74,8 @@ class FakeAws:
             return subprocess.CompletedProcess(cmd, 0, url_of(fn) + "\n", "")
         key = next(k for k, p in ppc.PATTERNS.items() if p == cmd[cmd.index("--filter-pattern") + 1])
         n = self.counts.get((fn, key), 0)
-        return subprocess.CompletedProcess(cmd, 0, json.dumps([f"{UUID}-{i}" for i in range(n)]), "")
+        ids = n if isinstance(n, list) else [f"{UUID}-{key}-{i}" for i in range(n)]
+        return subprocess.CompletedProcess(cmd, 0, json.dumps(ids), "")
 
 
 def fake_urlopen(statuses, bearer_fns, seen):
@@ -132,7 +133,7 @@ def test_all_401_and_zero_counts_is_pass(monkeypatch, capsys):
     assert code == 0 and out.splitlines()[-1] == "PASS"
     assert sum(1 for ln in out.splitlines() if ln.strip().startswith("PASS ")) == 23
     assert "GET 401 denied=0 errors=0 runtime=0" in line_for(out, "garden-critter")
-    assert len(aws.calls) == 1 + 23 * 4
+    assert len(aws.calls) == 1 + 23 * (1 + len(ppc.PATTERNS))
     assert all(c[0] == "aws" and c[-2:] == ["--region", "us-east-1"] for c in aws.calls)
 
 
@@ -212,10 +213,57 @@ def test_a_timeout_or_no_answer_is_fail(monkeypatch, capsys, exc):
     assert code == 1 and "GET no answer" in line_for(out, "garden-tags")
 
 
-@pytest.mark.parametrize("key", ["denied", "errors", "runtime"])
-def test_any_nonzero_log_count_is_fail(monkeypatch, capsys, key):
-    code, out, _ = run(monkeypatch, capsys, aws=FakeAws(counts={("garden-shared-state", key): 3}))
+@pytest.mark.parametrize("pattern, key", [("denied", "denied"), ("errors", "errors"), ("timed-out", "runtime"),
+                                          ("status-timeout", "runtime"), ("status-error", "runtime")])
+def test_any_nonzero_log_count_is_fail(monkeypatch, capsys, pattern, key):
+    code, out, _ = run(monkeypatch, capsys, aws=FakeAws(counts={("garden-shared-state", pattern): 3}))
     assert code == 1 and f"{key}=3" in line_for(out, "garden-shared-state")
+
+
+def _sent(aws, fn):
+    return [c[c.index("--filter-pattern") + 1] for c in aws.calls
+            if c[2] == "filter-log-events" and c[c.index("--log-group-name") + 1] == f"/aws/lambda/{fn}"]
+
+
+def test_each_function_is_read_with_the_level_anchored_patterns_errors_before_kit(monkeypatch, capsys):
+    """OPS-LOGINJECTGUARD-001: requester text lands mid-line (the kit's Clerk message, photos' route path, the
+    api-gzip ae value), so a pattern that matches a term anywhere in the line counts it."""
+    _, _, aws = run(monkeypatch, capsys)
+    # PIN: each pattern was proven with aws logs test-metric-filter (real line 1, forged line 0); re-prove a change.
+    want = ['{ $.msg = "household-membership-denied" }',
+            "[ts, rid, level=ERROR, ...]",
+            "[ts, rid, level=ERROR, w1=verifyToken, ...]",
+            '"Task timed out" -"verifyToken failed" -"api-gzip" -"route"',
+            '"Status: timeout" -"verifyToken failed" -"api-gzip" -"route"',
+            '"Status: error" -"verifyToken failed" -"api-gzip" -"route"']
+    for fn in FNS:
+        sent = _sent(aws, fn)
+        assert sorted(sent) == sorted(want), fn
+        # The kit read must come second: a kit line seen by the errors read is then always in the kit read too.
+        assert sent.index(want[1]) < sent.index(want[2]), fn
+
+
+def test_errors_is_error_lines_minus_kit_lines_by_event_id(monkeypatch, capsys):
+    """The 401 line is an ERROR line, so errors counts the ERROR-level ids the kit read did not return. A kit line
+    that arrives between the two reads is in the kit list only, and must not cancel a real error."""
+    fn = "garden-photos"
+    aws = FakeAws(counts={(fn, "errors"): ["e1", "k1", "e2", "k2"], (fn, "kit"): ["k1", "k2", "k3-late"]})
+    code, out, _ = run(monkeypatch, capsys, aws=aws)
+    assert code == 1 and "errors=2 " in line_for(out, fn)
+
+
+def test_kit_lines_alone_count_zero_errors(monkeypatch, capsys):
+    fn = "garden-photos"
+    aws = FakeAws(counts={(fn, "errors"): ["k1", "k2"], (fn, "kit"): ["k1", "k2"]})
+    code, out, _ = run(monkeypatch, capsys, aws=aws)
+    assert code == 0 and "errors=0 " in line_for(out, fn)
+
+
+def test_runtime_is_the_sum_of_its_three_terms(monkeypatch, capsys):
+    fn = "garden-tags"
+    aws = FakeAws(counts={(fn, "timed-out"): 1, (fn, "status-timeout"): 2, (fn, "status-error"): 4})
+    code, out, _ = run(monkeypatch, capsys, aws=aws)
+    assert code == 1 and line_for(out, fn).endswith("runtime=7")
 
 
 @pytest.mark.parametrize("fail", [
@@ -318,14 +366,19 @@ def test_a_bad_since_exits_2_through_argparse(monkeypatch, capsys):
 
 
 def test_the_patterns_name_the_lines_the_handlers_log():
-    """The denied pattern is the alarm's, on the shared-state gate's msg; the errors pattern excludes the
-    401 line, which every URL handler must log as exactly 'verifyToken failed' or each probe counts as an error."""
+    """The denied pattern is the alarm's, on the shared-state gate's msg; the kit pattern is the 401 line, which
+    every URL handler must log with first word 'verifyToken' or each probe counts as an error. The runtime terms
+    exclude the three lines that carry requester text before auth, by the words those lines start with."""
     with open(os.path.join(REPO, "scripts", "household-observability.sh"), encoding="utf-8") as fh:
         assert "pattern() { printf '{ $.msg = \"%s\" }' \"$1\"; }" in fh.read()
     assert ppc.PATTERNS["denied"] == '{ $.msg = "household-membership-denied" }'
     with open(os.path.join(REPO, "lambda", "shared-state", "index.js"), encoding="utf-8") as fh:
         assert "msg: 'household-membership-denied'" in fh.read()
-    assert ppc.PATTERNS["errors"] == 'ERROR -"verifyToken failed"'
+    assert ppc.PATTERNS["kit"] == "[ts, rid, level=ERROR, w1=verifyToken, ...]"
+    with open(os.path.join(REPO, "lambda", "http-response.js"), encoding="utf-8") as fh:
+        assert "tag: 'api-gzip'" in fh.read()
+    with open(os.path.join(REPO, "lambda", "photos", "index.js"), encoding="utf-8") as fh:
+        assert "console.log('route', " in fh.read()
     # The 401 line lives in each handler dir's copy of the sign-in kit since D2 (ruling R-PD-1).
     assert len(FNS) == 23
     for fn in FNS:
