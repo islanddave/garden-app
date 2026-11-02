@@ -235,6 +235,9 @@ MYSEEDS = [
     # OPS-SEEDAGEUTCYEAR-001: 01:00Z on 1 Jan is 20:00 ET on 31 Dec, so the stage year is 2026, not 2027
     srow('l11', 'Amish Paste', name='Amish Paste — saved 2026', seed_stage='drying',
          stage_entered_at='2027-01-01T01:00:00.000Z', source_plant_id='pl-15'),
+    # ... and 05:30Z on 1 Jan is 00:30 ET on 1 Jan, 2027: the other side of the boundary, so a zone west of ET fails
+    srow('l12', 'Rutgers', name='Rutgers — saved 2027', seed_stage='fermenting',
+         stage_entered_at='2027-01-01T05:30:00.000Z', source_plant_id='pl-16'),
     srow('l5', '1884', name='Porch jar', seed_stage='stored', source_kind='own_garden', year_harvested=2025,
          seed_count=185, seed_count_estimated=False),
     srow('l6', 'Datil', name='Saved seed 2025', seed_stage='stored', source_kind='farm_stand',
@@ -368,6 +371,7 @@ def test_the_second_line_reads_as_the_model_builds_it():
     assert line('l7') == '0.1 g · Saved from my garden · harvested 2025'
     assert line('l8') == '9999999.99 g · Saved · gift' and line('l9') == '28.35 g · Saved · gift'
     assert line('l10') == '0 seeds · 0 g · Saved · gift'                   # a counted zero DOES render
+    assert line('l11') == 'Drying · Saved from my plant · harvested 2026'  # OPS-SEEDAGEUTCYEAR-001: 20:00 ET on 31 Dec
     assert line('u1') == 'Not started · Saved from my plant'
     # release 2b: the parent set. "plants" from two plantings up, and only while the flag is on.
     many = 'Saved from my plants' if sla.seed_multi_parent() else 'Saved from my plant'

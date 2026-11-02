@@ -10,7 +10,8 @@
 #   1. The handler must be DEPLOYED with the SHARE_METRIC log lines first. A metric filter keyed on
 #      a string no code emits reads zero forever, and an alarm on it sits green permanently. That is
 #      a worse state than no alarm, because it looks like coverage.
-#   2. `provision` creates the filters (inert, safe, no alarm).
+#   2. `provision` runs test-patterns, refuses on any failure, then writes the filters. Three of them feed live
+#      alarms, so a filter it writes counts at once.
 #   3. `verify` proves the filters actually match real log output. It FAILS if the attempt metric has
 #      never moved — which is the honest state until the first publish is exercised.
 #   4. `alarm` refuses to run until `verify` passes.
@@ -29,7 +30,9 @@ SNS_TOPIC="${SNS_TOPIC:-}"   # optional; alarm is created without an action if u
 # Each pattern names fields of the Lambda Text line, "<ts>\t<requestId>\t<LEVEL>\t<message>": tabs split fields,
 # the caller cannot move the first three, and the message's first words are the emitter's own literal. A quoted
 # phrase would match anywhere in the line, and the sign-in kit's 401 line quotes a caller's token kid, so anyone
-# could raise these metrics. test-patterns proves each one, forged 401 lines included.
+# could raise these metrics. test-patterns proves each one, forged 401 lines included. The anchors hold only while
+# the function logs in Text format (a JSON-format line starts `{"timestamp"`, so every filter would read 0):
+# test-patterns reads the live LogFormat and fails unless it is Text; a LogFormat change re-keys these filters.
 P_ATTEMPT='[ts, rid, level=INFO, w1=SHARE_METRIC, w2=attempt, ...]'
 P_POSTED='[ts, rid, level=INFO, w1=SHARE_METRIC, w2=posted, ...]'
 P_FAILED='[ts, rid, level=INFO, w1=SHARE_METRIC, w2=failed, ...]'
@@ -37,6 +40,13 @@ P_REJECTED='[ts, rid, level=INFO, w1=SHARE_METRIC, w2=rejected, ...]'
 P_BLOCKED='[ts, rid, level=INFO, w1=SHARE_METRIC, w2=blocked, ...]'
 P_RETAINED='[ts, rid, level=INFO, w1=SHARE_METRIC, w2=staging_version_retained, ...]'
 P_ORPHAN='[ts, rid, level=ERROR, w1=orphan, w2=cleanup, w3=FAILED, ...]'   # orphans.js logs through console.error
+
+verify_log_format() {
+  local fmt
+  fmt=$(aws lambda get-function-configuration --region "$REGION" --function-name "$FN" \
+          --query 'LoggingConfig.LogFormat' --output text 2>/dev/null) || fmt="unreadable"
+  if [ "$fmt" = "Text" ]; then echo "  ok    log format ${FN}: Text"; else echo "  FAIL  log format ${FN}: $fmt (want Text)"; return 1; fi
+}
 
 emit_filter() {   # name, pattern, metric
   aws logs put-metric-filter \
@@ -49,6 +59,7 @@ emit_filter() {   # name, pattern, metric
 }
 
 provision() {
+  test_patterns || { echo "refusing to write the filters: a pattern is unproven, or ${FN} does not log in Text." >&2; exit 1; }
   echo "provisioning metric filters on ${LOG_GROUP}"
   # Matched against the literal lines emitted by shareMetric() in index.js.
   emit_filter share-attempt  "$P_ATTEMPT"  ShareAttempts
@@ -70,8 +81,7 @@ provision() {
   # S3 and remains as a non-current version. Alarmed: this one accumulates silently and is the
   # privacy-relevant failure, not a cosmetic one. See scripts/ig-staging-retention.sh.
   emit_filter share-staging-retained "$P_RETAINED" ShareStagingRetained
-  echo "filters provisioned. Run '$0 test-patterns' now (needs no real traffic), then '$0 verify'"
-  echo "AFTER exercising a publish — do not arm the alarm first."
+  echo "filters provisioned. Run '$0 verify' AFTER exercising a publish — do not arm the alarm first."
 }
 
 # Prove each pattern matches the string the DEPLOYED code actually emits, and — just as important —
@@ -94,6 +104,8 @@ test_patterns() {
       echo "  FAIL  $1 (expected $4 match(es), got $got)"; fails=$((fails+1))
     fi
   }
+  echo "the live function's log format (the anchors read only Text lines)"
+  verify_log_format || fails=$((fails+1))
   # POSITIVE: each pattern and the line shareMetric() (console.log, INFO) or orphans.js (console.error) logs.
   echo "testing filter patterns against the exact lines index.js emits, Lambda prefix included"
   check "attempt matches"        "$P_ATTEMPT"  "${PFX}INFO${T}SHARE_METRIC attempt {\"target\":\"instagram\"}" 1

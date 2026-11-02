@@ -5,6 +5,7 @@ Run from the garden-app checkout with prod AWS credentials in the shell:
     python3 scripts/post-promote-check.py               # the last 30 minutes
     python3 scripts/post-promote-check.py --since 120   # the last 120 minutes
     python3 scripts/post-promote-check.py --since 2026-11-01T14:00:00Z
+    python3 scripts/post-promote-check.py --test-patterns   # prove PATTERNS on CONTROLS (test-metric-filter only)
 
 For every function scripts/lambda-config-expected.json gives a Function URL:
   (a) a GET must answer exactly 401 (403, 5xx, a timeout or no answer is FAIL). A function whose log group
@@ -21,8 +22,9 @@ For every function scripts/lambda-config-expected.json gives a Function URL:
                every handler logs at ERROR, this tool's own probes included (the line starts "verifyToken failed:")
       runtime  the sum of "Task timed out", "Status: timeout" and "Status: error", each minus the three lines that
                carry requester text before auth; timeouts, out-of-memory, init failures; one timeout can log two
-  Trap: requester text reaches the middle of a line (the 401 line quotes Clerk's message, which quotes the token's
-  kid; photos logs the path; http-response.js logs Accept-Encoding), so a bare term there is forgeable by anyone.
+  Trap: requester text reaches the middle of a line (photos logs the path and http-response.js logs Accept-Encoding,
+  both through logSafe; in Lambda code before v5.3.29 the 401 line also quotes Clerk's message, which quotes the
+  token's kid), so a bare term there is forgeable by anyone.
   Text lines split into fields on tabs and the caller cannot move the first three (time, request id, level).
   The runtime deny-list holds only while those three are the only pre-auth requester-text lines.
 Exit 0 PASS, 1 FAIL, 2 could not verify (a manifest or AWS read failed and nothing FAILed).
@@ -48,7 +50,8 @@ EXPECTED_URL_FUNCTIONS = 23
 REGION = "us-east-1"
 HTTP_TIMEOUT = 10
 AWS_TIMEOUT = 120
-# Each was proven with `aws logs test-metric-filter`: a real line matches, a forged one does not. The kit pattern
+# Each is proven on CONTROLS by --test-patterns (aws logs test-metric-filter): a real line matches, a forged one
+# does not. The kit pattern
 # is subtracted, not excluded in one pattern: `w1!=verifyToken` needs a fourth field, so it misses an ERROR line
 # with an empty message. "route" (not "route GET") because the caller picks the method photos logs.
 _NOT_REQUESTER_TEXT = ' -"verifyToken failed" -"api-gzip" -"route"'
@@ -61,9 +64,75 @@ PATTERNS = {
     "status-error": '"Status: error"' + _NOT_REQUESTER_TEXT,
 }
 RUNTIME = ("timed-out", "status-timeout", "status-error")
+
+# Per PATTERNS key, (label, log line, matches expected). Real shapes: the Lambda Text line "<ts>\t<rid>\t<LEVEL>\t<msg>"
+# and the runtime's platform lines. Forged: what a caller could make the three pre-auth requester-text lines say
+# without logSafe (and what the kit line said before v5.3.29). scripts/test_post_promote_check.py requires a 1 and a
+# 0 for every key and models each line; --test-patterns asks CloudWatch itself.
+_P = "2026-11-01T12:00:00.000Z\t0f0f0f0f-1111-2222-3333-444444444444\t"
+_RID = "0f0f0f0f-1111-2222-3333-444444444444"
+_INVOKE = '{"errorType":"Error","errorMessage":"boom","stack":["Error: boom","    at handler (/var/task/index.js:9:3)"]}'
+
+
+def _forged(phrase):
+    return [("forged 401 line (kid)", f"{_P}ERROR\tverifyToken failed: Unable to find a signing key in JWKS that "
+             f"matches the kid='{phrase}' of the provided session token.", 0),
+            ("forged route line", f"{_P}INFO\troute POST /x/{phrase}", 0),
+            ("forged api-gzip ae", f'{_P}INFO\t{{"tag":"api-gzip","gzip":false,"ae":"{phrase}"}}', 0)]
+
+
+CONTROLS = {
+    "denied": [
+        ("household gate JSON line", f'{_P}WARN\t{{"msg":"household-membership-denied","userId":"user_x",'
+         '"reason":"non-member"}', 1),
+        ("the msg word in a path", f"{_P}INFO\troute GET /x/household-membership-denied", 0),
+        ("logSafe'd JSON in a path", f"{_P}INFO\troute GET /x/%7B%22msg%22:%22household-membership-denied%22%7D", 0),
+        ("another msg", f'{_P}WARN\t{{"msg":"auth-azp-refused","userId":"user_x"}}', 0),
+    ],
+    "errors": [
+        ("catch-all with a stack", f"{_P}ERROR\tplants lambda error Error: boom\n    at handler (/var/task/index.js:9:3)", 1),
+        ("empty console.error()", f"{_P}ERROR\t", 1),
+        ("Invoke Error", f"{_P}ERROR\tInvoke Error \t{_INVOKE}", 1),
+        ("init Uncaught Exception", f"2026-11-01T12:00:00.000Z\tundefined\tERROR\tUncaught Exception \t{_INVOKE}", 1),
+        ("db-error JSON", f'{_P}ERROR\t{{"tag":"db-error","code":"23505"}}', 1),
+        ("ERROR in a path at INFO", f"{_P}INFO\troute GET /x/ERROR", 0),
+        ("ERROR in a tabbed path", f"{_P}INFO\troute GET /x\tERROR\tboom", 0),
+        ("ERROR in a WARN line", f"{_P}WARN\tretrying after ERROR from upstream", 0),
+        ("ERROR as the ae value", f'{_P}INFO\t{{"tag":"api-gzip","gzip":false,"ae":"ERROR"}}', 0),
+    ],
+    "kit": [
+        ("401 line, reason code", f"{_P}ERROR\tverifyToken failed: jwk-kid-mismatch", 1),
+        ("401 line, error name", f"{_P}ERROR\tverifyToken failed: SyntaxError", 1),
+        ("401 line, Invalid form", f"{_P}ERROR\tverifyToken failed: Invalid JWT form. A JWT consists of three parts "
+         "separated by dots.", 1),
+        ("catch-all", f"{_P}ERROR\tplants lambda error Error: boom", 0),
+        ("empty console.error()", f"{_P}ERROR\t", 0),
+        ("Invoke Error", f"{_P}ERROR\tInvoke Error \t{_INVOKE}", 0),
+        ("the kit's words at INFO", f"{_P}INFO\tverifyToken failed: jwk-kid-mismatch", 0),
+    ],
+    "timed-out": [
+        ("timeout line", f"2026-11-01T12:00:03.000Z {_RID} Task timed out after 3.00 seconds", 1),
+        ("timeout line, tab-separated", f"2026-11-01T12:00:03.000Z\t{_RID}\tTask timed out after 3.00 seconds", 1),
+        *_forged("Task timed out"),
+    ],
+    "status-timeout": [
+        ("REPORT timeout", f"REPORT RequestId: {_RID}\tDuration: 3000.00 ms\tBilled Duration: 3000 ms\t"
+         "Memory Size: 512 MB\tMax Memory Used: 90 MB\tStatus: timeout", 1),
+        ("INIT_REPORT timeout", "INIT_REPORT Init Duration: 10000.12 ms\tPhase: init\tStatus: timeout", 1),
+        *_forged("Status: timeout"),
+    ],
+    "status-error": [
+        ("REPORT out of memory", f"REPORT RequestId: {_RID}\tDuration: 812.00 ms\tBilled Duration: 812 ms\t"
+         "Memory Size: 512 MB\tMax Memory Used: 512 MB\tStatus: error\tError Type: Runtime.OutOfMemory", 1),
+        ("INIT_REPORT exit", "INIT_REPORT Init Duration: 120.00 ms\tPhase: init\tStatus: error\t"
+         "Error Type: Runtime.ExitError", 1),
+        *_forged("Status: error"),
+    ],
+}
 TOKENLESS_FILTER = "tokenless-request-401"
-# deploy.yml's smoke canary sends the same value. Its first segment does not base64-decode to JSON, so
-# verifyToken throws "Unexpected end of data" before any JWKS fetch, a line the tokenless filter does not match.
+# deploy.yml's smoke canary sends the same value. Its first segment does not base64-decode to JSON, so Clerk throws
+# a SyntaxError before any JWKS fetch and the kit logs "verifyToken failed: SyntaxError", which the tokenless filter
+# does not match.
 PROBE_BEARER = "ci.smoke.probe"
 
 
@@ -176,6 +245,25 @@ def check_function(fn, start_ms, bearer=False):
     return status == 401 and not any(counts.values()), detail
 
 
+def test_patterns():
+    """Exit 0 when every CONTROLS line gets its expected match count from CloudWatch, else 1. test-metric-filter
+    calls only. --cli-input-json, so a tab, newline or comma in a line reaches CloudWatch as one event."""
+    fails = 0
+    for key, controls in CONTROLS.items():
+        for label, line, want in controls:
+            doc = json.dumps({"filterPattern": PATTERNS[key], "logEventMessages": [line]})
+            try:
+                got = aws("logs", "test-metric-filter", "--cli-input-json", doc, "--query", "length(matches)",
+                          "--output", "text").strip()
+            except Unread:
+                got = "error"
+            ok = got == str(want)
+            fails += not ok
+            print(f"  {'ok' if ok else 'FAIL':5} {key}: {label}" + ("" if ok else f" (expected {want}, got {got})"))
+    print("PASS: every pattern verified on its controls" if not fails else f"FAIL: {fails} control(s) wrong")
+    return 1 if fails else 0
+
+
 def parse_since(value, now=None):
     """--since as epoch milliseconds: whole minutes back from now, or an ISO 8601 time (naive = UTC)."""
     now = now or datetime.datetime.now(datetime.timezone.utc)
@@ -199,7 +287,11 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="Read-only post-promote check of prod's Function URLs.")
     ap.add_argument("--since", type=parse_since, default=parse_since("30"),
                     help="minutes back (default 30) or an ISO 8601 time")
+    ap.add_argument("--test-patterns", action="store_true",
+                    help="only prove PATTERNS on CONTROLS with aws logs test-metric-filter, then exit")
     args = ap.parse_args(argv)
+    if args.test_patterns:
+        return test_patterns()
     try:
         fns = url_functions()
     except Unread as e:
