@@ -26,6 +26,18 @@ LOG_GROUP="/aws/lambda/${FN}"
 NS="Garden/Share"
 SNS_TOPIC="${SNS_TOPIC:-}"   # optional; alarm is created without an action if unset
 
+# Each pattern names fields of the Lambda Text line, "<ts>\t<requestId>\t<LEVEL>\t<message>": tabs split fields,
+# the caller cannot move the first three, and the message's first words are the emitter's own literal. A quoted
+# phrase would match anywhere in the line, and the sign-in kit's 401 line quotes a caller's token kid, so anyone
+# could raise these metrics. test-patterns proves each one, forged 401 lines included.
+P_ATTEMPT='[ts, rid, level=INFO, w1=SHARE_METRIC, w2=attempt, ...]'
+P_POSTED='[ts, rid, level=INFO, w1=SHARE_METRIC, w2=posted, ...]'
+P_FAILED='[ts, rid, level=INFO, w1=SHARE_METRIC, w2=failed, ...]'
+P_REJECTED='[ts, rid, level=INFO, w1=SHARE_METRIC, w2=rejected, ...]'
+P_BLOCKED='[ts, rid, level=INFO, w1=SHARE_METRIC, w2=blocked, ...]'
+P_RETAINED='[ts, rid, level=INFO, w1=SHARE_METRIC, w2=staging_version_retained, ...]'
+P_ORPHAN='[ts, rid, level=ERROR, w1=orphan, w2=cleanup, w3=FAILED, ...]'   # orphans.js logs through console.error
+
 emit_filter() {   # name, pattern, metric
   aws logs put-metric-filter \
     --region "$REGION" \
@@ -39,13 +51,13 @@ emit_filter() {   # name, pattern, metric
 provision() {
   echo "provisioning metric filters on ${LOG_GROUP}"
   # Matched against the literal lines emitted by shareMetric() in index.js.
-  emit_filter share-attempt  '"SHARE_METRIC attempt"'  ShareAttempts
-  emit_filter share-posted   '"SHARE_METRIC posted"'   SharePosted
-  emit_filter share-failed   '"SHARE_METRIC failed"'   ShareFailed
-  emit_filter share-rejected '"SHARE_METRIC rejected"' ShareRejected
+  emit_filter share-attempt  "$P_ATTEMPT"  ShareAttempts
+  emit_filter share-posted   "$P_POSTED"   SharePosted
+  emit_filter share-failed   "$P_FAILED"   ShareFailed
+  emit_filter share-rejected "$P_REJECTED" ShareRejected
   # Not a SHARE_METRIC line — this one is the orphan-cleanup failure from orphans.js, which means a
   # real unpublished object was left on the public Page and needs removing by hand.
-  emit_filter share-orphan-stranded '"orphan cleanup FAILED"' ShareOrphanStranded
+  emit_filter share-orphan-stranded "$P_ORPHAN" ShareOrphanStranded
 
   # ── V4-IGSHARE-001 outcomes. Both existed in the handler with NO filter watching them. ──
   #
@@ -53,11 +65,11 @@ provision() {
   # is deliberately counted and deliberately NOT alarmed (see alarm()). It still needs a metric:
   # without one, "the location guard has never fired" and "the location guard is not running" are
   # the same picture, which is the exact ambiguity the attempt counter exists to remove elsewhere.
-  emit_filter share-blocked '"SHARE_METRIC blocked"' ShareBlocked
+  emit_filter share-blocked "$P_BLOCKED" ShareBlocked
   # staging_version_retained — an EXIF-stripped copy of a private photo could NOT be removed from
   # S3 and remains as a non-current version. Alarmed: this one accumulates silently and is the
   # privacy-relevant failure, not a cosmetic one. See scripts/ig-staging-retention.sh.
-  emit_filter share-staging-retained '"SHARE_METRIC staging_version_retained"' ShareStagingRetained
+  emit_filter share-staging-retained "$P_RETAINED" ShareStagingRetained
   echo "filters provisioned. Run '$0 test-patterns' now (needs no real traffic), then '$0 verify'"
   echo "AFTER exercising a publish — do not arm the alarm first."
 }
@@ -67,43 +79,57 @@ provision() {
 # supplied lines server-side and needs no real log events, so this is runnable before anything has
 # ever posted. A filter keyed on a string no code emits reads zero forever and looks like health.
 test_patterns() {
-  local fails=0
-  # POSITIVE: pattern, and a line copied from the shape shareMetric() produces.
+  local fails=0 T PFX
+  T=$(printf '\t')
+  PFX="2026-11-01T12:00:00.000Z${T}0f0f0f0f-1111-2222-3333-444444444444${T}"
   check() {  # label, pattern, line, expect(1|0)
     local got
+    # A refused call is a failure, not a 0: otherwise a malformed pattern would pass every negative control.
     got=$(aws logs test-metric-filter --region "$REGION" \
             --filter-pattern "$2" --log-event-messages "$3" \
-            --query 'length(matches)' --output text 2>/dev/null || echo 0)
+            --query 'length(matches)' --output text 2>/dev/null) || got="error"
     if [ "$got" = "$4" ]; then
       echo "  ok    $1"
     else
       echo "  FAIL  $1 (expected $4 match(es), got $got)"; fails=$((fails+1))
     fi
   }
-  echo "testing filter patterns against the exact strings index.js emits"
-  check "attempt matches"        '"SHARE_METRIC attempt"'  'SHARE_METRIC attempt {"target":"instagram"}' 1
-  check "posted matches"         '"SHARE_METRIC posted"'   'SHARE_METRIC posted {"target":"facebook","status":201}' 1
-  check "failed matches"         '"SHARE_METRIC failed"'   'SHARE_METRIC failed {"target":"instagram","kind":"GraphError","graph":190}' 1
-  check "rejected matches"       '"SHARE_METRIC rejected"' 'SHARE_METRIC rejected {"target":"facebook","status":404}' 1
-  check "blocked matches"        '"SHARE_METRIC blocked"'  'SHARE_METRIC blocked {"target":"instagram","kinds":["coordinates"]}' 1
-  check "staging retained match" '"SHARE_METRIC staging_version_retained"' 'SHARE_METRIC staging_version_retained {"target":"instagram","reason":"delete_version_denied"}' 1
-  check "orphan stranded match"  '"orphan cleanup FAILED"' 'orphan cleanup FAILED for 2 of 2 media on group abc: M1,M2' 1
+  # POSITIVE: each pattern and the line shareMetric() (console.log, INFO) or orphans.js (console.error) logs.
+  echo "testing filter patterns against the exact lines index.js emits, Lambda prefix included"
+  check "attempt matches"        "$P_ATTEMPT"  "${PFX}INFO${T}SHARE_METRIC attempt {\"target\":\"instagram\"}" 1
+  check "posted matches"         "$P_POSTED"   "${PFX}INFO${T}SHARE_METRIC posted {\"target\":\"facebook\",\"status\":201}" 1
+  check "failed matches"         "$P_FAILED"   "${PFX}INFO${T}SHARE_METRIC failed {\"target\":\"instagram\",\"kind\":\"GraphError\",\"graph\":190}" 1
+  check "rejected matches"       "$P_REJECTED" "${PFX}INFO${T}SHARE_METRIC rejected {\"target\":\"facebook\",\"status\":404}" 1
+  check "blocked matches"        "$P_BLOCKED"  "${PFX}INFO${T}SHARE_METRIC blocked {\"target\":\"instagram\",\"kinds\":[\"coordinates\"]}" 1
+  check "staging retained match" "$P_RETAINED" "${PFX}INFO${T}SHARE_METRIC staging_version_retained {\"target\":\"instagram\",\"reason\":\"delete_version_denied\"}" 1
+  check "orphan stranded match"  "$P_ORPHAN"   "${PFX}ERROR${T}orphan cleanup FAILED for 2 of 2 media M1,M2" 1
 
   # NEGATIVE CONTROLS. A pattern that matches everything is worse than no pattern: every metric would
   # move together and none would mean anything. These assert the outcomes stay distinguishable.
   echo "negative controls (each must match NOTHING)"
-  check "failed !~ posted line"   '"SHARE_METRIC failed"'  'SHARE_METRIC posted {"target":"facebook","status":201}' 0
-  check "posted !~ replay line"   '"SHARE_METRIC posted"'  'SHARE_METRIC replay {"target":"facebook","status":200}' 0
-  check "blocked !~ failed line"  '"SHARE_METRIC blocked"' 'SHARE_METRIC failed {"target":"instagram"}' 0
-  check "retained !~ failed line" '"SHARE_METRIC staging_version_retained"' 'SHARE_METRIC failed {"target":"instagram"}' 0
+  check "failed !~ posted line"   "$P_FAILED"   "${PFX}INFO${T}SHARE_METRIC posted {\"target\":\"facebook\",\"status\":201}" 0
+  check "posted !~ replay line"   "$P_POSTED"   "${PFX}INFO${T}SHARE_METRIC replay {\"target\":\"facebook\",\"status\":200}" 0
+  check "rejected !~ failed line" "$P_REJECTED" "${PFX}INFO${T}SHARE_METRIC failed {\"target\":\"facebook\"}" 0
+  check "blocked !~ failed line"  "$P_BLOCKED"  "${PFX}INFO${T}SHARE_METRIC failed {\"target\":\"instagram\"}" 0
+  check "retained !~ failed line" "$P_RETAINED" "${PFX}INFO${T}SHARE_METRIC failed {\"target\":\"instagram\"}" 0
   # 'attempt' must not be tripped by prose that merely contains the word.
-  check "attempt !~ prose"        '"SHARE_METRIC attempt"' 'share attempt logged by something else' 0
+  check "attempt !~ prose"        "$P_ATTEMPT"  "${PFX}INFO${T}share attempt logged by something else" 0
+  # The kit logs Clerk's message for any token before auth, and that message quotes the token header's kid.
+  # These are the lines a caller writes with kid set to each alarmed phrase; the quoted-phrase patterns matched them.
+  local kid='verifyToken failed: Unable to find a signing key in JWKS that matches the kid='
+  check "failed !~ forged 401 line"   "$P_FAILED"   "${PFX}ERROR${T}${kid}'SHARE_METRIC failed' of the provided session token." 0
+  check "orphan !~ forged 401 line"   "$P_ORPHAN"   "${PFX}ERROR${T}${kid}'orphan cleanup FAILED' of the provided session token." 0
+  check "retained !~ forged 401 line" "$P_RETAINED" "${PFX}ERROR${T}${kid}'SHARE_METRIC staging_version_retained' of the provided session token." 0
+  # The level field is the emitter's console method: the same words at another level are some other line.
+  check "failed !~ ERROR-level line"  "$P_FAILED"   "${PFX}ERROR${T}SHARE_METRIC failed {\"target\":\"instagram\"}" 0
+  check "orphan !~ INFO-level line"   "$P_ORPHAN"   "${PFX}INFO${T}orphan cleanup FAILED for 1 of 1 media M1" 0
+  check "retained !~ ERROR-level line" "$P_RETAINED" "${PFX}ERROR${T}SHARE_METRIC staging_version_retained {\"target\":\"instagram\"}" 0
 
   if [ "$fails" -ne 0 ]; then
     echo "FAIL: $fails pattern check(s) wrong — do NOT trust these metrics until fixed." >&2
     return 1
   fi
-  echo "all patterns verified against literal strings, with negative controls."
+  echo "all patterns verified against the emitted lines, with negative controls."
 }
 
 sum_metric() {   # metric name -> total datapoints sum over the window
