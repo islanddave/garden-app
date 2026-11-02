@@ -54,6 +54,13 @@ class FakeAws:
     def __call__(self, cmd, **kw):
         self.calls.append(cmd)
         op = cmd[2]
+        if op == "test-metric-filter":
+            doc = json.loads(cmd[cmd.index("--cli-input-json") + 1])
+            f = self.fail.get(("", op))
+            if f:
+                return subprocess.CompletedProcess(cmd, f, "", "An error occurred")
+            got = self.stdout.get(("", op)) or str(int(cw_matches(doc["filterPattern"], doc["logEventMessages"][0])))
+            return subprocess.CompletedProcess(cmd, 0, got + "\n", "")
         if op == "describe-metric-filters":
             fn = ""
         else:
@@ -76,6 +83,29 @@ class FakeAws:
         n = self.counts.get((fn, key), 0)
         ids = n if isinstance(n, list) else [f"{UUID}-{key}-{i}" for i in range(n)]
         return subprocess.CompletedProcess(cmd, 0, json.dumps(ids), "")
+
+
+def cw_matches(pattern, line):
+    """A model of CloudWatch's pattern syntax, for the three forms PATTERNS uses: a JSON selector read from the line's
+    first `{`, space-delimited fields split on whitespace (`name=value` must equal the field, `...` takes the rest),
+    and quoted terms with `-` exclusions. --test-patterns asks CloudWatch itself."""
+    if pattern.startswith("{"):
+        key, want = re.fullmatch(r'\{ \$\.(\w+) = "([^"]*)" \}', pattern).groups()
+        try:
+            doc = json.loads(line[line.index("{"):])
+        except ValueError:
+            return False
+        return isinstance(doc, dict) and doc.get(key) == want
+    if pattern.startswith("["):
+        conds = pattern[1:-1].split(", ")
+        rest = conds[-1] == "..."
+        conds = conds[:-1] if rest else conds
+        toks = line.split()
+        if len(toks) < len(conds) or (not rest and len(toks) != len(conds)):
+            return False
+        return all("=" not in c or t == c.split("=", 1)[1] for c, t in zip(conds, toks))
+    terms = re.findall(r'(-?)"([^"]*)"', pattern)
+    return bool(terms) and all((t in line) != bool(neg) for neg, t in terms)
 
 
 def fake_urlopen(statuses, bearer_fns, seen):
@@ -225,11 +255,12 @@ def _sent(aws, fn):
             if c[2] == "filter-log-events" and c[c.index("--log-group-name") + 1] == f"/aws/lambda/{fn}"]
 
 
-def test_each_function_is_read_with_the_level_anchored_patterns_errors_before_kit(monkeypatch, capsys):
+def test_each_function_is_read_with_the_level_anchored_patterns_errors_before_kit_OPS_LOGINJECTGUARD_001(monkeypatch, capsys):
     """OPS-LOGINJECTGUARD-001: requester text lands mid-line (the kit's Clerk message, photos' route path, the
     api-gzip ae value), so a pattern that matches a term anywhere in the line counts it."""
     _, _, aws = run(monkeypatch, capsys)
-    # PIN: each pattern was proven with aws logs test-metric-filter (real line 1, forged line 0); re-prove a change.
+    # PIN: each pattern is proven on ppc.CONTROLS; re-prove a change with `post-promote-check.py --test-patterns`
+    # (test_every_pattern_has_a_real_line_that_counts_and_forged_lines_that_do_not holds the controls).
     want = ['{ $.msg = "household-membership-denied" }',
             "[ts, rid, level=ERROR, ...]",
             "[ts, rid, level=ERROR, w1=verifyToken, ...]",
@@ -243,7 +274,44 @@ def test_each_function_is_read_with_the_level_anchored_patterns_errors_before_ki
         assert sent.index(want[1]) < sent.index(want[2]), fn
 
 
-def test_errors_is_error_lines_minus_kit_lines_by_event_id(monkeypatch, capsys):
+def test_every_pattern_has_a_real_line_that_counts_and_forged_lines_that_do_not_OPS_LOGINJECTGUARD_001():
+    """FakeAws answers filter-log-events by the pattern string, so the cases above prove which patterns are sent,
+    never what they match. CONTROLS are the semantic check, here on the model and live through --test-patterns."""
+    assert set(ppc.CONTROLS) == set(ppc.PATTERNS)
+    for key, controls in ppc.CONTROLS.items():
+        assert {want for _, _, want in controls} == {0, 1}, key
+        for label, line, want in controls:
+            assert cw_matches(ppc.PATTERNS[key], line) == bool(want), (key, label)
+    for key in ppc.RUNTIME:
+        forged = {label for label, _, want in ppc.CONTROLS[key] if want == 0}
+        assert forged == {"forged 401 line (kid)", "forged route line", "forged api-gzip ae"}, key
+
+
+def test_test_patterns_sends_each_control_with_its_pattern_as_one_event_OPS_LOGINJECTGUARD_001(monkeypatch, capsys):
+    code, out, aws = run(monkeypatch, capsys, argv=["--test-patterns"])
+    assert code == 0 and out.splitlines()[-1] == "PASS: every pattern verified on its controls", out
+    want = [(ppc.PATTERNS[k], [line]) for k, controls in ppc.CONTROLS.items() for _, line, _ in controls]
+    assert all(c[1:3] == ["logs", "test-metric-filter"] and c[-2:] == ["--region", "us-east-1"] for c in aws.calls)
+    sent = [json.loads(c[c.index("--cli-input-json") + 1]) for c in aws.calls]
+    assert [(d["filterPattern"], d["logEventMessages"]) for d in sent] == want
+
+
+@pytest.mark.parametrize("fake", [{"stdout": {("", "test-metric-filter"): "2"}}, {"fail": {("", "test-metric-filter"): 254}}])
+def test_test_patterns_fails_on_a_wrong_count_or_a_refused_call_OPS_LOGINJECTGUARD_001(monkeypatch, capsys, fake):
+    code, out, _ = run(monkeypatch, capsys, aws=FakeAws(**fake), argv=["--test-patterns"])
+    total = sum(len(c) for c in ppc.CONTROLS.values())
+    assert code == 1 and out.splitlines()[-1] == f"FAIL: {total} control(s) wrong"
+
+
+@pytest.mark.skipif(os.environ.get("GARDEN_LIVE_AWS") != "1",
+                    reason="opt-in: GARDEN_LIVE_AWS=1 with prod read credentials runs test-metric-filter for real")
+def test_test_patterns_live_against_cloudwatch_OPS_LOGINJECTGUARD_001():
+    p = subprocess.run(["python3", os.path.join(HERE, "post-promote-check.py"), "--test-patterns"],
+                       capture_output=True, text=True, timeout=600)
+    assert p.returncode == 0, p.stdout
+
+
+def test_errors_is_error_lines_minus_kit_lines_by_event_id_OPS_LOGINJECTGUARD_001(monkeypatch, capsys):
     """The 401 line is an ERROR line, so errors counts the ERROR-level ids the kit read did not return. A kit line
     that arrives between the two reads is in the kit list only, and must not cancel a real error."""
     fn = "garden-photos"
@@ -252,14 +320,14 @@ def test_errors_is_error_lines_minus_kit_lines_by_event_id(monkeypatch, capsys):
     assert code == 1 and "errors=2 " in line_for(out, fn)
 
 
-def test_kit_lines_alone_count_zero_errors(monkeypatch, capsys):
+def test_kit_lines_alone_count_zero_errors_OPS_LOGINJECTGUARD_001(monkeypatch, capsys):
     fn = "garden-photos"
     aws = FakeAws(counts={(fn, "errors"): ["k1", "k2"], (fn, "kit"): ["k1", "k2"]})
     code, out, _ = run(monkeypatch, capsys, aws=aws)
     assert code == 0 and "errors=0 " in line_for(out, fn)
 
 
-def test_runtime_is_the_sum_of_its_three_terms(monkeypatch, capsys):
+def test_runtime_is_the_sum_of_its_three_terms_OPS_LOGINJECTGUARD_001(monkeypatch, capsys):
     fn = "garden-tags"
     aws = FakeAws(counts={(fn, "timed-out"): 1, (fn, "status-timeout"): 2, (fn, "status-error"): 4})
     code, out, _ = run(monkeypatch, capsys, aws=aws)
