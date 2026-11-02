@@ -29,8 +29,14 @@ import { createMemoryRouter, RouterProvider } from 'react-router-dom'
 import Seeds, { defaultSeedsView } from '../pages/Seeds.jsx'
 import { ToastProvider } from '../context/ToastContext.jsx'
 import { writeDraft, clearDraft } from '../lib/draftStash.js'
+import { etDay } from '../lib/harvestSummary.js'
 
 const daysAgo = (d) => new Date(Date.now() - d * 86400000).toISOString()
+// Midday Eastern, d garden days before today, for cases that sit on a ferment threshold. The ferment
+// line counts Eastern calendar dates, and now − d×24h lands on the wrong date when the span crosses a
+// DST change (5 days reads as 4 late on a fall-back night), which moves a lot across a threshold.
+const gardenDaysAgo = (d) =>
+  `${new Date(Date.parse(`${etDay(new Date())}T12:00:00Z`) - d * 86400000).toISOString().slice(0, 10)}T16:00:00Z`
 
 const lot = (over = {}) => ({
   id: 'lot-x', name: 'Brandywine — saved 2026', variety_name: 'Brandywine', category: 'seeds',
@@ -413,7 +419,7 @@ describe('Seeds — the ferment line (§4.5)', () => {
   })
 
   it('names one overdue ferment on EVERY view and taps through to its card in Saved seeds', async () => {
-    const OVERDUE = { ...FERMENTING, stage_entered_at: daysAgo(5) }
+    const OVERDUE = { ...FERMENTING, stage_entered_at: gardenDaysAgo(5) }
     seedRows = [OVERDUE, BOUGHT]
     const router = mount(['/seeds?view=sow'])
     await waitFor(() => expect(screen.getByTestId('seeds-ferment-line')).toBeTruthy())
@@ -430,8 +436,8 @@ describe('Seeds — the ferment line (§4.5)', () => {
 
   it('counts two due ferments instead of naming one', async () => {
     seedRows = [
-      { ...FERMENTING, stage_entered_at: daysAgo(4) },
-      { ...FERMENTING, id: 'lot-ferm-2', variety_name: 'Brandywine', stage_entered_at: daysAgo(6) },
+      { ...FERMENTING, stage_entered_at: gardenDaysAgo(4) },
+      { ...FERMENTING, id: 'lot-ferm-2', variety_name: 'Brandywine', stage_entered_at: gardenDaysAgo(6) },
     ]
     mount(['/seeds?view=mine'])
     await waitFor(() => expect(screen.getByTestId('seeds-ferment-line').textContent).toContain('2 ferments need checking'))
