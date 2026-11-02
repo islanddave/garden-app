@@ -215,7 +215,7 @@ describe('jsonResponder — per-invocation binding', () => {
 
     // OPS-LOGINJECTGUARD-001: the line runs before sign-in and only a literal space joins a CloudWatch Text
     // phrase, so a caller's Accept-Encoding must not spell the ship scan's runtime terms.
-    it('encodes the spaces in a hostile Accept-Encoding, so it cannot spell a filter phrase', () => {
+    it('encodes the spaces in a hostile Accept-Encoding, so it cannot spell a filter phrase (OPS-LOGINJECTGUARD-001)', () => {
       withCapturedLog(() => jsonResponder({ headers: { 'accept-encoding': 'Task timed out' } }, {})(401, { error: 'unauthorized' }));
       const line = logged.map(JSON.parse).find(l => l.tag === 'api-gzip');
       expect(line.ae).toBe('Task%20timed%20out');
