@@ -771,7 +771,9 @@ describe('PhotoLibrary — Today filter', () => {
     timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
   }).format(d)
   const TODAY = zoned(new Date())
-  const YESTERDAY = zoned(new Date(Date.now() - 86400000))
+  // The calendar day before TODAY, stepped in UTC. now − 24h is not yesterday on a 25-hour day: in
+  // the last hour of a fall-back day it is still today, and the "old" photo becomes a today photo.
+  const YESTERDAY = new Date(Date.parse(`${TODAY}T12:00:00Z`) - 86400000).toISOString().slice(0, 10)
 
   const shot = (id, caption, dayKey, hour = '18') => ({
     id, caption, view_url: `https://x/${id}.jpg`,

@@ -9,7 +9,7 @@
 //     extraction. (d) a stage could be dated into the future, which reads as "today" forever.
 //
 // TIME IS REAL HERE, NOT FAKED — same discipline as SavedSeeds.processAndElapsed.test.jsx: the
-// fixtures are offsets from Date.now() at render, so no timer mock can make a threshold pass
+// fixtures are garden days back from the real today, so no timer mock can make a threshold pass
 // vacuously. No jest-dom (L-182).
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -30,9 +30,15 @@ vi.mock('react-router-dom', () => ({
 import SavedSeeds from '../pages/SavedSeeds.jsx'
 import { ToastProvider } from '../context/ToastContext.jsx'
 import { todayLocalISO } from '../lib/dateLocal.js'
+import { etDay } from '../lib/harvestSummary.js'
 import { P } from '../lib/constants.js'
 
 const daysAgo = (d) => new Date(Date.now() - d * 86400000).toISOString()
+// Midday Eastern, d garden days before today. elapsedDays counts Eastern calendar dates, and
+// now − d×24h lands on the wrong date when the span crosses a DST change (2 days reads as 1 late on
+// a fall-back night, 4 as 5 just after spring-forward), which moves a lot across a threshold.
+const gardenDaysAgo = (d) =>
+  `${new Date(Date.parse(`${etDay(new Date())}T12:00:00Z`) - d * 86400000).toISOString().slice(0, 10)}T16:00:00Z`
 
 // jsdom serialises style.color as `rgb(r, g, b)`, so a palette hex has to be converted to compare
 // against it. Shorthand-aware, because the palette has carried both forms.
@@ -48,7 +54,7 @@ const hexToRgb = (hex) => {
 const ferment = (id, days, over = {}) => ({
   id, name: id, variety_name: id, category: 'seeds', variety_id: 'v-tom', status: 'active',
   seed_stage: 'fermenting', seed_process: 'wet', source_plant_id: null,
-  updated_at: daysAgo(0.01), stage_entered_at: days == null ? null : daysAgo(days),
+  updated_at: daysAgo(0.01), stage_entered_at: days == null ? null : gardenDaysAgo(days),
   ...over,
 })
 
