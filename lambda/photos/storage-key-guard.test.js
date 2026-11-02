@@ -343,3 +343,22 @@ describe('route log never carries a JSON fragment from the path', () => {
     }
   });
 });
+
+// Only a literal space joins a CloudWatch Text phrase, so a path with spaces could spell any alarm's phrase.
+describe('route log never carries a space or a control character from the path (OPS-LOGINJECTGUARD-001)', () => {
+  beforeAll(() => { process.env.S3_PHOTOS_BUCKET ??= 'test-bucket'; });
+  it('the handler logs spaces as %20 and tabs as %09', async () => {
+    const { resetStubs } = await import('../_test-stubs/state.js');
+    resetStubs();
+    const { handler } = await import('./index.js');
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await handler({ rawPath: '/x/photos lambda error\tTask timed out', requestContext: { http: { method: 'GET' } }, headers: {} });
+      const route = log.mock.calls.filter((c) => c[0] === 'route');
+      expect(route).toEqual([['route', 'GET', '/x/photos%20lambda%20error%09Task%20timed%20out']]);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+});

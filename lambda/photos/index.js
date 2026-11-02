@@ -4,7 +4,7 @@ import { SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { householdScope, loadOwnedSpace, loadOwnedLocation, loadOwnedInventoryItem, warnRejectedFk } from './household.js';
-import { requestContext } from './request-context.js';
+import { requestContext, logSafe } from './request-context.js';
 // Loaders for the body-supplied PARENT ids of the five photo parents household.js does not cover
 // (contract: authz-parents.js).
 import { loadOwnedProject, loadOwnedPlantingRef, loadOwnedEvent } from './authz-parents.js';
@@ -497,18 +497,16 @@ const EMPTY_SPACE_HERO = {
   featured_photo_view_url: null,
 };
 
-// The route line runs before the kit, so any caller writes its tail. CloudWatch reads a JSON metric filter's input from
-// a Text line's first `{` to its end, so a raw path ending in {"msg":"authz-fk-reject"} would count as that line.
-// Percent-encoding { } " and \ leaves no JSON fragment and keeps the path readable. Pinned by
-// storage-key-guard.test.js; scripts/household-observability.sh test-patterns holds the server-side control.
-export function logSafePath(text) {
-  return String(text).replace(/[{}"\\]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
-}
+// The route line runs before the kit, so any caller writes its tail: a path ending in {"msg":"authz-fk-reject"} or
+// spelling an alarm's phrase with spaces would count as that line. logSafe (the kit's) encodes both away. Exported
+// under this name for storage-key-guard.test.js; scripts/household-observability.sh test-patterns holds the
+// server-side control.
+export { logSafe as logSafePath };
 
 export const handler = async (event) => {
   // Single method+path route log: per-route CloudWatch invocation evidence instead of per-function.
   // No payloads logged.
-  console.log('route', logSafePath(event.requestContext?.http?.method ?? 'GET'), logSafePath(event.rawPath ?? ''));
+  console.log('route', logSafe(event.requestContext?.http?.method ?? 'GET'), logSafe(event.rawPath ?? ''));
   // The kit answers OPTIONS, a secrets failure (secretsUnavailable) and every sign-in refusal (401, the household
   // gate's 403) before any statement, and refetches secrets on SECRETS_TTL_MS.
   const ctx = await requestContext(event, { resp, neon, onSecretsError: secretsUnavailable, secretsTtlMs: SECRETS_TTL_MS });

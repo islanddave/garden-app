@@ -12,8 +12,10 @@
 // `../http-response.js` import 502s at module load. An IDENTICAL copy lives in each adopting Lambda dir,
 // imported as `./http-response.js`, held byte-identical by lambda/http-response-copies-sync.test.js.
 //
-// node:zlib ONLY — no new runtime dependency; cold-start weight is not free.
+// node:zlib plus the sign-in kit's logSafe (its copy ships in every dir this one does): no new npm dependency;
+// cold-start weight is not free.
 import { gzipSync } from 'node:zlib';
+import { logSafe } from './request-context.js';
 
 // Below this many UTF-8 bytes the response is sent identity:
 //   · gzip INFLATES the small JSON this API returns ({"error":"Unauthorized"} is 24 B in, 44 B out),
@@ -98,14 +100,14 @@ export function jsonResponse(statusCode, body, { acceptEncoding = '', headers = 
 //   - The BROWSER cannot show it: the PWA's Service Worker intercepts every request, so
 //     PerformanceResourceTiming reports a 1.00 ratio whatever was sent.
 //   - The design FAILS SAFE, so an inert deploy and a working one look identical from outside.
-// `ae` is the raw Accept-Encoding, a transport preference with nothing user-identifying; it is truncated
-// so a long junk header cannot inflate log spend.
+// `ae` is the caller's Accept-Encoding, a transport preference with nothing user-identifying; it is truncated
+// so a long junk header cannot inflate log spend, then logSafe'd because this line runs before sign-in.
 function logNegotiation(acceptEncoding, encoded) {
   try {
     console.log(JSON.stringify({
       tag: 'api-gzip',
       gzip: encoded,
-      ae: String(acceptEncoding).slice(0, 64),
+      ae: logSafe(String(acceptEncoding).slice(0, 64)),
     }));
   } catch { /* logging must never be able to fail a response */ }
 }
