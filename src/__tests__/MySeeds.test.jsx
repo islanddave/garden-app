@@ -311,7 +311,7 @@ describe('My seeds — what each card says', () => {
     expect(live.style.flex).toBe('0 0 auto')
   })
 
-  it('a lot still drying across New Year says the year its stage began, not the clock\'s year (ageOf reads stage_entered_at)', async () => {
+  it('a lot still drying across New Year says the year its stage began, not the clock\'s year (ageOf reads stage_entered_at) (OPS-WEAKDATETESTS-001)', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date('2027-01-10T12:00:00'))
     onTestFinished(() => vi.useRealTimers())

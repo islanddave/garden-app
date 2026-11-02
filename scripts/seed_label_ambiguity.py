@@ -476,12 +476,13 @@ def _js_year(v):
 
 
 def age_of(i):
-    """mySeedsModel.js ageOf: (year, kind) or None."""
+    """mySeedsModel.js ageOf: (year, kind) or None. stage_entered_at is a timestamptz, read on its Eastern
+    day; purchase_date is a calendar date, read as written."""
     y = _js_number(i.get('year_harvested'))
     if _finite(y) and y == math.floor(y) and y > 1900:
         return int(y), 'harvested'
     if is_in_process(i):
-        sy = _js_year(i.get('stage_entered_at'))
+        sy = _js_year(et_day(i.get('stage_entered_at')))
         if sy is not None:
             return sy, 'harvested'
     py = _js_year(i.get('purchase_date'))

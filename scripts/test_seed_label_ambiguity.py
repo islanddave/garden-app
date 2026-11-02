@@ -232,6 +232,9 @@ MYSEEDS = [
     srow('l3', 'Black Krim', name='Black Krim — saved 2026', seed_stage='fermenting', source_plant_id='pl-3'),
     srow('l4', 'Aji Charapita', name='Charapita jar', seed_stage='drying', stage_entered_at='2026-09-10T15:00:00.000Z',
          source_plant_id='pl-4', seed_count=121, seed_weight_g='1.600', seed_count_estimated=False),
+    # OPS-SEEDAGEUTCYEAR-001: 01:00Z on 1 Jan is 20:00 ET on 31 Dec, so the stage year is 2026, not 2027
+    srow('l11', 'Amish Paste', name='Amish Paste — saved 2026', seed_stage='drying',
+         stage_entered_at='2027-01-01T01:00:00.000Z', source_plant_id='pl-15'),
     srow('l5', '1884', name='Porch jar', seed_stage='stored', source_kind='own_garden', year_harvested=2025,
          seed_count=185, seed_count_estimated=False),
     srow('l6', 'Datil', name='Saved seed 2025', seed_stage='stored', source_kind='farm_stand',

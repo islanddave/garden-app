@@ -10,6 +10,7 @@
 // previously is exactly the one Sow now calls sowed previously. Re-deciding any of these here would let the two views
 // disagree about one jar.
 import { formatQty } from '../../lib/format.js'
+import { etDay } from '../../lib/harvestSummary.js'
 import { isInProcess, isUnstartedSave, isDepleted, isArchivedForSeason } from '../../lib/sowEngine.js'
 import { elapsedDays, fermentUrgency, lotMeasure, isSavedLot, isF2Lot, F2_LABEL } from './seedLots.js'
 import { parentSetFacts } from './seedParents.js'
@@ -72,11 +73,13 @@ export function whereFrom(i, vendorOf) {
 // The seed's year, and what kind of year it is. The harvest year when it was recorded; for a saved
 // lot still being processed, the year of its current stage (it is this season's seed); otherwise the
 // purchase year — a LOWER bound on age, so it is labelled "bought", never passed off as the seed's own.
+// stage_entered_at is a timestamptz, so its year is the Eastern day's (an evening on 31 Dec is already
+// 1 Jan in UTC); purchase_date is a calendar date and is read as written.
 export function ageOf(i) {
   const y = Number(i?.year_harvested)
   if (Number.isInteger(y) && y > 1900) return { year: y, kind: 'harvested' }
   if (isInProcess(i)) {
-    const sy = Number(String(i?.stage_entered_at ?? '').slice(0, 4))
+    const sy = Number(String(etDay(i?.stage_entered_at) ?? '').slice(0, 4))
     if (Number.isInteger(sy) && sy > 1900) return { year: sy, kind: 'harvested' }
   }
   const py = Number(String(i?.purchase_date ?? '').slice(0, 4))
