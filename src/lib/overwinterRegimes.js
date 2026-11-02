@@ -4,9 +4,9 @@
 // lambda/daily-plan/overwinter.js rather than imported because that module is CommonJS Lambda
 // source and this one is bundled into the SPA; src/lib/wateringScale.js reaches into lambda/ for a
 // JSON file, but no production SPA module imports a CJS lambda .js.
-// src/__tests__/overwinterRegimeParity.test.js holds the two lists (plus the plants Lambda's
-// allowlist) identical, so a fifth regime cannot be added to the model without this picker failing
-// loudly instead of silently omitting it.
+// src/__tests__/OverwinterPrompt.test.jsx ("the picker offers exactly the regimes the evaluator
+// implements") holds the two lists identical, so a fifth regime cannot be added to the model without
+// this picker failing loudly instead of silently omitting it.
 //
 // WHAT THE COPY HAS TO DO. The user is standing in front of a plant deciding which of four buckets it
 // is in, and the four are ordered by DRYING RATE, not by how alive the plant is — which is exactly

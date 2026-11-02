@@ -126,7 +126,7 @@ export default function QuickActions({ planting, onLogged, ownLots, onSeedAdded,
   //   2. CADENCE. Even with the timezone right, "now" is when the user got round to LOGGING, not when the seed broke
   //      ground, and because the server stamp is set-once the error would be baked in permanently.
   // (1) is fixed by sending todayLocalISO(), the viewer's wall-clock day, as the other one-tap logger
-  // (today/CareNeeded.jsx) does. (2) cannot be fixed by a default, because only the user knows which morning they saw
+  // (today/useCareActions.js) does. (2) cannot be fixed by a default, because only the user knows which morning they saw
   // the cotyledons; it is fixed by the optional inline date below, and corrected after the fact by editing the
   // germination event itself (the events PUT re-derives the anchor, see lambda/events/index.js).
   //

@@ -310,7 +310,7 @@ export function SeedCountBasis({ estimated, onChange, testId }) {
  *
  * The cases are the values of chk_plant_varieties_breeding_system (f1 | open_pollinated | landrace | unknown) plus
  * NULL; there is no `f2_or_later` value. `landrace` gets its own line rather than being folded into open_pollinated,
- * which would assert uniformity a landrace does not have. breedingNoticeCoverage.test.js reads the CHECK's value list
+ * which would assert uniformity a landrace does not have. breedingNoticeCoverage.test.jsx reads the CHECK's value list
  * out of the migration and fails if any allowed value has no arm here.
  */
 export function breedingNotice(variety) {

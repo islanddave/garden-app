@@ -20,8 +20,8 @@
 // carries the reasoning and the `contested` class-3 register with its pre-authored flip conditions
 // (a slug whose condition fires graduates out of this list). This module is a COPY, kept small on
 // purpose: the JSON is large and importing it would put all of it in the client bundle to read one
-// array. harvestTracked.sync.test.js fails if the two ever diverge, which is the only thing making a
-// copy safe.
+// array. src/__tests__/harvestTracked.test.js fails if the two ever diverge, which is the only thing
+// making a copy safe.
 //
 // NOT a permanent property of a plant. The flip is a one-line edit here plus the JSON, and the
 // contested register exists to make that a considered act rather than a surprise.

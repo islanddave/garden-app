@@ -105,10 +105,12 @@ export function toPhoto(raw, { receivedAt = Date.now() } = {}) {
     storagePath: raw.storage_path ?? null,
     caption,
     // Most live rows have no caption, so this fallback is the common path. Kept non-empty so a
+    // photo always announces; a decorative usage passes alt="" at the call site instead.
     alt: caption || 'Garden photo',
     createdAt: raw.created_at ?? null,
     // EXIF DateTimeOriginal, or null on rows that predate the client-side read (or whose EXIF was
     // stripped before the file reached us). Do NOT sort on this
+    // directly — go through photoDate(), which supplies the created_at fallback those rows need.
     takenAt: raw.taken_at ?? null,
     parents: Object.freeze(parents),
     parentKinds: Object.freeze(parentKinds),

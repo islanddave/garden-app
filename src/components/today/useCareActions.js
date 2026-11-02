@@ -8,7 +8,7 @@ import {
 } from './careStore.js'
 
 // useCareActions: one care list's state and write paths, shared by the V2 Today and the household
-// list (moved out of CareNeeded.jsx, which behaves exactly as before).
+// list (extracted from the former CareNeeded.jsx, which no longer exists).
 //
 // Owns, per mounted list: the optimistic fades (`logged`), the in-flight guards (pendingKeys,
 // writeInFlightRef, bulkInFlightRef, bulkProgress), this list's view of the page's one skip set

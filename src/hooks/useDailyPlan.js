@@ -8,11 +8,15 @@
 // TWO fetch modes, because they have opposite failure requirements.
 //
 // `reload` (INITIAL) sets `loading`, clears `error`, and is what the mount effect and an
-// includeHousehold toggle call. Today.jsx gates the whole plan block
-// on `!loading && !error`, so this mode is allowed to blank the screen — there is nothing on it yet.
+// includeHousehold change call. It never clears `data`; what `loading` hides is each consumer's call.
+// src/pages/TodayV2.jsx shows its loading/error region only while it has no plan yet
+// (`!data && (loading || error)`) and counts `!loading` toward its ready point;
+// src/components/findings/TodayReasoning.jsx renders nothing while `loading`. So this mode is allowed
+// to blank a consumer that gates on `loading` — there is nothing on it yet.
 //
 // `refresh` (REVALIDATE) is the intraday path, and it must NEVER blank the screen. Calling `reload`
-// on focus/visibilitychange would be a full teardown: it sets loading=true, Today.jsx then unmounts <CareNeeded>, and every piece of in-memory list state
+// on focus/visibilitychange would set loading=true, which tears down whatever a consumer gates on
+// `loading` (TodayReasoning unmounts its card), and any in-memory list state held under such a gate
 // dies with it — grouping mode, manual expand/collapse, the "Show N more" state, an open bulk sheet
 // and its hand-checked subset, in-flight pending rows, and the scroll position of a ~200-row list the
 // user is physically walking. So `refresh` holds `data` and reports through `refreshing` instead.
@@ -32,15 +36,16 @@
 // on Today and resumed hours later is revalidated: the server regenerates the plan hourly, which
 // buys nothing if the client never asks for it again.
 //
-// The listeners live HERE, not in Today.jsx, because `refresh`'s identity is deliberately stabilised
+// The listeners live HERE, not in the consumer (TodayV2.jsx), because `refresh`'s identity is deliberately stabilised
 // in this file (see hasDataRef below) so registration survives a successful fetch. A consumer wiring
 // its own listener would re-derive that guarantee and eventually get it wrong.
 //
-// The in-flight guard must not coalesce a call asking a DIFFERENT question. Today asks with
-// includeHousehold = showOthers && canShowOthers, and on a cold roster (launch or sign-in, toggle
-// saved ON) the members land while the first plan request is still open: the reload that flip asks
-// for hits the guard, and since `run` closes over includeHousehold nothing would ask again — Today
-// would show the toggle ON over "No one else has care needs today." until the next wake. So a
+// The in-flight guard must not coalesce a call asking a DIFFERENT question. A caller's
+// includeHousehold can flip while the first plan request is still open (derived from a roster that
+// lands late, e.g. showOthers && canShowOthers on a cold launch or sign-in; TodayV2 passes a constant
+// `true` today, so useDailyPlan.trailingRun.test.jsx is what pins this): the reload that flip asks
+// for hits the guard, and since `run` closes over includeHousehold nothing would ask again — the
+// page would show the old question's answer until the next wake. So a
 // settling request compares the question it asked (fetch + includeHousehold) with the one the
 // latest commit asks, and if they differ ONE trailing run asks the current one. The same question still coalesces: the Android double wake, and StrictMode's double
 // mount effect in dev, stay one request each, and a question changed and changed back mid-flight is
@@ -48,8 +53,8 @@
 // refresh once a plan has been shown (so STALE ROWS BEAT BLANK ROWS covers its failure), and an
 // initial load when none has.
 //
-// An OPT-IN `seed`, absent for callers that do not pass it (Today.jsx, TodayReasoning.jsx), which
-// therefore get no seeding. A caller passing `seed` (the signed-in user's id) gets the module-level last good plan for the same user + question on a remount, when that
+// An OPT-IN `seed`, absent for callers that do not pass it (TodayReasoning.jsx), which
+// therefore get no seeding. A caller passing `seed` (TodayV2.jsx passes the signed-in user's id) gets the module-level last good plan for the same user + question on a remount, when that
 // plan is TODAY's: it paints at once with `loading` false, and the mount fetch runs as a REFRESH (loading
 // never flips on, a failure keeps the seeded plan). So Back to the redesigned Today paints the page it
 // left, under the page-scroll manager's restore, instead of a "Loading…" frame. Another user never reads

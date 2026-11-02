@@ -7,8 +7,8 @@
 // because it is the app supplying a completion determination, offered on a batch with zero pH rows
 // and zero recorded cue. Nothing on this surface names acidification, shelf stability, or whether a
 // reading is good, and the guard for that is a sweep over BOTH steps of the sheet in
-// BatchCloseField.test.jsx — the form <Note>s unmount on submit, which is exactly how a prior sweep
-// in this repo went vacuous.
+// src/__tests__/PutUpBatchClose.test.jsx ("the inherited rulings, swept at BOTH steps") — the form
+// <Note>s unmount on submit, which is exactly how a prior sweep in this repo went vacuous.
 //
 // WHY A <Sheet> AND NOT THE CARD'S INLINE-EXPAND IDIOM. EndStatusOffer.jsx is the shipped precedent
 // for exactly this interaction — "the server committed the row; now OFFER a terminal choice;
