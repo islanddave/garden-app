@@ -12,6 +12,16 @@ import { householdGate } from './household.js';
 // authorizedParties value anywhere else. Pinned in lambda/request-context.test.js.
 export const AUTHORIZED_PARTIES = Object.freeze(['https://garden.futureishere.net', 'https://dg6mmjhepoyt9.cloudfront.net']);
 
+// For requester text in a log line. CloudWatch reads a JSON filter's input from a Text line's first `{`, and only a
+// literal space joins a Text filter's phrase, so { } " \, the space and every control character become %XX; `%` stays,
+// so an encoded path still reads. lambda/log-inject-guard.static.test.js allows only literals or this before the kit.
+export function logSafe(text) {
+  return String(text).replace(/[{}"\\ \x00-\x1f\x7f]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')}`);
+}
+
+// Clerk's own text for an absent or malformed token: the tokenless-request alarm's metric filters match it.
+const INVALID_FORM = 'Invalid JWT form. A JWT consists of three parts separated by dots.';
+
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 let _secrets = null;
 let _secretsAt = 0;
@@ -72,15 +82,17 @@ export async function requestContext(event, { resp: respond, neon, scope, onSecr
     return { response: onSecretsError(err, { missing, keys: Object.keys(secrets) }) };
   }
 
-  // An absent header reaches Clerk as '' on purpose: the tokenless-request alarm's metric filters match Clerk's own
-  // "Invalid JWT form" text, which is logged as is.
+  // An absent header reaches Clerk as '' on purpose, so it logs the INVALID_FORM text the tokenless alarm counts.
   const authHeader = event.headers?.authorization ?? event.headers?.Authorization ?? '';
   const token = authHeader.replace(/^Bearer\s+/i, '');
   let payload;
   try {
     payload = await verifyToken(token, { secretKey: secrets.CLERK_SECRET_KEY, authorizedParties: AUTHORIZED_PARTIES });
   } catch (err) {
-    console.error('verifyToken failed:', err?.message ?? String(err));
+    // Clerk's other messages echo the caller's token header (a kid, a JSON.parse fragment), which could spell any
+    // alarm's phrase, so they log as Clerk's fixed reason code instead. Rule (b) of log-inject-guard.static.test.js.
+    const said = err?.message === INVALID_FORM ? INVALID_FORM : (err?.reason ?? err?.name ?? 'unknown');
+    console.error('verifyToken failed:', said);
     return resp(401, { error: 'Unauthorized' });
   }
   // Its own line, apart from Clerk's failures: the signature has verified, so the sub is safe to log, and the ship

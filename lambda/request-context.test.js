@@ -175,6 +175,39 @@ describe('request-context: sign-in failures', () => {
   });
 });
 
+// CloudWatch Text filters match a phrase anywhere in a line, and Clerk's messages echo the token's header (its kid,
+// or a JSON.parse fragment), so anyone could write an alarm's phrase into the kit's 401 line.
+describe('request-context: the 401 line carries no requester text (OPS-LOGINJECTGUARD-001)', () => {
+  const FORGED = 'photos lambda error SHARE_METRIC failed Task timed out\tx';
+  const clerkError = (message, extra = {}) => Object.assign(new Error(message), extra);
+  const expectNoForgery = () => {
+    const text = JSON.stringify(error.mock.calls);
+    for (const phrase of ['photos lambda error', 'SHARE_METRIC failed', 'Task timed out', '\\t']) expect(text).not.toContain(phrase);
+  };
+
+  it.each([
+    ['a kid lookup failure logs its reason code', clerkError(`Unable to find a signing key in JWKS that matches the kid='${FORGED}'`, { reason: 'jwk-kid-mismatch' }), 'jwk-kid-mismatch'],
+    ['a header that is not JSON logs the error name', new SyntaxError(`Unexpected token 'p', "${FORGED}" is not valid JSON`), 'SyntaxError'],
+    ['the Invalid-form text with more after it is not the constant', clerkError(`Invalid JWT form. A JWT consists of three parts separated by dots. ${FORGED}`), 'Error'],
+    ['an error with neither reason nor name logs unknown', clerkError(FORGED, { name: undefined }), 'unknown'],
+  ])('%s', async (_name, err, said) => {
+    await load();
+    stub.verifyTokenResult = err;
+    expect(await kit.requestContext(event(), wired().opts)).toEqual({ response: resp(401, { error: 'Unauthorized' }) });
+    expect(error.mock.calls).toEqual([['verifyToken failed:', said]]);
+    expectNoForgery();
+  });
+});
+
+describe('request-context: logSafe (OPS-LOGINJECTGUARD-001)', () => {
+  it('percent-encodes { } " \\, the space, every C0 control and DEL; leaves % and the rest as is', async () => {
+    await load();
+    expect(kit.logSafe('/x{"m"}\\ a\tb\r\n\x00\x7f%20é~')).toBe('/x%7B%22m%22%7D%5C%20a%09b%0D%0A%00%7F%20é~');
+    for (let c = 0; c < 0x20; c += 1) expect(kit.logSafe(String.fromCharCode(c))).toBe(`%${c.toString(16).toUpperCase().padStart(2, '0')}`);
+    expect(kit.logSafe(42)).toBe('42');
+  });
+});
+
 describe('request-context: the household gate', () => {
   it('a verified non-member gets the generic 403 through the handler\'s resp; neither neon nor scope is called', async () => {
     await load();
