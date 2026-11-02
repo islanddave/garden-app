@@ -8,6 +8,10 @@
 # phrase would match anywhere in the line, and the sign-in kit's 401 line quotes a caller's token kid, so anyone
 # could hold the alarm in ALARM.
 #
+# The anchor holds only while garden-photos logs in Text format: a JSON-format line starts `{"timestamp"`, so the
+# pattern would read 0 and the alarm would sit OK through real errors. test-patterns reads the live LogFormat and
+# fails unless it is Text; any LogFormat change re-keys this filter in the same change.
+#
 # ORDERING: the alarm already exists, so a filter written by provision pages at once. provision therefore runs
 # test-patterns first and refuses on any failure. scripts/test_photos_observability.py pins the pattern's words
 # to the catch-all line and the provision call to the filter's name and metric.
@@ -15,7 +19,8 @@ set -euo pipefail
 
 REGION="${AWS_REGION:-us-east-1}"
 ACCOUNT=769788341849
-LOG_GROUP=/aws/lambda/garden-photos
+FN=garden-photos
+LOG_GROUP=/aws/lambda/${FN}
 FILTER=photos-lambda-error
 NS=Garden/Photos
 METRIC=PhotosHandlerErrors
@@ -25,6 +30,13 @@ require_account() {
   local got
   got=$(aws sts get-caller-identity --query Account --output text) || { echo "cannot read the AWS identity" >&2; exit 1; }
   [ "$got" = "$ACCOUNT" ] || { echo "refusing: credentials are for account $got, not $ACCOUNT" >&2; exit 1; }
+}
+
+verify_log_format() {
+  local fmt
+  fmt=$(aws lambda get-function-configuration --region "$REGION" --function-name "$FN" \
+          --query 'LoggingConfig.LogFormat' --output text 2>/dev/null) || fmt="unreadable"
+  if [ "$fmt" = "Text" ]; then echo "  ok    log format ${FN}: Text"; else echo "  FAIL  log format ${FN}: $fmt (want Text)"; return 1; fi
 }
 
 FAILS=0
@@ -43,6 +55,8 @@ test_patterns() {
   PFX="2026-11-01T12:00:00.000Z${T}0f0f0f0f-1111-2222-3333-444444444444${T}"
   kid='verifyToken failed: Unable to find a signing key in JWKS that matches the kid='
   FAILS=0
+  echo "the live function's log format (the anchor reads only Text lines)"
+  verify_log_format || FAILS=$((FAILS+1))
   echo "positive: the catch-all line, Lambda prefix included"
   check "catch-all with a stack"         "${PFX}ERROR${T}photos lambda error Error: boom
     at handler (/var/task/index.js:1608:5)" 1
@@ -68,7 +82,7 @@ test_patterns() {
 
 provision() {
   require_account
-  test_patterns || { echo "refusing to write the filter: its pattern is unproven." >&2; exit 1; }
+  test_patterns || { echo "refusing to write the filter: its pattern is unproven, or ${FN} does not log in Text." >&2; exit 1; }
   aws logs put-metric-filter --region "$REGION" --log-group-name "$LOG_GROUP" --filter-name "$FILTER" \
     --filter-pattern "$PATTERN" \
     --metric-transformations "metricName=${METRIC},metricNamespace=${NS},metricValue=1,defaultValue=0"
