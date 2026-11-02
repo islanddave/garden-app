@@ -1,7 +1,7 @@
 {
-  "version": "5.3.28",
+  "version": "5.3.29",
   "date": "2026-11-01",
   "highlights": [
-    "Behind-the-scenes tidy-up of the notes in the app's screens and code, plus tighter checks on three date-sensitive tests. Nothing about how the app works or looks has changed."
+    "Saved seeds now count a lot entered on a New Year's Eve evening toward that year, and the app's server notes no longer copy text from a request that has not signed in. Behind the scenes, steadier checks on a few date-sensitive tests."
   ]
 }

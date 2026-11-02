@@ -1,5 +1,12 @@
 [
   {
+    "version": "5.3.29",
+    "date": "2026-11-01",
+    "highlights": [
+      "Saved seeds now count a lot entered on a New Year's Eve evening toward that year, and the app's server notes no longer copy text from a request that has not signed in. Behind the scenes, steadier checks on a few date-sensitive tests."
+    ]
+  },
+  {
     "version": "5.3.28",
     "date": "2026-11-01",
     "highlights": [
