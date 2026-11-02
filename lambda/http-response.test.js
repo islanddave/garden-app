@@ -1,7 +1,7 @@
 // V4-APIGZIP-001 — EXECUTABLE tests for the negotiated-gzip responder.
 //
-// Unlike the handler modules in this tree, http-response.js imports node:zlib and NOTHING else, so
-// it is importable from repo root and this tier can assert real behavior instead of source text:
+// http-response.js imports only node:zlib and the sign-in kit's logSafe (the kit's runtime deps resolve to
+// lambda/_test-stubs here), so it is importable from repo root and this tier can assert real behavior instead of source text:
 // every case below actually gunzips the emitted body and compares it to the input.
 //
 // The four things that can break a live API here, in the order they bite:
@@ -205,12 +205,20 @@ describe('jsonResponder — per-invocation binding', () => {
       try { fn(); } finally { console.log = orig; }
     };
 
-    it('records gzip:true and the raw Accept-Encoding when the gzip branch is taken', () => {
+    it('records gzip:true and the logSafe-encoded Accept-Encoding when the gzip branch is taken', () => {
       withCapturedLog(() => jsonResponder({ headers: { 'accept-encoding': 'gzip, deflate, br' } }, {})(200, bigBody));
       const line = logged.map(JSON.parse).find(l => l.tag === 'api-gzip');
       expect(line).toBeTruthy();
       expect(line.gzip).toBe(true);
-      expect(line.ae).toBe('gzip, deflate, br');
+      expect(line.ae).toBe('gzip,%20deflate,%20br');
+    });
+
+    // OPS-LOGINJECTGUARD-001: the line runs before sign-in and only a literal space joins a CloudWatch Text
+    // phrase, so a caller's Accept-Encoding must not spell the ship scan's runtime terms.
+    it('encodes the spaces in a hostile Accept-Encoding, so it cannot spell a filter phrase', () => {
+      withCapturedLog(() => jsonResponder({ headers: { 'accept-encoding': 'Task timed out' } }, {})(401, { error: 'unauthorized' }));
+      const line = logged.map(JSON.parse).find(l => l.tag === 'api-gzip');
+      expect(line.ae).toBe('Task%20timed%20out');
     });
 
     // The whole point: a MISSING accept-encoding must be distinguishable in the logs from a
