@@ -98,6 +98,11 @@ describe('howOld / ageOf', () => {
     expect(howOld(bought())).toBe('')
     expect(ageOf(bought())).toBeNull()
   })
+  it('an in-process lot takes its stage year from the Eastern day, not the UTC one (OPS-SEEDAGEUTCYEAR-001)', () => {
+    // 01:00Z on 1 Jan is 20:00 ET on 31 Dec: still the old year in the garden.
+    expect(ageOf(saved({ seed_stage: 'drying', stage_entered_at: '2027-01-01T01:00:00Z' }))).toEqual({ year: 2026, kind: 'harvested' })
+    expect(ageOf(saved({ seed_stage: 'fermenting', stage_entered_at: '2027-01-01T05:30:00Z' }))).toEqual({ year: 2027, kind: 'harvested' })
+  })
 })
 
 describe('stateChips — the engine’s predicates, the engine’s order', () => {
