@@ -13,7 +13,7 @@ import { parseDayOrInstant as parseDate } from './dateLocal.js'
 // `planted_out` uses care.plantedOut, a drawn glyph rather than a reuse of event.transplant: the
 // `transplanted` row sits DIRECTLY ABOVE it, so the same mark twice would make two adjacent milestones
 // visually identical, which loses the distinction the timeline exists to draw. It cannot live under
-// event.* either: eventTypeIconWiring.test.js pins event.* 1:1 against EVENT_TYPES, and planted_out is
+// event.* either: eventTypeIconWiring.test.jsx pins event.* 1:1 against EVENT_TYPES, and planted_out is
 // a date field, not an event type. See iconAnchors.js for the form's rationale.
 const MILESTONES = [
   ['sown_at', 'sown_at_approx', 'sown', 'Sown', 'event.sowing'],

@@ -356,7 +356,7 @@ export default function WeatherWidget({
 
   return (
     // Region anchor for the Today layout gate's ordered census (testid, not heading text, so a copy
-    // rename reds the census rather than emptying it). See the note in Today.jsx.
+    // rename reds the census rather than emptying it).
     <div data-testid="today-weather" style={{
       width: '100%', maxWidth: '100%', boxSizing: 'border-box', margin: '0 auto',
       borderRadius: tokens.radius.card, padding: tokens.space.md,

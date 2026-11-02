@@ -48,7 +48,7 @@ function weekdayOf(ymd) {
 }
 
 // The ET TIME half of asOfLabel's grammar (WeatherWidget.jsx), for inline use inside a sentence. Not a
-// second vocabulary: same formatter, same "as of {time}" phrasing Today.jsx stamps the care list with,
+// second vocabulary: same formatter, same "as of {time}" phrasing as asOfLabel's,
 // just without the "Jun 22 · " that would collide with a ·-separated sentence. The card's liveTimeLabel
 // is this plus its 'just now' fallback, so there is one formatter, not two.
 export function basisTimeLabel(at) {

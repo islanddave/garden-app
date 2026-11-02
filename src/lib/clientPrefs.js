@@ -10,7 +10,7 @@
 // state, dismissal memory and anything a future slice parks in localStorage — a much larger and
 // entirely undiscussed blast radius, and the kind of change that only shows up as a user-visible
 // regression weeks later. Every key removed here is listed here. Adding one is a deliberate edit,
-// and clientPrefs.test.js pins the list so a silent widening fails the suite.
+// and clientPrefs.test.jsx pins the list so a silent widening fails the suite.
 //
 // The PREFIX entry is not scope creep. EventNew reads `lastHarvestUnit:<crop_type_slug>` FIRST and
 // falls back to the bare `lastHarvestUnit` only when the per-crop key is missing (see EventNew.jsx

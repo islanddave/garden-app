@@ -501,7 +501,7 @@ const A = {
     svg24: '<path d="M11.2 12.8V6.6a2.1 2.1 0 0 0-4.2 0v6.2a3.4 3.4 0 1 0 4.2 0z"/><path d="M18 9.8V18"/><path d="M15.2 15.2 18 18l2.8-2.8"/>',
     svg18: '<path d="M11.8 12.8V6.4a2.6 2.6 0 0 0-5.2 0v6.4a3.8 3.8 0 1 0 5.2 0z"/><path d="M18 9.6V18.2"/><path d="M15 15.2 18 18.2l3-3"/>',
   },
-  // planted-out = a plant set DOWN into a dug hollow. Lives in care.*, not event.*: eventTypeIconWiring.test.js
+  // planted-out = a plant set DOWN into a dug hollow. Lives in care.*, not event.*: eventTypeIconWiring.test.jsx
   // holds the event.* keys and EVENT_TYPES at exactly 1:1, and `planted_out` is a planting DATE FIELD, not an
   // event type.
   //

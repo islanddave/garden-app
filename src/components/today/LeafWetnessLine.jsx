@@ -3,7 +3,7 @@
 //
 // It is MOUNTED, in the redesign's GlanceCard.jsx (compact). The sibling DroughtLine once shipped
 // UNMOUNTED; "shipped but never rendered" is the failure this project keeps hitting, and the mount
-// assertion in leafWetnessLine.test.jsx exists so this one cannot regress into it silently.
+// assertion in LeafWetnessLine.test.jsx exists so this one cannot regress into it silently.
 //
 // PROP IS THE WHOLE PLAN, NOT plan.leaf_wetness, same reasoning as DroughtLine. daily-plan-read
 // returns the stored items payload verbatim as `plan`, and the likeliest failure of a line like this

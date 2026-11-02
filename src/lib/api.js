@@ -150,12 +150,14 @@ async function sendApiRequest(path, options = {}, token) {
 // throw escapes useApiFetch().fetch, apiFetch is never called, no fetch() is issued, and the service
 // worker's fetch handler (and its API cache) is never reached.
 //
-// TWO codes, not one. clerk-js Session.getToken wraps the retry ladder in
-// `catch(e){ if(!k()) throw new ClerkOfflineError(...); throw e }`, k() reading navigator.onLine.
-// So the escaping error depends on the radio's state when the ladder gives up:
-//   still offline       -> ClerkOfflineError, code 'clerk_offline'
+// TWO codes, not one. clerk-js 6.29.2 Session.getToken (dist/clerk.browser.js @132530) wraps the
+// retry ladder in `catch(e){ if(!k()) throw new ClerkOfflineError(...); throw e }`, k() reading
+// navigator.onLine. So the escape depends on the radio's state when the ladder gives up:
+//   still offline      -> ClerkOfflineError,  code 'clerk_offline'
 //   came back mid-retry -> the INNER error, ClerkRuntimeError, code 'network_error'
-// Guarding only clerk_offline would miss every connectivity FLAP, the normal condition in a rural
+//                         (_getToken @138781: `else throw new x("Browser is offline, skipping
+//                         token fetch", { code: "network_error" })`)
+// Guarding only clerk_offline would miss every connectivity FLAP — the normal condition in a rural
 // dead zone, not an edge case. 'network_error' has no exported constant the way
 // ClerkOfflineError.ERROR_CODE does, hence the literal; it is a structured discriminant field on
 // the error, not a message match.
