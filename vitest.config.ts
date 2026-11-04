@@ -133,6 +133,11 @@ export default defineConfig({
         'lambda/facebook-share/**',
         // One page, not src/pages/**: the page whose VoiceHarvest.*.test.jsx files this measures.
         'src/pages/VoiceHarvest.jsx',
+        // Files due to be split: a split must not lower its moved code's figure. The *Routes.js globs catch the parts.
+        'src/pages/EventNew.jsx',
+        'lambda/events/index.js', 'lambda/events/*Routes.js',
+        'lambda/plants/index.js', 'lambda/plants/*Routes.js',
+        'lambda/inventory-items/index.js', 'lambda/inventory-items/*Routes.js',
       ],
       exclude: [
         'src/__tests__/**',
