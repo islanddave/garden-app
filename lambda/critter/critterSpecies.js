@@ -1,22 +1,22 @@
-// Critter species pool — full earnable catalog (V102, 2026-06-01).
-// Owner-override (L-102, Dave directive): ALL ~168 defined critters are earnable. The prior
-// MVP namespace contract (ids 1-8 = MVP pool, 100+ = V3 roster) is RETIRED — there is now ONE
-// unified pool keyed by integer species_id 1-168 (255 still reserved as the smoke sentinel,
-// out of pool range). species_id 1-8 PRESERVE their original MVP meaning (robin=1 … hummingbird=8)
-// so existing critter_state rows keep their critter.
+// Critter species pool — the full earnable catalog: ONE pool keyed by integer species_id 1-168
+// (255 is reserved as the smoke sentinel, outside the pool). species_id 1-8 keep their original
+// meaning (robin=1 … hummingbird=8) so existing critter_state rows keep their critter; an id is
+// never reassigned.
 //
-// Source of truth: src/data/critters-roster.json (168 entries; this pool is GENERATED from it and
-// kept identical in BOTH src/lib/critterSpecies.js and lambda/events/critterSpecies.js — a parity
-// test enforces equality). To regenerate after roster changes, re-run the V102 generator
-// (preserves the 8 MVP ids by sprite, assigns 9.. in roster order). The species_id -> roster id
-// bridge is sprite_filename -> "C0NN"/"L0NN"/"Y0NN" (src/lib/critterCollection.js); roster.json is
-// unchanged and carries no species_id.
+// Source of truth: src/data/critters-roster.json (168 entries). This pool was generated from it
+// (the original 8 ids matched by sprite, 9.. assigned in roster order); the generator is not in
+// this repo. The species_id -> roster id bridge is sprite_filename -> "C013"-style roster ids
+// (src/lib/critterCollection.js); roster.json carries no species_id.
 //
-// Reward model (V102, reward-ux-guideline-V102): VARIABLE-RATIO kept — pickSpecies returns null for
-// ~52.5% of seeds (no critter this event), preserving the ~0.475 overall award rate. LIGHT TIERS by
-// roster group: wild=common (weight 3), legacy=uncommon (weight 2), cryptid=rare (weight 1). All
-// fully earnable; exotics stay rarer-but-reachable. base_probability per entry = base_weight /
-// 469 (sum of weights) * 0.475 (target award rate). NO rarity UI (invisible mechanism).
+// This file is the canonical of two byte copies, lambda/critter/ and lambda/events/
+// (scripts/lambda-copies.json). Edit it here, then run `node scripts/gen-lambda-copies.mjs --write`;
+// lambda/critter/critterSpecies.parity.test.js asserts all three are identical.
+//
+// Reward model: VARIABLE-RATIO — pickSpecies returns null for ~52.5% of seeds (no critter this
+// event), an overall award rate of ~0.475. LIGHT TIERS by roster group: wild=common (weight 3),
+// legacy=uncommon (weight 2), cryptid=rare (weight 1). All fully earnable; exotics stay
+// rarer-but-reachable. base_probability per entry = base_weight / 469 (sum of weights) * 0.475
+// (target award rate). NO rarity UI (invisible mechanism).
 // base_weight retained for back-compat callers; pickSpecies reads base_probability.
 
 export const SPECIES_POOL = Object.freeze([
@@ -190,12 +190,13 @@ export const SPECIES_POOL = Object.freeze([
   Object.freeze({ species_id: 168, name: "Memphre", slug: "memphre", group: "cryptid", tier: "rare", sprite_filename: "Y011-memphre.svg", aria_announce_name: "a memphre", base_weight: 1, base_probability: 0.00101279 }),
 ])
 
-// Convenience subsets — computed once at module load.
+// Convenience subsets — computed once at module load. No entry has tier 'baseline', so
+// BASELINE_RESIDENTS is empty and EARNED_POOL is the whole pool.
 export const BASELINE_RESIDENTS = Object.freeze(SPECIES_POOL.filter(s => s.tier === 'baseline'))
 export const EARNED_POOL = Object.freeze(SPECIES_POOL.filter(s => s.tier !== 'baseline'))
 export const BY_ID = Object.freeze(Object.fromEntries(SPECIES_POOL.map(s => [s.species_id, s])))
 
-// Smoke-test sentinel (per revision §2.6). Out-of-pool; NEVER use in real flows.
+// Smoke-test sentinel. Out-of-pool; NEVER use in real flows.
 export const SMOKE_SENTINEL_SPECIES_ID = 255
 
 // Sum of base_probability across earned pool — informational; useful in tests / docs.
@@ -207,14 +208,14 @@ export const TOTAL_BASE_PROBABILITY = EARNED_POOL.reduce((a, s) => a + (s.base_p
 //
 // Inputs:
 //   seed  — string — typically `${source_event_id}|${event_log.created_at}|${householdId}`.
-//   prefs — { [species_id]: weight } — from critter_species_prefs PATCH'd rows (D-INV-1).
-//           Missing species_ids default to 1.0. Weight 2.0 = love, 0.5 = meh (per §3.29).
-//   opts  — { speciesMultipliers?: { [species_id]: number } } — future season/milestone
-//           multipliers. Each multiplier modulates base_probability (cap effective total
-//           at 1.0). Today: pass {} or omit; V4 blocker will source from DB/config.
+//   prefs — { [species_id]: weight } — from critter_species_prefs rows. Missing or
+//           non-positive weights default to 1.0. Weight 2.0 = love, 0.5 = meh.
+//   opts  — { speciesMultipliers?: { [species_id]: number } } — season/milestone
+//           multipliers. Each multiplier (>= 0) scales that species' base_probability; the
+//           total is clamped to 1.0. Every award path passes an empty map today.
 //
-// Output: species_id in [1, 8] (earned pool only — V101 retired baselines), OR null = "no critter awarded this event."
-//   The null path is intentional (variable-ratio reward — Dave directive 2026-05-30).
+// Output: a species_id from EARNED_POOL (1-168), OR null = "no critter awarded this event."
+//   The null path is intentional (variable-ratio reward).
 //
 // Algorithm:
 //   1) Per-species effective_prob = base_probability × prefs_weight × multiplier.
@@ -250,9 +251,8 @@ export function pickSpecies(seed, prefs = {}, opts = {}) {
   return EARNED_POOL[EARNED_POOL.length - 1].species_id  // numeric edge (r ≈ totalClamped)
 }
 
-// pickCopyVariant — deterministic seed → integer in [0, poolSize) for Stage 1 variant selection.
-// Pool size is the count of variants in the Stage 1 single-action set (default 10 per packet).
-// Pure JS; identical on Node + browser. (Unchanged from pre-probabilistic refactor.)
+// pickCopyVariant — deterministic seed → integer in [0, poolSize), the award's copy-variant index
+// (lambda/events/critterAward.js passes 10). Pure JS; identical on Node + browser.
 export function pickCopyVariant(seed, poolSize) {
   if (typeof seed !== 'string' || seed.length === 0) {
     throw new Error('pickCopyVariant: seed must be a non-empty string')
