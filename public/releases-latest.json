@@ -1,7 +1,7 @@
 {
-  "version": "5.3.29",
-  "date": "2026-11-02",
+  "version": "5.3.30",
+  "date": "2026-11-04",
   "highlights": [
-    "My seeds now count a lot entered on a New Year's Eve evening toward that year, and the app's server notes no longer copy text from a request that has not signed in. Behind the scenes, steadier checks on a few date-sensitive tests."
+    "Behind-the-scenes upkeep: tidier code notes, and test coverage now measures the screens due to be split. Nothing you use changes."
   ]
 }
