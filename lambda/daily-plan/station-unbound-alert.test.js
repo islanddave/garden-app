@@ -147,6 +147,39 @@ describe('BUG-STATIONDEGRADESILENT-001 — a configured station bound to no Spac
     expect(pg.writes.length).toBeGreaterThan(0);
   });
 
+  it('(e) AWN answered with ZERO records -> one OFFLINE alert (its own subject and key), not NOT BOUND', async () => {
+    // The 2026-11-15 live shape: the console stopped uploading, the data aged past AWN's window, and the email said
+    // "NOT BOUND" with a cause list when the station was simply offline at the house.
+    vi.stubEnv('AWN_STATIONS_JSON', cfg());
+    const { log } = quiet();
+    const { publishAlert, pg } = await drive({ fetchStation: async () => ({ mac: MAC, records: [] }) });
+    expect(publishAlert).toHaveBeenCalledTimes(1);
+    const [call] = publishAlert.mock.calls.map(([a]) => a);
+    expect(call.topic).toBe('ops');
+    expect(call.subject).toBe('Garden ops - weather station OFFLINE');
+    expect(call.subject).toMatch(/^[\x20-\x7E]+$/);
+    expect(call.message).toMatch(/^station_offline — /);
+    expect(call.message).toContain(MAC);
+    expect(call.message).toContain('no readings');
+    expect(call.message).toMatch(/power and WiFi/);
+    expect(call.message).not.toContain('station_unbound');
+    expect(stationCalls(publishAlert)).toHaveLength(0);
+    const published = logLines(log).filter((l) => l.msg === 'station-offline alert PUBLISHED');
+    expect(published).toHaveLength(1);
+    expect(published[0].dedup_key).toBe(`station|${DATE}|station_offline`);
+    expect(logLines(log).find((l) => l.msg === 'station-fetched')).toMatchObject({ present: false, records: 0 });
+    expect(pg.writes.length).toBeGreaterThan(0);
+  });
+
+  it('(e) a null fetch (key/HTTP fault) still says NOT BOUND, never OFFLINE', async () => {
+    vi.stubEnv('AWN_STATIONS_JSON', cfg());
+    quiet();
+    const { publishAlert } = await drive();
+    const [call] = publishAlert.mock.calls.map(([a]) => a);
+    expect(call.subject).toBe('Garden ops - weather station NOT BOUND');
+    expect(call.message).not.toContain('station_offline');
+  });
+
   it('names the per-Space weather and hydrology degrades that fired in the same run', async () => {
     // Context, not cause: neither fetch can unbind a station (binding reads only the station and the Space
     // coordinates). A throwing weather fetch ALSO raises frost_eval_degraded, as it always has.

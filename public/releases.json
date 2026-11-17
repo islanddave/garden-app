@@ -1,5 +1,12 @@
 [
   {
+    "version": "5.3.31",
+    "date": "2026-11-16",
+    "highlights": [
+      "Weather station emails now say OFFLINE when the station stops reporting, instead of NOT BOUND"
+    ]
+  },
+  {
     "version": "5.3.30",
     "date": "2026-11-04",
     "highlights": [

@@ -325,7 +325,10 @@ async function fetchStation() {
       endDate = oldest.dateutc - 1;
       if (page < 2) await new Promise((r) => setTimeout(r, 1100));
     }
-    return records.length ? { mac, records } : null;
+    // AWN answered but sent zero records: the station itself has not uploaded inside AWN's window (console, WiFi or
+    // array at the house), not a key or API fault. Returned as an empty list, not null, so the station_unbound alert
+    // can say "offline" instead of a cause list; deriveStation already turns an empty list into no station.
+    return { mac, records };
   } catch (e) {
     console.warn(JSON.stringify({ msg: 'fetchStation failed — station disabled', error: e.message }));
     return null;

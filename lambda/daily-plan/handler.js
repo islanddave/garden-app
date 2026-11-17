@@ -1381,7 +1381,8 @@ async function run({ pg, today, dryRun = true,geocodeZip, fetchNWS, fetchPrecip,
   // One account-level station fetch per run, derived to a normalized reading. fetchStation is fully guarded (returns null on any secret/HTTP/timeout failure) so it can NEVER empty the
   // nightly plan; a null station simply leaves Open-Meteo/NWS as the source.
   const stationRaw = fetchStation ? await fetchStation() : null;
-  console.log(JSON.stringify({ msg: 'station-fetched', ms: Date.now() - t0, present: !!stationRaw }));
+  console.log(JSON.stringify({ msg: 'station-fetched', ms: Date.now() - t0, present: !!(stationRaw && stationRaw.records && stationRaw.records.length),
+    records: stationRaw && Array.isArray(stationRaw.records) ? stationRaw.records.length : null }));
   // The DERIVATION gets the same promise the FETCH above makes. fetchStation is guarded so a gauge outage can never empty the nightly plan; deriveStation beside it was bare, so one throw
   // here (a bad `tz` in the hand-edited AWN_STATIONS_JSON reaching Intl is the live path) would cost the ENTIRE plan for every Space and the frost alert with it. Degrade to "no gauge" —
   // byte-identical to the null-fetch state the code already handles everywhere — and NAME the degrade so it is observable instead of silent.
@@ -1720,24 +1721,35 @@ async function run({ pg, today, dryRun = true,geocodeZip, fetchNWS, fetchPrecip,
       // the four evaluating runs, and year-round that would be a winter of them. The frost-degrade blocks above take the same cap and are otherwise unchanged: still frost-season, still behind
       // FROST_ALERT_ENABLED, still per Space.
       if (stationUnbound && frostRun.firstOfDay && !dryRun && publishAlert) {
-        const dk = `station|${today}|station_unbound`;
+        // AWN answered with zero records (fetchStation returns an empty list for that, null for a key/HTTP/config fault): the station has gone
+        // quiet at the house for longer than AWN's window, so the email says OFFLINE and names the remedy, not a cause list. Its own key, so
+        // the dedup store never treats an offline day and an unbound day as the same email.
+        const offline = !stationDegraded && !!stationRaw && Array.isArray(stationRaw.records) && stationRaw.records.length === 0;
+        const kind = offline ? 'station_offline' : 'station_unbound';
+        const dk = `station|${today}|${kind}`;
         if (!frostPublished.has(dk)) {
           const markers = [stationDegraded ? `station_derive_failed (${stationDegraded})` : null, ...wxDegradeMarkers].filter(Boolean);
+          const macs = stationCfg.map((c) => c && c.mac).filter(Boolean).join(', ') || '(no mac in AWN_STATIONS_JSON)';
           const cause = stationDegraded ? 'deriveStation threw'
-            : !stationRaw ? 'the station fetch returned nothing (AWN outage, keys, or no records)'
+            : !stationRaw ? 'the station fetch returned nothing (AWN outage, keys, or config)'
             : !station ? 'the fetched records were unusable'
             : 'no Space has weather coordinates within COORD_TOL of the station';
+          const tail = `Degrade markers this run: ${markers.length ? markers.join('; ') : 'none'}. ` +
+            'Tonight\'s low is the forecast with no station floor, and rain is forecast-only, until the station reports again.';
           try {
-            await publishAlert({ topic: 'ops', subject: 'Garden ops - weather station NOT BOUND',
-              message: `station_unbound — weather station ${stationCfg.map((c) => c && c.mac).filter(Boolean).join(', ') || '(no mac in AWN_STATIONS_JSON)'} ` +
-                `is configured but bound to 0 of ${spaces.length} Space(s) on ${today}. Cause: ${cause}. ` +
-                `Degrade markers this run: ${markers.length ? markers.join('; ') : 'none'}. ` +
-                'Tonight\'s low is the forecast with no station floor, and rain is forecast-only, until the station binds again.' });
+            await publishAlert(offline
+              ? { topic: 'ops', subject: 'Garden ops - weather station OFFLINE',
+                message: `station_offline — weather station ${macs} has sent no readings to Ambient Weather in about a day ` +
+                  `(Ambient answered on ${today} with zero records; keys and config are fine). ` +
+                  'Check the console at the house: power and WiFi first, then the outdoor array batteries (lithium AAs in winter). ' + tail }
+              : { topic: 'ops', subject: 'Garden ops - weather station NOT BOUND',
+                message: `station_unbound — weather station ${macs} ` +
+                  `is configured but bound to 0 of ${spaces.length} Space(s) on ${today}. Cause: ${cause}. ` + tail });
             frostPublished.add(dk);
-            console.log(JSON.stringify({ msg: 'station-unbound alert PUBLISHED', dedup_key: dk, markers }));
+            console.log(JSON.stringify({ msg: `${offline ? 'station-offline' : 'station-unbound'} alert PUBLISHED`, dedup_key: dk, markers }));
           } catch (e) {
-            console.error(JSON.stringify({ msg: 'station-unbound alert publish FAILED', dedup_key: dk, error: e?.message }));
-            frostFailures.push({ kind: 'station_unbound_publish_failed', dedupKey: dk, error: e?.message });
+            console.error(JSON.stringify({ msg: `${offline ? 'station-offline' : 'station-unbound'} alert publish FAILED`, dedup_key: dk, error: e?.message }));
+            frostFailures.push({ kind: `${kind}_publish_failed`, dedupKey: dk, error: e?.message });
           }
         }
       }
